@@ -130,6 +130,7 @@ nav:
           - guides/index.md
           - SSH gateway: guides/ssh-gateway.md
           - OIDC login: guides/oidc.md
+          - Browser access: guides/browser-access.md
           - Session recording: guides/recording.md
           - Remote administration: guides/management.md
           - Remote public-key export: guides/keys.md
@@ -149,7 +150,9 @@ nav:
       - Connections:
           - reference/connection/index.md
           - SSH: reference/connection/ssh.md
-          - HTTP / HTTPS (groundwork): reference/connection/http.md
+          - HTTP / HTTPS:
+              - reference/connection/http.md
+              - Security and limits: reference/connection/http/security.md
       - reference/flow.md
       - Authorizations:
           - reference/authorization/index.md

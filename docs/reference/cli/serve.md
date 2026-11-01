@@ -14,6 +14,8 @@ bifroest serve
 
 <<cli_syntax("serve", flag_prefix="run")>>
 
+`run` is an alias of `serve`.
+
 ## Arguments
 
 None.
@@ -31,8 +33,18 @@ The default depends on the platform:
 * macOS: `/Library/Application Support/Engity/Bifroest/configuration.yaml`
 * Windows: `C:\ProgramData\Engity\Bifroest\configuration.yaml`
 
+<<flag("windowsService", "bool", default=False, id_prefix="run-", heading=3)>>
+Windows only. Explicitly run as a registered Windows Service Control Manager
+(SCM) service. Without this flag, Bifröst uses automatic service detection.
+Use it in manually registered SCM commands, particularly in Windows containers
+where automatic detection may be unreliable. It does not register a service,
+change its account, grant logon rights or enable privileges.
+
 <<flag("serviceName", "string", default="engity-bifroest", id_prefix="run-", heading=3)>>
-Windows only. Name used when `serve` is launched by the Windows Service Control Manager.
+Windows only. Must match the service name registered with SCM.
+
+The built-in [service installer](service/install.md) supplies both arguments.
+Private state and key files must be owned by the actual service identity.
 
 ## Output
 
@@ -51,7 +63,16 @@ Logs are written to stderr. Startup failure returns a nonzero exit status. An in
 
     For an installed system service, use its service manager instead of starting a second process on the same address and repositories.
 
-Also accepted as `run`.
+### Manually registered Windows service
+
+Use these arguments in the registered SCM command, not as a foreground command.
+Replace the name and configuration path with those of the registered service:
+
+```text
+bifroest serve --windowsService --serviceName=custom-bifroest --configuration="C:\ProgramData\Engity\Bifroest\configuration.yaml"
+```
+
+Use [`bifroest service install`](service/install.md) instead when possible.
 
 ## Availability
 

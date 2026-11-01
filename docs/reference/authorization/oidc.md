@@ -6,19 +6,19 @@ description: How to authorize a user request via OpenID Connect (OIDC) with Bifr
 
 Authorizes a user request via [OpenID Connect (OIDC)](https://openid.net/developers/how-connect-works/).
 
-There is no need that the actual user exists in any way on the host machine of Bifröst. Even if the [local environment](../environment/local.md) is used together with [`createIfAbsent`](../environment/local.md#property-createIfAbsent) and [`updateIfDifferent`](../environment/local.md#property-updateIfDifferent) set to `true`, it will create/update the users. There is no need for tools like Puppet or Ansible.
+Users do not need a local host account to authenticate. The selected environment
+determines the target account; [local account management](../environment/local.md#account-management)
+can provision one when explicitly configured.
 
-This provides an easy way for SSO in all types of organizations, small or big. See [use cases for more details](../../usecases.md).
-
-Currently, the following flow of OpenID Connect is supported:
-
-* [Device Auth](#device-auth)
+Bifröst supports [Device Auth](#device-auth) through SSH and
+[browser access](../../guides/browser-access.md). Users follow the provider's
+verification instructions; this is not an OIDC redirect login.
 
 ## Device Auth {: #device-auth }
 
 ### Properties {: #device-auth-properties }
 
-<<property("type", "Authorization Type", default="oidc", required=True, id_prefix="device-auth-", heading=4)>>
+<<property("type", "Authorization Type", default="oidcDeviceAuth", required=True, id_prefix="device-auth-", heading=4)>>
 Has to be set to `oidcDeviceAuth` to enable the OIDC DeviceAuth authorization.
 
 <<property("issuer", "URL", "../data-type.md#url", template_context="../context/core.md", id_prefix="device-auth-", heading=4, required=True)>>
@@ -73,8 +73,6 @@ With `lostAccess`, a login without a refresh token is denied, and existing OIDC 
 
 If verification of a newly returned ID token temporarily fails (for example, because JWKS is unavailable), rotated credentials are stored as pending. They cannot authorize a reconnect or replace trusted claims until verification succeeds. Failure beyond `refreshToken.maxUnverifiedFor` disposes the session.
 
-An unsigned SSH remembered-key offer only checks for an eligible persisted session; it does not restore OIDC claims, contact the provider, refresh/promote credentials or report lost access. After SSH verifies possession of the key, Bifröst re-evaluates the authorization, including refresh and environment checks. The unsigned probe may therefore be accepted while the subsequent authenticated attempt is denied. Independent background refresh and its disposal deadlines remain active regardless of probes.
-
 <<property("refreshToken", "Refresh Token", "#device-auth-refresh-token", id_prefix="device-auth-", heading=4)>>
 Settings for refresh-token verification. Refresh is enabled when `forceDisposeSessionOn` is `lostAccess` or `refreshToken.mode` is `proactive`. When enabled, a login without a refresh token is denied.
 
@@ -99,9 +97,20 @@ For `lostAccess`, a refresh is scheduled before this deadline if the configured 
 
 ### Session sharing
 
-With the filesystem session repository and built-in target resolvers, regular device logins with the same verified issuer/subject, flow and effective target can reuse a [session association](../session/fs.md#session-association-groundwork), independently of the requesting name. Each connection keeps its freshly verified claims. Configurations without verified identity artifacts retain their previous allocation path rather than inferring identity from a name or unverified JWT.
+With filesystem sessions and built-in environments, device logins with the same
+verified issuer/subject, flow and effective target can [reuse a session](../session/fs.md#session-association-groundwork).
+The requesting name alone is not an identity. Without verified identity information,
+this identity-based reuse is unavailable. Each connection keeps its own verified claims.
 
-The retained grant is checked under the same lock as reconnect and background refresh. A fresh login cannot replace a rotating refresh chain, bypass pending verification or reset the retained grant's verification deadline. With `lostAccess`, detected grant loss revokes the old session's connections; a regular fresh login may instead receive a new session. Temporary retained-grant verification failures fail the login without replacing its credentials. Only when both refresh and forced disposal are disabled can a newer verified login update the non-refreshing snapshot under that lock. Removed credentials are not restored. The [interactive HTTP protocol](../connection/http.md#interactive-and-public-key-login-protocol) now carries the same device flow through acknowledged plain-text instructions and cancellation, not a new redirect flow. Frontend and browser RememberMe remain pending.
+A fresh login does not replace an existing rotating refresh grant or reset its
+verification deadline. Temporary retained-grant verification failures reject reuse.
+With `lostAccess`, detected grant loss closes the old session's connections;
+a fresh login may create a new session instead. Only when both refresh and forced
+disposal are disabled may a newer verified login update the retained claims.
+
+Remembered SSH keys and [browser RememberMe](../connection/http.md#rememberme)
+do not bypass configured refresh-token checks. A remembered SSH key must first
+prove possession before reconnect authorization is evaluated.
 
 ### Session cleanup
 
@@ -111,7 +120,7 @@ When a session is disposed (for example, after expiry or lost OIDC access), hous
 
 This authorization will produce a context of type [Authorization OIDC](../context/authorization.md#oidc).
 
-### Examples {: #device-auth-examples }
+## Examples {: #device-auth-examples }
 
 1. Use the default `lostAccess` policy with a provider that requires `offline_access` to issue refresh tokens:
    ```yaml

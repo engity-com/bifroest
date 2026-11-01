@@ -1,5 +1,9 @@
 # Browser application and client core
 
+This is developer documentation. For configuration and first use, see the
+[HTTP reference](../docs/reference/connection/http.md) and
+[browser access guide](../docs/guides/browser-access.md).
+
 The React 19/Material UI 9 application supports password login, explicit
 RememberMe opt-in, saved-access resumption, confirmed logout/revocation,
 explicit local-only recovery and an owned xterm terminal. It uses en-US message
@@ -85,6 +89,22 @@ the old deadline. The bounded settings worker does not block the WebSocket reade
 Idle/max timeouts, parent-grant expiry, revocation and RememberMe inactivity are unchanged.
 There are no keepalive keystrokes, shell commands, management polling, automatic
 reconnects or replays. HTTP-only management views have no synthetic keepalive job.
+
+## Implementation references
+
+The user documentation describes configuration, workflows and practical limits.
+Protocol field sets and internal ownership contracts live with their code:
+
+| Area | Source |
+| --- | --- |
+| Login, access and RememberMe messages | [`pkg/service/http-*.go`](../pkg/service/) and [`web/src/remember/`](src/remember/) |
+| Terminal messages, budgets and worker lifecycle | [`http-terminal-protocol.go`](../pkg/service/http-terminal-protocol.go), [`http-terminal-stream.go`](../pkg/service/http-terminal-stream.go) and [`socket.ts`](src/terminal/socket.ts) |
+| Shared management admission and execution | [`pkg/service/management*.go`](../pkg/service/) and [`pkg/management/`](../pkg/management/) |
+| Audit codecs and snapshot ownership | [`pkg/audit/evidence/`](../pkg/audit/evidence/) |
+| TLS startup, renewal and path/key checks | [`pkg/https/`](../pkg/https/) |
+
+The adjacent tests cover rejection, cancellation and cleanup paths. They do not
+replace platform-specific integration tests or independent security review.
 
 ## Development
 
@@ -290,8 +310,11 @@ the exact name/UID and new PAM environment. It never calls `pam_authenticate`,
 answers a PAM prompt, reuses a historical environment, changes a password or opens
 a PAM session. Operators must ensure that the PAM account stack enforces all
 restrictions required during resumption; this is not general PAM-auth/MFA
-equivalence. Current method/empty-password policies still apply. Darwin PAM and
-Windows SAM password resumption remain unavailable. The isolated native
+equivalence. Current method/empty-password policies still apply. Darwin PAM
+password resumption remains unavailable. Windows SAM resumption has a native
+policy adapter requiring LocalSystem and fresh account/network-logon checks;
+see [`test/nanoserver/README.md`](../test/nanoserver/README.md) for its isolated
+native acceptance tests. The isolated native
 `mise run test:e2e:pam` harness additionally verifies real PAM policy, service
 restart and browser profile recovery; see `test/pam/README.md` for its boundaries.
 

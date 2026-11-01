@@ -1,103 +1,173 @@
 ---
 toc_depth: 6
-description: A flow represents a flow of a user's session from the authorization to the active environment. Bifröst can have one ore more.
+description: Define how users authenticate and which environment their session uses.
 ---
+
 # Flows
 
-A flow represents a flow of a user's session from the [authorization](authorization/index.md) to the active [environment](environment/index.md). Unlike the majority of the SSH servers, Bifröst cannot only interpret one flow, it can interpret *one or more*. With this approach Bifröst can do something similar like HTTP servers are implementing [Virtual hosting](https://en.wikipedia.org/wiki/Virtual_hosting) - but in this case it is based on the combination of the requesting usernames (see [requirement](#requirement)) and which [authorization](authorization/index.md) the user can fulfill.
+A flow combines an [authorization](authorization/index.md) with an
+[environment](environment/index.md). Different flows can serve different users,
+hosts or browser access links.
 
-Flows are tried in configuration order. A disabled transport or an unmet requirement skips that flow before credentials or stored sessions are considered. A denied authorization can try the next candidate; an authorization error aborts the attempt. An explicitly published HTTP slug is the exception: it selects exactly one flow and never falls through to another one.
+Flows are tried in configuration order:
 
 1. Is the incoming transport enabled for this flow?
-2. Is the [requirement](#requirement) fulfilled?
-3. Is the user successfully [authorized](authorization/index.md), including any checks required to reuse a stored [session](session/index.md)?
-4. Is the configured [environment](environment/index.md) compatible with this request and authorization?
-5. Can a compatible session be reused or a new one created?
+2. Does the request meet its [requirements](#requirement)?
+3. Does authorization succeed?
+4. Can the request use the configured environment and a compatible session?
 
-!!! note "HTTP and SSH share selection and authorization rules"
-    The [root HTTP configuration](connection/http.md) starts the configured HTTPS/WebUI endpoint independently of SSH. Both transports use the shared flow, identity/target association, authorization and environment rules. Published links are discovery, not credentials. Configured incoming endpoints remain jointly startup-critical: a listener, TLS or configuration failure does not silently fall back to SSH-only operation. Browser authentication and new terminal executions retain the documented host/SNI/Origin/path and authorizer-specific eligibility boundaries.
+A denied authorization can try the next flow; an authorization error stops the
+attempt. A published HTTP link selects exactly one flow and never falls through
+to another flow if access is denied.
 
 ## Configuration
 
 <<property("name", "Flow Name", "data-type.md#flow-name", required=True)>>
-:   Defines the unique name of the flow. It will be used inside logs, as references for the stored [sessions](session/index.md), ...
+Unique flow name, used in logs and stored [sessions](session/index.md).
 
-    !!! warning
-         Changing this value afterward means to break all existing sessions.
+!!! warning
+    Changing a flow's name breaks its existing sessions.
 
 <<property("auditlog", "Audit log Name", "auditlog/index.md", default="default")>>
-:   References the named audit log used by this flow. The referenced entry must exist under the root [auditlog](auditlog/index.md#property-name) list; a missing root list provides a disabled entry named `default`.
+Name of the audit log used by this flow. It must exist in the root
+`auditlog` list. Omitting that list provides a disabled entry named `default`.
 
 <<property("ssh", "SSH transport", "#ssh-transport")>>
-:   Controls access through the incoming SSH transport, independently of HTTP.
+Controls incoming SSH access, independently of HTTP.
 
 <<property("http", "HTTP transport", "#http-transport")>>
-:   Controls HTTP eligibility and the requesting-name prompt. HTTP eligibility defaults to enabled for every flow once an HTTP endpoint is available.
+Controls browser access, the requesting-name prompt and terminal keepalive.
+
+!!! note
+    Enabling the [root HTTP endpoint](connection/http.md) makes every flow
+    HTTP-eligible by default. Set `http.enabled: false` on flows that should
+    remain SSH-only.
 
 <<property("discoverAsSlug", "string", default="")>>
-:   Publishes an explicit link on the HTTP root page and gives this slug priority over ordinary flow matching on hosts allowed by this flow's HTTP host requirements. Only HTTP-enabled flows publish links. An empty value publishes nothing.
+Publishes an HTTP access link for this flow on its allowed hosts. An empty value
+publishes nothing. Only HTTP-enabled flows publish links.
 
-    The selected flow must still satisfy **all** requirements and authorization checks. Failure never falls through to another flow, even one earlier in configuration order. The same slug may be used on disjoint hosts; collisions on a configured endpoint domain are configuration errors. Name and slug requirements do not resolve such collisions.
+A slug has one or two case-sensitive alphanumeric segments, each 1–64 characters
+long. For example, `servers/Example` publishes `/servers/Example`. Leading or
+trailing slashes, empty segments and URL-encoded aliases are not allowed.
 
-    Slugs are case-sensitive ASCII alphanumeric segments: `[a-zA-Z0-9]{1,64}(/[a-zA-Z0-9]{1,64})?`. The root `/` has slug `""`; `/servers/Foo` has slug `servers/Foo`. Query strings and fragments are not part of the slug. Encoded path aliases, trailing slashes, empty segments, dot segments, and additional segments are rejected rather than normalized. The `/_bifroest/` namespace is reserved for internal API, WebSocket, and asset routes; it is outside the slug grammar and must never enter ordinary flow matching.
+The link still requires authorization and all configured requirements. Two flows
+cannot publish the same slug on the same configured domain. Disjoint domains
+may use the same slug.
 
 <<property("requirement", "Requirement", "#requirement")>>
-:   See [Requirement](#requirement), below.
+Rules a request must satisfy before authorization.
 
 <<property("authorization", "Authorization", "authorization/index.md", required=True)>>
-:   Will be evaluated to ensure the requesting user is allowed to access [the environment of this flow](#property-environment).
+Defines how the user authenticates and which access is permitted.
 
 <<property("environment", "Environment", "environment/index.md", required=True)>>
-:   Once all requirements are fulfilled and the user is successfully authorized, he will execute into this [environment](environment/index.md).
+Defines where the authorized user's session runs.
 
 ### SSH transport
 
 <<property("enabled", "bool", default=True, id_prefix="ssh-", heading=4)>>
-:   Whether this flow accepts incoming SSH authentication. `false` does not disable HTTP or affect SSH used as a downstream environment transport.
+Accepts incoming SSH authentication for this flow. `false` does not disable HTTP
+or SSH used to connect to a downstream target.
 
 ### HTTP transport
 
 <<property("enabled", "bool", default=True, id_prefix="http-", heading=4)>>
-:   Whether this flow is eligible for HTTP authentication and discovery. `false` leaves SSH unchanged.
+Allows HTTP authentication and discovery for this flow. The root HTTP endpoint
+must also be enabled. `false` leaves SSH unchanged.
 
 <<property("requestUser", "bool", default=True, id_prefix="http-", heading=4)>>
-:   Whether the browser asks for a requesting name. With `false`, `remote.user` must be empty. The value is not synthesized from a slug, principal, or flow name. General and HTTP name requirements still check the actual empty string: `^sso$` does not match, while `^$` does. Authorization methods needing a name cannot guess an account instead.
+Asks the browser user for a requesting name. With `false`, the browser sends an
+empty name. This is useful for OIDC flows that identify users through the IdP.
+Methods needing a name cannot guess one instead.
 
-    Use boolean `true`/`false` for transport flags. Null blocks, null flags, quoted booleans, and unknown transport fields are rejected.
+Name requirements still apply: `^sso$` does not match an empty name; `^$` does.
+The requesting name is not the verified
+[principal](context/authentication.md#property-principal) or the target account.
 
 <<property("keepAlive", "string", template_context="context/authorization.md", default="15s", id_prefix="http-", heading=4)>>
-:   Default transport keepalive interval for authenticated browser terminals. Use
-    a Go duration between `1s` and `5m`. A leading `!` makes the evaluated value
-    server-enforced: `"10s"` is editable in **Connection settings**, while
-    `"!10s"` is not. Quote values starting with `!` so YAML does not treat them
-    as tags. Null/non-string values and invalid or out-of-range durations fail.
+Keepalive interval for browser terminals, from `1s` to `5m`. A user may change
+it in **Connection settings**. Prefix the value with `!` to prevent changes.
+Quote values starting with `!` in YAML.
 
-    Templates are rendered only after authentication, with the authenticated
-    connection/session context (including `.authentication`, `.authorization`
-    and `.session`). RememberMe resumption renders the current policy again.
-    New terminal connections and live setting changes re-evaluate that policy;
-    a stored preference or old UI policy cannot override an enforced value.
+The template is evaluated after authentication using the current session context.
+An enforced value overrides saved browser preferences. Keepalive preserves only
+the network connection; it does not extend session or RememberMe timeouts.
 
-    ```yaml
-    http:
-      keepAlive: '{{ if eq .authentication.principal "alice" }}10s{{ else }}!20s{{ end }}'
-    ```
+```yaml title="Editable interval"
+http:
+  keepAlive: 10s
+```
 
-    Keepalive uses server-generated WebSocket Ping frames and matching browser
-    Pong replies, not JavaScript background timers or synthetic terminal input.
-    The reply deadline is at least `45s`, or three times the selected interval.
-    A shorter reply window is activated only after a fresh matching Pong; the
-    previous dead-peer deadline is not extended while waiting for that proof.
-    It does **not** renew session idle/maximum timeouts, access-token expiry or
-    RememberMe inactivity. Non-terminal HTTP views do not create background
-    operations or executions just to keep a session active.
+```yaml title="Enforced interval based on the authenticated user"
+http:
+  keepAlive: '{{ if eq .authentication.principal "alice" }}10s{{ else }}!20s{{ end }}'
+```
 
-## Example
+## Requirement
+
+Requirements are checked before authorization. General name rules apply to SSH
+and HTTP. Transport-specific rules apply **in addition**: all applicable rules
+must match.
+
+### Configuration {: #requirement-configuration }
+
+<<property("includedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-", heading=4)>>
+Include rule for the requesting name, such as `alice` in `ssh alice@host`.
+Empty means unrestricted.
+
+<<property("excludedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-", heading=4)>>
+Exclude rule for the requesting name. Empty excludes nothing.
+
+!!! note
+    Regular expressions match substrings unless anchored. Use `^alice$` to
+    match the complete name, rather than also matching `alice-admin`.
+
+### SSH requirements
+
+These properties belong to `requirement.ssh`.
+
+<<property("includedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-ssh-", heading=4)>>
+Additional include rule for the SSH requesting name. Empty means unrestricted.
+
+<<property("excludedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-ssh-", heading=4)>>
+Additional exclude rule for the SSH requesting name. Empty excludes nothing.
+
+### HTTP requirements
+
+These properties belong to `requirement.http`.
+
+<<property("includedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+Additional include rule for the HTTP requesting name, which may be empty.
+
+<<property("excludedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+Additional exclude rule for the HTTP requesting name.
+
+<<property("includedHost", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+Include rule for the canonical host: lowercase, without port or trailing DNS
+dot. For example, `APP.EXAMPLE.:443` becomes `app.example`. IPv6 literals keep
+their brackets.
+
+<<property("excludedHost", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+Exclude rule for the canonical host.
+
+<<property("includedSlug", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+Include rule for the slug without a leading slash. The root has slug `""`.
+
+<<property("excludedSlug", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+Exclude rule for the slug.
+
+Empty include rules do not restrict access; empty exclude rules exclude nothing.
+Host rules only narrow the endpoint's [domain list](connection/http.md#property-domains).
+Discovery links do not bypass these requirements.
+
+## Examples
+
+### Different SSH login names
 
 ```yaml
 flows:
   - name: sso
-    auditlog: restricted
     requirement:
       includedRequestingName: ^sso$
     authorization:
@@ -116,69 +186,13 @@ flows:
       # ...
 ```
 
-## Requirement
+### A browser-only OIDC link
 
-The requirement has to be fulfilled, even before the [authorization](#property-authorization) is evaluated. General name rules apply to both SSH and HTTP. Transport-specific rules apply **in addition**, not as replacements. All applicable rules must match (AND).
-
-### Configuration {: id=requirement-configuration }
-
-<<property("includedRequestingName", "Regex", "data-type.md#regex", default="\"\"", id_prefix="requirement-", heading=4)>>
-If this property is set, the requesting name (`ssh <requesting name>@my-host.tld`) has to fulfill this regular expression. If empty everything will be included.
-
-!!! warning
-     Keep `^` and `$` to ensure a full match, otherwise it matches only a part of it.
-
-<<property("excludedRequestingName", "Regex", "data-type.md#regex", default="\"\"", id_prefix="requirement-", heading=4)>>
-If this property is set, the requesting name (`ssh <requesting name>@my-host.tld`) has to **NOT** fulfill this regular expression. If empty everything will be included.
-
-!!! warning
-     Keep `^` and `$` to ensure a full match, otherwise it matches only a part of it.
-
-If no flow matches the requesting name, Bifröst rejects authentication as usual and logs `no flow matches requested user` at DEBUG level. Use [`--log.level=DEBUG`](cli/index.md#general-flags) to see this diagnostic.
-
-### SSH requirements
-
-Under `requirement.ssh`:
-
-<<property("includedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-ssh-", heading=4)>>
-:   Additional include rule for the SSH requesting name. Empty means unrestricted.
-
-<<property("excludedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-ssh-", heading=4)>>
-:   Additional exclude rule for the SSH requesting name. Empty excludes nothing.
-
-### HTTP requirements
-
-Under `requirement.http`:
-
-<<property("includedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
-:   Additional include rule for the HTTP requesting name, which may be empty.
-
-<<property("excludedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
-:   Additional exclude rule for the HTTP requesting name.
-
-<<property("includedHost", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
-:   Include rule for the canonical HTTP host: lowercase IDNA ASCII, without port or a trailing DNS dot. IPv6 literals retain brackets. For example, `APP.EXAMPLE.:443` matches as `app.example`.
-
-<<property("excludedHost", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
-:   Exclude rule for the canonical HTTP host.
-
-<<property("includedSlug", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
-:   Include rule for the validated slug without a leading slash; the root is `""`.
-
-<<property("excludedSlug", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
-:   Exclude rule for that slug.
-
-Empty include rules do not restrict access; empty exclude rules exclude nothing. Regexes match substrings unless anchored with `^` and `$`. Host rules only narrow the endpoint's configured domain allowlist; they cannot authorize arbitrary domains or ACME issuance. Discovery lists only explicitly published slugs allowed on the requested host; it does not grant authorization or bypass name/slug requirements.
-
-### Example {: id=requirement-example }
-
-```yaml
-requirement:
-  includedRequestingName: ^foo$
-  excludedRequestingName: ^bar$
-```
-
-HTTP selection example (no listener is enabled by this example):
+This flow publishes `https://app.example.org/servers/Example` without asking for
+a login name. Configure the [HTTPS endpoint](connection/http.md) separately.
+The IdP must support device authorization and, by default, refresh tokens.
+Its verified principal must map to an allowed local account; configure the
+[principal mapping](authorization/index.md#principal-mapping) accordingly.
 
 ```yaml
 flows:
@@ -203,9 +217,8 @@ flows:
       name: '{{ .authentication.principal }}'
 ```
 
-This name-free example requires an identity provider whose verified principal maps to an allowed local account. It does not substitute the untrusted requesting name for the authenticated identity.
-
 ## Next topics
+
 * [Configuration](configuration.md)
 * [Environments](environment/index.md)
 * [Authorizations](authorization/index.md)

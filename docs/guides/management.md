@@ -83,7 +83,7 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
     bifroest @bifroest-admin audit events administration --limit=20
     ```
 
-    Settings are redacted. Metadata and public event queries work with `allowArtifactTransfer: false`. This does not make the flow read-only: all authorized management users can also disconnect and dispose of sessions.
+    Settings are redacted. Metadata and public event queries work with `allowArtifactTransfer: false`. This does not make the flow read-only: an unrestricted management login can also disconnect and dispose of sessions.
 
 ### Find a workload session and its Recording
 
@@ -132,7 +132,7 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
 
 Find the workload session with `session ls`, then choose **one** action:
 
-* Close its current SSH connections but keep the session reusable:
+* Close its current SSH and browser connections but keep the session reusable:
 
     ```shell
     bifroest @bifroest-admin session disconnect SESSION_UUID
@@ -144,7 +144,11 @@ Find the workload session with `session ls`, then choose **one** action:
     bifroest @bifroest-admin session dispose SESSION_UUID
     ```
 
-Disposal can remove containers, Pods or managed accounts and home directories, depending on the environment. Neither command requires an additional permission. A command cannot target its own executing management session. See [`disconnect`](../reference/cli/session/disconnect.md) and [`dispose`](../reference/cli/session/dispose.md) for details and failure behavior.
+Disposal can remove containers, Pods or managed accounts and home directories, depending on the environment. For this unrestricted management login, neither command requires an additional permission. A command cannot target its own executing management session. See [`disconnect`](../reference/cli/session/disconnect.md) and [`dispose`](../reference/cli/session/dispose.md) for details and failure behavior.
+
+## Browser alternative
+
+Add the HTTPS settings from [Browser access](browser-access.md) and publish this administration flow with `discoverAsSlug: Admin`. Open `/Admin`, choose **SSH key**, and sign in as `management` using its local private-key file. The browser provides metadata views and confirmed disconnect/dispose actions, not a configuration editor or a separate admin role. This example keeps artifact downloads disabled; [encrypted evidence](evidence.md) enables them separately.
 
 ## Next steps
 

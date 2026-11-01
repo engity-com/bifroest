@@ -16,7 +16,7 @@ Authorizes a user request via the local user database of the host on which Bifr�
 Has to be set to `local` to enable the local authorization.
 
 <<property("trustedUserCAs", "Public Keys", "../data-type.md#public-keys")>>
-OpenSSH public keys of certificate authorities that may sign user certificates for existing local users. The requested SSH username must be included in the certificate's principals.
+OpenSSH public keys of certificate authorities that may sign user certificates for existing local users. The requesting name must be included in the certificate's principals.
 
 <<property("trustedUserCAsFile", ref("File Path", "../data-type.md#file-path", ref("Public Keys", "../data-type.md#public-keys")))>>
 Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist, contain at least one valid public key, and be no larger than 4 MiB.
@@ -26,19 +26,23 @@ Contains files with the format of classic [authorized keys](../data-type.md#auth
 
 An entry with the `cert-authority` option treats its key as a user certificate authority for that local user. The optional `principals="..."` option restricts it further. An empty `authorizedKeys` list does not disable certificate authentication through `trustedUserCAs` or `trustedUserCAsFile`.
 
+User certificates must be current, signed by the selected CA, have the requesting name as a principal, and contain no critical options. Missing `permit-pty`, `permit-port-forwarding`, or `permit-agent-forwarding` certificate extensions disable the corresponding capability. Authorized-key options can only restrict these capabilities further.
+
 <<property("password", "Password", "#password")>>
 See [below](#password).
 
 <<property("pamService", "string", default="<os and edition specific>")>>
 If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) service will be directly used during the authorization process instead of `/etc/passwd` and `/etc/shadow`.
 
-On macOS, PAM password and keyboard-interactive authentication runs both authentication and account-management checks. The generic edition fails closed when `pamService` is empty and loads the system PAM library dynamically without CGO. The default `sshd` service uses `/etc/pam.d/sshd`; review that service's policy before exposing Bifröst.
+On Linux and macOS, PAM password and keyboard-interactive login must pass both
+authentication and account-management checks. Account denial, expiry or a required
+password change rejects login. Account-phase prompts are rejected.
+No automatic password change or PAM session is run.
+The direct peer is supplied as `PAM_RHOST`.
 
-PAM-enabled Linux builds also require both `pam_authenticate` and
-`pam_acct_mgmt` for primary password/keyboard-interactive login. Account denial,
-expiry or a required password change rejects login; account-phase prompts are
-not answered with the primary password. Both phases receive the direct peer in
-`PAM_RHOST`. No automatic password change, credential setup or PAM session is run.
+On macOS, `pamService` must be non-empty; there is no local password-repository
+fallback. The default `sshd` service uses `/etc/pam.d/sshd`. Review the selected
+service's policy before exposing Bifröst.
 
 PAM is unavailable on Windows; a non-empty `pamService` is rejected there.
 
@@ -49,18 +53,20 @@ PAM is unavailable on Windows; a non-empty `pamService` is rejected there.
 | `sshd` | `sshd` | _empty_ |
 
 <<property("pamAccountResumeAllowed", "bool", default=False)>>
-Explicitly permit secretless browser RememberMe account checks for the configured
-PAM service. This requires a PAM-enabled Linux build, a non-empty `pamService`
-and the fresh local passwd/group/shadow checker. Other builds reject `true` rather
-than ignoring it. The browser's separate RememberMe opt-in is still required.
+Permit browser RememberMe resumption through PAM account checks without a password.
+Requires a PAM-enabled Linux build, a non-empty `pamService` and current native
+account checks. Unsupported builds reject `true`. The user's separate browser
+RememberMe opt-in is still required.
 
 !!! warning "Review the PAM account stack before opting in"
     Resumption runs `pam_acct_mgmt`, not `pam_authenticate`. It cannot repeat MFA
     or secret-dependent restrictions found only in the PAM `auth` stack. Enable
     this only when all restrictions required on resumption are enforced by the
     service's `account` stack and the local account policy. Otherwise leave it
-    disabled and require a fresh regular login. A generic `pam_permit` account
-    stack is not proof of equivalent auth policy.
+    disabled and require a fresh regular login. A `pam_permit` account stack
+    alone does not provide equivalent authentication policy.
+
+A blocking native PAM module cannot be forcibly interrupted by Bifröst.
 
 ## Password
 
@@ -68,10 +74,10 @@ than ignoring it. The browser's separate RememberMe opt-in is still required.
 * On macOS, a non-empty PAM service is required; there is no local password-repository fallback.
 * On Windows, password and keyboard-interactive authentication validate the password of an existing **local SAM account**. Windows account restrictions (such as disabled accounts or denied network logon) still apply. Domain and Microsoft Entra accounts are not supported by `local` authorization.
 
-### Properties {. #password-properties}
+### Properties {: #password-properties}
 
 <<property("allowed", "bool", template_context="../context/authorization-request.md#password", template_context_title="Context Password Authorization Request", default=True, id_prefix="password-", heading=4)>>
-If `true`, the user is allowed to use passwords via classic password authentication
+If `true`, the user is allowed to use passwords via classic password authentication.
 
 <<property("interactiveAllowed", "bool", template_context="../context/authorization-request.md#interactive", template_context_title="Context Interactive Authorization Request", default=True, id_prefix="password-", heading=4)>>
 If `true`, the user is allowed to use passwords via interactive authentication.
@@ -80,61 +86,33 @@ If `true`, the user is allowed to use passwords via interactive authentication.
 If `true`, the user is allowed to use empty passwords.
 
 !!! danger
-     This is explicitly not recommend.
+     Allowing empty passwords is not recommended.
 
 ## Browser RememberMe
 
-Browser password/keyboard-interactive bindings are supported for Linux's
-repository-backed local authorization when `pamService` is empty. Both enrollment
-and resumption require a fresh independent browser-key proof and native account
-eligibility; a session ID or cached user lookup is not authentication. Current
-`password.allowed`, `password.interactiveAllowed` and `password.emptyAllowed`
-policies remain authoritative for the recorded primary method.
+Enrollment and resumption require an independent browser-key proof and current
+account eligibility. The original account name and UID/SID must still match.
+For password/keyboard-interactive bindings, current method, empty-password, group
+and target policies are rechecked. Disabled, locked or expired accounts and required
+password changes prevent password resumption.
 
-The native checker rereads the configured passwd/group/shadow files before and
-after policy validation, pins the stored account name and UID, and rejects locks,
-expiry/required password changes, ambiguous or malformed account records and
-unavailable/changed files. The group database must be fully decodable; malformed
-membership records are not treated as absent groups. Reads are read-only, nonblocking for file locks and
-special-file opens, limited to 16 MiB and 100000 records per file. Failure grants
-no access and does not repair account or session state. Historical environment
-variables, primary passwords and authorization snapshots are not reused.
+* **Linux without PAM:** supported with the local passwd/group/shadow repository
+  and `pamService: ""`.
+* **Linux with PAM:** also requires [`pamAccountResumeAllowed`](#property-pamAccountResumeAllowed).
+  Each resumption checks the current PAM account policy; it does not repeat
+  password authentication or reuse an earlier PAM environment.
+* **Windows:** supported for local SAM accounts with an unimpersonated LocalSystem
+  service and the required native APIs. Current native account and network-logon
+  restrictions apply. A native blank-password restriction overrides `password.emptyAllowed`.
+  Bifröst does not grant logon rights, enable TCB privileges or relax account policy.
+* **macOS:** password/keyboard-interactive resumption is not supported. Use a fresh
+  PAM login instead.
 
-With [`pamAccountResumeAllowed`](#property-pamAccountResumeAllowed), PAM-backed
-Linux password/interactive bindings additionally open a new account-only PAM
-transaction, with the current direct peer in `PAM_RHOST`. The canonical `PAM_USER`
-must remain the pinned account name and UID. The local account is checked before
-and after PAM, and both native policy and PAM are rechecked after request/target
-validation. Changed identity, groups or environment fail closed. All account
-prompts are rejected, messages are bounded, and only the new transaction's
-environment is used. The original password and prior PAM environment are never
-available to this transaction. Failure to end PAM or cancellation grants no access.
-PAM calls are synchronous: a blocking native module cannot be forcibly canceled
-and is never abandoned in a detached worker.
-
-Without that explicit server opt-in PAM-backed resumption remains unavailable.
-
-Windows local SAM password/interactive bindings use the same original name/SID
-and fresh native restrictions, including disabled/locked/expired accounts,
-required password changes, real blank-password state and network-logon policy.
-They require an unimpersonated LocalSystem caller and the supported local SAM
-interfaces; missing APIs/rights, unknown policy, cancellation and cleanup errors
-refuse resumption without enabling privileges. A native blank-password network
-restriction overrides operator `password.emptyAllowed`. Current profile/groups
-and the existing method/target requirements are rechecked before access is
-issued. Request-local views do not survive into later bearer admissions, which
-use current native getters. No primary password, previous rights/environment or
-token is replayed or retained for this check.
-
-Darwin PAM password/interactive resumption remains unavailable: the validated
-account-policy APIs do not prove the actual current nonempty-password condition
-required by `password.emptyAllowed: false`. Accountstack opt-in is not that
-proof. Normal fresh PAM login remains supported; there is no empty/fabricated
-authentication attempt, hash-data fallback or policy relaxation.
-Key/certificate bindings retain
-their existing current-key checks. RememberMe is opt-in and uses the common
-[HTTP binding lifecycle](../connection/http.md#rememberme), including independent
-browser keys and logout without session/workload disposal.
+Unavailable or inconclusive native checks deny resumption. No saved password or
+previous rights are replayed. Key/certificate bindings must still pass current
+key and certificate policy. See [HTTP RememberMe](../connection/http.md#rememberme)
+for opt-in and logout, and [security limits](../connection/http/security.md) for
+browser-key protection. Logout does not dispose of the session or its workload.
 
 ## Context
 
@@ -164,11 +142,25 @@ flows:
       uid: '{{ .authorization.user.uid }}'
 ```
 
-User certificates must be current, signed by the selected CA, have the requested SSH username as a principal, and contain no critical options. Missing `permit-pty`, `permit-port-forwarding`, or `permit-agent-forwarding` certificate extensions disable the corresponding capability. Authorized-key options can only restrict these capabilities further.
+### Allow PAM account checks for browser RememberMe
+
+Use only after reviewing a PAM service whose account stack enforces all required
+resumption restrictions; this does not repeat auth-stack MFA.
+
+```yaml
+type: local
+pamService: bifroest
+pamAccountResumeAllowed: true
+```
+
+The `bifroest` PAM service must already be configured on the host. Leave the flag
+`false` if account-only checks are insufficient.
 
 ## Compatibility
 
 | Feature | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
 | - | - | - | - |
 | [PAM](#property-pamService) | <<compatibility_editions(False,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(False,None,"windows")>> |
+| [Browser password/interactive RememberMe without PAM](#browser-rememberme) | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(False,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |
+| [PAM browser RememberMe (explicit opt-in)](#property-pamAccountResumeAllowed) | <<compatibility_editions(False,True,"linux")>> | <<compatibility_editions(False,None,"darwin")>> | <<compatibility_editions(False,None,"windows")>> |
 | <<else_ref()>> | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

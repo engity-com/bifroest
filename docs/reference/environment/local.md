@@ -1,11 +1,11 @@
 ---
-description: Run SSH sessions as local users on the Bifröst host.
+description: Run sessions as local users on the Bifröst host.
 toc_depth: 4
 ---
 
 # Local environment
 
-Run SSH sessions as local users on the Bifröst host. Use existing accounts or optionally create, update and remove them.
+Run SSH or browser sessions as local users on the Bifröst host. Use existing accounts or optionally create, update and remove them.
 
 ## Configuration
 
@@ -101,7 +101,7 @@ The default depends on the platform:
 * Windows: `[%COMSPEC%]` (in most cases: `COMSPEC=cmd.exe`)
 
 <<property("execCommandPrefix", array_ref("string"), template_context="../context/authorization-request.md", default="<os specific>", heading=4)>>
-Command and arguments prepended to a non-interactive SSH command. The requested command is appended as one argument when a prefix is configured.
+Command and arguments prepended to a non-interactive command. The requested command is appended as one argument when a prefix is configured.
 
 The default depends on the platform:
 
@@ -169,6 +169,13 @@ Name of a Unix group or local Windows alias.
 [Group identifier](../data-type.md#gid). On Windows, a specified name and GID must resolve to the same local group; Windows cannot assign an arbitrary SID to a newly created group.
 
 
+## Requirements
+
+- On Linux and macOS, changing local accounts or impersonating a different user requires appropriate privileges, usually root. macOS account mutation is limited to the local `/Local/Default` Directory Services node.
+- On Windows, session processes require LocalSystem and an existing or explicitly managed local SAM account. S4U does not provide credentials for remote shares or EFS. See [Windows service startup](../cli/serve.md#run-flag-windowsService).
+- Windows interactive PTYs require Windows 10 1809 or Windows Server 2019 or later. Older versions support non-PTY commands and SFTP.
+- In Windows containers, accounts and required native APIs must be available inside the container. The default Nano Server entrypoint is not a LocalSystem service; local process startup requires a service-based configuration.
+
 ## Examples
 
 ### Existing local account
@@ -180,15 +187,20 @@ name: "{{.authorization.user.name}}" # Linux local authorization
 
 ### OIDC with managed Unix users
 
+The following OIDC examples require an administrator-assigned `local_user` claim
+from a trusted issuer, restricted to accounts this flow may manage. A subject or
+email address is not automatically a suitable local account name. Existing
+unmarked accounts are not adopted by these examples.
+
 ```yaml
 type: local
-name: "{{.authorization.idToken.email}}"
+name: "{{.authorization.idToken.local_user}}"
 displayName: "{{.authorization.idToken.name}}"
 groups:
   - name: oidc
 createIfAbsent: true
-updateIfDifferent: true
-deleteOnDispose: true
+updateIfDifferent: "{{.user.managed}}"
+deleteOnDispose: "{{.user.managed}}"
 ```
 
 ### OIDC with managed Windows users
@@ -203,14 +215,6 @@ createIfAbsent: true
 updateIfDifferent: "{{.user.managed}}" # Do not adopt an unmarked account.
 deleteOnDispose: "{{.user.managed}}"
 ```
-
-## Requirements
-
-- On Linux and macOS, changing local accounts or impersonating a different user requires appropriate privileges, usually root. macOS account mutation is limited to the local `/Local/Default` Directory Services node.
-- On Windows, session processes for local accounts require Bifröst to run as LocalSystem. Only local SAM accounts are supported; S4U does not provide credentials for remote shares or EFS.
-- A manually registered Windows SCM command should use `run --windowsService --serviceName=<registered-name> --configuration=<path>`. The built-in Windows service installer supplies these arguments. This selects SCM dispatch explicitly without granting a logon right or changing the account used by the service. Foreground startup still uses its existing default detection; parent-process detection alone is unreliable in Windows containers. Private state/key files must be owned for the actual service identity, not accepted through a foreign-owner exception.
-- Windows interactive PTYs require Windows 10 1809 or Windows Server 2019 or later. Older versions support non-PTY commands and SFTP.
-- In Windows containers, accounts live inside the container. The default Nano Server entrypoint is not a LocalSystem service. The pinned Nano image has an isolated SAM capability test, but `samcli.dll` availability and runtime behavior have not yet been verified on every host.
 
 ## Compatibility
 

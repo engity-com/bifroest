@@ -165,6 +165,10 @@ The management login uses a separate SSH identity and trusted host key as in [th
 
     `play` outputs terminal content; `export` writes a signed asciicast file. Both fully verify the encrypted content before playback or export.
 
+## Browser alternative
+
+Add the HTTPS settings from [Browser access](browser-access.md), publish this administration flow with `discoverAsSlug: Admin`, and sign in through **SSH key** as `management`. This flow already opts into original downloads with `allowArtifactTransfer: true`. In the browser, select the recipient private key locally to verify, decrypt and export downloaded originals or prepare recording playback. Use the independently retained producer ID and your recipient key's fingerprint, not unverified server metadata. The application code still comes from the server; keep the CLI workflow above when a separately trusted verification environment is required. See [Security and limits](../reference/connection/http/security.md).
+
 ## Offline alternatives
 
 If the verification workstation is disconnected from the server, copy a complete audit journal or a sealed Recording and use local file selectors with the same independent producer ID and recipient key. Follow [the encrypted audit-copy example](../reference/auditlog/index.md#encrypted-audit-events) or the file syntax on [`recording verify`](../reference/cli/recording/verify.md).

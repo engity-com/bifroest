@@ -59,10 +59,10 @@ must not infer a successful exit. After a clean Windows-service stop, the existi
 Go audit/recording verifiers check every signed artifact against the independent
 fixture producer pin and correlate all eight task/connection/operation records.
 The copied session association must still identify the original local SID and
-must not be disposed. This does not enable Windows SAM password RememberMe or
-claim that service installation inside a container is the released image's default
-entrypoint. Native runtime results remain required; a cross-build alone is not
-acceptance.
+must not be disposed. This key-only case does not exercise Windows SAM password
+RememberMe; the separate password case is described below. Service installation
+inside the container is not the released image's default entrypoint. A
+cross-build alone is not native runtime acceptance.
 
 ## Native password-policy observations (not RememberMe activation)
 
@@ -90,10 +90,10 @@ Host accounts, host security settings and privileges are not modified.
 Both existing S4U flags0 and `MSV1_0_S4U_LOGON_FLAG_CHECK_LOGONHOURS` (2) are
 observed, including the actual resulting token SID. A denied reference followed
 by S4U success is logged as a policy gap, **not** converted into eligibility or a
-feature pass. Password/interactive RememberMe stays unavailable. This matrix is
-a prerequisite to a complete secretless policy adapter, not its implementation;
-identity replacement, races and cleanup/API failures still need additional strict
-coverage before activation. New expiry/lockout references must pass natively too.
+feature pass. This primitive matrix alone does not validate password/interactive
+RememberMe. The combined adapter and browser case below additionally check
+identity replacement, current authorization and cleanup. Expiry/lockout
+references must pass natively too.
 
 The expiry/lockout fixtures first bind `NetUserModalsGet(2)` to their owned local
 SAM domain SID and machine name. Only that separate container's maximum password
@@ -192,8 +192,9 @@ thread retirement, rejected caller impersonation with unchanged token identity/
 authentication/modification statistics, and rejected worker
 impersonation with retirement rather than reversion. Only those marked fixture
 threads deliberately adopt a token; fixture cleanup restores its own caller.
-This guard is not yet connected to password resumption or a complete policy
-checker. Its API/cleanup models and new native controls must pass independently.
+These guard tests do not by themselves validate password resumption. Their
+API/cleanup models and native controls must pass independently of the combined
+adapter and browser case below.
 
 The fresh blank-password network-policy reader opens only the local LSA registry
 key with `QUERY_VALUE`, never create/set/remote-registry access. Only an actual
@@ -213,14 +214,14 @@ and cleanup failures reject. The reference matrix compares both operator
 operator allowance. Negative cases must report their controlled SAM/blank
 restriction or the direct flag-2 native logon error, not an unrelated API error.
 
-The Query29 flow and native binding are moved unchanged from test-only files
-into private package code so the models and prospective kernel share one
-implementation; no public capability or resume adapter is enabled. Query29's
+The Query29 flow and native binding share one private implementation with the
+models and combined restriction kernel. These primitive checks alone do not
+validate the resume adapter. Query29's
 third-party ABI provenance, OS/build/architecture coverage and current snapshots
 remain explicit limitations. Repeated reads are not an atomic SAM/registry
 transaction or a password-generation/revocation proof. Fresh group/template/
-target/session authorization and final grant/race integration remain separate
-mandatory work, as does Darwin policy parity.
+target/session authorization and final grant/race checks belong to the separate
+adapter and browser integration below. Darwin policy parity is not claimed.
 
 The prospective group-binding reader rereads the existing direct local/BUILTIN
 aliases inside the same System/thread guard, binding the account name/SID before

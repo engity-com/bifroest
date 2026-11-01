@@ -4,7 +4,7 @@ description: Reference for Bifröst audit events and their privacy and failure s
 
 # Audit events
 
-For each enabled audit journal, Bifröst writes structured events for security-relevant SSH transitions selected by the active [flow](../flow.md). With `auditlog.enabled: false`, even if session recording is enabled, **no audit events or journal files are written**. Events contain controlled classifications and technical correlation IDs rather than request contents.
+For each enabled audit journal, Bifröst writes structured events for security-relevant SSH and browser transitions selected by the active [flow](../flow.md). With `auditlog.enabled: false`, even if session recording is enabled, **no audit events or journal files are written**. Events contain controlled classifications and technical correlation IDs rather than request contents.
 
 ## Event model
 
@@ -16,16 +16,17 @@ Every event has a `name`. All other fields are optional and are present only whe
 | `domain` | Event category: `authentication`, `connection`, `housekeeping`, `port-forwarding`, or `session`. |
 | `outcome` | Result: `success`, `denied`, `failure`, or `canceled`. Start events omit this field. |
 | `flow` | Configured flow that selected the audit log. |
-| `connectionId` | UUID correlating events from one SSH connection. |
+| `connectionId` | UUID correlating events from one connection or management operation. |
 | `sessionId` | UUID of the persistent Bifröst session, when one is available. |
 | `operationId` | UUID correlating the events belonging to one task, forwarding operation, or housekeeping action. |
 | `recordingId` | Canonical UUIDv4 identifying one session recording. |
 | `recordingDigest` | Lowercase SHA-256 digest of the canonical signed Cast content, cryptographically bound by the recording seal. It is not a hash of the outer native `.bcast` or `.becast` container file. |
 | `target` | Configured audit-log target name for a Recording delivery transition. It contains no destination address, credentials, or remote path. |
-| `authenticationMethod` | `public-key`, `password`, or `keyboard-interactive`. |
-| `authenticationPhase` | `candidate` before public-key possession is proven or `verified` after certificate-signature verification. |
+| `authenticationMethod` | `public-key`, `password`, `keyboard-interactive`, or `browser-remember-me`. |
+| `authenticationPhase` | `candidate` before public-key possession is proven or `verified` after its proof has been checked. |
 | `authorizationKind` | Authorization implementation that produced the result, for example `simple` or `local`. |
-| `sessionTask` | `shell`, `exec`, or `sftp`. |
+| `sessionTask` | `shell`, `exec`, `sftp`, or `subsystem`. |
+| `sessionSubsystem` | Subsystem name for an `sftp` or `subsystem` task; at most 256 UTF-8 bytes, without NUL. |
 | `reason` | Stable machine-readable reason code whose values are documented for each event. |
 | `errorCategory` | Controlled error class: `unknown`, `system`, `config`, `network`, `user`, `permission`, or `expired`. |
 | `exitCode` | Non-negative task exit code, including zero. |
@@ -40,7 +41,10 @@ The table describes the **complete logical event**, not what an observer can rea
 * Private map: `flow`, `reason`, `target`, correlation IDs and all other event fields. It is compressed in `.baudit` and additionally encrypted in `.beaudit`.
 * Default JSONL omits the private map even for `.baudit`, but still exposes identifying provenance. JSONL is **unsigned**; protect it and the original evidence.
 
-Events with the same `connectionId` belong to one SSH transport. Events with the same `sessionId` can span multiple SSH connections to one persistent Bifröst session. An `operationId` has meaning within the event lifecycle that created it and must be interpreted together with `name`.
+Events with the same `connectionId` belong to one connection or management
+operation. Events with the same `sessionId` can span SSH and browser connections
+to one persistent session. An `operationId` has meaning within its event
+lifecycle and must be interpreted together with `name`.
 
 ## Event catalog
 
@@ -176,7 +180,9 @@ The signed receipt keeps the success event pending until it is recorded. Startup
 
 #### `session.task.started`
 
-Written immediately before Bifröst begins service execution of a shell, exec, or SFTP task. If this event cannot be recorded, the task does not start.
+Written immediately before Bifröst begins service execution of a shell, exec,
+SFTP/subsystem task or management operation. If this event cannot be recorded,
+the task does not start.
 
 Fields: `domain` is `session`; `flow`, `connectionId`, `sessionId`, `authorizationKind`, `operationId`, and `sessionTask` identify the task. `pty`, `agentForwarding`, and `forcedCommand` describe Boolean task properties. `outcome` is omitted.
 
@@ -184,7 +190,9 @@ The event records the requested task category. Applying an authorized-key forced
 
 #### `session.task.completed`
 
-Written when a previously started shell, exec, or SFTP task finishes. Its `operationId`, `flow`, `connectionId`, `sessionId`, `authorizationKind`, and `sessionTask` match the corresponding `session.task.started` event.
+Written when a previously started task finishes. Its `operationId`, `flow`,
+`connectionId`, `sessionId`, `authorizationKind`, and `sessionTask` match the
+corresponding `session.task.started` event.
 
 Fields: `domain` is `session`; `outcome` and `durationMillis` describe completion. `exitCode`, `reason`, and `errorCategory` are present when applicable.
 
@@ -208,7 +216,9 @@ Written after disconnection returns, with the same identifiers as its start even
 
 #### `session.dispose.started`
 
-Written before a management command revokes a session, disconnects its SSH connections and runs configured environment and authorization cleanup. Fields and audit routing match `session.disconnect.started`.
+Written before a management action revokes a session, disconnects its connections
+and runs configured environment and authorization cleanup. Fields and audit
+routing match `session.disconnect.started`.
 
 #### `session.dispose.completed`
 

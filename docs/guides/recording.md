@@ -81,6 +81,10 @@ This Linux example adds audit logging and session recording to a local-account h
 
     Recording exports are complete, sensitive plaintext and are never redacted. Without an encryption recipient, signatures protect integrity but not confidentiality of the stored original either.
 
+## Browser alternative
+
+The same recording settings also capture output from [browser shells](browser-access.md). For browser playback, use a management flow with `allowArtifactTransfer: true`, download the sealed Recording and choose **Open content, prepare playback or export**. Verify it locally before preparing playback, using an independently retained producer ID rather than trusting downloaded metadata. See [encrypted evidence](evidence.md) for the trust setup and [browser limits](../reference/connection/http/security.md) for size and playback bounds.
+
 ## Next steps
 
 * [Manage a host remotely](management.md) adds a separate administration flow and workstation alias.

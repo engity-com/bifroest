@@ -9,7 +9,7 @@ Everything in Bifröst starts here. Firstly, a user must be authorized. Bifröst
 ## Types
 
 1. `local`: [Local](local.md)
-2. `oidc`: [OpenID Connect (OIDC)](oidc.md)
+2. `oidcDeviceAuth`: [OpenID Connect (OIDC)](oidc.md)
 3. `simple`: [Simple](simple.md)
 4. `htpasswd`: [Htpasswd](htpasswd.md)
 5. `bifroest`: [Bifröst delegation](bifroest.md)
@@ -17,8 +17,8 @@ Everything in Bifröst starts here. Firstly, a user must be authorized. Bifröst
 
 ## Principal mapping {: #principal-mapping}
 
-All authorization types expose a common [authentication context](../context/authentication.md)
-without changing their existing authorization-specific fields. Defaults are:
+Built-in authorizations provide a common [authentication context](../context/authentication.md)
+when the required identity information is available. Their authorization-specific fields remain unchanged. Default principals are:
 
 | Authorization | `.authentication.principal` |
 | --- | --- |
@@ -33,21 +33,16 @@ without changing their existing authorization-specific fields. Defaults are:
 Optional template inside `authorization` that replaces the default principal.
 It can use existing `.authorization.*` fields; `.authentication.principal` inside
 this mapping refers to the default principal, not recursively to the mapping.
-For example, an OIDC authorization can use
-`principal: '{{ .authorization.idToken.email }}'` when the verified provider
-claims and the installation's access policy make that email suitable.
-A signed email claim does not itself prove email ownership; check the provider's
-verification policy and `email_verified` where applicable before using it for
-account selection.
-
-An empty, unavailable or invalid mapped value fails when resolved. There is no
+A mapping that resolves to an empty, unavailable or invalid value fails. There is no
 fallback to the unverified `.remote.user`. A mapping changes neither issuer nor
 subject and cannot turn anonymous authorization into authenticated access;
 `none` therefore does not accept a configured principal mapping.
 
-Existing configurations without `principal` retain their previous target-account
-templates and behavior. Adding this field does not itself change environment
-account selection or enable an additional network endpoint.
+The principal is not automatically a target account. Configure account selection
+separately; see the [mapping example](../context/authentication.md#examples).
+Use only identity claims whose assignment and verification policy you trust.
+A signed email claim alone does not prove email ownership or permission to use
+an account. Adding `principal` does not change existing target-account templates.
 
 ## Examples
 
@@ -67,7 +62,7 @@ account selection or enable an additional network endpoint.
       - profile
       - offline_access
    ```
-3. Using [Simple DeviceAuth](simple.md):
+3. Using [Simple authorization](simple.md):
    ```yaml
    type: simple
    entries:

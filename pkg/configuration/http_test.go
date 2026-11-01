@@ -298,3 +298,15 @@ func TestHttpReferenceExamplesParseWithoutFilesystemOrNetworkAccess(t *testing.T
 		require.True(t, conf.Http.IsEnabled())
 	}
 }
+
+func TestBrowserAccessGuideExampleParsesWithoutFilesystemOrNetworkAccess(t *testing.T) {
+	contents, err := os.ReadFile("../../docs/guides/browser-access.md")
+	require.NoError(t, err)
+	examples := regexp.MustCompile("(?s)```yaml(?:[ \\t][^\n]*)?\n(.*?)\n```").FindAllSubmatch(contents, -1)
+	require.Len(t, examples, 1)
+	var conf Configuration
+	require.NoError(t, conf.LoadFromYaml(strings.NewReader(string(examples[0][1])), "browser-access-guide-example"))
+	require.True(t, conf.Http.IsEnabled())
+	require.Len(t, conf.Flows, 1)
+	require.True(t, conf.Flows[0].Http.IsEnabled())
+}
