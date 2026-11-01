@@ -5,6 +5,7 @@ package protocol
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,22 @@ import (
 )
 
 const boundedPidfdsHelper = "BIFROEST_BOUNDED_PIDFDS_HELPER"
+
+func TestMain(m *testing.M) {
+	// Keep the legacy fixture's reference epoch deterministic even when the
+	// dependency reconstructs container boot time from wall clock and uptime.
+	// Warm it before worker goroutines; do not alter production identity guards.
+	process.EnableBootTimeCache(true)
+	candidate, err := process.NewProcess(int32(os.Getpid()))
+	if err == nil {
+		_, err = candidate.CreateTime()
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot initialize legacy process test clock")
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
 
 func mustGetProcessGroup(t *testing.T, pid int) int {
 	t.Helper()
@@ -97,6 +114,11 @@ func TestLegacyProcessIdentityRequiresEnvironment(t *testing.T) {
 		expectedIdentity: &identity,
 		expectedEnv:      os.Environ()[0],
 	}).matchesIdentity())
+	require.False(t, (processTarget{pid: os.Getpid(), expectedIdentity: &identity, expectedEnv: "BIFROEST_TEST_LEGACY_IDENTITY=not-owned"}).matchesIdentity())
+	for _, difference := range []int64{-1000, -1, 1, 1000} {
+		wrong := strconv.FormatInt(createdAt+difference, 10)
+		require.False(t, (processTarget{pid: os.Getpid(), expectedIdentity: &wrong, expectedEnv: os.Environ()[0]}).matchesIdentity())
+	}
 }
 
 func TestLegacyStartingProcessMatchesIdentity(t *testing.T) {

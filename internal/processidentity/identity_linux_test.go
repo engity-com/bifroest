@@ -3,6 +3,7 @@
 package processidentity
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"testing"
@@ -10,6 +11,22 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	// Legacy gopsutil times use a wall-clock/uptime-derived boot epoch in
+	// containers. Pin and warm that reference before any test goroutines start;
+	// production still uses its unchanged strict, fail-closed comparison.
+	process.EnableBootTimeCache(true)
+	candidate, err := process.NewProcess(int32(os.Getpid()))
+	if err == nil {
+		_, err = candidate.CreateTime()
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot initialize legacy process test clock")
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
 
 func TestGetIsStable(t *testing.T) {
 	expected, err := Get(os.Getpid())
@@ -45,6 +62,11 @@ func TestMatchesLegacyCreationTime(t *testing.T) {
 	matches, err := Matches(os.Getpid(), strconv.FormatInt(createdAt, 10))
 	require.NoError(t, err)
 	require.True(t, matches)
+	for _, difference := range []int64{-1000, -1, 1, 1000} {
+		matches, err := Matches(os.Getpid(), strconv.FormatInt(createdAt+difference, 10))
+		require.NoError(t, err)
+		require.False(t, matches, "legacy identity comparison must not acquire a tolerance window")
+	}
 }
 
 func TestParseLinuxStatHandlesSpecialCommandNames(t *testing.T) {
