@@ -288,7 +288,7 @@ flows:
 }
 
 func TestHttpReferenceExamplesParseWithoutFilesystemOrNetworkAccess(t *testing.T) {
-	contents, err := os.ReadFile("../../docs/reference/connection/http.md")
+	contents, err := os.ReadFile("../../docs/reference/connection/http/index.md")
 	require.NoError(t, err)
 	examples := regexp.MustCompile("(?s)```yaml\n(.*?)\n```").FindAllSubmatch(contents, -1)
 	require.Len(t, examples, 3)

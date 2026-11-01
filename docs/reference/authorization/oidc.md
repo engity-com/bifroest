@@ -108,7 +108,7 @@ With `lostAccess`, detected grant loss closes the old session's connections;
 a fresh login may create a new session instead. Only when both refresh and forced
 disposal are disabled may a newer verified login update the retained claims.
 
-Remembered SSH keys and [browser RememberMe](../connection/http.md#rememberme)
+Remembered SSH keys and [browser RememberMe](../connection/http/index.md#rememberme)
 do not bypass configured refresh-token checks. A remembered SSH key must first
 prove possession before reconnect authorization is evaluated.
 

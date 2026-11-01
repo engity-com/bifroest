@@ -39,7 +39,7 @@ Controls incoming SSH access, independently of HTTP.
 Controls browser access, the requesting-name prompt and terminal keepalive.
 
 !!! note
-    Enabling the [root HTTP endpoint](connection/http.md) makes every flow
+    Enabling the [root HTTP endpoint](connection/http/index.md) makes every flow
     HTTP-eligible by default. Set `http.enabled: false` on flows that should
     remain SSH-only.
 
@@ -85,10 +85,9 @@ Name requirements still apply: `^sso$` does not match an empty name; `^$` does.
 The requesting name is not the verified
 [principal](context/authentication.md#property-principal) or the target account.
 
-<<property("keepAlive", "string", template_context="context/authorization.md", default="15s", id_prefix="http-", heading=4)>>
-Keepalive interval for browser terminals, from `1s` to `5m`. A user may change
-it in **Connection settings**. Prefix the value with `!` to prevent changes.
-Quote values starting with `!` in YAML.
+<<property("keepAlive", "Duration", "data-type.md#duration", template_context="context/authorization.md", default="15s", id_prefix="http-", heading=4)>>
+Browser terminal keepalive interval, from `1s` to `5m`. Users can change it in
+**Connection settings**. Prefix with `!` to enforce it, quoted in YAML: `"!10s"`.
 
 The template is evaluated after authentication using the current session context.
 An enforced value overrides saved browser preferences. Keepalive preserves only
@@ -112,12 +111,18 @@ must match.
 
 ### Configuration {: #requirement-configuration }
 
-<<property("includedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-", heading=4)>>
+<<property("includedRequestingName", "Regex", "data-type.md#regex", default="", id_prefix="requirement-", heading=4)>>
 Include rule for the requesting name, such as `alice` in `ssh alice@host`.
 Empty means unrestricted.
 
-<<property("excludedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-", heading=4)>>
+<<property("excludedRequestingName", "Regex", "data-type.md#regex", default="", id_prefix="requirement-", heading=4)>>
 Exclude rule for the requesting name. Empty excludes nothing.
+
+<<property("ssh", "SSH requirements", "#ssh-requirements", id_prefix="requirement-", heading=4)>>
+Additional rules for incoming SSH connections.
+
+<<property("http", "HTTP requirements", "#http-requirements", id_prefix="requirement-", heading=4)>>
+Additional rules for browser access.
 
 !!! note
     Regular expressions match substrings unless anchored. Use `^alice$` to
@@ -127,38 +132,38 @@ Exclude rule for the requesting name. Empty excludes nothing.
 
 These properties belong to `requirement.ssh`.
 
-<<property("includedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-ssh-", heading=4)>>
+<<property("includedRequestingName", "Regex", "data-type.md#regex", default="", id_prefix="requirement-ssh-", heading=4)>>
 Additional include rule for the SSH requesting name. Empty means unrestricted.
 
-<<property("excludedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-ssh-", heading=4)>>
+<<property("excludedRequestingName", "Regex", "data-type.md#regex", default="", id_prefix="requirement-ssh-", heading=4)>>
 Additional exclude rule for the SSH requesting name. Empty excludes nothing.
 
 ### HTTP requirements
 
 These properties belong to `requirement.http`.
 
-<<property("includedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+<<property("includedRequestingName", "Regex", "data-type.md#regex", default="", id_prefix="requirement-http-", heading=4)>>
 Additional include rule for the HTTP requesting name, which may be empty.
 
-<<property("excludedRequestingName", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+<<property("excludedRequestingName", "Regex", "data-type.md#regex", default="", id_prefix="requirement-http-", heading=4)>>
 Additional exclude rule for the HTTP requesting name.
 
-<<property("includedHost", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+<<property("includedHost", "Regex", "data-type.md#regex", default="", id_prefix="requirement-http-", heading=4)>>
 Include rule for the canonical host: lowercase, without port or trailing DNS
 dot. For example, `APP.EXAMPLE.:443` becomes `app.example`. IPv6 literals keep
 their brackets.
 
-<<property("excludedHost", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+<<property("excludedHost", "Regex", "data-type.md#regex", default="", id_prefix="requirement-http-", heading=4)>>
 Exclude rule for the canonical host.
 
-<<property("includedSlug", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+<<property("includedSlug", "Regex", "data-type.md#regex", default="", id_prefix="requirement-http-", heading=4)>>
 Include rule for the slug without a leading slash. The root has slug `""`.
 
-<<property("excludedSlug", "Regex", "data-type.md#regex", default='""', id_prefix="requirement-http-", heading=4)>>
+<<property("excludedSlug", "Regex", "data-type.md#regex", default="", id_prefix="requirement-http-", heading=4)>>
 Exclude rule for the slug.
 
 Empty include rules do not restrict access; empty exclude rules exclude nothing.
-Host rules only narrow the endpoint's [domain list](connection/http.md#property-domains).
+Host rules only narrow the endpoint's [domain list](connection/http/index.md#property-domains).
 Discovery links do not bypass these requirements.
 
 ## Examples
@@ -189,7 +194,7 @@ flows:
 ### A browser-only OIDC link
 
 This flow publishes `https://app.example.org/servers/Example` without asking for
-a login name. Configure the [HTTPS endpoint](connection/http.md) separately.
+a login name. Configure the [HTTPS endpoint](connection/http/index.md) separately.
 The IdP must support device authorization and, by default, refresh tokens.
 Its verified principal must map to an allowed local account; configure the
 [principal mapping](authorization/index.md#principal-mapping) accordingly.

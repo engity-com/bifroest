@@ -29,7 +29,7 @@ when the required identity information is available. Their authorization-specifi
 | Bifröst | Verified original identity attested by the delegation |
 | None | `anonymous`, not an authenticated identity |
 
-<<property("principal", "string", template_context="../context/authentication.md")>>
+<<property("principal", "string", template_context="../context/authorization.md")>>
 Optional template inside `authorization` that replaces the default principal.
 It can use existing `.authorization.*` fields; `.authentication.principal` inside
 this mapping refers to the default principal, not recursively to the mapping.

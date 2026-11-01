@@ -20,6 +20,7 @@ func TestFlowHttpKeepAliveUsesAuthenticatedTemplateAndLockedDuration(t *testing.
 		locked   bool
 	}{
 		{"10s", 10 * time.Second, false}, {"!10s", 10 * time.Second, true},
+		{"1s", time.Second, false}, {"!5m", 5 * time.Minute, true},
 		{`{{if .authenticated}}!1m{{else}}10s{{end}}`, time.Minute, true},
 	} {
 		var conf FlowHttp
@@ -28,6 +29,14 @@ func TestFlowHttpKeepAliveUsesAuthenticatedTemplateAndLockedDuration(t *testing.
 		actual, err := conf.ResolveKeepAlive(map[string]any{"authenticated": true})
 		require.NoError(t, err)
 		require.Equal(t, HttpKeepAlive{Interval: entry.interval, Locked: entry.locked}, actual)
+		encoded, err := yaml.Marshal(conf)
+		require.NoError(t, err)
+		var restored FlowHttp
+		require.NoError(t, yaml.Unmarshal(encoded, &restored))
+		require.True(t, conf.IsEqualTo(restored))
+		again, err := restored.ResolveKeepAlive(map[string]any{"authenticated": true})
+		require.NoError(t, err)
+		require.Equal(t, actual, again)
 	}
 }
 
@@ -36,13 +45,13 @@ func TestFlowHttpKeepAliveRejectsMistypedUnsafeAndPrivateTemplateOutput(t *testi
 		var conf FlowHttp
 		require.Error(t, yaml.Unmarshal([]byte("keepAlive: "+source), &conf), source)
 	}
-	for _, value := range []string{"0s", "-1s", "999ms", "5m1ns", "1h", "!PRIVATE-TOKEN"} {
-		conf := FlowHttp{KeepAlive: template.MustNewString(value)}
+	for _, value := range []string{"0s", "-1s", "999ms", "5m1ns", "1h", "!", "!!10s", "PRIVATE-TOKEN", "!PRIVATE-TOKEN"} {
+		conf := FlowHttp{KeepAlive: template.MustNewDuration(value)}
 		err := conf.Validate()
 		require.Error(t, err, value)
 		require.NotContains(t, err.Error(), "PRIVATE-TOKEN")
 	}
-	conf := FlowHttp{KeepAlive: template.MustNewString("{{.private}}")}
+	conf := FlowHttp{KeepAlive: template.MustNewDuration("{{.private}}")}
 	_, err := conf.ResolveKeepAlive(map[string]any{"private": "PRIVATE-TOKEN"})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "PRIVATE-TOKEN")

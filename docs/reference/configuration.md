@@ -21,7 +21,7 @@ bifroest run --configuration=/my/config.yaml
 <<property("ssh", "SSH", "connection/ssh.md")>>
 Defines how the SSH connections itself will behave.
 
-<<property("http", "HTTP / HTTPS", "connection/http.md")>>
+<<property("http", "HTTP", "connection/http/index.md")>>
 Configures optional HTTPS browser access. Disabled by default. A startup failure in any enabled SSH or HTTPS endpoint prevents the service from starting.
 
 <<property("session", "Session", "session/index.md")>>

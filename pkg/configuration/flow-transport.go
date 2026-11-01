@@ -43,9 +43,9 @@ func (this FlowSsh) IsEqualTo(other any) bool {
 }
 
 type FlowHttp struct {
-	Enabled     *bool           `yaml:"enabled,omitempty"`
-	RequestUser *bool           `yaml:"requestUser,omitempty"`
-	KeepAlive   template.String `yaml:"keepAlive,omitempty"`
+	Enabled     *bool             `yaml:"enabled,omitempty"`
+	RequestUser *bool             `yaml:"requestUser,omitempty"`
+	KeepAlive   template.Duration `yaml:"keepAlive,omitempty"`
 }
 
 func (this FlowHttp) IsEnabled() bool          { return this.Enabled == nil || *this.Enabled }

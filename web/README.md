@@ -1,7 +1,7 @@
 # Browser application and client core
 
 This is developer documentation. For configuration and first use, see the
-[HTTP reference](../docs/reference/connection/http.md) and
+[HTTP reference](../docs/reference/connection/http/index.md) and
 [browser access guide](../docs/guides/browser-access.md).
 
 The React 19/Material UI 9 application supports password login, explicit

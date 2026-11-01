@@ -20,7 +20,7 @@ import (
 
 func TestWebKeepAliveIsPrivateAndRenderedWithAuthenticatedSession(t *testing.T) {
 	_, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
-		conf.Flows[0].Http.KeepAlive = template.MustNewString(`{{if .session}}{{if eq .authentication.principal "alice"}}!10s{{else}}20s{{end}}{{else}}PRIVATE_INVALID{{end}}`)
+		conf.Flows[0].Http.KeepAlive = template.MustNewDuration(`{{if .session}}{{if eq .authentication.principal "alice"}}!10s{{else}}20s{{end}}{{else}}PRIVATE_INVALID{{end}}`)
 	})
 	discovery := webTestRequest(handler, http.MethodGet, "app.example.org", "/Work", "", "")
 	require.NotContains(t, discovery.Body.String(), "keepAlive")
@@ -57,7 +57,7 @@ func TestWebSocketKeepAliveShorteningRequiresRealPongWithoutExtendingOldDeadline
 				<-task.Context().Done()
 				return -1, task.Context().Err()
 			}, func(conf *configuration.Configuration) {
-				conf.Flows[0].Http.KeepAlive = template.MustNewString("5m")
+				conf.Flows[0].Http.KeepAlive = template.MustNewDuration("5m")
 			})
 			token := fixture.login(t)
 			conn := fixture.dial(t)
@@ -110,7 +110,7 @@ func TestWebSocketKeepAliveReevaluatesLockedFlowAndUsesNoNewExecution(t *testing
 	token := fixture.login(t)
 	// Change after authentication: a historical editable UI policy is not an
 	// authority to override the current authenticated flow policy.
-	fixture.svc.Configuration.Flows[0].Http.KeepAlive = template.MustNewString("!10s")
+	fixture.svc.Configuration.Flows[0].Http.KeepAlive = template.MustNewDuration("!10s")
 	conn := fixture.dial(t)
 	open := webSocketOpen(token)
 	open["keepAlive"] = "1s"

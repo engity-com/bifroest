@@ -73,7 +73,7 @@ Configured SSH and HTTPS listeners must both start successfully. If startup fail
 
     `id -un` should print `alice`. If login is refused, check the existing account's status and `/etc/pam.d/sshd`; see [local password authorization](../reference/authorization/local.md#password).
 
-Other flows can use **Interactive** for keyboard-interactive/OIDC device login or **SSH key** for locally signed key login. Only methods accepted by the selected flow can succeed; see the [HTTP reference](../reference/connection/http.md).
+Other flows can use **Interactive** for keyboard-interactive/OIDC device login or **SSH key** for locally signed key login. Only methods accepted by the selected flow can succeed; see the [HTTP reference](../reference/connection/http/index.md).
 
 ## Returning and leaving
 
@@ -91,4 +91,4 @@ The terminal's **Connection settings** can change its keepalive interval unless 
 
 * [Manage a host remotely](management.md) adds a management flow; terminal access alone grants no management access.
 * [Record, find and replay a session](recording.md) enables optional output recording and verification.
-* [HTTP / HTTPS configuration](../reference/connection/http.md) and [Security and limits](../reference/connection/http/security.md) cover other deployment choices and browser limits.
+* [HTTP configuration](../reference/connection/http/index.md) and [Security and limits](../reference/connection/http/security.md) cover other deployment choices and browser limits.

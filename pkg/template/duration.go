@@ -3,6 +3,7 @@ package template
 import (
 	"fmt"
 	"strings"
+	"text/template/parse"
 	"time"
 
 	"github.com/engity-com/bifroest/internal/text/template"
@@ -40,31 +41,64 @@ type Duration struct {
 }
 
 func (this Duration) Render(data any) (time.Duration, error) {
+	value, _, err := this.render(data, false, 0)
+	return value, err
+}
+
+// RenderWithLock also returns whether the evaluated duration has a leading !.
+// Only properties that explicitly allow user-change locks should call it.
+// maximumBytes bounds the evaluated duration text, excluding the marker; zero
+// leaves it unbounded. Ordinary Render never accepts the marker.
+func (this Duration) RenderWithLock(data any, maximumBytes int) (time.Duration, bool, error) {
+	return this.render(data, true, maximumBytes)
+}
+
+func (this Duration) render(data any, allowLock bool, maximumBytes int) (time.Duration, bool, error) {
 	if this.isHardCoded {
-		return this.hardCodedValue, nil
+		if maximumBytes > 0 && len(this.plain) > maximumBytes {
+			return 0, false, fmt.Errorf("duration exceeds %d bytes", maximumBytes)
+		}
+		return this.hardCodedValue, false, nil
 	}
 
 	if tmpl := this.tmpl; tmpl != nil {
 		var buf strings.Builder
 		if err := tmpl.Execute(&buf, data); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		plain := strings.TrimSpace(buf.String())
+		locked := allowLock && strings.HasPrefix(plain, "!")
+		if locked {
+			plain = plain[1:]
+			if len(plain) == 0 {
+				return 0, false, fmt.Errorf("locked duration is empty")
+			}
+		}
+		if maximumBytes > 0 && len(plain) > maximumBytes {
+			return 0, false, fmt.Errorf("templated duration exceeds %d bytes", maximumBytes)
+		}
 		if len(plain) == 0 {
-			return 0, nil
+			return 0, locked, nil
 		}
 
 		result, err := time.ParseDuration(plain)
 		if err != nil {
-			return 0, fmt.Errorf("templated duration results in a value that cannot be parsed as duration: %q", buf.String())
+			return 0, false, fmt.Errorf("templated duration results in a value that cannot be parsed as duration: %q", buf.String())
 		}
-		return result, nil
+		return result, locked, nil
 	}
-	return 0, nil
+	return 0, false, nil
 }
 
 func (this Duration) IsHardCoded() bool {
-	return this.isHardCoded
+	if this.isHardCoded {
+		return true
+	}
+	if this.tmpl != nil && len(this.tmpl.Root.Nodes) == 1 {
+		_, literal := this.tmpl.Root.Nodes[0].(*parse.TextNode)
+		return literal
+	}
+	return false
 }
 
 func (this Duration) String() string {

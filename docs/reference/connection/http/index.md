@@ -8,12 +8,12 @@ toc_depth: 5
 Connect to Bifröst with a browser over HTTPS. The browser provides terminal tabs,
 session management and local recording verification and playback.
 
-HTTP and [SSH](ssh.md) use the same [flows](../flow.md), authorizations, sessions
+HTTP and [SSH](../ssh.md) use the same [flows](../../flow.md), authorizations, sessions
 and environments. HTTP is optional and disabled by default. Enabling it does not
 disable SSH or grant additional management rights.
 
-Follow the [browser access guide](../../guides/browser-access.md) to open a first
-terminal. See [Security and limits](http/security.md) for saved-access behavior,
+Follow the [browser access guide](../../../guides/browser-access.md) to open a first
+terminal. See [Security and limits](security.md) for saved-access behavior,
 management permissions and browser limits.
 
 !!! note
@@ -30,34 +30,35 @@ These properties belong to the root `http` block.
 <<property("enabled", "bool", default=False)>>
 Enables HTTPS. There is no unencrypted HTTP fallback.
 
-<<property("addresses", array_ref("Net Address", "../data-type.md#net-address"), default=[":443"])>>
+<<property("addresses", array_ref("Net Address", "../../data-type.md#net-address"), default=[":443"])>>
 TCP addresses to listen on. At least one is required when HTTP is enabled.
 
-<<property("domains", array_ref("Host", "../data-type.md#host"), required=True)>>
+<<property("domains", array_ref("Host", "../../data-type.md#host"), required=True)>>
 Host names or IP addresses accepted by this endpoint. Do not include schemes,
 ports, paths or wildcards. Every configured domain needs a valid certificate.
+Enclose IPv6 addresses in brackets, for example `"[::1]"`.
 
-Flow [host requirements](../flow.md#http-requirements) can restrict this list
+Flow [host requirements](../../flow.md#http-requirements) can restrict this list
 further, but cannot add domains.
 
 <<property("tls", "TLS", "#tls", required=True)>>
 Certificate sources. Configure certificates, enable ACME, or explicitly select
 dummy TLS for local testing.
 
-<<property("startupTimeout", "Duration", "../data-type.md#duration", default="2m")>>
+<<property("startupTimeout", "Duration", "../../data-type.md#duration", default="2m")>>
 Maximum time to prepare HTTPS, including initial certificate acquisition. Must
 be greater than zero.
 
-<<property("readHeaderTimeout", "Duration", "../data-type.md#duration", default="10s")>>
+<<property("readHeaderTimeout", "Duration", "../../data-type.md#duration", default="10s")>>
 Timeout for reading request headers. Also limits initial request-body reads.
 Must be greater than zero.
 
-<<property("idleTimeout", "Duration", "../data-type.md#duration", default="1m")>>
+<<property("idleTimeout", "Duration", "../../data-type.md#duration", default="1m")>>
 Idle timeout for HTTP keep-alive connections. Must be greater than zero. This is
-not the session lifetime or the terminal's [keepalive interval](../flow.md#http-property-keepAlive).
+not the session lifetime or the terminal's [keepalive interval](../../flow.md#http-property-keepAlive).
 
-<<property("gracefulShutdownTimeout", "Duration", "../data-type.md#duration", default="30s")>>
-How long to wait for HTTP requests during shutdown. `0` closes them immediately.
+<<property("gracefulShutdownTimeout", "Duration", "../../data-type.md#duration", default="30s")>>
+How long to wait for HTTP requests during shutdown. `0s` closes them immediately.
 
 <<property("maxHeaderBytes", "uint32", default=1048576)>>
 Maximum request-header size in bytes. Must be between `1` and `16777216` (16 MiB).
@@ -65,7 +66,7 @@ Maximum request-header size in bytes. Must be between `1` and `16777216` (16 MiB
 <<property("rememberMe", "RememberMe", "#rememberme")>>
 Controls how long an explicitly remembered browser can remain unused.
 
-<<property("assetsDirectory", "File Path", "../data-type.md#file-path", default="")>>
+<<property("assetsDirectory", "File Path", "../../data-type.md#file-path", default="")>>
 Optional directory overriding embedded browser files, one file at a time.
 Missing files use the embedded version. An unreadable or unsafe file is rejected
 instead. Leave empty to use only the bundled application.
@@ -73,14 +74,14 @@ instead. Leave empty to use only the bundled application.
 The directory cannot overlap session, audit, recording or private-key storage.
 Replacing its root directory requires a restart.
 
-<<property("customCss", array_ref("File Path", "../data-type.md#file-path"))>>
+<<property("customCss", array_ref("File Path", "../../data-type.md#file-path"))>>
 Local CSS files loaded after the built-in styles, in the listed order.
 
 ```yaml title="Example"
 customCss: [custom/brand.css]
 ```
 
-<<property("customJs", array_ref("File Path", "../data-type.md#file-path"))>>
+<<property("customJs", array_ref("File Path", "../../data-type.md#file-path"))>>
 Local JavaScript files loaded after the built-in scripts, in the listed order.
 These scripts have the same trust as the browser application. Only load code
 you trust with authenticated access and browser-held keys.
@@ -142,10 +143,10 @@ Optional automatic certificate issuance and renewal. Disabled by default.
 
 Each entry in `http.tls.certificates` has these properties.
 
-<<property("certificateFile", "File Path", "../data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
+<<property("certificateFile", "File Path", "../../data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
 Local PEM certificate-chain file.
 
-<<property("privateKeyFile", "File Path", "../data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
+<<property("privateKeyFile", "File Path", "../../data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
 Local PEM private-key file. Do not put the key itself in the configuration.
 
 ### ACME
@@ -172,11 +173,11 @@ Accepts the selected CA's terms. Must be `true` when ACME is enabled.
 <<property("email", "string", default="", id_prefix="acme-", heading=5)>>
 Optional contact email address, without a display name.
 
-<<property("directoryUrl", "string", default="https://acme-v02.api.letsencrypt.org/directory", id_prefix="acme-", heading=5)>>
+<<property("directoryUrl", "URL", "../../data-type.md#url", default="https://acme-v02.api.letsencrypt.org/directory", id_prefix="acme-", heading=5)>>
 HTTPS directory URL of the CA. Use its staging service when testing issuance.
 Staging certificates are not trusted by normal browsers.
 
-<<property("storage", "File Path", "../data-type.md#file-path", id_prefix="acme-", heading=5)>>
+<<property("storage", "File Path", "../../data-type.md#file-path", id_prefix="acme-", heading=5)>>
 Private persistent directory for ACME account and certificate keys. Defaults:
 
 * Linux: `/var/lib/engity/bifroest/http/acme`
@@ -190,14 +191,14 @@ Keep it separate from public assets, session storage and audit/recording data.
 RememberMe requires explicit opt-in during login. It stores independent browser
 keys, not the login password or imported SSH private key. Saved access still
 requires current authorization and a valid session. See the authorizer's
-[supported methods](../authorization/index.md).
+[supported methods](../../authorization/index.md).
 
 Closing a tab is not logout. Explicit logout revokes that browser access and its
 linked connections; it does not dispose the shared session or workload.
 
 ### Configuration {: #rememberme-configuration }
 
-<<property("idleTimeout", "Duration", "../data-type.md#duration", default="6h", id_prefix="rememberme-", heading=4)>>
+<<property("idleTimeout", "Duration", "../../data-type.md#duration", default="6h", id_prefix="rememberme-", heading=4)>>
 How long a remembered browser may remain unused. A successful resume starts a
 new inactivity period. Must be greater than zero. Shorter session lifetimes and
 revocation still apply. Expiry does not close an already authenticated terminal.

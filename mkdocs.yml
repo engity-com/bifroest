@@ -150,8 +150,8 @@ nav:
       - Connections:
           - reference/connection/index.md
           - SSH: reference/connection/ssh.md
-          - HTTP / HTTPS:
-              - reference/connection/http.md
+          - HTTP:
+              - reference/connection/http/index.md
               - Security and limits: reference/connection/http/security.md
       - reference/flow.md
       - Authorizations:

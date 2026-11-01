@@ -2,7 +2,6 @@ package configuration
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -23,17 +22,14 @@ func (this FlowHttp) ResolveKeepAlive(context any) (HttpKeepAlive, error) {
 	if this.KeepAlive.IsZero() {
 		return HttpKeepAlive{Interval: DefaultHttpKeepAlive}, nil
 	}
-	value, err := this.KeepAlive.Render(context)
+	interval, locked, err := this.KeepAlive.RenderWithLock(context, 64)
 	if err != nil {
 		return HttpKeepAlive{}, fmt.Errorf("keepAlive template evaluation failed")
 	}
-	value = strings.TrimSpace(value)
-	locked := strings.HasPrefix(value, "!")
-	if locked {
-		value = value[1:]
+	if err := validateHttpKeepAliveInterval(interval); err != nil {
+		return HttpKeepAlive{}, err
 	}
-	interval, err := ParseHttpKeepAlive(value)
-	return HttpKeepAlive{Interval: interval, Locked: locked}, err
+	return HttpKeepAlive{Interval: interval, Locked: locked}, nil
 }
 
 func ParseHttpKeepAlive(value string) (time.Duration, error) {
@@ -41,8 +37,18 @@ func ParseHttpKeepAlive(value string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid keepAlive duration")
 	}
 	interval, err := time.ParseDuration(value)
-	if err != nil || interval < MinimumHttpKeepAlive || interval > MaximumHttpKeepAlive {
-		return 0, fmt.Errorf("keepAlive must be a Go duration between 1s and 5m")
+	if err != nil {
+		return 0, fmt.Errorf("invalid keepAlive duration")
+	}
+	if err := validateHttpKeepAliveInterval(interval); err != nil {
+		return 0, err
 	}
 	return interval, nil
+}
+
+func validateHttpKeepAliveInterval(interval time.Duration) error {
+	if interval < MinimumHttpKeepAlive || interval > MaximumHttpKeepAlive {
+		return fmt.Errorf("keepAlive must be between 1s and 5m")
+	}
+	return nil
 }

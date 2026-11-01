@@ -4,7 +4,7 @@ description: Understand browser access, saved logins, management permissions and
 
 # HTTP security and limits
 
-This page explains the boundaries of [HTTPS access](../http.md). For a first
+This page explains the boundaries of [HTTPS access](../http/index.md). For a first
 connection, follow the [browser access guide](../../../guides/browser-access.md).
 
 ## TLS and deployment
@@ -52,7 +52,7 @@ target before deciding what to do next.
 RememberMe starts only after explicit opt-in. It persists independent,
 non-exportable signing and encryption keys in IndexedDB, not a password or the
 imported SSH key. Resuming requires a fresh proof and current authorization.
-The default unused timeout is [six hours](../http.md#rememberme-property-idleTimeout);
+The default unused timeout is [six hours](../http/index.md#rememberme-property-idleTimeout);
 shorter session limits and revocation still apply.
 
 Authorizers can impose additional limits. In particular,

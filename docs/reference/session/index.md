@@ -18,7 +18,7 @@ can also [reuse a session by verified identity, flow and target](fs.md#session-a
 Every connection retains its own checked credentials and restrictions; a known
 session ID does not grant access.
 
-[Browser RememberMe](../connection/http.md#rememberme) is a separate opt-in with
+[Browser RememberMe](../connection/http/index.md#rememberme) is a separate opt-in with
 current authorization checks and an independent browser-key proof. Each new
 terminal starts a fresh execution, not a reattachment. Closing a connection or
 logging out of the browser is not session disposal; see [Browser access](../../guides/browser-access.md).

@@ -110,7 +110,7 @@ password changes prevent password resumption.
 
 Unavailable or inconclusive native checks deny resumption. No saved password or
 previous rights are replayed. Key/certificate bindings must still pass current
-key and certificate policy. See [HTTP RememberMe](../connection/http.md#rememberme)
+key and certificate policy. See [HTTP RememberMe](../connection/http/index.md#rememberme)
 for opt-in and logout, and [security limits](../connection/http/security.md) for
 browser-key protection. Logout does not dispose of the session or its workload.
 
