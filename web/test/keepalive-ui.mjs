@@ -89,7 +89,7 @@ export async function exerciseKeepAlive(page, login) {
   assert.equal(changes.length, 1);
 
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
-  await page.getByLabel('Access link / flow', { exact: true }).click();
+  await page.getByLabel('Slug', { exact: true }).click();
   await page.getByRole('option', { name: 'Other', exact: true }).click();
   await page.waitForFunction(
     () => document.querySelector('.login-dialog [role="combobox"]')?.textContent === 'Other',
@@ -106,12 +106,13 @@ export async function exerciseKeepAlive(page, login) {
   assert.equal(await stored('Work'), '1s');
 
   await page.reload();
+  assert.equal(new URL(page.url()).pathname, '/Other', 'reload retains the selected Slug');
   await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor();
   assert.equal(openings.length, 4, 'preferences cannot authenticate or start a shell after reload');
   await login(page, false);
   await connected();
-  assert.deepEqual(openings[4], { slug: 'Work', keepAlive: '1s' });
-  await openSettings('1s');
+  assert.deepEqual(openings[4], { slug: 'Other', keepAlive: '20s' });
+  await openSettings('20s');
   await settings().getByRole('button', { name: 'Close', exact: true }).click();
   await assertUiPreferences(page);
 }

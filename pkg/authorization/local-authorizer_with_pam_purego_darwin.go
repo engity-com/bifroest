@@ -16,6 +16,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+const localPamAuthenticationAvailable = true
+
 const (
 	darwinPamSuccess             int32 = 0
 	darwinPamSystemErr           int32 = 4

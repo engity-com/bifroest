@@ -16,6 +16,14 @@ Follow the [browser access guide](../../../guides/browser-access.md) to open a f
 terminal. See [Security and limits](security.md) for saved-access behavior,
 management permissions and browser limits.
 
+The root `/` is available when a flow accepts the empty Slug or published links
+exist on this host. Otherwise it returns 404. A link directory does not grant
+permission to sign in at the root.
+
+The **Slug** selector updates the browser URL without reloading the workspace.
+Only potentially supported sign-in methods are offered. Credentials and dynamic
+policy rules are still checked during authentication.
+
 !!! note
     Bifröst must terminate TLS itself. A TCP pass-through proxy is possible;
     TLS termination at an HTTP reverse proxy is not supported. If a configured

@@ -186,6 +186,64 @@ func TestWebRequestUserDisabledRetainsEmptyRemoteUser(t *testing.T) {
 	}
 }
 
+func TestWebRootUsesTheSameSlugRequirementsAsOtherPaths(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*configuration.Flow)
+		root      int
+		work      int
+	}{
+		{name: "unrestricted", root: http.StatusOK, work: http.StatusOK},
+		{name: "only non-root path", configure: func(flow *configuration.Flow) {
+			flow.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
+		}, root: http.StatusNotFound, work: http.StatusOK},
+		{name: "excluded root", configure: func(flow *configuration.Flow) {
+			flow.Requirement.Http.ExcludedSlug = common.MustNewRegexp("^$")
+		}, root: http.StatusNotFound, work: http.StatusOK},
+		{name: "only root", configure: func(flow *configuration.Flow) {
+			flow.Requirement.Http.IncludedSlug = common.MustNewRegexp("^$")
+		}, root: http.StatusOK, work: http.StatusNotFound},
+		{name: "HTTP disabled", configure: func(flow *configuration.Flow) {
+			flow.Http.Enabled = commonBool(false)
+		}, root: http.StatusNotFound, work: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
+				conf.Flows[0].DiscoverAsSlug = ""
+				if test.configure != nil {
+					test.configure(&conf.Flows[0])
+				}
+			})
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				for _, accept := range []string{"text/html", "application/json"} {
+					for _, path := range []struct {
+						name   string
+						status int
+					}{{"/", test.root}, {"/Work", test.work}} {
+						request := httptest.NewRequest(method, "https://app.example.org"+path.name, nil)
+						request.URL.Scheme, request.URL.Host = "", ""
+						request.Host = "app.example.org"
+						request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, ServerName: "app.example.org"}
+						request.Header.Set("Accept", accept)
+						response := httptest.NewRecorder()
+						handler.ServeHTTP(response, request)
+						require.Equal(t, path.status, response.Code, "%s %s %s", method, path.name, accept)
+						if path.status == http.StatusNotFound {
+							require.NotContains(t, response.Body.String(), "Published access links")
+							require.NotContains(t, response.Body.String(), "passwordLogin")
+						}
+					}
+				}
+			}
+			require.Empty(t, svc.web.access)
+			if test.root == http.StatusNotFound {
+				require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "alice", "correct", "").Code)
+				require.Empty(t, svc.web.access)
+			}
+		})
+	}
+}
+
 func TestWebJsonBoundaryRejectsAmbiguityBeforeAuthentication(t *testing.T) {
 	svc, handler, _ := webTestFixture(t)
 	for _, body := range []string{
@@ -279,6 +337,7 @@ func TestWebBestEffortAuditFailureUsesExistingPolicy(t *testing.T) {
 func TestWebBearerAllowsOnlyItsOwnAnonymousSession(t *testing.T) {
 	svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
 		conf.Flows[0].Authorization.V = &configuration.AuthorizationNone{}
+		conf.Flows[0].Http.RequestUser = commonBool(false)
 	})
 	token := webTestToken(t, webTestPassword(handler, "", "", "Work"))
 	access := webTestAccess(t, svc, token, "Work")
@@ -307,6 +366,7 @@ func (this *webMutableTargetRepository) ResolveSessionTarget(environment.Context
 func TestWebAnonymousPermissionAlsoPinsTheEffectiveTarget(t *testing.T) {
 	svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
 		conf.Flows[0].Authorization.V = &configuration.AuthorizationNone{}
+		conf.Flows[0].Http.RequestUser = commonBool(false)
 	})
 	repo := &webMutableTargetRepository{CloseableRepository: svc.environments}
 	svc.environments = repo

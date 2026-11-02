@@ -8,6 +8,7 @@ import { exerciseConnectionRaces, exerciseManagementOwner } from './connection-r
 import { exerciseConnections } from './connections-ui.mjs';
 import { exerciseKeepAlive } from './keepalive-ui.mjs';
 import { exerciseKey, exerciseKeyDiagnostic, exerciseKeyVariant } from './key-ui.mjs';
+import { exerciseLoginOptions } from './login-options-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
 import { exerciseManagementForcedAction } from './management-forced-action-ui.mjs';
@@ -19,6 +20,7 @@ import {
 import { exerciseManagement } from './management-ui.mjs';
 import { exercisePreferences } from './preferences-ui.mjs';
 import { installPreparationObserver } from './response-capture.mjs';
+import { exerciseStoppedAuthRoute } from './stopped-auth-route-ui.mjs';
 import { exerciseTerminalExpiry } from './terminal-expiry-ui.mjs';
 import { exerciseLostTerminalLogout } from './terminal-logout-ui.mjs';
 import { exerciseTerminalTabs } from './terminal-tabs-ui.mjs';
@@ -93,7 +95,9 @@ try {
         failedResources.push({ path, status: response.status() });
       }
     });
-    const response = await page.goto(`${origin}/Work`);
+    const response = await page.goto(
+      `${origin}/${process.argv[3] === 'login-options' ? 'Mixed' : 'Work'}`,
+    );
     assert.equal(response.status(), 200);
     const policy = response.headers()['content-security-policy'];
     assert(
@@ -102,6 +106,18 @@ try {
         !policy.includes('unsafe-inline') &&
         !policy.includes('unsafe-eval'),
     );
+    if (process.argv[3] === 'bootstrap-retry') {
+      await page
+        .getByText('Access-link metadata is unavailable or invalid.', { exact: true })
+        .waitFor();
+      await page.getByRole('button', { name: 'Retry loading options', exact: true }).waitFor();
+      assert.equal(await page.locator('.login-dialog').count(), 0);
+      await page.evaluate(() => {
+        const button = document.querySelector('#root button');
+        button.click();
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+    }
     try {
       // MUI correctly removes the background main from the accessibility tree
       // while the initial sign-in dialog owns focus; it must still be rendered.
@@ -158,7 +174,7 @@ try {
       'trusted inline HTML extension needs the fresh document nonce',
     );
     if (process.argv[3] === 'management-actions') {
-      await loginLayout(page);
+      await loginLayout(page, ['Password login', 'Interactive / device login']);
     }
     return page;
   };
@@ -253,6 +269,24 @@ try {
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'stopped-auth-route') {
+      await exerciseStoppedAuthRoute(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'bootstrap-retry') {
+      await page.getByLabel('User name', { exact: true }).waitFor();
+      assert.deepEqual(errors, []);
+      assert.deepEqual(failedResources, [{ path: '/Work', status: 503 }]);
+      assert.equal(loginResponses.length, 0, 'retrying metadata must not authenticate');
+      assert.equal(await page.locator('[data-connection-principal]').count(), 0);
+      return;
+    }
+    if (process.argv[3] === 'login-options') {
+      await exerciseLoginOptions(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.argv[3] === 'keepalive') {
       await exerciseKeepAlive(page, login);
       assert.deepEqual(errors, []);
@@ -378,18 +412,38 @@ try {
     }
     if (process.argv[3] === 'name-free') {
       assert.equal(await page.getByLabel('User name', { exact: true }).count(), 0);
-      await page.getByLabel('Password', { exact: true }).fill('correct');
+      assert.equal(await page.getByLabel('Password', { exact: true }).count(), 0);
+      assert.equal(await page.locator('#key-private').count(), 0);
+      assert.equal(
+        await page.locator('[data-connection-principal]').count(),
+        0,
+        'secretless access still requires an explicit action',
+      );
       const request = page.waitForRequest((request) =>
         request.url().endsWith('/api/v1/login/password'),
       );
-      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-      assert.equal(JSON.parse((await request).postData()).user, '');
-      await page.getByText('Access was denied.', { exact: false }).waitFor();
-      assert.equal(
-        await page.getByLabel('Password', { exact: true }).inputValue(),
-        '',
-        'failed sign-in must not repopulate the submitted password',
-      );
+      await page.getByRole('button', { name: 'Continue without credentials', exact: true }).click();
+      assert.deepEqual(JSON.parse((await request).postData()), {
+        slug: 'Work',
+        user: '',
+        password: '',
+      });
+      await page
+        .locator('[data-connection-principal="anonymous"][data-connection-scope="Work"]')
+        .waitFor();
+      await page.locator('[data-terminal-phase="exited"]').waitFor();
+      assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
+      return;
+    }
+    if (process.argv[3] === 'no-login-options') {
+      await page
+        .getByText('No sign-in method is available for this access link.', { exact: true })
+        .waitFor();
+      assert.equal(await page.getByLabel('User name', { exact: true }).count(), 0);
+      assert.equal(await page.getByLabel('Password', { exact: true }).count(), 0);
+      assert.equal(await page.locator('#key-private').count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Sign in', exact: true }).count(), 0);
+      assert.equal(await page.locator('[data-connection-principal]').count(), 0);
       assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
       return;
     }

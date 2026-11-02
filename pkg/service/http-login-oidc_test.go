@@ -19,7 +19,12 @@ import (
 
 func webOidcLoginFixture(t *testing.T, holdDevice ...bool) (*service, http.Handler, *oidcAssociationProvider, *recordingAuditRecorder) {
 	t.Helper()
-	provider := newOidcAssociationProviderWithDeviceHold(t, len(holdDevice) > 0 && holdDevice[0])
+	return webOidcLoginFixtureConfigured(t, len(holdDevice) > 0 && holdDevice[0])
+}
+
+func webOidcLoginFixtureConfigured(t *testing.T, holdDevice bool, configure ...func(*configuration.Configuration)) (*service, http.Handler, *oidcAssociationProvider, *recordingAuditRecorder) {
+	t.Helper()
+	provider := newOidcAssociationProviderWithDeviceHold(t, holdDevice)
 	conf := sessionRecordingTestConfiguration(t, t.TempDir())
 	settings := &configuration.AuthorizationOidcDeviceAuth{}
 	require.NoError(t, settings.SetDefaults())
@@ -29,6 +34,9 @@ func webOidcLoginFixture(t *testing.T, holdDevice ...bool) (*service, http.Handl
 	conf.Flows[0].Authorization.V = settings
 	conf.Flows[0].Http.RequestUser = commonBool(false)
 	conf.Flows[0].DiscoverAsSlug = "Work"
+	for _, change := range configure {
+		change(&conf)
+	}
 	ctx := context.WithValue(t.Context(), oauth2.HTTPClient, provider.server.Client())
 	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepareContext(ctx)
 	require.NoError(t, err)

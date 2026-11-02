@@ -416,7 +416,7 @@ func (this *webService) accessResponse(access *webAccess, token string) any {
 	}{"authorized", token, access.expires, access.scope, access.identity.Principal, kind, kind != "management", access.keepAlive}
 }
 
-var webDiscoveryTemplate = htmltemplate.Must(htmltemplate.New("discovery").Parse(`<!doctype html><html lang="en-US"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifröst</title><h1>Bifröst</h1><p>Published access links. Each link still requires authorization.</p><ul>{{range .}}<li><a href="/{{.}}">{{.}}</a></li>{{else}}<li>No access links published on this host.</li>{{end}}</ul><p>The interactive browser interface is not available yet.</p></html>`))
+var webDiscoveryTemplate = htmltemplate.Must(htmltemplate.New("discovery").Parse(`<!doctype html><html lang="en-US"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifröst</title><h1>Bifröst</h1><p>Published access links. Each link still requires authorization.</p><ul>{{range .}}<li><a href="/{{.}}">{{.}}</a></li>{{else}}<li>No access links published on this host.</li>{{end}}</ul><p>This build does not include the browser application. Use SSH or a build with bundled browser resources.</p></html>`))
 
 func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -445,20 +445,18 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 		return
 	}
-	fixed, hasFixed, err := this.service.Configuration.Flows.ResolveHttpSlug(host, slug)
+	if this.service.authorizerDiscovery == nil {
+		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
+		return
+	}
+	description, err := this.service.authorizerDiscovery.DescribeHttpLogin(host, slug)
 	if err != nil {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 		return
 	}
-	requestUser, available := false, false
-	for _, flow := range this.service.Configuration.Flows {
-		if hasFixed && flow.Name != fixed || !flow.Http.IsEnabled() || !flow.Requirement.Http.MatchesHost(host) || !flow.Requirement.Http.MatchesSlug(slug) {
-			continue
-		}
-		available = true
-		requestUser = requestUser || flow.Http.RequestUserEnabled()
-	}
-	if !available && slug != "" {
+	// Root may be a public link directory without being an authentication target.
+	// Published links never create a root login option or bypass requirements.
+	if !description.Available && (slug != "" || len(links) == 0) {
 		http.NotFound(w, r)
 		return
 	}
@@ -479,15 +477,15 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
+	if description.Options == nil {
+		description.Options = []authorization.LoginOption{}
+	}
 	webJSONResponse(w, http.StatusOK, struct {
-		Scope             webScope `json:"scope"`
-		RequestUser       bool     `json:"requestUser"`
-		PublishedSlugs    []string `json:"publishedSlugs,omitempty"`
-		Login             string   `json:"passwordLogin"`
-		InteractiveLogin  string   `json:"interactiveLogin"`
-		PublicKeyLogin    string   `json:"publicKeyLogin"`
-		FrontendAvailable bool     `json:"frontendAvailable"`
-	}{scope, requestUser, links, webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", this.assets != nil && this.assets.Available()})
+		Scope             webScope                    `json:"scope"`
+		PublishedSlugs    []string                    `json:"publishedSlugs,omitempty"`
+		LoginOptions      []authorization.LoginOption `json:"loginOptions"`
+		FrontendAvailable bool                        `json:"frontendAvailable"`
+	}{scope, links, description.Options, this.assets != nil && this.assets.Available()})
 }
 
 // The current protocol has a flat string-only payload. Reject duplicate keys,

@@ -30,6 +30,13 @@ try {
   const page = await context.newPage();
   const errors = [];
   const requests = [];
+  const artifactResponses = [];
+  page.on('response', (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path.includes('/management/artifacts/')) {
+      artifactResponses.push({ path, status: response.status() });
+    }
+  });
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('request', (request) => {
     if (new URL(request.url()).pathname.includes('/management/')) {
@@ -70,6 +77,30 @@ try {
   const panel = page.getByRole('region', {
     name: 'Artifacts and client-side evidence',
     exact: true,
+  });
+  await panel.evaluate((panel) => {
+    const form = panel.querySelector('.artifact-selection form');
+    const button = form.querySelector('button[type="submit"]');
+    window.catalogDownloadProbe = { submits: 0, invalid: 0, disabledTransitions: [] };
+    form.addEventListener(
+      'submit',
+      () => {
+        window.catalogDownloadProbe.submits++;
+      },
+      true,
+    );
+    form.addEventListener(
+      'invalid',
+      () => {
+        window.catalogDownloadProbe.invalid++;
+      },
+      true,
+    );
+    new MutationObserver(() => {
+      if (window.catalogDownloadProbe.disabledTransitions.length < 24) {
+        window.catalogDownloadProbe.disabledTransitions.push(button.disabled);
+      }
+    }).observe(button, { attributes: true, attributeFilter: ['disabled'] });
   });
   assert.equal(requests.length, 0, 'login must not automatically list or download artifacts');
   await catalog.getByRole('button', { name: 'Load auditlogs', exact: true }).click();
@@ -133,9 +164,41 @@ try {
   );
   assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 0);
   await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
-  await panel
-    .getByRole('heading', { name: 'Independent verification expectations', exact: true })
-    .waitFor();
+  async function waitDownload(stage) {
+    try {
+      await panel
+        .getByRole('heading', { name: 'Independent verification expectations', exact: true })
+        .waitFor();
+    } catch (error) {
+      const state = await panel.evaluate((panel) => {
+        const form = panel.querySelector('.artifact-selection form');
+        return {
+          ...window.catalogDownloadProbe,
+          disabled: form.querySelector('button[type="submit"]').disabled,
+          invalidControls: [...form.querySelectorAll(':invalid')].map((input) => ({
+            tag: input.tagName,
+            missing: input.validity?.valueMissing,
+            pattern: input.validity?.patternMismatch,
+          })),
+          receiving: panel.textContent.includes(
+            'Receiving artifact; waiting for complete audited transfer…',
+          ),
+          statuses: [...panel.querySelectorAll('[role="status"]')].length,
+          hidden: panel.closest('[hidden]') !== null,
+        };
+      });
+      throw new Error(
+        JSON.stringify({
+          stage,
+          requestCount: requests.filter((request) => request.path.includes('/artifacts/')).length,
+          artifactResponses,
+          publicState: state,
+        }),
+        { cause: error },
+      );
+    }
+  }
+  await waitDownload('first-download');
   assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
   assert.equal(
     await panel
@@ -170,9 +233,7 @@ try {
     0,
   );
   await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
-  await panel
-    .getByRole('heading', { name: 'Independent verification expectations', exact: true })
-    .waitFor();
+  await waitDownload('second-download');
   assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
   assert.equal(
     await panel

@@ -83,19 +83,24 @@ export async function exerciseConnectionRaces(page) {
       contentType: 'application/json',
       body: JSON.stringify({
         scope: { origin: new URL(page.url()).origin, slug: 'Wrong' },
-        requestUser: true,
+        loginOptions: [{ method: 'password', requestUser: true, certificateRequired: false }],
       }),
     });
   });
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   const signIn = page.getByRole('dialog', { name: 'Sign in', exact: true });
-  await signIn.getByLabel('Access link / flow', { exact: true }).click();
+  await signIn.getByLabel('Slug', { exact: true }).click();
   await page.getByRole('option', { name: 'Other', exact: true }).click();
   await entering;
-  await terminal(page, 2, 'bob').waitFor({ state: 'detached' });
+  await page.locator('#terminal-tab-2').waitFor({ state: 'detached' });
   await activeAccess(page, 'alice');
   release();
-  await signIn.getByText('The operation could not be confirmed.', { exact: false }).waitFor();
+  await signIn
+    .getByText(
+      'Sign-in options for this Slug could not be loaded. Existing connections are unchanged.',
+      { exact: true },
+    )
+    .waitFor();
   await signIn.getByRole('button', { name: 'Close', exact: true }).click();
   await page.unroute('**/Other');
   assert.equal(await terminal(page, 1, 'alice').getAttribute('aria-selected'), 'true');

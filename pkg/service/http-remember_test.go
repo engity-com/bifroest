@@ -360,6 +360,7 @@ func TestWebRememberKeyPolicyIsFreshAndRemovedPrimaryKeyCannotResume(t *testing.
 func TestWebRememberAnonymousBindingsCannotSelectAnotherSession(t *testing.T) {
 	svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
 		conf.Flows[0].Authorization.V = &configuration.AuthorizationNone{}
+		conf.Flows[0].Http.RequestUser = commonBool(false)
 	})
 	one := webTestToken(t, webTestPassword(handler, "", "", "Work"))
 	two := webTestToken(t, webTestPassword(handler, "", "", "Work"))

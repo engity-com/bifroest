@@ -22,6 +22,8 @@ import (
 
 var _ = RegisterAuthorizer(NewLocal)
 
+const localPamAuthenticationAvailable = false
+
 type LocalAuthorizer struct {
 	flow           configuration.FlowName
 	conf           *configuration.AuthorizationLocal

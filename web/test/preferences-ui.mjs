@@ -88,13 +88,16 @@ export async function exercisePreferences(page) {
   );
 
   async function flow(slug) {
-    await page.getByLabel('Access link / flow', { exact: true }).click();
+    await page.getByLabel('Slug', { exact: true }).click();
     await page.getByRole('option', { name: slug, exact: true }).click();
     await page.waitForFunction(
-      (slug) => document.querySelector('.login-dialog [role="combobox"]')?.textContent === slug,
+      (slug) =>
+        document
+          .querySelector('.login-dialog [data-login-ready="true"]')
+          ?.getAttribute('data-login-scope') === slug,
       slug,
     );
-    await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, `/${slug}`);
   }
   await flow('Other');
   assert.equal(
@@ -111,16 +114,17 @@ export async function exercisePreferences(page) {
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   await dialog().waitFor();
   assert.equal(await input().inputValue(), 'bob');
+  const beforeNameFree = requests.length;
   await flow('NameFree');
   assert.equal(await input().count(), 0, 'deliberately name-free flows still omit this input');
-  await chooseLoginMethod(page, 'Password login');
-  await page.getByLabel('Password', { exact: true }).fill('correct');
-  await dialog().getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByText('Access was denied.', { exact: false }).waitFor();
-  assert.deepEqual(
-    requests.at(-1),
-    { slug: 'NameFree', user: '' },
-    'no hidden preferred or fabricated principal is sent',
+  await dialog()
+    .getByText('No sign-in method is available for this access link.', { exact: true })
+    .waitFor();
+  assert.equal(await dialog().getByLabel('Password', { exact: true }).count(), 0);
+  assert.equal(
+    requests.length,
+    beforeNameFree,
+    'an impossible method cannot submit a hidden preferred name',
   );
   assert.equal(await pref('NameFree'), null);
   await dialog().getByRole('button', { name: 'Close', exact: true }).click();
@@ -129,6 +133,8 @@ export async function exercisePreferences(page) {
   await notification(page, 'Logout confirmed.');
   await page.reload();
   await dialog().waitFor({ state: 'visible' });
+  assert.equal(new URL(page.url()).pathname, '/NameFree');
+  await flow('Work');
   assert.equal(await input().inputValue(), 'alice');
   assert.equal(
     await page.getByRole('button', { name: 'Use saved access', exact: true }).count(),

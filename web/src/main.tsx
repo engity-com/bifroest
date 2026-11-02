@@ -9,13 +9,15 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { RouterProvider } from 'react-router/dom';
 import './ui/app.css';
-import { validateScope } from './remember/protocol';
+import { RememberMeError } from './remember/protocol';
 import { App } from './ui/App';
 import { reportUiError } from './ui/error-report';
 import { type LinkMetadata, loadLinkMetadata } from './ui/link-metadata';
 import { t } from './ui/messages';
 import { isThemePreference, preferredTheme, saveThemePreference } from './ui/preferences';
+import { createSlugRouter, scopeFromSlugLocation } from './ui/slug-router';
 
 const cache = createCache({
   key: 'bifroest',
@@ -93,15 +95,23 @@ function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string 
   );
 }
 
+let starting = false;
+let started = false;
+
 async function start() {
+  if (starting || started) {
+    return;
+  }
   const container = document.getElementById('root');
   if (container === null) {
     return;
   }
+  starting = true;
   try {
-    const path = location.pathname;
-    const scope = { origin: location.origin, slug: path === '/' ? '' : path.slice(1) };
-    validateScope(scope);
+    const scope = scopeFromSlugLocation(location.origin, location);
+    if (scope === null) {
+      throw new RememberMeError('unavailable');
+    }
     const metadata = await loadLinkMetadata(scope);
     const customization = { version: 1, title: t('brand') };
     window.dispatchEvent(new CustomEvent('bifroest:configure', { detail: customization }));
@@ -110,10 +120,23 @@ async function start() {
         ? customization.title
         : t('brand');
     document.title = title;
-    createRoot(container).render(<Workspace metadata={metadata} title={title} />);
+    const router = createSlugRouter(<Workspace metadata={metadata} title={title} />);
+    createRoot(container).render(<RouterProvider router={router} />);
+    started = true;
   } catch (error) {
     reportUiError('bootstrap', error);
-    container.textContent = t('loadFailed');
+    const message = document.createElement('p');
+    message.textContent = t('loadFailed');
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = t('retrySlug');
+    retry.addEventListener('click', () => {
+      retry.disabled = true;
+      void start();
+    });
+    container.replaceChildren(message, retry);
+  } finally {
+    starting = false;
   }
 }
 

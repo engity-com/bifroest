@@ -283,6 +283,28 @@ protection still need runtime verification.
 
 ## HTTP orchestration
 
+HTTP discovery is a configuration-level hint, never authentication. Registered
+authorizers implement the pure `AuthenticationCapabilityProvider` contract;
+`AuthorizerFacade.DescribeHttpLogin` applies canonical host/Slug requirements and
+published-flow pinning, then unions options by method and username input mode.
+It does not evaluate policy templates, inspect accounts/keys/sessions, or start
+PAM/IdP work. A typed `Bool.StaticValue` getter omits constant disabled methods;
+unknown dynamic rules remain possible. Session-key resumption alone does not
+advertise a primary key login. Certificate-only configurations retain their hint.
+
+Discovery returns `loginOptions` with `method`, `requestUser` and
+`certificateRequired`, not the former global name flag/unconditional login URLs.
+The UI handles a missing method set without credential fields; None uses an
+explicit no-secret action through its existing adapter. Root may expose a public
+link directory without becoming a permitted authentication target.
+
+React Router owns Slug URLs/history in one stable wildcard route. Routing never
+stores credentials or access objects, remounts connection tabs, reauthenticates,
+reconnects, or chooses a prior actor. Metadata requests have separate cancellation
+and generation guards; old results cannot rebind a new scope. Name modes stay
+separate both in discovery and authoritative HTTP matching. Critical operations
+block in-app navigation; metadata failures have explicit read-only retries.
+
 `BrowserClient.password` performs regular primary authentication and returns an
 opaque `WebAccess` kept only in tab memory. Its JSON snapshot excludes its token.
 RememberMe is a separate explicit `access.remember({ explicitOptIn: true })`

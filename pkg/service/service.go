@@ -252,6 +252,7 @@ func (this *Service) prepareContext(ctx context.Context) (svc *service, err erro
 		return fail(err)
 	}
 	svc.authorizer = authorizer
+	svc.authorizerDiscovery = authorizer
 	environments, err := environment.NewRepositoryFacadeWithManagement(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners, svc.sessions, svc)
 	if err != nil {
 		return fail(err)
@@ -863,6 +864,7 @@ type service struct {
 	unauthenticatedAudit     *unauthenticatedAuditLimiter
 	sessions                 session.CloseableRepository
 	authorizer               authorization.CloseableAuthorizer
+	authorizerDiscovery      authorization.HttpLoginDescriber
 	environments             environment.CloseableRepository
 	houseKeeper              houseKeeper
 	oidcRefresh              oidcRefreshManager

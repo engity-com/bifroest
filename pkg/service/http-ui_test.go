@@ -22,6 +22,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
@@ -40,7 +41,28 @@ func TestBrowserLoginUiWithRememberRecoveryAndStrictCsp(t *testing.T) {
 }
 
 func TestBrowserLoginUiPreservesDisabledRequestingName(t *testing.T) {
-	testBrowserLoginUi(t, false, "name-free")
+	testBrowserLoginUi(t, false, "name-free", func(conf *configuration.Configuration) {
+		conf.Flows[0].Authorization.V = &configuration.AuthorizationNone{}
+	})
+}
+
+func TestBrowserLoginUiDoesNotOfferImpossibleCredentialMethods(t *testing.T) {
+	testBrowserLoginUi(t, false, "no-login-options")
+}
+
+func TestBrowserBootstrapMetadataRetryDoesNotStartAuthentication(t *testing.T) {
+	testBrowserLoginUi(t, true, "bootstrap-retry")
+}
+
+func TestBrowserSlugNavigationRetiresStoppedAuthenticationAtTabLimit(t *testing.T) {
+	testBrowserLoginUi(t, true, "stopped-auth-route", func(conf *configuration.Configuration) {
+		conf.Flows[0].DiscoverAsSlug = "Work"
+		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
+		other := conf.Flows[0]
+		other.Name, other.DiscoverAsSlug = "other", "Other"
+		other.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Other$")
+		conf.Flows = append(conf.Flows, other)
+	})
 }
 
 func TestBrowserTerminalUiFreshExecutionResizeSignalsExitAndDisconnect(t *testing.T) {
@@ -152,8 +174,11 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if keyMode || forcedReadMode || forcedActionMode {
 		keyFixture, authorizedKeys = browserKeyUiFixture(t)
 	}
-	if mode == "oidc" || mode == "oidc-cancel" {
-		svc, protocolHandler, provider, _ = webOidcLoginFixture(t, mode == "oidc-cancel")
+	if mode == "oidc" || mode == "oidc-cancel" || mode == "login-options" {
+		svc, protocolHandler, provider, _ = webOidcLoginFixtureConfigured(t, mode == "oidc-cancel", configure...)
+		if mode == "login-options" {
+			svc.environments = &executionTestRepository{CloseableRepository: svc.environments}
+		}
 	} else {
 		svc, _, lifecycleRecorder = webTestFixture(t, func(conf *configuration.Configuration) {
 			conf.Flows[0].Http.RequestUser = commonBool(requestUser)
@@ -284,7 +309,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		}}}
 	}
 	var terminalCounters *terminalUiCounters
-	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" || mode == "compact" || mode == "keepalive" {
+	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" || mode == "compact" || mode == "keepalive" || mode == "login-options" || mode == "stopped-auth-route" {
 		terminalCounters = installTerminalUiBackend(svc)
 	}
 	settings := &configuration.Http{}
@@ -309,6 +334,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	var interrupt atomic.Bool
 	var interrupted atomic.Int32
 	var providerReplyBarriers atomic.Int32
+	var metadataRequests atomic.Int32
 	var holdPreparation atomic.Bool
 	holdPreparation.Store(workspaceActionMode)
 	preparationEntered := make(chan struct{})
@@ -324,6 +350,14 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		interrupt.Store(true)
 	}
 	endpoint, err := https.NewEndpoint(settings, https.EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode == "bootstrap-retry" && r.Method == http.MethodGet && r.URL.Path == "/Work" && r.Header.Get("Accept") == "application/json" {
+			metadataRequests.Add(1)
+			if interrupt.CompareAndSwap(false, true) {
+				interrupted.Add(1)
+				webError(w, http.StatusServiceUnavailable, "controlled metadata failure")
+				return
+			}
+		}
 		if workspaceActionMode && r.URL.Path == "/_bifroest/test/preparation-entered" {
 			select {
 			case <-preparationEntered:
@@ -528,9 +562,14 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" || workspaceActionMode || mode == "workspace-races" || mode == "management-forced-dispose" || mode == "terminal-logout-lost" {
 		expectedInterrupt = 1
 	}
-	require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
+	if mode == "bootstrap-retry" {
+		require.EqualValues(t, 1, interrupted.Load(), "exactly one metadata failure precedes the explicit retry")
+		require.EqualValues(t, 2, metadataRequests.Load(), "double-clicking retry must not create another bootstrap")
+	} else {
+		require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
+	}
 	expectedSessions := 1
-	if mode == "name-free" || mode == "oidc-cancel" {
+	if mode == "no-login-options" || mode == "oidc-cancel" || mode == "bootstrap-retry" {
 		expectedSessions = 0
 	}
 	if strings.HasPrefix(mode, "key-diagnostic-") {
@@ -550,12 +589,21 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if mode == "keepalive" {
 		expectedSessions = 3
 	}
+	if mode == "login-options" {
+		expectedSessions = 3
+	}
 	if workspaceActionMode {
 		expectedSessions = 3
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
 	if terminalCounters != nil {
 		switch mode {
+		case "stopped-auth-route":
+			require.EqualValues(t, 7, terminalCounters.runs.Load(), "failed authentication and routing must not replace or start executions")
+			require.Zero(t, terminalCounters.interrupts.Load())
+		case "login-options":
+			require.EqualValues(t, 3, terminalCounters.runs.Load(), "routing and metadata must never create executions")
+			require.Zero(t, terminalCounters.interrupts.Load())
 		case "keepalive":
 			require.EqualValues(t, 5, terminalCounters.runs.Load(), "keepalive settings may not restart or duplicate executions")
 			require.Zero(t, terminalCounters.interrupts.Load())

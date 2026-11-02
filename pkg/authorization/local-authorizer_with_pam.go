@@ -15,6 +15,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/user"
 )
 
+const localPamAuthenticationAvailable = true
+
 func (this *LocalAuthorizer) checkPassword(req PasswordRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
 	if v := this.conf.PamService; v != "" {
 		return authorizeWithLinuxPam(linuxPamOptions{Context: req.Context(), Service: v, Username: requestedUsername, RemoteHost: req.Connection().Remote().Host().String(), Authenticate: true}, passwordRequestToPamHandlerFunc(req, validatePassword), startLinuxPam)

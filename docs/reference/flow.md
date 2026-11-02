@@ -77,9 +77,10 @@ Allows HTTP authentication and discovery for this flow. The root HTTP endpoint
 must also be enabled. `false` leaves SSH unchanged.
 
 <<property("requestUser", "bool", default=True, id_prefix="http-", heading=4)>>
-Asks the browser user for a requesting name. With `false`, the browser sends an
-empty name. This is useful for OIDC flows that identify users through the IdP.
-Methods needing a name cannot guess one instead.
+With `true`, the browser and API require a nonblank requesting name. With `false`,
+the browser sends an empty name. This is useful for OIDC flows that identify users
+through the IdP. Named and nameless flows remain separate; methods needing a name
+cannot guess one instead.
 
 Name requirements still apply: `^sso$` does not match an empty name; `^$` does.
 The requesting name is not the verified

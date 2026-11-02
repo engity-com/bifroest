@@ -102,6 +102,39 @@ func selectionTestFlow(name configuration.FlowName) configuration.Flow {
 	return configuration.Flow{Name: name, Authorization: configuration.Authorization{V: &configuration.AuthorizationNone{}}}
 }
 
+func TestHttpNamedAndNamelessAdaptersDoNotInterceptEachOther(t *testing.T) {
+	no := false
+	for _, method := range facadeSelectionMethods {
+		t.Run(method.name, func(t *testing.T) {
+			named := selectionTestFlow("named")
+			nameless := selectionTestFlow("nameless")
+			nameless.Http.RequestUser = &no
+			for _, test := range []struct {
+				user     string
+				expected configuration.FlowName
+			}{
+				{user: "alice", expected: "named"},
+				{user: "", expected: "nameless"},
+				{user: "   "},
+			} {
+				facade, observations := newSelectionTestFacade(t, configuration.Flows{named, nameless})
+				request := facadeHttpRequest{newFacadeSelectionRequest(t, test.user), connection.Selection{Transport: connection.TransportHttp, Host: "app.example", Slug: "Work"}}
+				auth, err := method.authorize(facade, request)
+				require.NoError(t, err)
+				if test.expected == "" {
+					require.False(t, auth.IsAuthorized())
+					require.Empty(t, *observations)
+				} else {
+					require.True(t, auth.IsAuthorized())
+					require.Equal(t, test.expected, auth.Flow())
+					require.Len(t, *observations, 1)
+					require.Equal(t, test.expected, (*observations)[0].Flow)
+				}
+			}
+		})
+	}
+}
+
 func TestFacadeChecksTransportAndNameRulesBeforeEveryAuthenticationMethod(t *testing.T) {
 	no := false
 	for _, test := range []struct {
@@ -116,7 +149,7 @@ func TestFacadeChecksTransportAndNameRulesBeforeEveryAuthenticationMethod(t *tes
 		{name: "SSH disabled", configure: func(f *configuration.Flow) { f.Ssh.Enabled = &no }},
 		{name: "HTTP disabled leaves SSH enabled", configure: func(f *configuration.Flow) { f.Http.Enabled = &no }, accepted: true},
 		{name: "HTTP disabled", transport: connection.TransportHttp, configure: func(f *configuration.Flow) { f.Http.Enabled = &no }},
-		{name: "SSH disabled leaves HTTP enabled", transport: connection.TransportHttp, configure: func(f *configuration.Flow) { f.Ssh.Enabled = &no }, accepted: true},
+		{name: "SSH disabled leaves HTTP enabled", transport: connection.TransportHttp, user: "alice", configure: func(f *configuration.Flow) { f.Ssh.Enabled = &no }, accepted: true},
 		{name: "empty HTTP user without prompt", transport: connection.TransportHttp, configure: func(f *configuration.Flow) { f.Http.RequestUser = &no }, accepted: true},
 		{name: "no hidden HTTP user", transport: connection.TransportHttp, user: "alice", configure: func(f *configuration.Flow) { f.Http.RequestUser = &no }},
 		{name: "empty user still checked", transport: connection.TransportHttp, configure: func(f *configuration.Flow) {

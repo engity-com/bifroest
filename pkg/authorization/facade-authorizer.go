@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 
@@ -191,21 +192,31 @@ func (this *AuthorizerFacade) candidatesFor(req Request) (connection.Selection, 
 	if err != nil {
 		return connection.Selection{}, nil, err
 	}
+	candidates, err := this.candidatesForSelection(selection)
+	if err != nil {
+		return connection.Selection{}, nil, err
+	}
+	return selection, candidates, nil
+}
+
+// selection must already be canonical. Discovery and authentication share this
+// pinning boundary; neither may fall through from a published HTTP flow.
+func (this *AuthorizerFacade) candidatesForSelection(selection connection.Selection) ([]facaded, error) {
 	if selection.Transport == connection.TransportHttp {
 		flow, fixed, err := this.flows.ResolveHttpSlug(selection.Host, selection.Slug)
 		if err != nil {
-			return connection.Selection{}, nil, err
+			return nil, err
 		}
 		if fixed {
 			for index := range this.entries {
 				if this.entries[index].flow == flow {
-					return selection, this.entries[index : index+1], nil
+					return this.entries[index : index+1], nil
 				}
 			}
-			return connection.Selection{}, nil, errors.System.Newf("published HTTP flow has no authorizer")
+			return nil, errors.System.Newf("published HTTP flow has no authorizer")
 		}
 	}
-	return selection, this.entries, nil
+	return this.entries, nil
 }
 
 func validateFlowAuthorizationResponse(flow configuration.FlowName, auth Authorization, err error) (Authorization, error) {
@@ -275,10 +286,11 @@ func (this *AuthorizerFacade) Close() (rErr error) {
 type facaded struct {
 	CloseableAuthorizer
 
-	flow        configuration.FlowName
-	requirement *configuration.Requirement
-	ssh         configuration.FlowSsh
-	http        configuration.FlowHttp
+	flow               configuration.FlowName
+	requirement        *configuration.Requirement
+	ssh                configuration.FlowSsh
+	http               configuration.FlowHttp
+	capabilityProvider AuthenticationCapabilityProvider
 }
 
 func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow) error {
@@ -295,7 +307,16 @@ func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow) erro
 	if err, ok := rets[1].Interface().(error); ok && err != nil {
 		return fail(err)
 	}
-	this.CloseableAuthorizer = rets[0].Interface().(CloseableAuthorizer)
+	authorizer, ok := rets[0].Interface().(DiscoveryAuthorizer)
+	if !ok {
+		return fail(errors.Config.Newf("authorizer does not provide authentication capabilities"))
+	}
+	value := reflect.ValueOf(authorizer)
+	if (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) && value.IsNil() {
+		return fail(errors.Config.Newf("authorizer factory returned nil"))
+	}
+	this.CloseableAuthorizer = authorizer
+	this.capabilityProvider = authorizer
 	this.requirement = &flow.Requirement
 	this.flow = flow.Name
 	this.ssh = flow.Ssh
@@ -312,7 +333,9 @@ func (this *facaded) canHandle(req Request, selection connection.Selection) (boo
 		if !this.http.IsEnabled() {
 			return false, nil
 		}
-		if !this.http.RequestUserEnabled() && name != "" {
+		// Keep the adapter's named/nameless modes distinct. A nameless device
+		// login must not enter an earlier named flow and receive its prompts.
+		if this.http.RequestUserEnabled() && strings.TrimSpace(name) == "" || !this.http.RequestUserEnabled() && name != "" {
 			return false, nil
 		}
 		return this.requirement.MatchesHttp(name, selection.Host, selection.Slug), nil
@@ -325,9 +348,9 @@ var (
 	configurationTypeToAuthorizerFactory = make(map[reflect.Type]any)
 )
 
-type AuthorizerFactory[C any, A CloseableAuthorizer] func(ctx context.Context, flow configuration.FlowName, conf C) (A, error)
+type AuthorizerFactory[C any, A DiscoveryAuthorizer] func(ctx context.Context, flow configuration.FlowName, conf C) (A, error)
 
-func RegisterAuthorizer[C any, A CloseableAuthorizer](factory AuthorizerFactory[C, A]) AuthorizerFactory[C, A] {
+func RegisterAuthorizer[C any, A DiscoveryAuthorizer](factory AuthorizerFactory[C, A]) AuthorizerFactory[C, A] {
 	ct := reflect.TypeFor[C]()
 	configurationTypeToAuthorizerFactory[ct] = factory
 	return factory

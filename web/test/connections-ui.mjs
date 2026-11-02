@@ -14,7 +14,13 @@ import {
 } from './workspace-ui.mjs';
 
 export async function exerciseConnections(page, login) {
-  const documentURL = page.url();
+  const documentOrigin = new URL(page.url()).origin;
+  let documentReloads = 0;
+  page.on('request', (request) => {
+    if (request.resourceType() === 'document') {
+      documentReloads++;
+    }
+  });
   const requests = [];
   let sockets = 0;
   page.on('websocket', () => sockets++);
@@ -46,7 +52,7 @@ export async function exerciseConnections(page, login) {
   async function newConnection(slug) {
     await page.getByRole('button', { name: 'New connection', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
-    await dialog.getByLabel('Access link / flow', { exact: true }).click();
+    await dialog.getByLabel('Slug', { exact: true }).click();
     const metadata = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === `/${slug}` &&
@@ -60,7 +66,12 @@ export async function exerciseConnections(page, login) {
       (slug) => document.querySelector('.login-dialog [role="combobox"]')?.textContent === slug,
       slug,
     );
-    assert.equal(page.url(), documentURL, 'selecting a flow must not navigate/reload the document');
+    assert.equal(
+      page.url(),
+      `${documentOrigin}/${slug}`,
+      'the selected Slug must be reflected in the URL',
+    );
+    assert.equal(documentReloads, 0, 'Slug routing must preserve the live document');
   }
   await login(page, false);
   await active('EXECUTION_START:1');
@@ -191,7 +202,8 @@ export async function exerciseConnections(page, login) {
   await logoutAccess(page);
   await page.locator('[data-connection-active="true"]').waitFor({ state: 'detached' });
   assert.equal(await page.getByRole('tab').count(), 0);
-  assert.equal(page.url(), documentURL);
+  assert.equal(new URL(page.url()).origin, documentOrigin);
+  assert.equal(documentReloads, 0);
   assert.equal(sockets, 5);
   assert.deepEqual(
     requests.filter((r) => r.user === 'bob' && r.method === 'interactive'),

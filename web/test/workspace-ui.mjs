@@ -304,11 +304,13 @@ export async function captureLayout(page, name) {
   }
 }
 
-export async function loginLayout(page) {
+export async function loginLayout(page, methods) {
+  assert(methods.length > 0, 'layout checks require the configured method set');
+  assert.equal(await page.getByRole('radio').count(), methods.length);
   const viewport = page.viewportSize();
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    for (const name of ['Password login', 'Interactive / device login', 'SSH key login']) {
+    for (const name of methods) {
       const label = await page
         .getByRole('radio', { name, exact: true })
         .locator('..')
@@ -320,17 +322,20 @@ export async function loginLayout(page) {
     }
     await captureLayout(page, `login-${width}`);
   }
-  const keyMethod = page.getByRole('radio', { name: 'SSH key login', exact: true });
-  await chooseLoginMethod(page, 'SSH key login');
-  await page.getByLabel('Private key file (local only)', { exact: true }).waitFor();
-  await captureLayout(page, 'login-key-320');
-  await keyMethod.press('ArrowLeft');
+  const keyboardMethod = methods.includes('SSH key login') ? 'SSH key login' : methods.at(-1);
+  await chooseLoginMethod(page, keyboardMethod);
+  if (keyboardMethod === 'SSH key login') {
+    await page.getByLabel('Private key file (local only)', { exact: true }).waitFor();
+    await captureLayout(page, 'login-key-320');
+  }
+  const previous = methods[(methods.indexOf(keyboardMethod) + methods.length - 1) % methods.length];
+  await page.getByRole('radio', { name: keyboardMethod, exact: true }).press('ArrowLeft');
   assert.equal(
-    await page.getByRole('radio', { name: 'Interactive / device login', exact: true }).isChecked(),
+    await page.getByRole('radio', { name: previous, exact: true }).isChecked(),
     true,
     'login methods must also be reachable with the keyboard',
   );
-  await chooseLoginMethod(page, 'Password login');
+  await chooseLoginMethod(page, methods[0]);
   await page.setViewportSize(viewport);
 }
 

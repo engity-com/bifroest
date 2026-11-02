@@ -1,10 +1,26 @@
 import type { Scope } from '../remember';
 import { RememberMeError, validateScope } from '../remember/protocol';
 
+export type LoginMethod = 'password' | 'keyboard-interactive' | 'public-key' | 'none';
+
+export interface LoginOption {
+  readonly method: LoginMethod;
+  readonly requestUser: boolean;
+  readonly certificateRequired: boolean;
+}
+
 export interface LinkMetadata {
   readonly scope: Scope;
-  readonly requestUser: boolean;
+  readonly loginOptions: readonly LoginOption[];
   readonly publishedSlugs: readonly string[];
+}
+
+export function loginOptionKey(option: LoginOption): string {
+  return `${option.method}:${option.requestUser ? 'named' : 'nameless'}`;
+}
+
+export function loginOptionFor(metadata: LinkMetadata, key: string): LoginOption | null {
+  return metadata.loginOptions.find((option) => loginOptionKey(option) === key) ?? null;
 }
 
 // Discovery is not authorization. Each new link gets its own bounded metadata
@@ -99,10 +115,40 @@ export function parseLinkMetadata(value: unknown, scope: Scope): LinkMetadata {
     typeof selected !== 'object' ||
     selected.origin !== scope.origin ||
     selected.slug !== scope.slug ||
-    typeof body.requestUser !== 'boolean'
+    !Array.isArray(body.loginOptions) ||
+    body.loginOptions.length > 8
   ) {
     throw new RememberMeError('unavailable');
   }
+  const optionKeys = new Set<string>();
+  const options = body.loginOptions.map((value: unknown): LoginOption => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new RememberMeError('unavailable');
+    }
+    const option = value as Record<string, unknown>;
+    if (
+      Object.keys(option).sort().join(',') !== 'certificateRequired,method,requestUser' ||
+      !['password', 'keyboard-interactive', 'public-key', 'none'].includes(
+        option.method as string,
+      ) ||
+      typeof option.requestUser !== 'boolean' ||
+      typeof option.certificateRequired !== 'boolean' ||
+      (option.method !== 'public-key' && option.certificateRequired)
+    ) {
+      throw new RememberMeError('unavailable');
+    }
+    const decoded = Object.freeze({
+      method: option.method as LoginMethod,
+      requestUser: option.requestUser,
+      certificateRequired: option.certificateRequired,
+    });
+    const key = loginOptionKey(decoded);
+    if (optionKeys.has(key)) {
+      throw new RememberMeError('unavailable');
+    }
+    optionKeys.add(key);
+    return decoded;
+  });
   const links = body.publishedSlugs === undefined ? [] : body.publishedSlugs;
   if (
     !Array.isArray(links) ||
@@ -116,7 +162,7 @@ export function parseLinkMetadata(value: unknown, scope: Scope): LinkMetadata {
   }
   return Object.freeze({
     scope: Object.freeze({ ...scope }),
-    requestUser: body.requestUser,
+    loginOptions: Object.freeze(options),
     publishedSlugs: Object.freeze([...links]),
   });
 }

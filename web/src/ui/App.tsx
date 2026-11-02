@@ -5,7 +5,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import PaletteIcon from '@mui/icons-material/Palette';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { keyLoginDiagnostic, keyLoginError, publicRememberErrorCode } from '../login/diagnostic';
 import { verificationLink } from '../login/links';
 import type { AccessSnapshot, LoginStep, LogoutResult, WebAccess } from '../remember';
@@ -13,7 +13,13 @@ import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
 import type { AuthenticationView } from '../terminal/AuthenticationTerminal';
 import { maximumTabs, TerminalWorkspace } from '../terminal/TerminalWorkspace';
 import { reportUiError } from './error-report';
-import { type LinkMetadata, loadLinkMetadata } from './link-metadata';
+import {
+  type LinkMetadata,
+  type LoginMethod,
+  loadLinkMetadata,
+  loginOptionFor,
+  loginOptionKey,
+} from './link-metadata';
 import {
   ActionIcon,
   Alert,
@@ -34,12 +40,20 @@ import {
 import type { Message } from './messages';
 import { t } from './messages';
 import { preferredUsername, saveSuccessfulUsername } from './preferences';
+import { useSlugRoute } from './slug-router';
 
 type Saved = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
 type Notice = {
   key: Message;
   color: 'red' | 'yellow' | 'green';
   context?: AccessSnapshot;
+};
+
+const loginMethodMessages: Record<LoginMethod, { label: Message; description: Message }> = {
+  password: { label: 'loginPasswordTab', description: 'passwordMethod' },
+  'keyboard-interactive': { label: 'loginInteractiveTab', description: 'interactiveMethod' },
+  'public-key': { label: 'loginKeyTab', description: 'keyMethod' },
+  none: { label: 'loginNoneTab', description: 'noneMethod' },
 };
 
 function errorNotice(error: unknown): Notice {
@@ -93,7 +107,7 @@ export function App({
   const link = useRef(metadata);
   const [loginMetadata, setLoginMetadata] = useState(metadata);
   const [loginUser, setLoginUser] = useState(() =>
-    metadata.requestUser ? preferredUsername(metadata.scope) : '',
+    metadata.loginOptions[0]?.requestUser ? preferredUsername(metadata.scope) : '',
   );
   const access = useRef<WebAccess | null>(null);
   // An independently confirmed primary may still be enrolling RememberMe. Keep
@@ -103,10 +117,15 @@ export function App({
   const savedHandle = useRef<BrowserBinding | null>(null);
   const confirmationHandle = useRef<BrowserBinding | null>(null);
   const operation = useRef<AbortController | null>(null);
+  const routeOperation = useRef<AbortController | null>(null);
+  const seenRoute = useRef<{ key: string; revision: number } | null>(null);
   const generation = useRef(0);
   const [snapshot, setSnapshot] = useState<AccessSnapshot | null>(null);
   const [saved, setSaved] = useState<Saved>('loading');
   const [busy, setBusy] = useState(false);
+  const [routing, setRouting] = useState(false);
+  const [routeFailed, setRouteFailed] = useState(false);
+  const [routeRevision, setRouteRevision] = useState(0);
   const [closing, setClosing] = useState(false);
   const [managementLocked, setManagementLocked] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -121,7 +140,38 @@ export function App({
   const [retiredAccess, setRetiredAccess] = useState<WebAccess | null>(null);
   const [tabCount, setTabCount] = useState(0);
   const [rememberUncertain, setRememberUncertain] = useState(false);
-  const [loginMethod, setLoginMethod] = useState('password');
+  const [loginChoice, setLoginChoice] = useState(() =>
+    metadata.loginOptions[0] ? loginOptionKey(metadata.loginOptions[0]) : '',
+  );
+  const selectedLoginOption = loginOptionFor(loginMetadata, loginChoice);
+  const loginMethod = selectedLoginOption?.method ?? null;
+  const loginChoices = loginMetadata.loginOptions.map((option) => {
+    const messages = loginMethodMessages[option.method];
+    const multipleNameModes = loginMetadata.loginOptions.some(
+      (other) => other.method === option.method && other.requestUser !== option.requestUser,
+    );
+    const nameMode = multipleNameModes
+      ? ` · ${t(option.requestUser ? 'loginWithUserName' : 'loginWithoutUserName')}`
+      : '';
+    return {
+      value: loginOptionKey(option),
+      label: (
+        <>
+          <span aria-hidden="true">
+            {t(messages.label)}
+            {nameMode}
+          </span>
+          <VisuallyHidden>
+            {t(messages.description)}
+            {nameMode}
+          </VisuallyHidden>
+        </>
+      ),
+    };
+  });
+  const useLoginSelect =
+    loginChoices.length > 3 ||
+    new Set(loginMetadata.loginOptions.map((option) => option.method)).size !== loginChoices.length;
   const [loginStep, setLoginStep] = useState<LoginStep | null>(null);
   const [providerInformation, setProviderInformation] = useState<LoginStep | null>(null);
   const [loginPending, setLoginPending] = useState<'authentication' | 'remember' | null>(null);
@@ -135,6 +185,33 @@ export function App({
     generation: number;
     answer: (value: string) => void;
   } | null>(null);
+
+  const routeBlocked = useCallback(() => {
+    setNotice((current) =>
+      current &&
+      (rememberUncertain ||
+        closing ||
+        ['unknown', 'logoutUnknown', 'localCleanupFailed', 'logoutPending'].includes(current.key))
+        ? current
+        : { key: 'slugNavigationBlocked', color: 'yellow' },
+    );
+    setNoticeOpen(true);
+  }, [closing, rememberUncertain]);
+  const slugRoute = useSlugRoute(
+    busy || closing || managementLocked || rememberUncertain || confirm !== null,
+    routeBlocked,
+  );
+  const routeOrigin = slugRoute.scope?.origin ?? null;
+  const routeSlug = slugRoute.scope?.slug ?? null;
+  const metadataReady =
+    !routing &&
+    !routeFailed &&
+    routeOrigin === loginMetadata.scope.origin &&
+    routeSlug === loginMetadata.scope.slug;
+  const activeUsesLoginScope =
+    snapshot !== null &&
+    snapshot.scope.origin === loginMetadata.scope.origin &&
+    snapshot.scope.slug === loginMetadata.scope.slug;
 
   const readSaved = useCallback(async (current = generation.current) => {
     const scope = link.current.scope;
@@ -153,11 +230,93 @@ export function App({
       }
     }
   }, []);
+
+  useLayoutEffect(() => {
+    if (seenRoute.current?.key === slugRoute.key && seenRoute.current.revision === routeRevision) {
+      return;
+    }
+    const initial = seenRoute.current === null;
+    const retry = seenRoute.current !== null && seenRoute.current.revision !== routeRevision;
+    seenRoute.current = { key: slugRoute.key, revision: routeRevision };
+    // Active/uncertain operations are blocked by the router. A stopped local
+    // authentication console has no operation left to cancel and must not keep
+    // the new route behind an old generation's unresponsive close callback.
+    if (operation.current === null) {
+      setTerminalLogin(null);
+      setLoginStep(null);
+      pendingResponse.current = null;
+    }
+    routeOperation.current?.abort();
+    routeOperation.current = null;
+    if (
+      !retry &&
+      routeOrigin === link.current.scope.origin &&
+      routeSlug === link.current.scope.slug
+    ) {
+      setRouting(false);
+      setRouteFailed(false);
+      if (!initial) {
+        setLoginOpen(true);
+        setPasswordKey((value) => value + 1);
+        setOptIn(false);
+        void readSaved();
+      }
+      return;
+    }
+    const current = ++generation.current;
+    setLoginOpen(true);
+    setPasswordKey((value) => value + 1);
+    setOptIn(false);
+    setProviderInformation(null);
+    setNotice(null);
+    savedHandle.current = null;
+    setSaved('loading');
+    if (routeOrigin === null || routeSlug === null) {
+      setRouting(false);
+      setRouteFailed(true);
+      reportUiError('application', new RememberMeError('unavailable'));
+      return;
+    }
+    const controller = new AbortController();
+    routeOperation.current = controller;
+    setRouting(true);
+    setRouteFailed(false);
+    void loadLinkMetadata({ origin: routeOrigin, slug: routeSlug }, controller.signal)
+      .then((next) => {
+        if (current !== generation.current || controller.signal.aborted) {
+          return;
+        }
+        link.current = next;
+        client.current = new BrowserClient(next.scope);
+        setLoginMetadata(next);
+        const option = next.loginOptions[0] ?? null;
+        setLoginChoice(option ? loginOptionKey(option) : '');
+        setLoginUser(option?.requestUser ? preferredUsername(next.scope) : '');
+        void readSaved(current);
+      })
+      .catch((error) => {
+        if (current !== generation.current || controller.signal.aborted) {
+          return;
+        }
+        setRouteFailed(true);
+        reportUiError('application', error);
+      })
+      .finally(() => {
+        if (current === generation.current && routeOperation.current === controller) {
+          routeOperation.current = null;
+          setRouting(false);
+        }
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [slugRoute.key, routeOrigin, routeSlug, routeRevision, readSaved]);
   useEffect(() => {
     void readSaved();
     return () => {
       generation.current++;
       operation.current?.abort();
+      routeOperation.current?.abort();
     };
   }, [readSaved]);
 
@@ -179,40 +338,50 @@ export function App({
   const linkChoices = [
     ...new Set([
       metadata.scope.slug,
+      ...(metadata.publishedSlugs.length > 0 || loginMetadata.publishedSlugs.length > 0
+        ? ['']
+        : []),
       ...metadata.publishedSlugs,
       loginMetadata.scope.slug,
       ...loginMetadata.publishedSlugs,
+      ...(routeSlug === null ? [] : [routeSlug]),
       ...(snapshot ? [snapshot.scope.slug] : []),
     ]),
   ];
+
+  function selectLoginOption(choice: string) {
+    const option = loginOptionFor(link.current, choice);
+    if (busy || managementLocked || option === null) {
+      return;
+    }
+    if (option.requestUser && !selectedLoginOption?.requestUser) {
+      setLoginUser(preferredUsername(link.current.scope));
+    }
+    setLoginChoice(choice);
+    setPasswordKey((value) => value + 1);
+    setProviderInformation(null);
+  }
 
   async function chooseLink(slug: string) {
     if (closing || busy || rememberUncertain || managementLocked || !linkChoices.includes(slug)) {
       return;
     }
-    if (slug === link.current.scope.slug) {
+    if (slug === routeSlug) {
       void readSaved();
       return;
     }
-    await run(async (signal, current) => {
-      const next = await loadLinkMetadata({ origin: metadata.scope.origin, slug }, signal);
-      if (current !== generation.current) {
-        return;
-      }
-      link.current = next;
-      client.current = new BrowserClient(next.scope);
-      setLoginMetadata(next);
-      setLoginUser(next.requestUser ? preferredUsername(next.scope) : '');
-      setProviderInformation(null);
-      setPasswordKey((value) => value + 1);
-      setOptIn(false);
-      savedHandle.current = null;
-      setSaved('loading');
-    });
+    await slugRoute.navigate(slug);
   }
 
   async function run(action: (signal: AbortSignal, current: number) => Promise<void>) {
-    if (operation.current !== null || managementLocked || rememberUncertain || closing) {
+    if (
+      operation.current !== null ||
+      routeOperation.current !== null ||
+      !metadataReady ||
+      managementLocked ||
+      rememberUncertain ||
+      closing
+    ) {
       return;
     }
     const controller = new AbortController();
@@ -308,11 +477,19 @@ export function App({
   }
 
   async function login(form: HTMLFormElement) {
+    if (!metadataReady) {
+      return;
+    }
     const password = form.elements.namedItem('password') as HTMLInputElement | null;
     const selectedLink = link.current;
+    const option = loginOptionFor(selectedLink, loginChoice);
+    if (option === null) {
+      setNotice({ key: 'noLoginMethods', color: 'yellow' });
+      return;
+    }
     const userInput = form.elements.namedItem('user') as HTMLInputElement | null;
-    const user = selectedLink.requestUser ? (userInput?.value ?? '') : '';
-    if (selectedLink.requestUser && user.trim().length === 0) {
+    const user = option.requestUser ? (userInput?.value ?? '') : '';
+    if (option.requestUser && user.trim().length === 0) {
       setNotice({ key: 'userRequired', color: 'yellow' });
       reportUiError('application', undefined, 'user-required');
       userInput?.reportValidity();
@@ -344,12 +521,12 @@ export function App({
     const remember = optIn;
     await run(async (signal, current) => {
       setLoginPending('authentication');
-      if (loginMethod === 'interactive') {
+      if (option.method === 'keyboard-interactive') {
         setTerminalLogin({ id: current, scope: selectedScope, user });
         setLoginOpen(false);
       }
       let result: WebAccess;
-      if (loginMethod === 'key') {
+      if (option.method === 'public-key') {
         if (privateFile === null) {
           throw new RememberMeError('key-import');
         }
@@ -382,14 +559,16 @@ export function App({
         }
       } else {
         result =
-          loginMethod === 'interactive'
+          option.method === 'keyboard-interactive'
             ? await selectedClient.interactive(user, requestStep, signal)
-            : await selectedClient.password(user, secret, signal);
+            : // None uses the existing no-secret login adapter, not an automatic
+              // login or a grant created by discovery. The server still authorizes.
+              await selectedClient.password(user, option.method === 'none' ? '' : secret, signal);
       }
       if (current !== generation.current) {
         return;
       }
-      if (selectedLink.requestUser) {
+      if (option.requestUser) {
         saveSuccessfulUsername(selectedScope, user);
       }
       access.current = result;
@@ -458,7 +637,7 @@ export function App({
   }
 
   async function logout(selected = access.current) {
-    if (managementLocked) {
+    if (managementLocked || routeOperation.current !== null) {
       return;
     }
     if (selected === null) {
@@ -545,11 +724,18 @@ export function App({
     setOptIn(false);
     setProviderInformation(null);
     setNotice(null);
-    if (scope && scope.origin === metadata.scope.origin && scope.slug !== link.current.scope.slug) {
+    if (scope && scope.origin === metadata.scope.origin && scope.slug !== routeSlug) {
       void chooseLink(scope.slug);
       return;
     }
-    setLoginUser(link.current.requestUser ? preferredUsername(link.current.scope) : '');
+    if (routing) {
+      return;
+    }
+    setLoginUser(
+      loginOptionFor(link.current, loginChoice)?.requestUser
+        ? preferredUsername(link.current.scope)
+        : '',
+    );
     void readSaved();
   }
   function closeLogin() {
@@ -600,7 +786,7 @@ export function App({
         authorizationEvent={authorizationEvent}
         retiredAccess={retiredAccess}
         unavailableAccess={closing || rememberUncertain ? access.current : null}
-        blocked={closing || busy || rememberUncertain || managementLocked}
+        blocked={closing || busy || routing || rememberUncertain || managementLocked}
         focusBlocked={
           loginOpen ||
           (loginStep !== null && terminalLogin === null) ||
@@ -682,11 +868,15 @@ export function App({
             <NoticeBody notice={notice} />
           </Alert>
         )}
-        <Stack gap="sm">
+        <Stack
+          gap="sm"
+          data-login-scope={loginMetadata.scope.slug}
+          data-login-ready={metadataReady}
+        >
           {linkChoices.length > 1 ? (
             <Select
               label={t('connectionLink')}
-              value={loginMetadata.scope.slug}
+              value={routeSlug ?? loginMetadata.scope.slug}
               data={linkChoices.map((slug) => ({ value: slug, label: slug || '/' }))}
               disabled={busy}
               allowDeselect={false}
@@ -697,13 +887,16 @@ export function App({
               }}
             />
           ) : (
-            loginMetadata.scope.slug && (
+            routeSlug && (
               <Text size="sm" c="dimmed">
-                {loginMetadata.scope.slug}
+                {routeSlug}
               </Text>
             )
           )}
-          {saved === 'ready' && (
+          <Text size="xs" c="dimmed">
+            {t('slugRouteHint')}
+          </Text>
+          {metadataReady && saved === 'ready' && (
             <Group justify="space-between" gap="xs">
               <Button
                 variant="light"
@@ -715,7 +908,7 @@ export function App({
               >
                 {t('useSaved')}
               </Button>
-              {snapshot === null && (
+              {!activeUsesLoginScope && (
                 <Menu>
                   <Menu.Target>
                     <ActionIcon
@@ -746,142 +939,163 @@ export function App({
               )}
             </Group>
           )}
-          {saved === 'pending' && (
+          {metadataReady && saved === 'pending' && (
             <Alert color="yellow">
               <p>{t('pending')}</p>
-              {snapshot === null && (
+              {!activeUsesLoginScope && (
                 <Button variant="outline" disabled={busy} onClick={() => showConfirmation('local')}>
                   {t('removeLocal')}
                 </Button>
               )}
             </Alert>
           )}
-          {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
-          <form
-            key={loginMetadata.scope.slug}
-            method={loginMethod === 'key' ? 'dialog' : 'post'}
-            action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
-            className="login-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void login(event.currentTarget);
-            }}
-          >
-            <SegmentedControl
-              aria-label={t('loginMethod')}
-              value={loginMethod}
-              onChange={setLoginMethod}
-              disabled={busy}
-              fullWidth
-              data={[
-                {
-                  value: 'password',
-                  label: (
-                    <>
-                      <span aria-hidden="true">{t('loginPasswordTab')}</span>
-                      <VisuallyHidden>{t('passwordMethod')}</VisuallyHidden>
-                    </>
-                  ),
-                },
-                {
-                  value: 'interactive',
-                  label: (
-                    <>
-                      <span aria-hidden="true">{t('loginInteractiveTab')}</span>
-                      <VisuallyHidden>{t('interactiveMethod')}</VisuallyHidden>
-                    </>
-                  ),
-                },
-                {
-                  value: 'key',
-                  label: (
-                    <>
-                      <span aria-hidden="true">{t('loginKeyTab')}</span>
-                      <VisuallyHidden>{t('keyMethod')}</VisuallyHidden>
-                    </>
-                  ),
-                },
-              ]}
-            />
-            {loginMetadata.requestUser && (
-              <TextInput
-                name="user"
-                label={t('user')}
-                aria-label={t('user')}
-                required
-                pattern={'.*\\S.*'}
-                maxLength={256}
-                value={loginUser}
-                onChange={(event) => setLoginUser(event.currentTarget.value)}
-                autoComplete="username"
-                data-autofocus
-                disabled={busy}
-              />
-            )}
-            {loginMethod === 'password' && (
-              <PasswordInput
-                key={passwordKey}
-                name="password"
-                label={t('password')}
-                autoComplete="current-password"
-                visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
-                disabled={busy}
-              />
-            )}
-            {loginMethod === 'key' && (
-              <>
-                <Text size="xs" c="dimmed">
-                  {t('keyLocalHint')}
-                </Text>
-                <label className="stack" htmlFor="key-private">
-                  {t('keyPrivateFile')}
-                  <input
-                    key={`private:${passwordKey}`}
-                    id="key-private"
-                    type="file"
-                    required
-                    disabled={busy}
-                  />
-                </label>
+          {metadataReady && saved === 'unavailable' && (
+            <Alert color="yellow">{t('storageUnavailable')}</Alert>
+          )}
+          {!metadataReady ? (
+            <Alert color={routeFailed || routeOrigin === null ? 'red' : 'blue'}>
+              <p>{t(routeFailed || routeOrigin === null ? 'slugLoadFailed' : 'loadingSlug')}</p>
+              {routeFailed && routeOrigin !== null && (
+                <Button
+                  variant="default"
+                  disabled={busy || managementLocked || rememberUncertain}
+                  onClick={() => setRouteRevision((value) => value + 1)}
+                >
+                  {t('retrySlug')}
+                </Button>
+              )}
+            </Alert>
+          ) : selectedLoginOption === null ? (
+            <Alert color="blue">
+              {t(
+                loginMetadata.scope.slug === '' && loginMetadata.publishedSlugs.length > 0
+                  ? 'chooseSlug'
+                  : 'noLoginMethods',
+              )}
+            </Alert>
+          ) : (
+            <form
+              key={`${loginMetadata.scope.slug}:${loginChoice}`}
+              method={loginMethod === 'public-key' || loginMethod === 'none' ? 'dialog' : 'post'}
+              action={
+                loginMethod === 'public-key' || loginMethod === 'none'
+                  ? undefined
+                  : '/_bifroest/api/v1/login/password'
+              }
+              className="login-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void login(event.currentTarget);
+              }}
+            >
+              {useLoginSelect ? (
+                <Select
+                  label={t('loginMethod')}
+                  value={loginChoice}
+                  disabled={busy}
+                  allowDeselect={false}
+                  data={loginChoices}
+                  onChange={(choice) => {
+                    if (choice !== null) {
+                      selectLoginOption(choice);
+                    }
+                  }}
+                />
+              ) : (
+                <SegmentedControl
+                  aria-label={t('loginMethod')}
+                  value={loginChoice}
+                  onChange={selectLoginOption}
+                  disabled={busy}
+                  fullWidth
+                  data={loginChoices}
+                />
+              )}
+              {selectedLoginOption.requestUser && (
+                <TextInput
+                  name="user"
+                  label={t('user')}
+                  aria-label={t('user')}
+                  required
+                  pattern={'.*\\S.*'}
+                  maxLength={256}
+                  value={loginUser}
+                  onChange={(event) => setLoginUser(event.currentTarget.value)}
+                  autoComplete="username"
+                  data-autofocus
+                  disabled={busy}
+                />
+              )}
+              {loginMethod === 'password' && (
                 <PasswordInput
-                  key={`passphrase:${passwordKey}`}
-                  id="key-passphrase"
-                  label={t('keyPassphrase')}
-                  autoComplete="off"
+                  key={passwordKey}
+                  name="password"
+                  label={t('password')}
+                  autoComplete="current-password"
                   visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
                   disabled={busy}
                 />
-                <label className="stack" htmlFor="key-certificate">
-                  {t('keyCertificateFile')}
-                  <input
-                    key={`certificate:${passwordKey}`}
-                    id="key-certificate"
-                    type="file"
+              )}
+              {loginMethod === 'public-key' && (
+                <>
+                  <Text size="xs" c="dimmed">
+                    {t('keyLocalHint')}
+                  </Text>
+                  <label className="stack" htmlFor="key-private">
+                    {t('keyPrivateFile')}
+                    <input
+                      key={`private:${passwordKey}`}
+                      id="key-private"
+                      type="file"
+                      required
+                      disabled={busy}
+                    />
+                  </label>
+                  <PasswordInput
+                    key={`passphrase:${passwordKey}`}
+                    id="key-passphrase"
+                    label={t('keyPassphrase')}
+                    autoComplete="off"
+                    visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
                     disabled={busy}
                   />
-                </label>
-              </>
-            )}
-            {saved === 'missing' && (
-              <Checkbox
-                checked={optIn}
-                onChange={(event) => setOptIn(event.currentTarget.checked)}
-                disabled={busy || saved !== 'missing'}
-                label={t('remember')}
-                size="sm"
-              />
-            )}
-            <Group justify="flex-end" gap="xs">
-              <Button type="submit" loading={busy} disabled={busy || managementLocked}>
-                {t('login')}
-              </Button>
-              {busy && (
-                <Button type="button" variant="default" onClick={cancel}>
-                  {t('cancel')}
-                </Button>
+                  <label className="stack" htmlFor="key-certificate">
+                    {t(
+                      selectedLoginOption.certificateRequired
+                        ? 'keyCertificateRequired'
+                        : 'keyCertificateFile',
+                    )}
+                    <input
+                      key={`certificate:${passwordKey}`}
+                      id="key-certificate"
+                      type="file"
+                      required={selectedLoginOption.certificateRequired}
+                      disabled={busy}
+                    />
+                  </label>
+                </>
               )}
-            </Group>
-          </form>
+              {saved === 'missing' && (
+                <Checkbox
+                  checked={optIn}
+                  onChange={(event) => setOptIn(event.currentTarget.checked)}
+                  disabled={busy || saved !== 'missing'}
+                  label={t('remember')}
+                  size="sm"
+                />
+              )}
+              <Group justify="flex-end" gap="xs">
+                <Button type="submit" loading={busy} disabled={busy || managementLocked}>
+                  {t(loginMethod === 'none' ? 'noneMethod' : 'login')}
+                </Button>
+                {busy && (
+                  <Button type="button" variant="default" onClick={cancel}>
+                    {t('cancel')}
+                  </Button>
+                )}
+              </Group>
+            </form>
+          )}
         </Stack>
       </Modal>
       <Modal
@@ -949,6 +1163,9 @@ export function App({
         title={t(confirm === 'local' ? 'removeTitle' : 'forgetTitle')}
         closeButtonProps={{ 'aria-label': t('close') }}
       >
+        <Text size="sm" c="dimmed">
+          {confirmationHandle.current?.scope.origin}/{confirmationHandle.current?.scope.slug}
+        </Text>
         <p>{t(confirm === 'local' ? 'removeWarning' : 'forgetWarning')}</p>
         <div className="actions">
           <Button
