@@ -11,11 +11,16 @@ import {
 
 const [origin, mode] = process.argv.slice(2);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
-assert(['catalog-clear', 'catalog-encrypted'].includes(mode));
+assert(['catalog-clear', 'catalog-encrypted', 'catalog-startup-failure'].includes(mode));
 const browser = await chromium.launch({
   headless: true,
   args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'],
 });
+const failedResources = [];
+const failedRequests = [];
+const artifactErrors = [];
+const workerAssets = [];
+let observedPage;
 try {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   await context.addCookies([
@@ -28,13 +33,58 @@ try {
     );
   });
   const page = await context.newPage();
+  observedPage = page;
   const errors = [];
   const requests = [];
   const artifactResponses = [];
-  page.on('response', (response) => {
+  page.on('console', async (message) => {
+    if (
+      message.type() !== 'error' ||
+      message.args().length !== 2 ||
+      !['[Bifröst/artifact]', '[Bifröst/artifact-catalog]'].includes(
+        message.text().split(' ', 1)[0],
+      )
+    ) {
+      return;
+    }
+    const code = await message
+      .args()[1]
+      .evaluate((error) => Object.getOwnPropertyDescriptor(error, 'code')?.value);
+    artifactErrors.push(
+      [
+        'unavailable',
+        'busy',
+        'cancelled',
+        'denied',
+        'rate-limited',
+        'input',
+        'artifact-too-large',
+      ].includes(code)
+        ? code
+        : 'unknown',
+    );
+  });
+  context.on('response', (response) => {
     const path = new URL(response.url()).pathname;
+    if (/\/(?:browser-transfer-worker\.js|browser-transfer\.wasm|go-wasm-exec\.js)$/u.test(path)) {
+      workerAssets.push({ path, status: response.status() });
+    }
     if (path.includes('/management/artifacts/')) {
       artifactResponses.push({ path, status: response.status() });
+    }
+    if (path.startsWith('/_bifroest/') && response.status() >= 400 && failedResources.length < 32) {
+      failedResources.push({ path, status: response.status(), at: Date.now() });
+    }
+  });
+  context.on('requestfailed', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (failedRequests.length < 32) {
+      const code = request.failure()?.errorText;
+      failedRequests.push({
+        path,
+        code: /^net::ERR_[A-Z_]+$/u.test(code ?? '') ? code : 'unknown',
+        at: Date.now(),
+      });
     }
   });
   page.on('pageerror', (error) => errors.push(error.message));
@@ -79,9 +129,8 @@ try {
     exact: true,
   });
   await panel.evaluate((panel) => {
+    window.catalogDownloadProbe = { submits: 0, invalid: 0 };
     const form = panel.querySelector('.artifact-selection form');
-    const button = form.querySelector('button[type="submit"]');
-    window.catalogDownloadProbe = { submits: 0, invalid: 0, disabledTransitions: [] };
     form.addEventListener(
       'submit',
       () => {
@@ -96,11 +145,6 @@ try {
       },
       true,
     );
-    new MutationObserver(() => {
-      if (window.catalogDownloadProbe.disabledTransitions.length < 24) {
-        window.catalogDownloadProbe.disabledTransitions.push(button.disabled);
-      }
-    }).observe(button, { attributes: true, attributeFilter: ['disabled'] });
   });
   assert.equal(requests.length, 0, 'login must not automatically list or download artifacts');
   await catalog.getByRole('button', { name: 'Load auditlogs', exact: true }).click();
@@ -138,7 +182,7 @@ try {
   assert.equal(await recordings.locator('tbody tr').count(), 20);
   await recordings
     .getByText(
-      mode === 'catalog-clear'
+      mode !== 'catalog-encrypted'
         ? 'Server claims full inspection; not browser verification'
         : 'Server claims outer inspection only; not browser verification',
       { exact: true },
@@ -166,9 +210,20 @@ try {
   await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
   async function waitDownload(stage) {
     try {
-      await panel
-        .getByRole('heading', { name: 'Independent verification expectations', exact: true })
-        .waitFor();
+      const heading = panel.getByRole('heading', {
+        name: 'Independent verification expectations',
+        exact: true,
+      });
+      const failed = panel
+        .getByRole('status')
+        .filter({ hasText: 'The artifact download could not be confirmed or is not permitted.' });
+      await heading.or(failed).waitFor();
+      assert.equal(
+        await failed.count(),
+        0,
+        'a download failure must be reported immediately, not hidden behind a later missing-heading timeout',
+      );
+      await heading.waitFor();
     } catch (error) {
       const state = await panel.evaluate((panel) => {
         const form = panel.querySelector('.artifact-selection form');
@@ -192,6 +247,10 @@ try {
           stage,
           requestCount: requests.filter((request) => request.path.includes('/artifacts/')).length,
           artifactResponses,
+          workerAssets,
+          artifactErrors,
+          failedResources,
+          failedRequests,
           publicState: state,
         }),
         { cause: error },
@@ -232,6 +291,43 @@ try {
     await panel.getByRole('region', { name: 'Evidence result', exact: true }).count(),
     0,
   );
+  if (mode === 'catalog-startup-failure') {
+    let blockedStarts = 0;
+    await context.route(
+      '**/_bifroest/files/browser-transfer-worker.js',
+      (route) => {
+        blockedStarts++;
+        return route.abort('connectionfailed');
+      },
+      { times: 1 },
+    );
+    await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
+    await panel
+      .getByRole('status')
+      .filter({ hasText: 'The artifact download could not be confirmed or is not permitted.' })
+      .waitFor();
+    assert.equal(blockedStarts, 1);
+    assert.equal(
+      requests.filter((request) => request.path.includes('/artifacts/')).length,
+      1,
+      'a worker startup failure must not start an artifact request or replay the previous download',
+    );
+    assert.equal(
+      await panel
+        .getByRole('heading', { name: 'Independent verification expectations', exact: true })
+        .count(),
+      0,
+    );
+    assert.equal(
+      await panel.getByRole('region', { name: 'Evidence result', exact: true }).count(),
+      0,
+    );
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+    assert.equal(blockedStarts, 1, 'there must be no automatic worker restart');
+    assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 1);
+  }
   await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
   await waitDownload('second-download');
   assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
@@ -246,7 +342,7 @@ try {
   assert.equal(
     requests.filter((request) => request.path.includes('/artifacts/')).length,
     2,
-    'only the two explicit clicks may download',
+    'only the two explicit clicks with a ready worker may download',
   );
   const recordPages = requests.filter((request) => request.path.endsWith('/recordings/list'));
   assert.equal(recordPages.length, 2);
@@ -286,6 +382,18 @@ try {
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   await assertUiPreferences(page);
   console.log(JSON.stringify({ success: true }));
+} catch (error) {
+  const publicState = await observedPage
+    ?.evaluate(() => ({
+      download: window.catalogDownloadProbe,
+      statusCount: document.querySelectorAll('[role="status"]').length,
+      recordedAt: Date.now(),
+    }))
+    .catch(() => ({ unavailable: true }));
+  throw new Error(
+    JSON.stringify({ failedResources, failedRequests, artifactErrors, workerAssets, publicState }),
+    { cause: error },
+  );
 } finally {
   await browser.close();
 }

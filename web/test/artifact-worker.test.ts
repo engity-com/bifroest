@@ -14,6 +14,7 @@ class ArtifactWorker extends EventTarget {
   static hold = false;
   static failure: 'too-large' | 'unavailable' | null = null;
   static wrongID = false;
+  static bootFailure = false;
   terminated = false;
   requests: unknown[] = [];
 
@@ -22,7 +23,11 @@ class ArtifactWorker extends EventTarget {
     expect(url).toBe('/_bifroest/files/browser-transfer-worker.js');
     expect(options).toMatchObject({ type: 'module', credentials: 'omit' });
     ArtifactWorker.instances.push(this);
-    queueMicrotask(() => this.send({ kind: 'ready' }));
+    queueMicrotask(() =>
+      this.send(
+        ArtifactWorker.bootFailure ? { kind: 'failed', reason: 'unavailable' } : { kind: 'ready' },
+      ),
+    );
   }
 
   postMessage(value: unknown, transfer: Transferable[]) {
@@ -69,6 +74,7 @@ afterEach(() => {
   ArtifactWorker.hold = false;
   ArtifactWorker.failure = null;
   ArtifactWorker.wrongID = false;
+  ArtifactWorker.bootFailure = false;
 });
 
 function install() {
@@ -76,6 +82,24 @@ function install() {
 }
 
 describe('owned artifact worker RPC lifecycle (not framing/evidence verification)', () => {
+  it('retires a failed startup without opening an artifact response or retrying the worker', async () => {
+    install();
+    ArtifactWorker.bootFailure = true;
+    const open = vi.fn(async () => ({
+      bytes: new ArrayBuffer(0),
+      mediaType: transferMediaType,
+      status: 200,
+    }));
+    await expect(
+      receiveArtifact(request, open, new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'unavailable' });
+    expect(open).not.toHaveBeenCalled();
+    expect(ArtifactWorker.instances).toHaveLength(1);
+    const worker = required(ArtifactWorker.instances[0]);
+    expect(worker.terminated).toBe(true);
+    expect(worker.requests).toHaveLength(0);
+  });
+
   it('transfers the response once and releases only transport-complete unverified immutable Blobs', async () => {
     install();
     const bytes = new Uint8Array([1, 2, 3]).buffer;

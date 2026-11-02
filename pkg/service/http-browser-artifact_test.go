@@ -58,7 +58,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 		node, err = exec.LookPath("node")
 		require.NoError(t, err)
 	}
-	for _, mode := range []string{"normal", "encrypted", "ui-clear", "ui-encrypted", "catalog-clear", "catalog-encrypted", "held-success", "held-failure"} {
+	for _, mode := range []string{"normal", "encrypted", "ui-clear", "ui-encrypted", "catalog-clear", "catalog-encrypted", "catalog-startup-failure", "held-success", "held-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			var keyPath, recipient string
 			private := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))

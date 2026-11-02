@@ -205,6 +205,22 @@ Without the explicit opt-in, ordinary Go tests remain independent of Bun/browser
 installation. The owned self-signed HTTPS fixture is accepted only by that test
 browser context, without changing any OS trust store.
 
+On Linux, changes to unrelated host interfaces can abort even loopback Chromium
+requests (`ERR_NETWORK_CHANGED`, or an aborted worker script before any API
+request). Do not overlap these checks with Podman/kind network lifecycle jobs.
+For loopback-only Go/browser fixtures, an isolated network namespace avoids host
+interface churn without retries, altered deadlines or relaxed TLS/CSP checks:
+
+```sh
+unshare --user --map-current-user --keep-caps --net bash -euc '
+  ip link set lo up
+  exec setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all mise run test:go
+'
+```
+
+This preserves the current UID and drops namespace capabilities before testing.
+It changes no host interfaces or trust stores and is not for container/kind E2Es.
+
 The opt-in `TestOpenSSHKubernetesBrowserSharedWorkload` uses the existing E2E
 harness to create and remove its own kind cluster, image and scoped kubeconfig,
 not the user's current Kubernetes context. It drives real OpenSSH and the built
