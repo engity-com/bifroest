@@ -215,6 +215,7 @@ export function Select({
       size="small"
       value={value ?? ''}
       onChange={(event) => onChange(event.target.value)}
+      slotProps={{ select: { displayEmpty: true } }}
     >
       {data.map((entry) =>
         typeof entry === 'string' ? (

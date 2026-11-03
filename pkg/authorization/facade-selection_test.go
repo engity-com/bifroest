@@ -99,7 +99,9 @@ func newSelectionTestFacade(t *testing.T, flows configuration.Flows) (*Authorize
 }
 
 func selectionTestFlow(name configuration.FlowName) configuration.Flow {
-	return configuration.Flow{Name: name, Authorization: configuration.Authorization{V: &configuration.AuthorizationNone{}}}
+	// Selection tests opt into arbitrary slugs deliberately, independently of the
+	// root-only production default, so they can isolate name/transport/pinning.
+	return configuration.Flow{Name: name, Authorization: configuration.Authorization{V: &configuration.AuthorizationNone{}}, Requirement: configuration.Requirement{Http: configuration.RequirementHttp{IncludedSlug: common.MustNewRegexp(".*")}}}
 }
 
 func TestHttpNamedAndNamelessAdaptersDoNotInterceptEachOther(t *testing.T) {

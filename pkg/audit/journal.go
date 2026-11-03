@@ -33,14 +33,11 @@ var (
 	errJournalClosed     = errors.System.Newf("audit journal is closed")
 )
 
-// NewRecorder creates the configured audit recorder. Disabled audit logging
-// returns a no-op recorder without inspecting the identity or filesystem.
+// NewRecorder creates the configured audit recorder. Optional audit logging is
+// handled by the caller with NewNoopRecorder, not by a configured auditlog.
 func NewRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, error) {
 	if conf == nil {
 		return nil, errors.Config.Newf("nil auditlog configuration")
-	}
-	if !conf.Enabled {
-		return NewNoopRecorder(), nil
 	}
 	if identity == nil || identity.ProducerId().IsZero() {
 		return nil, errors.Config.Newf("nil audit identity")

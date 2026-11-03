@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -78,38 +79,59 @@ func TestFlowTransportRejectsUnknownNonBooleanAndNullFields(t *testing.T) {
 }
 
 func TestFlowTransportSupportsValidAliasesAndFlowMerges(t *testing.T) {
-	for _, source := range []string{
-		"unused: &off false\nhttp:\n  enabled: *off\n",
-		"unused: &transport {enabled: false}\nhttp: *transport\n",
-		"<<: {http: {enabled: false}}\n",
+	for _, test := range []struct {
+		source string
+		ssh    bool
+	}{
+		{"http:\n  requestUser: &off false\n  enabled: *off\n", true},
+		{"ssh: &transport {enabled: false}\nhttp: *transport\n", false},
+		{"<<: {http: {enabled: false}}\n", true},
 	} {
 		var flow Flow
-		require.NoError(t, yaml.Unmarshal([]byte(transportTestFlow+source), &flow))
+		require.NoError(t, yaml.Unmarshal([]byte(transportTestFlow+test.source), &flow))
 		require.False(t, flow.Http.IsEnabled())
-		require.True(t, flow.Ssh.IsEnabled())
+		require.Equal(t, test.ssh, flow.Ssh.IsEnabled())
 	}
 }
 
 func TestFlowDiscoverySlugValidation(t *testing.T) {
-	for _, slug := range []string{"foo", "servers/Foo9", strings.Repeat("a", 64)} {
+	for _, slug := range []string{"foo", "bla-bla", "servers/Foo9", strings.Repeat("a", 64)} {
 		var flow Flow
-		require.NoError(t, yaml.Unmarshal([]byte(transportTestFlow+"discoverAsSlug: "+slug), &flow))
+		require.NoError(t, yaml.Unmarshal([]byte(transportTestFlow+"discoverAsSlug: "+slug+"\nrequirement:\n  http:\n    includedSlug: '^"+regexp.QuoteMeta(slug)+"$'\n"), &flow))
 		require.Equal(t, slug, flow.DiscoverAsSlug)
 	}
-	for _, slug := range []string{"/foo", "foo/", "foo/bar/baz", "_bifroest", "foo-bar", strings.Repeat("a", 65)} {
+	for _, slug := range []string{"/foo", "foo/", "foo/bar/baz", "_bifroest", "foo_bar", strings.Repeat("a", 65)} {
 		var flow Flow
 		require.Error(t, yaml.Unmarshal([]byte(transportTestFlow+"discoverAsSlug: "+slug), &flow))
 	}
+}
+
+func TestPublishedSlugMustPassItsOwnSlugRequirement(t *testing.T) {
+	for _, test := range []struct{ name, rules string }{
+		{"no explicit opt-in", ""},
+		{"different published slug", "requirement:\n  http:\n    includedSlug: '^dumm$'\n"},
+		{"explicit exclusion", "requirement:\n  http:\n    includedSlug: '^admin$'\n    excludedSlug: '^admin$'\n"},
+		{"root-only expression", "requirement:\n  http:\n    includedSlug: '^$'\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var flow Flow
+			err := yaml.Unmarshal([]byte(transportTestFlow+"discoverAsSlug: admin\n"+test.rules), &flow)
+			require.ErrorContains(t, err, "discoverAsSlug")
+			require.ErrorContains(t, err, "slug rules")
+		})
+	}
+	var flow Flow
+	require.NoError(t, yaml.Unmarshal([]byte(transportTestFlow+"discoverAsSlug: admin\nrequirement:\n  includedRequestingName: '^admin$'\n  http:\n    includedSlug: '^(admin|alternate)$'\n"), &flow), "slug validation must not invent a requesting name")
 }
 
 func TestHttpDiscoveryIsExplicitOrderedAndHostScoped(t *testing.T) {
 	no := false
 	flows := Flows{
 		{Name: "not-published"},
-		{Name: "first", DiscoverAsSlug: "servers/First"},
+		{Name: "first", DiscoverAsSlug: "servers/First", Requirement: Requirement{Http: RequirementHttp{IncludedSlug: common.MustNewRegexp("^servers/First$")}}},
 		{Name: "disabled", DiscoverAsSlug: "disabled", Http: FlowHttp{Enabled: &no}},
-		{Name: "other-host", DiscoverAsSlug: "second", Requirement: Requirement{Http: RequirementHttp{IncludedHost: common.MustNewRegexp(`^other\.example$`)}}},
-		{Name: "last", DiscoverAsSlug: "last"},
+		{Name: "other-host", DiscoverAsSlug: "second", Requirement: Requirement{Http: RequirementHttp{IncludedHost: common.MustNewRegexp(`^other\.example$`), IncludedSlug: common.MustNewRegexp("^second$")}}},
+		{Name: "last", DiscoverAsSlug: "last", Requirement: Requirement{Http: RequirementHttp{IncludedSlug: common.MustNewRegexp("^last$")}}},
 	}
 	slugs, err := flows.HttpDiscovery("APP.EXAMPLE:443")
 	require.NoError(t, err)
@@ -128,8 +150,8 @@ func TestHttpDiscoveryIsExplicitOrderedAndHostScoped(t *testing.T) {
 
 func TestHttpDiscoveryRejectsCollisionsOnlyOnOverlappingDomains(t *testing.T) {
 	flows := Flows{
-		{Name: "first", DiscoverAsSlug: "foo", Requirement: Requirement{Http: RequirementHttp{IncludedHost: common.MustNewRegexp(`^first\.example$`)}}},
-		{Name: "second", DiscoverAsSlug: "foo", Requirement: Requirement{Http: RequirementHttp{IncludedHost: common.MustNewRegexp(`^second\.example$`)}}},
+		{Name: "first", DiscoverAsSlug: "foo", Requirement: Requirement{Http: RequirementHttp{IncludedHost: common.MustNewRegexp(`^first\.example$`), IncludedSlug: common.MustNewRegexp("^foo$")}}},
+		{Name: "second", DiscoverAsSlug: "foo", Requirement: Requirement{Http: RequirementHttp{IncludedHost: common.MustNewRegexp(`^second\.example$`), IncludedSlug: common.MustNewRegexp("^foo$")}}},
 	}
 	require.NoError(t, flows.ValidateHttpDiscovery([]string{"first.example", "second.example"}))
 	flows[1].Requirement.Http.IncludedHost = common.MustNewRegexp(`\.example$`)

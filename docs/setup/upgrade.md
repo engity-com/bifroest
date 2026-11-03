@@ -35,6 +35,24 @@ Sessions saved by the previous minor series have no creation timestamp. For them
 
 Flow names must be unique, may not be `.` or `..`, and may not exceed 255 bytes. Correct existing names that violate these rules before starting the upgraded version, or configuration validation will fail.
 
+Replace the root `auditlog` list with an `auditlogs` map keyed by each former
+entry's name. Remove entry-level `name` and `enabled`; a selected logger is now
+active. Keep `recording.enabled`, targets, failure policies and separate storage
+and identity paths. Omitted, `null` or empty flow selections use an explicitly
+defined `auditlogs.default`, otherwise neither audit logging nor recording runs.
+Do not retain a formerly disabled logger expecting it to stay disabled.
+
+Flows can now reference typed definitions in the root `environments` and
+`authorizations` maps, or keep their inline objects. Each selection uses the
+corresponding map's `default` for omitted, `null` or empty values only when that
+entry exists. No definitions are created automatically; unknown references fail
+validation. Older recording-only repositories need a new empty Recording
+directory before use with an active journal; preserve their existing evidence.
+
+For browser access, two empty slug rules now match only `/`. Set explicit
+`requirement.http.includedSlug` rules for non-root links; every `discoverAsSlug`
+must satisfy both slug rules or startup fails. See [flow requirements](../reference/flow.md#http-requirements).
+
 ## Authorizations
 
 ### OIDC Device Auth

@@ -105,19 +105,16 @@ export async function exerciseLoginOptions(page) {
     .waitFor();
   assert.equal(await dialog().locator('form').count(), 0);
 
-  await chooseSlug('');
-  await dialog().getByText('Choose a published Slug to sign in.', { exact: true }).waitFor();
-  assert.equal(await dialog().locator('form').count(), 0);
   assert.equal(logins.length, 0, 'routing must not attempt authentication');
   assert.equal(sockets, 0, 'routing must not start an execution');
   await page.goBack();
+  await page.waitForURL('**/Certificates');
+  await dialog().getByLabel('SSH user certificate (required)', { exact: true }).waitFor();
+  await page.goForward();
   await page.waitForURL('**/Empty');
   await dialog()
     .getByText('No sign-in method is available for this access link.', { exact: true })
     .waitFor();
-  await page.goForward();
-  await page.waitForURL((url) => url.pathname === '/');
-  await dialog().getByText('Choose a published Slug to sign in.', { exact: true }).waitFor();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await chooseSlug('Work');
@@ -159,6 +156,7 @@ export async function exerciseLoginOptions(page) {
   ]);
   await page.getByRole('tab', { name: 'Terminal 1 alice', exact: true }).click();
   await activeAccess(page, 'alice');
+  assert.equal(new URL(page.url()).pathname, '/Work');
   await input('still-the-original-execution');
   assert.equal(sockets, 2);
 
@@ -188,11 +186,58 @@ export async function exerciseLoginOptions(page) {
   await input('another-slug-revocation-does-not-affect-alice');
   assert.equal(sockets, 3);
   assert.equal(documents, 0, 'Slug navigation must not reload the workspace');
-  assert.equal(
-    await page.evaluate(() => history.state?.usr),
-    null,
-    'routing state must contain no authentication context',
-  );
+  const view = await page.evaluate(() => history.state?.usr);
+  assert.deepEqual(Object.keys(view).sort(), ['generation', 'view']);
+  assert.equal(typeof view.generation, 'string');
+  assert.equal(view.view, 1);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await assertUiPreferences(page);
+}
+
+export async function exerciseRootAccess(page) {
+  let authentications = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST') {
+      authentications++;
+    }
+  });
+  assert.equal(new URL(page.url()).pathname, '/');
+  const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
+  const select = dialog.getByLabel('Slug', { exact: true });
+  assert.equal(await select.textContent(), '/');
+  await select.click();
+  await page.getByRole('option', { name: '/', exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await dialog.locator('form').waitFor();
+  assert.equal(authentications, 0, 'root discovery never signs in automatically');
+}
+
+export async function exerciseRootDirectory(page) {
+  let authentications = 0;
+  let sockets = 0;
+  let documents = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST') {
+      authentications++;
+    }
+    if (request.resourceType() === 'document') {
+      documents++;
+    }
+  });
+  page.on('websocket', () => sockets++);
+  assert.equal(new URL(page.url()).pathname, '/');
+  const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
+  await dialog.getByText('Choose a published Slug to sign in.', { exact: true }).waitFor();
+  assert.equal(await dialog.locator('form').count(), 0);
+  const select = dialog.getByLabel('Slug', { exact: true });
+  assert.equal((await select.textContent()).replaceAll('\u200b', ''), '');
+  await select.click();
+  assert.equal(await page.getByRole('option', { name: '/', exact: true }).count(), 0);
+  await page.getByRole('option', { name: 'Work', exact: true }).click();
+  await page.waitForURL('**/Work');
+  await dialog.getByLabel('User name', { exact: true }).waitFor();
+  await dialog.getByLabel('Password', { exact: true }).waitFor();
+  assert.equal(authentications, 0, 'choosing a published link only loads sign-in metadata');
+  assert.equal(sockets, 0);
+  assert.equal(documents, 0, 'the root directory uses the same live router, not a document reload');
 }

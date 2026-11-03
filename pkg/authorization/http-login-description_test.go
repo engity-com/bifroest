@@ -106,7 +106,7 @@ func TestDescribeHttpLoginMatchesRequirementsWithoutProbingUsernames(t *testing.
 		configure func(*configuration.Flow)
 		available bool
 	}{
-		{name: "defaults", available: true},
+		{name: "explicit slug opt-in", available: true},
 		{name: "SSH disabled does not disable HTTP", configure: func(f *configuration.Flow) { f.Ssh.Enabled = &no }, available: true},
 		{name: "HTTP disabled", configure: func(f *configuration.Flow) { f.Http.Enabled = &no }},
 		{name: "included host mismatch", configure: func(f *configuration.Flow) {
@@ -241,14 +241,18 @@ func TestDescribeHttpLoginRootAvailabilityIsNotSpecialCased(t *testing.T) {
 		configure func(*configuration.Flow)
 		available bool
 	}{
-		{name: "unrestricted root", available: true},
-		{name: "discovery slug alone does not restrict root", configure: func(f *configuration.Flow) { f.DiscoverAsSlug = "Work" }, available: true},
+		{name: "empty slug rules permit root", available: true},
+		{name: "published slug also permits explicitly included root", configure: func(f *configuration.Flow) {
+			f.DiscoverAsSlug = "Work"
+			f.Requirement.Http.IncludedSlug = common.MustNewRegexp("^(|Work)$")
+		}, available: true},
 		{name: "included non-root", configure: func(f *configuration.Flow) { f.Requirement.Http.IncludedSlug = common.MustNewRegexp(`^Work$`) }},
 		{name: "excluded root", configure: func(f *configuration.Flow) { f.Requirement.Http.ExcludedSlug = common.MustNewRegexp(`^$`) }},
 		{name: "explicit root", configure: func(f *configuration.Flow) { f.Requirement.Http.IncludedSlug = common.MustNewRegexp(`^$`) }, available: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			flow := selectionTestFlow("selected")
+			flow.Requirement.Http.IncludedSlug = common.Regexp{}
 			if test.configure != nil {
 				test.configure(&flow)
 			}

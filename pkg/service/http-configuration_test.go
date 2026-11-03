@@ -46,12 +46,14 @@ func TestHttpDiscoveryCollisionsFailBeforeRuntimePreparation(t *testing.T) {
 flows:
   - name: first
     discoverAsSlug: foo
+    requirement:
+      http: {includedSlug: '^foo$'}
     authorization: {type: none}
     environment: {type: dummy}
   - name: second
     discoverAsSlug: foo
     requirement:
-      http: {includedHost: '^other\.example\.org$'}
+      http: {includedHost: '^other\.example\.org$', includedSlug: '^foo$'}
     authorization: {type: none}
     environment: {type: dummy}
 `), ""))

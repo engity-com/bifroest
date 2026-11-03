@@ -72,6 +72,11 @@ func (this RequirementHttp) MatchesHost(host string) bool {
 	return matchesRequirement(this.IncludedHost, this.ExcludedHost, host)
 }
 func (this RequirementHttp) MatchesSlug(slug string) bool {
+	// An absent pair is an explicit root-only default, not a wildcard. Once
+	// either expression is configured, retain the normal include/exclude rules.
+	if this.IncludedSlug.IsZero() && this.ExcludedSlug.IsZero() {
+		return slug == ""
+	}
 	return matchesRequirement(this.IncludedSlug, this.ExcludedSlug, slug)
 }
 func (this *RequirementHttp) UnmarshalYAML(node *yaml.Node) error {

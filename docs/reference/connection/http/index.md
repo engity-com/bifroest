@@ -18,11 +18,23 @@ management permissions and browser limits.
 
 The root `/` is available when a flow accepts the empty Slug or published links
 exist on this host. Otherwise it returns 404. A link directory does not grant
-permission to sign in at the root.
+permission to sign in at the root, and a directory-only root is not offered as
+a selectable **Slug**. With both flow slug rules empty, that flow accepts only
+the root; [explicit slug requirements](../../flow.md#http-requirements) are
+needed for a published non-root link.
 
 The **Slug** selector updates the browser URL without reloading the workspace.
 Only potentially supported sign-in methods are offered. Credentials and dynamic
-policy rules are still checked during authentication.
+host/user policy rules are still checked during authentication. These methods
+belong to the applicable flow, not a separate provider or MFA selection model.
+
+Selecting an existing tab updates the URL to the access scope originally used
+for that tab, without another authentication, session/workload operation,
+reconnect or discovery request. A tab opened through `/bla-bla` keeps `/bla-bla`,
+even if its flow publishes `/docker`. Browser Back/Forward keeps the URL and
+selected scope consistent without replaying a login or execution. Reload requires fresh
+authentication or explicit saved-access resumption and starts a fresh execution,
+not a reattachment.
 
 !!! note
     Bifröst must terminate TLS itself. A TCP pass-through proxy is possible;
@@ -258,6 +270,9 @@ http:
 flows:
   - name: work
     discoverAsSlug: work
+    requirement:
+      http:
+        includedSlug: '^work$'
     authorization:
       type: oidcDeviceAuth
       issuer: https://identity.example.org
@@ -290,6 +305,9 @@ flows:
     discoverAsSlug: management
     http:
       requestUser: false
+    requirement:
+      http:
+        includedSlug: '^management$'
     authorization:
       type: oidcDeviceAuth
       issuer: https://identity.example.org

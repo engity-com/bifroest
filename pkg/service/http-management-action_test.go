@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -33,6 +34,7 @@ func managementActionFixture(t *testing.T) (*service, http.Handler, *recordingAu
 		worker := conf.Flows[0]
 		worker.Name = "worker"
 		worker.DiscoverAsSlug = "Worker"
+		worker.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Worker$")
 		worker.Environment.V = &configuration.EnvironmentDummy{}
 		conf.Flows = append(conf.Flows, worker)
 	})

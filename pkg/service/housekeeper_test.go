@@ -30,7 +30,7 @@ func TestHouseKeeperFinalRetentionDeleteWaitsForSuccessfulAuthorizationDispose(t
 	}
 	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: goerrors.New("permanent restore failure")})
 	hk.service.flowAuditRecorders[sess.flow] = recorder
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 
 	canContinue, err := hk.inspectSession(context.Background(), sess)
@@ -58,7 +58,7 @@ func TestHouseKeeperClearsPermanentlyUnusableAuthorizationBeforeRetentionDelete(
 	authorizer := &houseKeeperTestAuthorizer{restoreErr: authorization.ErrUnusableAuthorizationToken}
 	hk := newHouseKeeperForTest(repository, authorizer)
 	hk.service.flowAuditRecorders[sess.flow] = recorder
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 
 	canContinue, err := hk.inspectSession(context.Background(), sess)
@@ -234,7 +234,7 @@ func TestHouseKeeperKeepsSessionWhenUnusableAuthorizationTokenCannotBeCleared(t 
 	}
 	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrUnusableAuthorizationToken})
 	hk.service.flowAuditRecorders[sess.flow] = recorder
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 
 	canContinue, err := hk.inspectSession(context.Background(), sess)
@@ -257,7 +257,7 @@ func TestHouseKeeperKeepsTransientAuthorizationFailuresRetryable(t *testing.T) {
 			sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(-2 * time.Hour)}
 			hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: restoreErr})
 			hk.service.flowAuditRecorders[sess.flow] = audit.NewNoopRecorder()
-			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 			hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 
 			_, err := hk.inspectSession(context.Background(), sess)
@@ -278,7 +278,7 @@ func TestHouseKeeperInitialDisposeFailureDoesNotDeleteBeforeRetention(t *testing
 	}
 	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: goerrors.New("permanent restore failure")})
 	hk.service.flowAuditRecorders[sess.flow] = recorder
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 
 	canContinue, err := hk.inspectSession(context.Background(), sess)
@@ -308,7 +308,7 @@ func TestHouseKeeperPreservesRemovedFlowSessionsWithoutAudit(t *testing.T) {
 				environmentToken:   []byte(`{"containerId":"recover-me"}`),
 			}
 			hk := newHouseKeeperForTest(repository, authorizer)
-			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: configuration.DefaultAuditlogName, Enabled: false}}
+			hk.service.Configuration.Auditlogs = nil
 			hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 
 			canContinue, err := hk.inspectSession(context.Background(), sess)
@@ -343,9 +343,8 @@ func TestHouseKeeperFansOutRemovedFlowCleanupSkipToEveryEnabledAuditlog(t *testi
 	hk.service.auditRecorders["first"] = first
 	hk.service.auditRecorders["second"] = second
 	hk.service.Configuration.Auditlogs = configuration.Auditlogs{
-		{Name: "first", Enabled: true},
-		{Name: "disabled", Enabled: false},
-		{Name: "second", Enabled: true},
+		{Name: "first"},
+		{Name: "second"},
 	}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 
@@ -395,7 +394,7 @@ func TestHouseKeeperPreservesRemovedFlowWhenSkipAuditFails(t *testing.T) {
 	hk.service.auditRecorders["working"] = working
 	hk.service.auditRecorders["failing"] = failing
 	hk.service.flowAuditRecorders["current"] = audit.NewNoopRecorder()
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "working", Enabled: true}, {Name: "failing", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "working"}, {Name: "failing"}}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 
 	require.NoError(t, hk.run(hk.logger(), context.Background()))
@@ -418,7 +417,7 @@ func TestHouseKeeperContinuesAfterCorruptSessionDiagnostic(t *testing.T) {
 		return err
 	}
 	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 	hk.service.flowAuditRecorders["current"] = audit.NewNoopRecorder()
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
@@ -463,7 +462,7 @@ func TestHouseKeeperRunsRecordingRetentionAfterSessionInspectionFailure(t *testi
 		return injected
 	}}
 	hk := newHouseKeeperForTest(repository, nil)
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "recordings", Enabled: true, Recording: configuration.AuditlogRecording{Enabled: true}}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "recordings", Recording: configuration.AuditlogRecording{Enabled: true}}}
 
 	err := hk.run(hk.logger(), t.Context())
 	require.ErrorIs(t, err, injected)
@@ -476,7 +475,7 @@ func TestHouseKeeperRunsRecordingRetentionAfterEnvironmentCleanupFailure(t *test
 	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
 	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
 	environments.cleanupErr = injected
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "recordings", Enabled: true, Recording: configuration.AuditlogRecording{Enabled: true}}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "recordings", Recording: configuration.AuditlogRecording{Enabled: true}}}
 
 	err := hk.run(hk.logger(), t.Context())
 	require.ErrorIs(t, err, injected)
@@ -487,8 +486,8 @@ func TestHouseKeeperRunsRecordingRetentionAfterEnvironmentCleanupFailure(t *test
 func TestHouseKeeperIsolatesRecordingRetentionStoreFailuresByAuditlog(t *testing.T) {
 	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
 	hk.service.Configuration.Auditlogs = configuration.Auditlogs{
-		{Name: "first", Enabled: true, Recording: configuration.AuditlogRecording{Enabled: true}},
-		{Name: "second", Enabled: true, Recording: configuration.AuditlogRecording{Enabled: true}},
+		{Name: "first", Recording: configuration.AuditlogRecording{Enabled: true}},
+		{Name: "second", Recording: configuration.AuditlogRecording{Enabled: true}},
 	}
 	hk.service.recordingRepositories = map[configuration.AuditlogName]*sessionRecordingRepository{
 		"first": {},
@@ -514,7 +513,7 @@ func TestHouseKeeperPreservesEnvironmentResourcesOfRemovedFlow(t *testing.T) {
 		},
 	}
 	hk := newHouseKeeperForTest(repository, nil)
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: configuration.DefaultAuditlogName, Enabled: false}}
+	hk.service.Configuration.Auditlogs = nil
 	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
 	environments.cleanupCheckFlow = "removed"
 
@@ -527,7 +526,7 @@ func TestHouseKeeperPreservesEnvironmentResourcesOfRemovedFlow(t *testing.T) {
 func TestHouseKeeperDisablesSessionAutoRepairWhenAuditlogEnabled(t *testing.T) {
 	repository := &houseKeeperTestSessionRepository{findByErr: session.ErrNoSuchSession}
 	hk := newHouseKeeperForTest(repository, nil)
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 	hk.service.Configuration.HouseKeeping.AutoRepair = true
 
 	require.NoError(t, hk.inspectSessions(nil, context.Background()))
@@ -544,7 +543,7 @@ func TestHouseKeeperDisablesSessionAutoRepairWhenAuditlogEnabled(t *testing.T) {
 func TestHouseKeeperHonorsDisabledAutoRepairWhenAuditlogsAreDisabled(t *testing.T) {
 	repository := &houseKeeperTestSessionRepository{findByErr: session.ErrNoSuchSession}
 	hk := newHouseKeeperForTest(repository, nil)
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: configuration.DefaultAuditlogName, Enabled: false}}
+	hk.service.Configuration.Auditlogs = nil
 	hk.service.Configuration.HouseKeeping.AutoRepair = false
 
 	require.NoError(t, hk.inspectSessions(nil, context.Background()))
@@ -561,7 +560,7 @@ func TestHouseKeeperHonorsDisabledAutoRepairWhenAuditlogsAreDisabled(t *testing.
 func TestHouseKeeperRestrictsSessionAutoRepairToKnownFlows(t *testing.T) {
 	repository := &houseKeeperTestSessionRepository{}
 	hk := newHouseKeeperForTest(repository, nil)
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: configuration.DefaultAuditlogName, Enabled: false}}
+	hk.service.Configuration.Auditlogs = nil
 	hk.service.Configuration.HouseKeeping.AutoRepair = true
 
 	require.NoError(t, hk.inspectSessions(nil, context.Background()))

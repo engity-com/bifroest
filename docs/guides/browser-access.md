@@ -35,6 +35,8 @@ flows:
       requestUser: true
     requirement:
       includedRequestingName: ^alice$
+      http:
+        includedSlug: '^Shell$'
     authorization:
       type: local
       password:
@@ -75,12 +77,21 @@ Configured SSH and HTTPS listeners must both start successfully. If startup fail
 
 Other flows can offer **Interactive** for keyboard-interactive/OIDC device login or **SSH key** for locally signed key login. Only potentially supported methods appear; dynamic rules and credentials are checked at login. Choose another **Slug** to update the URL and its sign-in options. Existing connection tabs stay unchanged.
 
+Opening `/` shows the published links even though this flow accepts login only
+at `/Shell`. This directory-only root is not a selectable login Slug. The
+published link must match the flow's slug requirements; a contradiction prevents
+startup. Without slug rules, a flow accepts only `/`.
+
 ## Returning and leaving
 
 Reloading does not restore a running shell. Sign in again, or explicitly select **Use saved access**, to open a new shell. Compatible SSH and browser logins can reuse the same session and workspace, not the previous execution.
 
-Browser Back/Forward selects sign-in Slugs, not previous shells or accounts.
-An unfinished login or critical action must be resolved before changing Slug.
+Selecting an existing tab changes the URL to the access scope that tab originally
+used, including an alias rather than its published link. This does not sign in
+again, change its session or workload, reconnect, or fetch discovery again.
+Browser Back/Forward keeps the displayed scope and URL consistent; it does not
+replay authentication or execution. Resolve an unfinished login or critical
+action before changing Slug.
 
 **Remember this browser** is a separate opt-in, not automatic login. It saves independent browser credentials, not your password or imported SSH key. Eligibility depends on the authorization method and platform. In this PAM-backed example it requires an operator-reviewed server opt-in; see [local RememberMe](../reference/authorization/local.md#browser-rememberme) before enabling it.
 

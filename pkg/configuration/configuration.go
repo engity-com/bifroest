@@ -17,7 +17,9 @@ var (
 )
 
 type Configuration struct {
-	Auditlogs Auditlogs `yaml:"auditlog,omitempty"`
+	Environments   Environments   `yaml:"environments,omitempty"`
+	Authorizations Authorizations `yaml:"authorizations,omitempty"`
+	Auditlogs      Auditlogs      `yaml:"auditlogs,omitempty"`
 
 	Ssh Ssh `yaml:"ssh"`
 
@@ -42,7 +44,9 @@ type Configuration struct {
 
 func (this *Configuration) SetDefaults() error {
 	return setDefaults(this,
-		func(v *Configuration) (string, defaulter) { return "auditlog", &v.Auditlogs },
+		func(v *Configuration) (string, defaulter) { return "environments", &v.Environments },
+		func(v *Configuration) (string, defaulter) { return "authorizations", &v.Authorizations },
+		func(v *Configuration) (string, defaulter) { return "auditlogs", &v.Auditlogs },
 		func(v *Configuration) (string, defaulter) { return "ssh", &v.Ssh },
 		fixedDefault("http", func(v *Configuration) **Http { return &v.Http }, (*Http)(nil)),
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
@@ -54,8 +58,17 @@ func (this *Configuration) SetDefaults() error {
 }
 
 func (this *Configuration) Trim() error {
+	if err := this.Environments.Trim(); err != nil {
+		return errors.Config.Newf("[environments] %w", err)
+	}
+	if err := this.Authorizations.Trim(); err != nil {
+		return errors.Config.Newf("[authorizations] %w", err)
+	}
+	if err := this.resolveFlowReferences(); err != nil {
+		return err
+	}
 	return trim(this,
-		func(v *Configuration) (string, trimmer) { return "auditlog", &v.Auditlogs },
+		func(v *Configuration) (string, trimmer) { return "auditlogs", &v.Auditlogs },
 		func(v *Configuration) (string, trimmer) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, trimmer) { return "http", v.Http },
 		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
@@ -67,8 +80,17 @@ func (this *Configuration) Trim() error {
 }
 
 func (this *Configuration) Validate() error {
+	if err := this.Environments.Validate(); err != nil {
+		return errors.Config.Newf("[environments] %w", err)
+	}
+	if err := this.Authorizations.Validate(); err != nil {
+		return errors.Config.Newf("[authorizations] %w", err)
+	}
+	if err := this.resolveFlowReferences(); err != nil {
+		return err
+	}
 	if err := validate(this,
-		func(v *Configuration) (string, validator) { return "auditlog", &v.Auditlogs },
+		func(v *Configuration) (string, validator) { return "auditlogs", &v.Auditlogs },
 		func(v *Configuration) (string, validator) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, validator) { return "http", v.Http },
 		func(v *Configuration) (string, validator) { return "session", &v.Session },
@@ -97,6 +119,9 @@ func (this *Configuration) validateAuditlogReferences() error {
 		configuredAuditlogs[auditlog.Name] = struct{}{}
 	}
 	for index, flow := range this.Flows {
+		if flow.Auditlog == "" {
+			continue
+		}
 		if _, exists := configuredAuditlogs[flow.Auditlog]; !exists {
 			return errors.Config.Newf("[flows][%d][auditlog] references unknown auditlog %q", index, flow.Auditlog)
 		}
@@ -114,7 +139,7 @@ func (this *Configuration) validateRecordingSessionStoragePathOverlaps() error {
 			continue
 		}
 		if pathsOverlap(auditlog.Recording.Directory, sessionFs.Storage) {
-			return errors.Config.Newf("[auditlog][%d][recording][directory] overlaps [session][storage]", index)
+			return errors.Config.Newf("[auditlogs][%d][recording][directory] overlaps [session][storage]", index)
 		}
 	}
 	return nil
@@ -122,12 +147,20 @@ func (this *Configuration) validateRecordingSessionStoragePathOverlaps() error {
 
 func (this *Configuration) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Configuration, node *yaml.Node) error {
+		if err := rejectUnknownConfigurationFields(node, target); err != nil {
+			return err
+		}
 		fields, err := effectiveHttpFields(node)
 		if err != nil {
 			return err
 		}
 		if value, exists := fields["http"]; exists && value.Kind != yaml.MappingNode {
 			return reportYamlRelatedErrf(&value, "[http] must be a mapping")
+		}
+		for _, name := range []string{"environments", "authorizations", "auditlogs"} {
+			if value, exists := fields[name]; exists && value.Kind != yaml.MappingNode {
+				return reportYamlRelatedErrf(&value, "[%s] must be a mapping", name)
+			}
 		}
 		type raw Configuration
 		return node.Decode((*raw)(target))
@@ -189,7 +222,9 @@ func (this Configuration) IsEqualTo(other any) bool {
 }
 
 func (this Configuration) isEqualTo(other *Configuration) bool {
-	return isEqual(&this.Auditlogs, &other.Auditlogs) &&
+	return other != nil && isEqual(&this.Environments, &other.Environments) &&
+		isEqual(&this.Authorizations, &other.Authorizations) &&
+		isEqual(&this.Auditlogs, &other.Auditlogs) &&
 		isEqual(&this.Ssh, &other.Ssh) &&
 		this.Http.IsEqualTo(other.Http) &&
 		isEqual(&this.Session, &other.Session) &&

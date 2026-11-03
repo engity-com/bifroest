@@ -160,7 +160,14 @@ try {
   assert(
     await logs
       .getByRole('button', { name: 'Select audit inventory catalog20', exact: true })
+      .isEnabled(),
+    'every configured audit log is active; there is no separate enabled flag',
+  );
+  assert(
+    await logs
+      .getByRole('button', { name: 'List sealed recordings catalog20', exact: true })
       .isDisabled(),
+    'recording remains a separate opt-in and unavailable recording actions stay disabled',
   );
   await catalog
     .getByRole('button', { name: 'Select audit inventory default', exact: true })

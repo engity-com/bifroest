@@ -109,8 +109,10 @@ func TestBrowserConnectionWorkspaceUiKeepsFlowActorAndManagementContexts(t *test
 	testBrowserLoginUi(t, true, "workspace", func(conf *configuration.Configuration) {
 		other := conf.Flows[0]
 		other.Name, other.DiscoverAsSlug = "other", "Other"
+		other.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Other$")
 		manager := conf.Flows[0]
 		manager.Name, manager.DiscoverAsSlug = "manage", "Manage"
+		manager.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Manage$")
 		manager.Environment.V = &configuration.EnvironmentManagement{}
 		conf.Flows = append(conf.Flows, other, manager)
 	})
@@ -120,6 +122,7 @@ func TestBrowserConnectionWorkspaceUiCancellationAndUnknownDoNotStartSiblingAcce
 	testBrowserLoginUi(t, true, "workspace-races", func(conf *configuration.Configuration) {
 		other := conf.Flows[0]
 		other.Name, other.DiscoverAsSlug = "other", "Other"
+		other.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Other$")
 		conf.Flows = append(conf.Flows, other)
 	})
 }
@@ -181,6 +184,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		}
 	} else {
 		svc, _, lifecycleRecorder = webTestFixture(t, func(conf *configuration.Configuration) {
+			conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 			conf.Flows[0].Http.RequestUser = commonBool(requestUser)
 			if mode == "management" {
 				base := conf.Flows[0]
@@ -200,6 +204,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 				worker := conf.Flows[0]
 				worker.Name = "worker"
 				worker.DiscoverAsSlug = "Worker"
+				worker.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Worker$")
 				worker.Environment.V = &configuration.EnvironmentDummy{}
 				worker.Authorization.V = &configuration.AuthorizationSimple{Entries: configuration.AuthorizationSimpleEntries{{Name: "bob", Password: bfcrypto.Password("plain:correct")}}}
 				conf.Flows = append(conf.Flows, worker)
@@ -227,7 +232,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			if keyMode {
 				conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = authorizedKeys
 			}
-			if mode == "terminal" || mode == "workspace" || mode == "workspace-races" || workspaceActionMode {
+			if mode == "terminal" || mode == "workspace" || mode == "workspace-races" || mode == "slug-history" || workspaceActionMode {
 				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
 			}
@@ -309,7 +314,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		}}}
 	}
 	var terminalCounters *terminalUiCounters
-	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" || mode == "compact" || mode == "keepalive" || mode == "login-options" || mode == "stopped-auth-route" {
+	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" || mode == "compact" || mode == "keepalive" || mode == "login-options" || mode == "stopped-auth-route" || mode == "slug-history" {
 		terminalCounters = installTerminalUiBackend(svc)
 	}
 	settings := &configuration.Http{}
@@ -335,6 +340,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	var interrupted atomic.Int32
 	var providerReplyBarriers atomic.Int32
 	var metadataRequests atomic.Int32
+	var terminalSockets atomic.Int32
 	var holdPreparation atomic.Bool
 	holdPreparation.Store(workspaceActionMode)
 	preparationEntered := make(chan struct{})
@@ -350,6 +356,9 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		interrupt.Store(true)
 	}
 	endpoint, err := https.NewEndpoint(settings, https.EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == webAPI+"terminal" {
+			terminalSockets.Add(1)
+		}
 		if mode == "bootstrap-retry" && r.Method == http.MethodGet && r.URL.Path == "/Work" && r.Header.Get("Accept") == "application/json" {
 			metadataRequests.Add(1)
 			if interrupt.CompareAndSwap(false, true) {
@@ -569,15 +578,20 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
 	}
 	expectedSessions := 1
-	if mode == "no-login-options" || mode == "oidc-cancel" || mode == "bootstrap-retry" {
+	if mode == "no-login-options" || mode == "oidc-cancel" || mode == "bootstrap-retry" || mode == "root-access" || mode == "root-directory" {
 		expectedSessions = 0
+	}
+	if mode == "root-access" || mode == "root-directory" {
+		require.Zero(t, terminalSockets.Load(), "root metadata and discovery must not open terminal sockets")
+		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted), "root metadata and discovery must not authenticate")
+		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionTaskStarted), "root metadata and discovery must not start executions")
 	}
 	if strings.HasPrefix(mode, "key-diagnostic-") {
 		expectedSessions = 0
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted), "a failed local key operation must not authenticate")
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionTaskStarted), "a failed local key operation must not start a shell")
 	}
-	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || mode == "preferences" || forcedActionMode {
+	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || mode == "preferences" || mode == "slug-history" || forcedActionMode {
 		expectedSessions = 2
 	}
 	if mode == "workspace" {
@@ -598,6 +612,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
 	if terminalCounters != nil {
 		switch mode {
+		case "slug-history":
+			require.EqualValues(t, 3, terminalCounters.runs.Load(), "history navigation, local close and reload must not restore or duplicate executions")
+			require.EqualValues(t, 3, terminalSockets.Load(), "history navigation, local close and reload must not reconnect terminal sockets")
+			require.Zero(t, terminalCounters.interrupts.Load())
+			require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionDisposeStarted))
+			require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionDisposeCompleted))
 		case "stopped-auth-route":
 			require.EqualValues(t, 7, terminalCounters.runs.Load(), "failed authentication and routing must not replace or start executions")
 			require.Zero(t, terminalCounters.interrupts.Load())

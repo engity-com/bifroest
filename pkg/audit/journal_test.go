@@ -21,13 +21,11 @@ import (
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
-func TestNewRecorderDoesNothingWhenDisabled(t *testing.T) {
+func TestOptionalNoopRecorderDoesNotInspectIdentityOrFilesystem(t *testing.T) {
 	directory := t.TempDir()
-	conf := auditIdentityTestConfiguration(filepath.Join(directory, "missing"), false)
+	conf := auditIdentityTestConfiguration(filepath.Join(directory, "missing"))
 
-	recorder, err := NewRecorder(&conf, nil)
-
-	require.NoError(t, err)
+	recorder := NewNoopRecorder()
 	require.IsType(t, noopRecorder{}, recorder)
 	require.NoError(t, recorder.Record(context.Background(), Event{}))
 	require.NoError(t, recorder.Close())
@@ -40,7 +38,7 @@ func TestNewRecorderRejectsMissingInputs(t *testing.T) {
 	require.ErrorContains(t, err, "nil auditlog configuration")
 	require.True(t, berrors.Config.IsErr(err))
 
-	conf := auditIdentityTestConfiguration(t.TempDir(), true)
+	conf := auditIdentityTestConfiguration(t.TempDir())
 	_, err = NewRecorder(&conf, nil)
 	require.ErrorContains(t, err, "nil audit identity")
 	require.True(t, berrors.Config.IsErr(err))
@@ -386,7 +384,7 @@ func TestNativeJournalCloseAfterAcceptedFailureOmitsOnlyExistingPoison(t *testin
 
 func newJournalTestIdentity(t *testing.T) (configuration.Auditlog, *Identity) {
 	t.Helper()
-	conf := auditIdentityTestConfiguration(t.TempDir(), true)
+	conf := auditIdentityTestConfiguration(t.TempDir())
 	identity, err := EnsureIdentity(&conf)
 	require.NoError(t, err)
 	return conf, identity

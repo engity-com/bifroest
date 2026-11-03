@@ -12,7 +12,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import StopIcon from '@mui/icons-material/Stop';
 import { Box, CircularProgress, IconButton, Tab, Tabs } from '@mui/material';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Scope, WebAccess } from '../remember';
 import { ManagementWorkspace } from '../ui/ManagementWorkspace';
 import { ActionIcon, Button, Menu, Modal } from '../ui/material';
@@ -25,10 +25,14 @@ import type { TerminalState } from './socket';
 import type { TerminalActions } from './TerminalPanel';
 import { TerminalPanel, terminalStatus } from './TerminalPanel';
 
-interface ShellTab {
+export interface ConnectionView {
   readonly id: number;
-  readonly kind: 'terminal' | 'management';
   readonly access: WebAccess;
+  readonly scope: Scope;
+}
+
+interface ShellTab extends ConnectionView {
+  readonly kind: 'terminal' | 'management';
   readonly cancellation: AbortController;
   readonly state: TerminalState;
   readonly inputClosed: boolean;
@@ -37,6 +41,7 @@ export const maximumTabs = 8;
 
 export function TerminalWorkspace({
   authentication,
+  activeView: active,
   authorizationEvent,
   retiredAccess,
   unavailableAccess,
@@ -47,12 +52,14 @@ export function TerminalWorkspace({
   notice,
   onSignIn,
   onNewConnection,
-  onSelectAccess,
+  onSelectView,
+  onViewsChange,
   onActionLock,
   onTabCount,
   onLogout,
 }: {
   authentication: AuthenticationView | null;
+  activeView: number | null;
   authorizationEvent: WebAccess | null;
   retiredAccess: WebAccess | null;
   unavailableAccess: WebAccess | null;
@@ -63,7 +70,8 @@ export function TerminalWorkspace({
   notice: ReactNode;
   onSignIn: (scope?: Scope) => void;
   onNewConnection: () => void;
-  onSelectAccess: (access: WebAccess | null) => void;
+  onSelectView: (view: ConnectionView | null, replace?: boolean) => void;
+  onViewsChange: (views: readonly ConnectionView[]) => void;
   onActionLock: (locked: boolean) => void;
   onTabCount: (count: number) => void;
   onLogout: (access: WebAccess) => void;
@@ -76,13 +84,16 @@ export function TerminalWorkspace({
   const lastRetired = useRef<WebAccess | null>(null);
   const tabList = useRef<HTMLDivElement | null>(null);
   const controls = useRef(new Map<number, TerminalActions>());
-  const [active, setActive] = useState<number | null>(null);
   const [closing, setClosing] = useState<number | null>(null);
   const [limit, setLimit] = useState(false);
   const [menuTab, setMenuTab] = useState<number | null>(null);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [focusTerminal, setFocusTerminal] = useState(true);
   const [settingsTab, setSettingsTab] = useState<number | null>(null);
+  const selectView = useRef(onSelectView);
+  useLayoutEffect(() => {
+    selectView.current = onSelectView;
+  }, [onSelectView]);
   useEffect(() => {
     if (blocked || focusBlocked || authentication !== null) {
       setSettingsTab(null);
@@ -96,10 +107,19 @@ export function TerminalWorkspace({
       setSettingsTab(null);
     }
   }, [settingsTab, tabs]);
-  const updateTabs = useCallback((next: readonly ShellTab[]) => {
-    current.current = next;
-    setTabs(next);
-  }, []);
+  const updateTabs = useCallback(
+    (next: readonly ShellTab[]) => {
+      const structural =
+        next.length !== current.current.length ||
+        next.some((tab, index) => tab.id !== current.current[index]?.id);
+      current.current = next;
+      if (structural) {
+        onViewsChange(next);
+      }
+      setTabs(next);
+    },
+    [onViewsChange],
+  );
   useEffect(
     () => onTabCount(tabs.length + (authentication ? 1 : 0)),
     [tabs.length, authentication, onTabCount],
@@ -116,13 +136,14 @@ export function TerminalWorkspace({
         setNewMenuOpen(false);
         const tab = current.current.find((entry) => entry.id === owner);
         if (tab) {
-          setActive(owner);
-          onSelectAccess(tab.access);
+          selectView.current(tab);
         }
       }
       onActionLock(actionOwners.current.size > 0);
     },
-    [onActionLock, onSelectAccess],
+    // Route callbacks change with URL/view state, not with the management
+    // access owner. Keep that callback out of the actor-bound lock identity.
+    [onActionLock],
   );
   const onState = useCallback(
     (id: number, state: TerminalState) => {
@@ -138,7 +159,7 @@ export function TerminalWorkspace({
     }
   }, []);
   const open = useCallback(
-    (selected: WebAccess) => {
+    (selected: WebAccess, replace = false) => {
       if (current.current.length >= maximumTabs) {
         setLimit(true);
         return;
@@ -147,17 +168,17 @@ export function TerminalWorkspace({
         id: ++nextID.current,
         kind: selected.snapshot().terminalAvailable ? 'terminal' : 'management',
         access: selected,
+        scope: Object.freeze({ ...selected.snapshot().scope }),
         cancellation: new AbortController(),
         state: { phase: 'connecting' },
         inputClosed: false,
       };
       updateTabs([...current.current, tab]);
-      setActive(tab.id);
-      onSelectAccess(selected);
+      onSelectView(tab, replace);
       setFocusTerminal(true);
       setLimit(false);
     },
-    [updateTabs, onSelectAccess],
+    [updateTabs, onSelectView],
   );
   useEffect(() => {
     if (!authorizationEvent || blocked || authorizationEvent === lastAuthorization.current) {
@@ -169,11 +190,11 @@ export function TerminalWorkspace({
     }
     const snapshot = authorizationEvent.snapshot();
     if (snapshot.terminalAvailable || snapshot.environment === 'management') {
-      open(authorizationEvent);
+      open(authorizationEvent, true);
     } else {
-      setActive(null);
+      onSelectView(null);
     }
-  }, [authorizationEvent, retiredAccess, blocked, open]);
+  }, [authorizationEvent, retiredAccess, blocked, open, onSelectView]);
   useEffect(() => {
     if (retiredAccess === null || retiredAccess === lastRetired.current) {
       return;
@@ -186,16 +207,13 @@ export function TerminalWorkspace({
     const remaining = current.current.filter((tab) => tab.access !== retiredAccess);
     updateTabs(remaining);
     const next = remaining.at(-1);
-    setActive(next?.id ?? null);
-    onSelectAccess(next?.access ?? null);
+    onSelectView(next ?? null, true);
     setClosing(null);
     setLimit(false);
     setMenuTab(null);
     setNewMenuOpen(false);
-    if (!next) {
-      nextID.current = 0;
-    }
-  }, [retiredAccess, onSelectAccess, updateTabs]);
+    // IDs are never reused within this app generation, including after logout.
+  }, [retiredAccess, onSelectView, updateTabs]);
   useEffect(() => {
     if (!blocked) {
       return;
@@ -213,13 +231,12 @@ export function TerminalWorkspace({
       updateTabs(remaining);
       if (pending.some((tab) => tab.id === active)) {
         const next = remaining.at(-1);
-        setActive(next?.id ?? null);
         if (next) {
-          onSelectAccess(next.access);
+          onSelectView(next, true);
         }
       }
     }
-  }, [blocked, active, onSelectAccess, updateTabs]);
+  }, [blocked, active, onSelectView, updateTabs]);
   useEffect(
     () => () => {
       for (const tab of current.current) {
@@ -256,8 +273,7 @@ export function TerminalWorkspace({
     updateTabs(remaining);
     if (active === id) {
       const next = remaining.at(-1);
-      setActive(next?.id ?? null);
-      onSelectAccess(next?.access ?? null);
+      onSelectView(next ?? null, true);
       if (!next) {
         lastAuthorization.current = null;
       }
@@ -308,8 +324,7 @@ export function TerminalWorkspace({
     if (opened) {
       operate(id, (tab) => {
         setFocusTerminal(false);
-        setActive(id);
-        onSelectAccess(tab.access);
+        onSelectView(tab);
         setNewMenuOpen(false);
         setMenuTab(id);
       });
@@ -359,13 +374,18 @@ export function TerminalWorkspace({
               scrollButtons="auto"
               allowScrollButtonsMobile
               selectionFollowsFocus
-              onChange={(event, id: number) =>
+              onChange={(event, id: number) => {
+                // ConnectionTab already handles clicks (including an already
+                // selected tab). MUI also emits onChange for that click: do not
+                // push the same activation twice. Focus selection is keyboard.
+                if (event.type === 'click') {
+                  return;
+                }
                 operate(id, (tab) => {
-                  setFocusTerminal(event.type === 'click');
-                  setActive(tab.id);
-                  onSelectAccess(tab.access);
-                })
-              }
+                  setFocusTerminal(false);
+                  onSelectView(tab);
+                });
+              }}
             >
               {tabs.map((tab) => (
                 <ConnectionTab
@@ -373,7 +393,7 @@ export function TerminalWorkspace({
                   id={tab.id}
                   value={tab.id}
                   kind={tab.kind}
-                  scope={tab.access.snapshot().scope.slug}
+                  scope={tab.scope.slug}
                   principal={tab.access.snapshot().principal}
                   state={tab.state}
                   active={authentication === null && active === tab.id}
@@ -381,8 +401,7 @@ export function TerminalWorkspace({
                   onSelect={() =>
                     operate(tab.id, (entry) => {
                       setFocusTerminal(true);
-                      setActive(entry.id);
-                      onSelectAccess(entry.access);
+                      onSelectView(entry);
                     })
                   }
                   onMenu={(value) => showTabMenu(tab.id, value)}

@@ -33,6 +33,9 @@ import (
 
 func webTestFixture(t *testing.T, configure ...func(*configuration.Configuration)) (*service, http.Handler, *recordingAuditRecorder) {
 	t.Helper()
+	configure = append([]func(*configuration.Configuration){func(conf *configuration.Configuration) {
+		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
+	}}, configure...)
 	svc, recorder, _ := executionTestFixture(t, func(environment.TerminalTask) (int, error) { return 0, nil }, configure...)
 	svc.web = newWebService(svc)
 	boundary, err := https.Boundary(configuration.HttpDomains{"app.example.org", "other.example.org"}, svc.web)
@@ -121,22 +124,56 @@ func TestWebScopeCanonicalizesAuthorityButKeepsPortAndSlug(t *testing.T) {
 	}
 }
 
+func TestWebAliasPreservesTheActualEntryScope(t *testing.T) {
+	svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
+		conf.Flows[0].DiscoverAsSlug = "docker"
+		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^(docker|bla-bla)$")
+	})
+	response := webTestRequest(handler, http.MethodGet, "app.example.org", "/bla-bla", "", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var metadata struct {
+		Scope          webScope `json:"scope"`
+		PublishedSlugs []string `json:"publishedSlugs"`
+		RootAvailable  bool     `json:"rootAvailable"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &metadata))
+	require.Equal(t, "bla-bla", metadata.Scope.Slug)
+	require.Equal(t, []string{"docker"}, metadata.PublishedSlugs)
+	require.False(t, metadata.RootAvailable)
+	aliasToken := webTestToken(t, webTestPassword(handler, "alice", "correct", "bla-bla"))
+	alias := webTestAccess(t, svc, aliasToken, "bla-bla")
+	require.Equal(t, "bla-bla", alias.scope.Slug)
+	otherToken := webTestToken(t, webTestPassword(handler, "alice", "correct", "docker"))
+	other := webTestAccess(t, svc, otherToken, "docker")
+	require.NotEqual(t, aliasToken, otherToken)
+	require.Equal(t, alias.auth.FindSession().Id(), other.auth.FindSession().Id(), "same flow/actor/target may share a session without canonicalizing its distinct access scopes")
+	for _, test := range []struct{ token, slug string }{{aliasToken, "docker"}, {otherToken, "bla-bla"}} {
+		_, err := svc.web.lookup(webScope{Origin: "https://app.example.org", Slug: test.slug}, test.token, false)
+		require.Error(t, err, "an alias-scoped access token must not be accepted under the published scope or vice versa")
+	}
+	require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "alice", "correct", "Bla-bla").Code)
+}
+
 func TestWebPublishedSlugNeverFallsThroughAndDiscoveryIsNotAuthorization(t *testing.T) {
 	svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
 		first := conf.Flows[0]
 		first.Name = "fixed"
 		first.DiscoverAsSlug = "Private"
+		first.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Private$")
 		first.Requirement.Http.IncludedRequestingName = common.MustNewRegexp("^other$")
 		fallback := conf.Flows[0]
 		fallback.Name = "fallback"
 		fallback.DiscoverAsSlug = "Public"
+		fallback.Requirement.Http.IncludedSlug = common.MustNewRegexp("^(Public|Unknown)$")
 		disabled := fallback
 		disabled.Name = "off"
 		disabled.DiscoverAsSlug = "Hidden"
+		disabled.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Hidden$")
 		disabled.Http.Enabled = commonBool(false)
 		onOther := fallback
 		onOther.Name = "other"
 		onOther.DiscoverAsSlug = "Elsewhere"
+		onOther.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Elsewhere$")
 		onOther.Requirement.Http.IncludedHost = common.MustNewRegexp("^other\\.example\\.org$")
 		conf.Flows = configuration.Flows{first, fallback, disabled, onOther}
 	})
@@ -193,7 +230,10 @@ func TestWebRootUsesTheSameSlugRequirementsAsOtherPaths(t *testing.T) {
 		root      int
 		work      int
 	}{
-		{name: "unrestricted", root: http.StatusOK, work: http.StatusOK},
+		{name: "empty means root only", root: http.StatusOK, work: http.StatusNotFound},
+		{name: "explicit wildcard", configure: func(flow *configuration.Flow) {
+			flow.Requirement.Http.IncludedSlug = common.MustNewRegexp(".*")
+		}, root: http.StatusOK, work: http.StatusOK},
 		{name: "only non-root path", configure: func(flow *configuration.Flow) {
 			flow.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 		}, root: http.StatusNotFound, work: http.StatusOK},
@@ -210,6 +250,7 @@ func TestWebRootUsesTheSameSlugRequirementsAsOtherPaths(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
 				conf.Flows[0].DiscoverAsSlug = ""
+				conf.Flows[0].Requirement.Http.IncludedSlug = common.Regexp{}
 				if test.configure != nil {
 					test.configure(&conf.Flows[0])
 				}
@@ -516,6 +557,7 @@ func TestRealHttpsPasswordAndSshLoginShareOneStoredSession(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
 		conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].Password = crypto.Password("plain:correct")
 		conf.Flows[0].DiscoverAsSlug = "Work"
+		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 		conf.Http = &configuration.Http{}
 		require.NoError(t, conf.Http.SetDefaults())
 		conf.Http.Enabled = true

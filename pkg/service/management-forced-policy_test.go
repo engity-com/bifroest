@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
@@ -162,6 +163,7 @@ func TestForcedManagementReferenceSSHAndHTTPAgreeOnSupportedDataCeilings(t *test
 					command += " --user=alice --state=all --flow=restricted-key"
 				}
 				server := newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, "alice", "command="+strconv.Quote(command), nil, func(conf *configuration.Configuration) {
+					conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 					conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 				})
 				client := server.mustDial(t)
@@ -234,6 +236,7 @@ func TestForcedManagementShowReferenceSSHAndHTTPKeepExactIDAndPrecision(t *testi
 	for _, format := range []string{"table", "json", "yaml", "cbor"} {
 		t.Run(format, func(t *testing.T) {
 			server := newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, "alice", `command="flow ls"`, nil, func(conf *configuration.Configuration) {
+				conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 			})
 			initial := server.mustDial(t)

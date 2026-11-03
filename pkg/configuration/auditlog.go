@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -13,7 +14,6 @@ import (
 )
 
 var (
-	DefaultAuditlogEnabled                 = false
 	DefaultAuditlogFailurePolicy           = AuditlogFailurePolicyStrict
 	DefaultAuditlogIdentityFile            = defaultAuditlogIdentityFile
 	DefaultAuditlogJournalDirectory        = defaultAuditlogJournalDirectory
@@ -23,14 +23,13 @@ var (
 // Auditlog defines the authoritative local audit journal and optional remote
 // targets that replicate its immutable sealed segments.
 type Auditlog struct {
-	Name                    AuditlogName          `yaml:"name"`
-	Enabled                 bool                  `yaml:"enabled,omitempty"`
+	Name                    AuditlogName          `yaml:"-"`
 	FailurePolicy           AuditlogFailurePolicy `yaml:"failurePolicy,omitempty"`
 	IdentityFile            string                `yaml:"identityFile,omitempty"`
 	EncryptionPublicKey     crypto.PublicKeys     `yaml:"encryptionPublicKey,omitempty"`
 	EncryptionPublicKeyFile crypto.PublicKeysFile `yaml:"encryptionPublicKeyFile,omitempty"`
 	Directory               string                `yaml:"directory,omitempty"`
-	MinimumFreeBytes        uint64                `yaml:"minimumFreeBytes,omitempty"`
+	MinimumFreeBytes        uint64                `yaml:"minimumFreeBytes"`
 	Recording               AuditlogRecording     `yaml:"recording,omitempty"`
 	Targets                 AuditlogTargets       `yaml:"targets,omitempty"`
 }
@@ -38,7 +37,6 @@ type Auditlog struct {
 func (this *Auditlog) SetDefaults() error {
 	return setDefaults(this,
 		fixedDefault("name", func(v *Auditlog) *AuditlogName { return &v.Name }, DefaultAuditlogName),
-		fixedDefault("enabled", func(v *Auditlog) *bool { return &v.Enabled }, DefaultAuditlogEnabled),
 		fixedDefault("failurePolicy", func(v *Auditlog) *AuditlogFailurePolicy { return &v.FailurePolicy }, DefaultAuditlogFailurePolicy),
 		fixedDefault("identityFile", func(v *Auditlog) *string { return &v.IdentityFile }, DefaultAuditlogIdentityFile),
 		noopSetDefault[Auditlog]("encryptionPublicKey"),
@@ -53,7 +51,6 @@ func (this *Auditlog) SetDefaults() error {
 func (this *Auditlog) Trim() error {
 	return trim(this,
 		noopTrim[Auditlog]("name"),
-		noopTrim[Auditlog]("enabled"),
 		noopTrim[Auditlog]("failurePolicy"),
 		func(v *Auditlog) (string, trimmer) { return "identityFile", &stringTrimmer{&v.IdentityFile} },
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKey", &v.EncryptionPublicKey },
@@ -71,7 +68,6 @@ func (this *Auditlog) Validate() error {
 	}
 	if err := validate(this,
 		func(v *Auditlog) (string, validator) { return "name", &v.Name },
-		noopValidate[Auditlog]("enabled"),
 		func(v *Auditlog) (string, validator) { return "failurePolicy", &v.FailurePolicy },
 		notEmptyStringValidate("identityFile", func(v *Auditlog) *string { return &v.IdentityFile }),
 		func(v *Auditlog) (string, validator) {
@@ -90,7 +86,7 @@ func (this *Auditlog) Validate() error {
 
 func (this *Auditlog) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Auditlog, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "failurePolicy", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "directory", "minimumFreeBytes", "recording", "targets"); err != nil {
+		if err := rejectUnknownConfigurationFields(node, target); err != nil {
 			return err
 		}
 		type raw Auditlog
@@ -114,7 +110,6 @@ func (this Auditlog) IsEqualTo(other any) bool {
 
 func (this Auditlog) isEqualTo(other *Auditlog) bool {
 	return this.Name == other.Name &&
-		this.Enabled == other.Enabled &&
 		this.FailurePolicy.IsEqualTo(other.FailurePolicy) &&
 		this.IdentityFile == other.IdentityFile &&
 		this.EncryptionPublicKey.IsEqualTo(other.EncryptionPublicKey) &&
@@ -166,7 +161,7 @@ func ValidateAuditlogEncryptionPublicKeys(keys []ssh.PublicKey) error {
 type Auditlogs []Auditlog
 
 func (this *Auditlogs) SetDefaults() error {
-	return setSliceDefaults(this, Auditlog{Name: DefaultAuditlogName})
+	return setSliceDefaults(this)
 }
 
 func (this Auditlogs) IsZero() bool {
@@ -174,15 +169,11 @@ func (this Auditlogs) IsZero() bool {
 }
 
 func (this *Auditlogs) Trim() error {
-	if len(*this) == 0 {
-		if err := this.SetDefaults(); err != nil {
-			return err
-		}
-	}
+	slices.SortFunc(*this, func(left, right Auditlog) int { return strings.Compare(string(left.Name), string(right.Name)) })
 	if err := trimSlice(this); err != nil {
 		return err
 	}
-	return this.validateUniqueNames()
+	return this.Validate()
 }
 
 func (this Auditlogs) Validate() error {
@@ -195,44 +186,28 @@ func (this Auditlogs) Validate() error {
 	identityFiles := make(map[string]int)
 	journalDirectories := make(map[string]int)
 	for index, auditlog := range this {
-		if !auditlog.Enabled && !auditlog.Recording.Enabled {
-			continue
-		}
 		if previous, exists := identityFiles[auditlog.IdentityFile]; exists {
-			status := "active"
-			if this[previous].Enabled {
-				status = "enabled"
-			}
-			return fmt.Errorf("[%d][identityFile] duplicates %s auditlog [%d][identityFile] %q", index, status, previous, auditlog.IdentityFile)
+			return fmt.Errorf("[%d][identityFile] duplicates auditlog [%d][identityFile] %q", index, previous, auditlog.IdentityFile)
 		}
 		identityFiles[auditlog.IdentityFile] = index
-		if !auditlog.Enabled {
-			continue
-		}
 		if previous, exists := journalDirectories[auditlog.Directory]; exists {
-			return fmt.Errorf("[%d][directory] duplicates enabled auditlog [%d][directory] %q", index, previous, auditlog.Directory)
+			return fmt.Errorf("[%d][directory] duplicates auditlog [%d][directory] %q", index, previous, auditlog.Directory)
 		}
 		journalDirectories[auditlog.Directory] = index
 	}
 	for leftIndex, left := range this {
-		if !left.Enabled && !left.Recording.Enabled {
-			continue
-		}
 		for rightIndex, right := range this {
-			if !right.Enabled && !right.Recording.Enabled {
-				continue
+			if leftIndex < rightIndex && pathsOverlap(left.Directory, right.Directory) {
+				return fmt.Errorf("[%d][directory] overlaps auditlog [%d][directory]", rightIndex, leftIndex)
 			}
-			if left.Enabled && right.Enabled && leftIndex < rightIndex && pathsOverlap(left.Directory, right.Directory) {
-				return fmt.Errorf("[%d][directory] overlaps enabled auditlog [%d][directory]", rightIndex, leftIndex)
+			if pathContains(left.IdentityFile, right.Directory) {
+				return fmt.Errorf("[%d][identityFile] is located inside auditlog [%d][directory]", leftIndex, rightIndex)
 			}
-			if right.Enabled && pathContains(left.IdentityFile, right.Directory) {
-				return fmt.Errorf("[%d][identityFile] is located inside enabled auditlog [%d][directory]", leftIndex, rightIndex)
-			}
-			if right.Enabled && pathContains(right.Directory, left.IdentityFile) {
-				return fmt.Errorf("[%d][directory] is located below enabled auditlog [%d][identityFile]", rightIndex, leftIndex)
+			if pathContains(right.Directory, left.IdentityFile) {
+				return fmt.Errorf("[%d][directory] is located below auditlog [%d][identityFile]", rightIndex, leftIndex)
 			}
 			if leftIndex < rightIndex && pathsOverlap(left.IdentityFile, right.IdentityFile) {
-				return fmt.Errorf("[%d][identityFile] overlaps active auditlog [%d][identityFile]", rightIndex, leftIndex)
+				return fmt.Errorf("[%d][identityFile] overlaps auditlog [%d][identityFile]", rightIndex, leftIndex)
 			}
 		}
 	}
@@ -242,28 +217,17 @@ func (this Auditlogs) Validate() error {
 		}
 		recordingDirectory := recordingAuditlog.Recording.Directory
 		for auditlogIndex, auditlog := range this {
-			if !auditlog.Enabled && !auditlog.Recording.Enabled {
-				continue
-			}
-			status := "active"
-			if auditlog.Enabled {
-				status = "enabled"
-			}
-			if auditlog.Enabled && pathsOverlap(recordingDirectory, auditlog.Directory) {
-				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][directory]", recordingIndex, auditlogIndex)
+			if pathsOverlap(recordingDirectory, auditlog.Directory) {
+				return fmt.Errorf("[%d][recording][directory] overlaps auditlog [%d][directory]", recordingIndex, auditlogIndex)
 			}
 			if pathsOverlap(recordingDirectory, auditlog.IdentityFile) {
-				return fmt.Errorf("[%d][recording][directory] overlaps %s auditlog [%d][identityFile]", recordingIndex, status, auditlogIndex)
+				return fmt.Errorf("[%d][recording][directory] overlaps auditlog [%d][identityFile]", recordingIndex, auditlogIndex)
 			}
 			if recordingIndex < auditlogIndex && auditlog.Recording.Enabled && pathsOverlap(recordingDirectory, auditlog.Recording.Directory) {
-				status := "active"
-				if recordingAuditlog.Enabled {
-					status = "enabled"
-				}
-				return fmt.Errorf("[%d][recording][directory] overlaps %s auditlog [%d][recording][directory]", auditlogIndex, status, recordingIndex)
+				return fmt.Errorf("[%d][recording][directory] overlaps auditlog [%d][recording][directory]", auditlogIndex, recordingIndex)
 			}
 			if !auditlog.EncryptionPublicKeyFile.IsZero() && pathsOverlap(recordingDirectory, string(auditlog.EncryptionPublicKeyFile)) {
-				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][encryptionPublicKeyFile]", recordingIndex, auditlogIndex)
+				return fmt.Errorf("[%d][recording][directory] overlaps auditlog [%d][encryptionPublicKeyFile]", recordingIndex, auditlogIndex)
 			}
 			for targetIndex, target := range auditlog.Targets {
 				sftp, ok := target.V.(*AuditlogTargetSftp)
@@ -271,11 +235,11 @@ func (this Auditlogs) Validate() error {
 					continue
 				}
 				if !sftp.KnownHostsFile.IsZero() && pathsOverlap(recordingDirectory, string(sftp.KnownHostsFile)) {
-					return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][targets][%d][knownHostsFile]", recordingIndex, auditlogIndex, targetIndex)
+					return fmt.Errorf("[%d][recording][directory] overlaps auditlog [%d][targets][%d][knownHostsFile]", recordingIndex, auditlogIndex, targetIndex)
 				}
 				for identityIndex, identityFile := range sftp.IdentityFiles {
 					if pathsOverlap(recordingDirectory, identityFile) {
-						return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][targets][%d][identityFiles][%d]", recordingIndex, auditlogIndex, targetIndex, identityIndex)
+						return fmt.Errorf("[%d][recording][directory] overlaps auditlog [%d][targets][%d][identityFiles][%d]", recordingIndex, auditlogIndex, targetIndex, identityIndex)
 					}
 				}
 			}
@@ -288,11 +252,11 @@ func (this Auditlogs) Validate() error {
 					continue
 				}
 				if !sftp.KnownHostsFile.IsZero() && pathsOverlap(recordingDirectory, string(sftp.KnownHostsFile)) {
-					return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][recording][targets][%d][knownHostsFile]", recordingIndex, auditlogIndex, targetIndex)
+					return fmt.Errorf("[%d][recording][directory] overlaps auditlog [%d][recording][targets][%d][knownHostsFile]", recordingIndex, auditlogIndex, targetIndex)
 				}
 				for identityIndex, identityFile := range sftp.IdentityFiles {
 					if pathsOverlap(recordingDirectory, identityFile) {
-						return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][recording][targets][%d][identityFiles][%d]", recordingIndex, auditlogIndex, targetIndex, identityIndex)
+						return fmt.Errorf("[%d][recording][directory] overlaps auditlog [%d][recording][targets][%d][identityFiles][%d]", recordingIndex, auditlogIndex, targetIndex, identityIndex)
 					}
 				}
 			}
@@ -327,11 +291,32 @@ func (this Auditlogs) validateUniqueNames() error {
 }
 
 func (this *Auditlogs) UnmarshalYAML(node *yaml.Node) error {
-	*this = Auditlogs{}
-	return unmarshalYAML(this, node, func(target *Auditlogs, node *yaml.Node) error {
-		type raw Auditlogs
-		return node.Decode((*raw)(target))
-	})
+	var entries map[string]Auditlog
+	if err := decodeDefinitions(node, &entries); err != nil {
+		return err
+	}
+	result := make(Auditlogs, 0, len(entries))
+	for _, name := range definitionKeys(entries) {
+		value := entries[name]
+		value.Name = AuditlogName(name)
+		result = append(result, value)
+	}
+	if err := result.Validate(); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	*this = result
+	return nil
+}
+
+func (this Auditlogs) MarshalYAML() (any, error) {
+	if err := this.Validate(); err != nil {
+		return nil, err
+	}
+	result := make(map[string]Auditlog, len(this))
+	for _, value := range this {
+		result[string(value.Name)] = value
+	}
+	return result, nil
 }
 
 func (this Auditlogs) IsEqualTo(other any) bool {
@@ -352,10 +337,19 @@ func (this Auditlogs) isEqualTo(other *Auditlogs) bool {
 	if len(this) != len(*other) {
 		return false
 	}
-	for index, auditlog := range this {
-		if !auditlog.IsEqualTo((*other)[index]) {
+	entries := make(map[AuditlogName]Auditlog, len(this))
+	for _, auditlog := range this {
+		entries[auditlog.Name] = auditlog
+	}
+	if len(entries) != len(this) {
+		return false
+	}
+	for _, auditlog := range *other {
+		entry, exists := entries[auditlog.Name]
+		if !exists || !entry.IsEqualTo(auditlog) {
 			return false
 		}
+		delete(entries, auditlog.Name)
 	}
 	return true
 }

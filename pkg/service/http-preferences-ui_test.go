@@ -3,6 +3,7 @@ package service
 import (
 	"testing"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -19,8 +20,10 @@ func TestBrowserUiPreferencesRequireNamesAndRememberOnlySuccessfulOriginalNames(
 		)
 		other := conf.Flows[0]
 		other.Name, other.DiscoverAsSlug = "other", "Other"
+		other.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Other$")
 		nameFree := conf.Flows[0]
 		nameFree.Name, nameFree.DiscoverAsSlug = "namefree", "NameFree"
+		nameFree.Requirement.Http.IncludedSlug = common.MustNewRegexp("^NameFree$")
 		nameFree.Http.RequestUser = commonBool(false)
 		conf.Flows = append(conf.Flows, other, nameFree)
 	})

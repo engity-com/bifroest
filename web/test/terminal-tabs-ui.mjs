@@ -18,6 +18,7 @@ export async function exerciseTerminalTabs(page, login, logout) {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   const route = await held;
   await page.getByRole('tab', { name: 'Terminal 1 alice', exact: true }).waitFor();
+  const canceledID = 1;
   await logout(page);
   const delivered = page.waitForResponse((response) => response.url() === route.request().url());
   await route.continue();
@@ -33,11 +34,29 @@ export async function exerciseTerminalTabs(page, login, logout) {
   assert.equal(await page.locator('.xterm').count(), 0);
   await page.unroute('**/xterm-*.js');
   await login(page, false);
+  const firstID = Number(
+    (await page.getByRole('tab', { selected: true }).getAttribute('id')).slice(
+      'terminal-tab-'.length,
+    ),
+  );
+  assert.equal(firstID, canceledID + 1, 'retired history view IDs must never be reused');
+  const selected = async (id) =>
+    page.waitForFunction((id) => {
+      const panel = document.getElementById(`terminal-pane-${id}`);
+      return (
+        history.state?.usr?.view === id &&
+        document.getElementById(`terminal-tab-${id}`)?.getAttribute('aria-selected') === 'true' &&
+        panel?.getAttribute('data-terminal-active') === 'true' &&
+        panel.querySelector('[data-terminal-phase="exited"]') !== null
+      );
+    }, id);
+  await selected(firstID);
   assert.equal(sockets, 1);
   for (let number = 2; number <= 8; number++) {
+    const id = firstID + number - 1;
     await duplicateTab(page);
-    await page.getByRole('tab', { name: `Terminal ${number} alice`, exact: true }).waitFor();
-    await page.locator('[data-terminal-phase="exited"]').waitFor();
+    await page.getByRole('tab', { name: `Terminal ${id} alice`, exact: true }).waitFor();
+    await selected(id);
   }
   assert.equal(sockets, 8, 'each deliberate new tab owns exactly one new shell');
   await tabMenu(page);
@@ -47,16 +66,16 @@ export async function exerciseTerminalTabs(page, login, logout) {
     'local tab resources are bounded independently of server quotas',
   );
   await page.keyboard.press('Escape');
-  const first = page.getByRole('tab', { name: 'Terminal 1 alice', exact: true });
-  await page.getByRole('tab', { name: 'Terminal 8 alice', exact: true }).evaluate((node) => {
-    node.focus();
-    node.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }),
-    );
-  });
-  await page.waitForFunction(
-    () => document.getElementById('terminal-tab-1')?.getAttribute('aria-selected') === 'true',
-  );
+  const first = page.getByRole('tab', { name: `Terminal ${firstID} alice`, exact: true });
+  await page
+    .getByRole('tab', { name: `Terminal ${firstID + 7} alice`, exact: true })
+    .evaluate((node) => {
+      node.focus();
+      node.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }),
+      );
+    });
+  await selected(firstID);
   // Activate while returning keyboard focus to the bar in the same event turn.
   // A queued terminal-focus frame must respect that newer focus owner.
   await first.evaluate((node) => {
@@ -73,12 +92,10 @@ export async function exerciseTerminalTabs(page, login, logout) {
   );
   await first.focus();
   await first.press('ArrowRight');
-  await page.waitForFunction(
-    () => document.getElementById('terminal-tab-2')?.getAttribute('aria-selected') === 'true',
-  );
+  await selected(firstID + 1);
   assert.equal(
     await page
-      .getByRole('tab', { name: 'Terminal 2 alice', exact: true })
+      .getByRole('tab', { name: `Terminal ${firstID + 1} alice`, exact: true })
       .getAttribute('aria-selected'),
     'true',
   );
@@ -87,16 +104,16 @@ export async function exerciseTerminalTabs(page, login, logout) {
   );
   assert.equal(
     await page
-      .getByRole('tab', { name: 'Terminal 2 alice', exact: true })
+      .getByRole('tab', { name: `Terminal ${firstID + 1} alice`, exact: true })
       .evaluate((node) => node === document.activeElement),
     true,
     'tab keyboard navigation keeps focus in the bar',
   );
   assert.equal(sockets, 8, 'keyboard navigation cannot reconnect a tab');
-  await page.getByRole('button', { name: 'Close terminal 1', exact: true }).click();
+  await page.getByRole('button', { name: `Close terminal ${firstID}`, exact: true }).click();
   await duplicateTab(page);
-  await page.getByRole('tab', { name: 'Terminal 9 alice', exact: true }).waitFor();
-  await page.locator('[data-terminal-phase="exited"]').waitFor();
+  await page.getByRole('tab', { name: `Terminal ${firstID + 8} alice`, exact: true }).waitFor();
+  await selected(firstID + 8);
   assert.equal(sockets, 9);
   await logout(page);
   assert.equal(await page.getByRole('tab').count(), 0);

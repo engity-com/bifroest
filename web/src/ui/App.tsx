@@ -11,11 +11,12 @@ import { verificationLink } from '../login/links';
 import type { AccessSnapshot, LoginStep, LogoutResult, WebAccess } from '../remember';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
 import type { AuthenticationView } from '../terminal/AuthenticationTerminal';
-import { maximumTabs, TerminalWorkspace } from '../terminal/TerminalWorkspace';
+import { type ConnectionView, maximumTabs, TerminalWorkspace } from '../terminal/TerminalWorkspace';
 import { reportUiError } from './error-report';
 import {
   type LinkMetadata,
   type LoginMethod,
+  linkSlugs,
   loadLinkMetadata,
   loginOptionFor,
   loginOptionKey,
@@ -139,6 +140,13 @@ export function App({
   const [authorizationEvent, setAuthorizationEvent] = useState<WebAccess | null>(null);
   const [retiredAccess, setRetiredAccess] = useState<WebAccess | null>(null);
   const [tabCount, setTabCount] = useState(0);
+  const views = useRef<readonly ConnectionView[]>([]);
+  const [activeView, setActiveView] = useState<number | null>(null);
+  const [tabScopes, setTabScopes] = useState<readonly LinkMetadata['scope'][]>([]);
+  const registerViews = useCallback((next: readonly ConnectionView[]) => {
+    views.current = next;
+    setTabScopes(next.map((view) => view.scope));
+  }, []);
   const [rememberUncertain, setRememberUncertain] = useState(false);
   const [loginChoice, setLoginChoice] = useState(() =>
     metadata.loginOptions[0] ? loginOptionKey(metadata.loginOptions[0]) : '',
@@ -238,6 +246,32 @@ export function App({
     const initial = seenRoute.current === null;
     const retry = seenRoute.current !== null && seenRoute.current.revision !== routeRevision;
     seenRoute.current = { key: slugRoute.key, revision: routeRevision };
+    const selected = views.current.find(
+      (view) =>
+        view.id === slugRoute.view &&
+        view.scope.origin === routeOrigin &&
+        view.scope.slug === routeSlug,
+    );
+    if (selected) {
+      // View navigation only selects a still-owned local view. In particular it
+      // must not enter routing/blocked, reload discovery or touch saved access.
+      if (routeOperation.current !== null) {
+        generation.current++;
+        routeOperation.current.abort();
+        routeOperation.current = null;
+      }
+      access.current = selected.access;
+      if (candidate.current === selected.access) {
+        candidate.current = null;
+      }
+      setSnapshot(selected.access.snapshot());
+      setActiveView(selected.id);
+      setLoginOpen(false);
+      setTerminalLogin(null);
+      setRouting(false);
+      setRouteFailed(false);
+      return;
+    }
     // Active/uncertain operations are blocked by the router. A stopped local
     // authentication console has no operation left to cancel and must not keep
     // the new route behind an old generation's unresponsive close callback.
@@ -310,7 +344,7 @@ export function App({
     return () => {
       controller.abort();
     };
-  }, [slugRoute.key, routeOrigin, routeSlug, routeRevision, readSaved]);
+  }, [slugRoute.key, slugRoute.view, routeOrigin, routeSlug, routeRevision, readSaved]);
   useEffect(() => {
     void readSaved();
     return () => {
@@ -335,19 +369,21 @@ export function App({
     }
   }, []);
 
-  const linkChoices = [
-    ...new Set([
-      metadata.scope.slug,
-      ...(metadata.publishedSlugs.length > 0 || loginMetadata.publishedSlugs.length > 0
-        ? ['']
-        : []),
-      ...metadata.publishedSlugs,
-      loginMetadata.scope.slug,
-      ...loginMetadata.publishedSlugs,
-      ...(routeSlug === null ? [] : [routeSlug]),
-      ...(snapshot ? [snapshot.scope.slug] : []),
-    ]),
-  ];
+  const selectView = useCallback(
+    (selected: ConnectionView | null, replace = false) => {
+      if (selected === null || (replace && (routing || loginOpen))) {
+        // Lifecycle fallback behind an existing login intent must not replace the
+        // requested login URL. User/History activation is committed by the route.
+        setActiveView(selected?.id ?? null);
+        selectAccess(selected?.access ?? null);
+        return;
+      }
+      void slugRoute.activate(selected.scope.slug, selected.id, replace);
+    },
+    [routing, loginOpen, selectAccess, slugRoute.activate],
+  );
+
+  const linkChoices = linkSlugs(metadata, loginMetadata, routeSlug, tabScopes);
 
   function selectLoginOption(choice: string) {
     const option = loginOptionFor(link.current, choice);
@@ -366,7 +402,7 @@ export function App({
     if (closing || busy || rememberUncertain || managementLocked || !linkChoices.includes(slug)) {
       return;
     }
-    if (slug === routeSlug) {
+    if (slug === routeSlug && slugRoute.view === null && metadataReady) {
       void readSaved();
       return;
     }
@@ -709,7 +745,7 @@ export function App({
     setConfirm(value);
   }
 
-  function showLogin(scope = access.current?.snapshot().scope) {
+  function showLogin(scope = access.current?.snapshot().scope ?? slugRoute.scope ?? undefined) {
     if (closing || busy || rememberUncertain || managementLocked) {
       return;
     }
@@ -724,8 +760,14 @@ export function App({
     setOptIn(false);
     setProviderInformation(null);
     setNotice(null);
-    if (scope && scope.origin === metadata.scope.origin && scope.slug !== routeSlug) {
-      void chooseLink(scope.slug);
+    if (
+      scope &&
+      scope.origin === metadata.scope.origin &&
+      (scope.slug !== routeSlug || slugRoute.view !== null)
+    ) {
+      // Explicit sign-in clears the local view intent, even for the same URL.
+      // Its route effect may discover metadata for a previously selected tab.
+      void slugRoute.navigate(scope.slug);
       return;
     }
     if (routing) {
@@ -739,6 +781,10 @@ export function App({
     void readSaved();
   }
   function closeLogin() {
+    const selected = views.current.find((view) => view.id === activeView);
+    if (selected && !busy && !closing && !rememberUncertain && !managementLocked) {
+      void slugRoute.activate(selected.scope.slug, selected.id, true);
+    }
     if (operation.current !== null) {
       cancel();
     }
@@ -760,6 +806,7 @@ export function App({
   return (
     <>
       <TerminalWorkspace
+        activeView={activeView}
         authentication={
           terminalLogin === null
             ? null
@@ -798,7 +845,8 @@ export function App({
         title={title}
         onSignIn={showLogin}
         onNewConnection={() => showLogin()}
-        onSelectAccess={selectAccess}
+        onSelectView={selectView}
+        onViewsChange={registerViews}
         onActionLock={setManagementLocked}
         onTabCount={setTabCount}
         onLogout={(selected) => {
@@ -873,10 +921,10 @@ export function App({
           data-login-scope={loginMetadata.scope.slug}
           data-login-ready={metadataReady}
         >
-          {linkChoices.length > 1 ? (
+          {linkChoices.length > 1 || (routeSlug === '' && !loginMetadata.rootAvailable) ? (
             <Select
               label={t('connectionLink')}
-              value={routeSlug ?? loginMetadata.scope.slug}
+              value={routeSlug !== null && linkChoices.includes(routeSlug) ? routeSlug : ''}
               data={linkChoices.map((slug) => ({ value: slug, label: slug || '/' }))}
               disabled={busy}
               allowDeselect={false}

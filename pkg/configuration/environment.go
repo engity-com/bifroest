@@ -11,6 +11,9 @@ import (
 type Environment struct {
 	Variables EnvironmentVariables `yaml:"variables,omitempty" sensitive:"true"`
 	V         EnvironmentV         `yaml:"-"`
+	// Reference is the configured definition name; V is the effective per-flow value.
+	Reference string `yaml:"-"`
+	resolved  bool
 }
 
 type EnvironmentV interface {
@@ -80,6 +83,13 @@ func (this *Environment) Validate() error {
 }
 
 func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
+		*this = Environment{Reference: node.Value}
+		return nil
+	}
+	if _, err := effectiveHttpFields(node); err != nil {
+		return err
+	}
 	var typeBuf struct {
 		Type string `yaml:"type"`
 	}
@@ -102,6 +112,9 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	this.V = factory()
+	if err := rejectUnknownConfigurationFields(node, this.V, "type", "variables"); err != nil {
+		return err
+	}
 	if err := node.Decode(this.V); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
@@ -117,8 +130,11 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (this Environment) MarshalYAML() (any, error) {
-	if this.V == nil {
-		return nil, fmt.Errorf("cannot marshal environment without a type")
+	if this.Reference != "" {
+		return this.Reference, nil
+	}
+	if this.resolved || this.V == nil {
+		return nil, nil
 	}
 	var result yaml.Node
 	if err := result.Encode(this.V); err != nil {
@@ -157,13 +173,16 @@ func (this Environment) IsEqualTo(other any) bool {
 }
 
 func (this Environment) isEqualTo(other *Environment) bool {
+	if other == nil || this.Reference != other.Reference || (this.Reference == "" && this.resolved != other.resolved) {
+		return false
+	}
 	if !isEqual(&this.Variables, &other.Variables) {
 		return false
 	}
 	if other.V == nil {
 		return this.V == nil
 	}
-	return this.V.IsEqualTo(other.V)
+	return this.V != nil && this.V.IsEqualTo(other.V)
 }
 
 func GetSupportedEnvironmentFeatureFlags() []string {

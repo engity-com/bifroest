@@ -20,6 +20,7 @@ func TestHTTPRuntimePathsProtectPrivateStateAndPublicAssetsAtomically(t *testing
 			c.Http.Tls.Acme.Storage = filepath.Join(c.Session.V.(*configuration.SessionFs).Storage, "acme")
 		}, "HTTPS ACME storage overlaps session storage"},
 		{"TLS key in journal", func(c *configuration.Configuration) {
+			configureDefaultTestAuditlog(c).Directory = filepath.Join(t.TempDir(), "journal")
 			c.Http.Tls.Certificates[0].PrivateKeyFile = filepath.Join(c.Auditlogs[0].Directory, "tls.pem")
 		}, "HTTPS private key file overlaps"},
 		{"TLS key equals SSH key", func(c *configuration.Configuration) {
@@ -40,6 +41,7 @@ func TestHTTPRuntimePathsProtectPrivateStateAndPublicAssetsAtomically(t *testing
 			c.Http.CustomCss = configuration.HttpAssetFiles{c.Http.Tls.Certificates[0].PrivateKeyFile}
 		}, "HTTP customization file overlaps HTTPS private key"},
 		{"custom JS reads audit key", func(c *configuration.Configuration) {
+			configureDefaultTestAuditlog(c).IdentityFile = filepath.Join(t.TempDir(), "audit-key")
 			c.Http.CustomJs = configuration.HttpAssetFiles{c.Auditlogs[0].IdentityFile}
 		}, "HTTP customization file overlaps auditlog"},
 	} {

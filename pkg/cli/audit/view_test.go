@@ -14,7 +14,7 @@ import (
 )
 
 func TestAuditlogListAndDetailFormats(t *testing.T) {
-	conf := &configuration.Configuration{Auditlogs: configuration.Auditlogs{{Name: "restricted", Enabled: true, IdentityFile: "private-signing-key"}}}
+	conf := &configuration.Configuration{Auditlogs: configuration.Auditlogs{{Name: "restricted", IdentityFile: "private-signing-key"}}}
 	var output bytes.Buffer
 	require.NoError(t, ListAuditlogs(&output, cliformat.Json, conf))
 	var rows []model.AuditlogSummary

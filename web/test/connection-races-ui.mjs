@@ -84,6 +84,7 @@ export async function exerciseConnectionRaces(page) {
       body: JSON.stringify({
         scope: { origin: new URL(page.url()).origin, slug: 'Wrong' },
         loginOptions: [{ method: 'password', requestUser: true, certificateRequired: false }],
+        rootAvailable: false,
       }),
     });
   });
@@ -156,6 +157,23 @@ export async function exerciseConnectionRaces(page) {
 
 export async function exerciseManagementOwner(page, fixture, login, logout, closeProbe = false) {
   const target = JSON.parse(readFileSync(fixture, 'utf8'));
+  const committedView = async (id, user) => {
+    // Alice and Bob use the same Slug. Wait for this exact local view after the
+    // route commit, not merely a matching principal or ready login metadata.
+    await page.waitForFunction(
+      ({ id, user }) => {
+        const pane = document.getElementById(`terminal-pane-${id}`);
+        return (
+          document.getElementById(`terminal-tab-${id}`)?.getAttribute('aria-selected') === 'true' &&
+          pane?.getAttribute('data-connection-active') === 'true' &&
+          pane.getAttribute('data-connection-principal') === user &&
+          pane.getAttribute('data-connection-scope') === location.pathname.slice(1) &&
+          history.state?.usr?.view === id
+        );
+      },
+      { id, user },
+    );
+  };
   let commits = 0;
   page.on('request', (request) => {
     if (request.url().endsWith('/management/sessions/confirm')) {
@@ -163,14 +181,18 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
     }
   });
   await login(page, false);
+  await committedView(1, 'alice');
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   await login(page, false, 'bob');
+  await committedView(2, 'bob');
   await page.getByRole('button', { name: 'Load sessions', exact: true }).click();
   await page.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
   const alice = page.getByRole('tab', { name: 'Management 1 alice', exact: true });
   const bob = page.getByRole('tab', { name: 'Management 2 bob', exact: true });
   const alicePanel = page.getByRole('tabpanel', { name: 'Management 1 alice', exact: true });
+  const bobPanel = page.getByRole('tabpanel', { name: 'Management 2 bob', exact: true });
   await alice.click();
+  await committedView(1, 'alice');
   await alicePanel.getByText('Action on a known session', { exact: true }).click();
   await page.getByRole('textbox', { name: /^Target flow/u }).fill(target.flow);
   await page.getByRole('textbox', { name: /^Target session ID/u }).fill(target.id);
@@ -186,6 +208,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
     await page.getByRole('dialog', { name: 'Close this management view?', exact: true }).waitFor();
   } else {
     await bob.click();
+    await committedView(2, 'bob');
   }
   await page.evaluate(async () => {
     const response = await fetch('/_bifroest/test/preparation-release', {
@@ -209,21 +232,44 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
       0,
     );
     await closing.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await activeAccess(page, 'alice');
+    await committedView(1, 'alice');
   } else {
     assert.equal(
       await page.getByRole('dialog').count(),
       0,
       'a late Alice preparation cannot open a portal over Bob',
     );
-    await activeAccess(page, 'bob');
+    await committedView(2, 'bob');
+    await bobPanel.getByText('Action on a known session', { exact: true }).click();
+    assert.equal(
+      await bobPanel.getByRole('textbox', { name: /^Target flow/u }).inputValue(),
+      '',
+      'Alice preparation must not populate Bob action fields',
+    );
+    assert.equal(
+      await bobPanel.getByRole('textbox', { name: /^Target session ID/u }).inputValue(),
+      '',
+      'Alice preparation must not populate Bob target session',
+    );
   }
   assert.equal(commits, 0);
   await alice.click();
+  await committedView(1, 'alice');
   assert.equal(
     await page.getByRole('dialog').count(),
     0,
     'the unused hidden confirmation is retired, not resurrected',
+  );
+  assert.equal(
+    (await alicePanel.getByRole('textbox', { name: /^Target flow/u }).inputValue()) === target.flow,
+    true,
+    'reactivating Alice must preserve her independently owned target flow',
+  );
+  assert.equal(
+    (await alicePanel.getByRole('textbox', { name: /^Target session ID/u }).inputValue()) ===
+      target.id,
+    true,
+    'reactivating Alice must preserve her independently owned target session',
   );
   await page.getByRole('combobox', { name: 'Session action', exact: true }).click();
   await page.getByRole('option', { name: 'dispose', exact: true }).click();

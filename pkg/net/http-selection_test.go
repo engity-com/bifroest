@@ -50,6 +50,7 @@ func TestHttpSlugFromURL(t *testing.T) {
 	for _, test := range []struct{ raw, slug string }{
 		{"https://example.org", ""}, {"/", ""}, {"/?next=/other", ""},
 		{"/foo", "foo"}, {"/servers/Foo9", "servers/Foo9"},
+		{"/bla-bla", "bla-bla"}, {"/servers/a-b", "servers/a-b"},
 		{"/servers/foo?next=/other#fragment", "servers/foo"},
 		{"/" + strings.Repeat("a", 64) + "/" + strings.Repeat("B", 64), strings.Repeat("a", 64) + "/" + strings.Repeat("B", 64)},
 	} {
@@ -65,7 +66,7 @@ func TestHttpSlugFromURL(t *testing.T) {
 
 func TestHttpSlugRejectsAliasesAndInternalPaths(t *testing.T) {
 	for _, path := range []string{
-		"foo", "/foo/", "/foo//bar", "/one/two/three", "/.", "/..", "/foo/..", "/foo-bar", "/é",
+		"foo", "/foo/", "/foo//bar", "/one/two/three", "/.", "/..", "/foo/..", "/foo_bar", "/é",
 		"/_bifroest", "/_bifroest/api", "/_bifroest/assets/main.js", "/assets/main.js", "/%66oo", "/foo%2fbar", "/foo%2Fbar", "/foo%252fbar",
 		"/" + strings.Repeat("a", 65),
 	} {

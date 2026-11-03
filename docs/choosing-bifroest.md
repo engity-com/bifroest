@@ -21,7 +21,7 @@ Bifröst combines **who may connect** with **where their session runs** in confi
 
 ## Feature and workflow comparison
 
-The cells describe the **documented workflow**, not every possible integration or an unconditional security guarantee. Features may depend on configuration, platform and edition. In Bifröst, the [audit journal](reference/auditlog/index.md) records access and session events; [session recording](reference/auditlog/recording.md) captures terminal output. They are independent options: recording can run without an audit journal.
+The cells describe the **documented workflow**, not every possible integration or an unconditional security guarantee. Features may depend on configuration, platform and edition. In Bifröst, a selected [audit logger](reference/auditlog/index.md) records access and session events; optional [session recording](reference/auditlog/recording.md) adds terminal output capture.
 
 **Legend:** :material-check-circle: documented product workflow (configuration may still be needed); :material-tune: additional integration, client setup or edition; :material-swap-horizontal: different workflow in the cited docs; :material-help-circle-outline: not documented in the cited sources (not proof of absence); :material-minus-circle-outline: not built in. The symbols are not security ratings.
 

@@ -28,9 +28,11 @@ Unique flow name, used in logs and stored [sessions](session/index.md).
 !!! warning
     Changing a flow's name breaks its existing sessions.
 
-<<property("auditlog", "Audit log Name", "auditlog/index.md", default="default")>>
-Name of the audit log used by this flow. It must exist in the root
-`auditlog` list. Omitting that list provides a disabled entry named `default`.
+<<property("auditlog", "Audit log Name", "auditlog/index.md")>>
+Name of an entry in the root `auditlogs` map. Omitted, `null` and `''` select
+`auditlogs.default` only if it is defined; otherwise this flow has no audit
+logging or recording. An explicit unknown name is a configuration error.
+Selecting a defined logger activates it; no `enabled` flag is needed.
 
 <<property("ssh", "SSH transport", "#ssh-transport")>>
 Controls incoming SSH access, independently of HTTP.
@@ -47,22 +49,33 @@ Controls browser access, the requesting-name prompt and terminal keepalive.
 Publishes an HTTP access link for this flow on its allowed hosts. An empty value
 publishes nothing. Only HTTP-enabled flows publish links.
 
-A slug has one or two case-sensitive alphanumeric segments, each 1–64 characters
-long. For example, `servers/Example` publishes `/servers/Example`. Leading or
-trailing slashes, empty segments and URL-encoded aliases are not allowed.
+A slug has one or two case-sensitive segments of ASCII letters, digits or
+hyphens, each 1–64 bytes long. For example, `servers/Example` publishes
+`/servers/Example`, and `bla-bla` is valid. Underscores, dots, leading or trailing
+slashes, empty segments and URL-encoded aliases are not allowed.
 
 The link still requires authorization and all configured requirements. Two flows
 cannot publish the same slug on the same configured domain. Disjoint domains
 may use the same slug.
 
+The published slug must match this flow's `requirement.http.includedSlug` and
+must not match `excludedSlug`. A contradiction is a configuration error at
+startup; publishing a link does not widen the allowed slug scope.
+
 <<property("requirement", "Requirement", "#requirement")>>
 Rules a request must satisfy before authorization.
 
-<<property("authorization", "Authorization", "authorization/index.md", required=True)>>
-Defines how the user authenticates and which access is permitted.
+<<property("authorization", "Authorization or name", "authorization/index.md")>>
+Exactly one inline object with `type` and authorization settings, or a string
+referencing the root `authorizations` map. Lists and multiple authorizations are
+not supported. Omitted, `null` and `''` use `authorizations.default` if defined;
+otherwise an authorization is required. Unknown references are configuration errors.
 
-<<property("environment", "Environment", "environment/index.md", required=True)>>
-Defines where the authorized user's session runs.
+<<property("environment", "Environment or name", "environment/index.md")>>
+An inline object with `type` and environment settings, or a string referencing
+the root `environments` map. Omitted, `null` and `''` use `environments.default`
+if defined; otherwise an environment is required. Unknown references are
+configuration errors. Neither default definition is created automatically.
 
 ### SSH transport
 
@@ -158,14 +171,21 @@ their brackets.
 Exclude rule for the canonical host.
 
 <<property("includedSlug", "Regex", "data-type.md#regex", default="", id_prefix="requirement-http-", heading=4)>>
-Include rule for the slug without a leading slash. The root has slug `""`.
+Include rule for the slug without a leading slash. The root `/` has slug `""`.
 
 <<property("excludedSlug", "Regex", "data-type.md#regex", default="", id_prefix="requirement-http-", heading=4)>>
 Exclude rule for the slug.
 
-Empty include rules do not restrict access; empty exclude rules exclude nothing.
+When **both** slug rules are empty or omitted, only the root `/` matches.
+Otherwise normal regex rules apply: an empty include with a nonempty exclude
+allows every slug except those excluded. Use `^docker$` to allow only `/docker`.
+
+For name and host rules, empty includes do not restrict access and empty excludes
+exclude nothing.
 Host rules only narrow the endpoint's [domain list](connection/http/index.md#property-domains).
-Discovery links do not bypass these requirements.
+Discovery links do not bypass these requirements. Host and user checks remain
+authoritative during authentication; anonymous discovery does not inspect user
+accounts, keys or sessions, or contact an identity provider.
 
 ## Examples
 

@@ -3,7 +3,6 @@ package service
 import (
 	stdcrypto "crypto"
 	"fmt"
-	"os"
 
 	gossh "golang.org/x/crypto/ssh"
 
@@ -17,14 +16,8 @@ func (this *service) prepareHTTPS() error {
 	if !this.Configuration.Http.IsEnabled() {
 		return nil
 	}
-	// Archived encrypted evidence remains confidential even when that auditlog
-	// is now disabled. Audit best-effort policy must not waive transport key safety.
+	// Audit best-effort policy must not waive transport key safety.
 	for _, auditlog := range this.Configuration.Auditlogs {
-		if !auditlog.Enabled && !auditlog.Recording.Enabled && !auditlog.EncryptionPublicKeyFile.IsZero() {
-			if _, err := os.Stat(string(auditlog.EncryptionPublicKeyFile)); os.IsNotExist(err) && auditlog.EncryptionPublicKey.IsZero() {
-				continue
-			}
-		}
 		recipients, err := audit.ResolveEncryptionPublicKey(auditlog.EncryptionPublicKey, auditlog.EncryptionPublicKeyFile)
 		if err != nil {
 			return fmt.Errorf("cannot verify configured audit recipient separation for HTTPS")

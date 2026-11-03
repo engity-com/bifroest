@@ -71,8 +71,8 @@ The SFTP account needs to inspect the root; create producer directories; set dir
 ## Example
 
 ```yaml
-auditlog:
-  - enabled: true
+auditlogs:
+  default:
     targets:
       - name: sftp-archive
         type: sftp

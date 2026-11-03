@@ -42,7 +42,7 @@ func (this *resumeTestRequest) Selection() connection.Selection { return this.se
 func newSimpleResumeFixture(t *testing.T) (*AuthorizerFacade, *resumeTestRequest, *configuration.AuthorizationSimple) {
 	t.Helper()
 	conf := &configuration.AuthorizationSimple{Entries: configuration.AuthorizationSimpleEntries{{Name: "alice", Password: crypto.Password("plain:correct")}}}
-	facade, _ := newSelectionTestFacade(t, configuration.Flows{{Name: "selected", Authorization: configuration.Authorization{V: conf}}})
+	facade, _ := newSelectionTestFacade(t, configuration.Flows{{Name: "selected", Authorization: configuration.Authorization{V: conf}, Requirement: configuration.Requirement{Http: configuration.RequirementHttp{IncludedSlug: common.MustNewRegexp("^Work$")}}}})
 	base := newFacadeSelectionRequest(t, "alice")
 	base.password = "correct"
 	selected := facadeHttpRequest{base, connection.Selection{Transport: connection.TransportHttp, Host: "app.example.org", Slug: "Work"}}
@@ -152,7 +152,7 @@ func TestSessionResumeHtpasswdRechecksFileMembershipAndMissingFile(t *testing.T)
 	require.NoError(t, os.WriteFile(path, []byte("alice:"+string(hash)+"\n"), 0600))
 	conf := &configuration.AuthorizationHtpasswd{}
 	require.NoError(t, conf.File.Set(path))
-	facade, _ := newSelectionTestFacade(t, configuration.Flows{{Name: "selected", Authorization: configuration.Authorization{V: conf}}})
+	facade, _ := newSelectionTestFacade(t, configuration.Flows{{Name: "selected", Authorization: configuration.Authorization{V: conf}, Requirement: configuration.Requirement{Http: configuration.RequirementHttp{IncludedSlug: common.MustNewRegexp("^Work$")}}}})
 	base := newFacadeSelectionRequest(t, "alice")
 	base.password = "correct"
 	selected := facadeHttpRequest{base, connection.Selection{Transport: connection.TransportHttp, Host: "app.example.org", Slug: "Work"}}

@@ -901,7 +901,7 @@ func (this *service) beginRecording(source *recordingExecution, pty terminalReco
 		return nil, nil, nil
 	}
 	auditlog, ok := this.flowAuditlogs[flow]
-	if !ok {
+	if !ok || auditlog == "" {
 		return nil, nil, nil
 	}
 	if this.auditlogDisabled(auditlog) {

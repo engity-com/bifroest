@@ -13,6 +13,30 @@ export interface LinkMetadata {
   readonly scope: Scope;
   readonly loginOptions: readonly LoginOption[];
   readonly publishedSlugs: readonly string[];
+  readonly rootAvailable: boolean;
+}
+
+// The directory itself is never a selectable root access. Only the explicit
+// configuration-derived flag permits '', including for old root tab scopes.
+export function linkSlugs(
+  initial: LinkMetadata,
+  current: LinkMetadata,
+  routeSlug: string | null,
+  tabScopes: readonly Scope[],
+): string[] {
+  return [
+    ...new Set([
+      initial.scope.slug,
+      ...initial.publishedSlugs,
+      current.scope.slug,
+      ...current.publishedSlugs,
+      ...(current.rootAvailable ? [''] : []),
+      ...(routeSlug === null ? [] : [routeSlug]),
+      ...tabScopes
+        .filter((scope) => scope.origin === current.scope.origin)
+        .map((scope) => scope.slug),
+    ]),
+  ].filter((slug) => slug !== '' || current.rootAvailable);
 }
 
 export function loginOptionKey(option: LoginOption): string {
@@ -111,10 +135,20 @@ export function parseLinkMetadata(value: unknown, scope: Scope): LinkMetadata {
   const body = value as Record<string, unknown>;
   const selected = body.scope as Record<string, unknown> | null;
   if (
+    Object.keys(body).some(
+      (key) =>
+        !['scope', 'loginOptions', 'publishedSlugs', 'rootAvailable', 'frontendAvailable'].includes(
+          key,
+        ),
+    ) ||
     selected === null ||
     typeof selected !== 'object' ||
+    Array.isArray(selected) ||
+    Object.keys(selected).sort().join(',') !== 'origin,slug' ||
     selected.origin !== scope.origin ||
     selected.slug !== scope.slug ||
+    typeof body.rootAvailable !== 'boolean' ||
+    (body.frontendAvailable !== undefined && typeof body.frontendAvailable !== 'boolean') ||
     !Array.isArray(body.loginOptions) ||
     body.loginOptions.length > 8
   ) {
@@ -155,7 +189,7 @@ export function parseLinkMetadata(value: unknown, scope: Scope): LinkMetadata {
     links.length > 1024 ||
     !links.every(
       (slug) =>
-        typeof slug === 'string' && /^[A-Za-z0-9]{1,64}(?:\/[A-Za-z0-9]{1,64})?$/.test(slug),
+        typeof slug === 'string' && /^[A-Za-z0-9-]{1,64}(?:\/[A-Za-z0-9-]{1,64})?$/.test(slug),
     )
   ) {
     throw new RememberMeError('unavailable');
@@ -164,5 +198,6 @@ export function parseLinkMetadata(value: unknown, scope: Scope): LinkMetadata {
     scope: Object.freeze({ ...scope }),
     loginOptions: Object.freeze(options),
     publishedSlugs: Object.freeze([...links]),
+    rootAvailable: body.rootAvailable,
   });
 }

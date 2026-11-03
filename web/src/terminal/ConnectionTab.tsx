@@ -95,6 +95,7 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
               >
                 {principal}
               </Box>
+              {/* Closing a background execution must not first select its Tab. */}
               <IconButton
                 size="small"
                 component="span"
@@ -102,6 +103,8 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
                 tabIndex={-1}
                 aria-label={`${t(kind === 'terminal' ? 'terminalCloseTab' : 'managementCloseTab')} ${id}`}
                 disabled={props.disabled}
+                onFocus={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={(event) => {
                   event.stopPropagation();
                   onClose();

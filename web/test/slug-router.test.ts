@@ -1,6 +1,6 @@
 import { act, createElement, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createMemoryRouter } from 'react-router';
+import { createMemoryRouter, type Location } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { validateScope } from '../src/remember/protocol';
@@ -24,14 +24,19 @@ afterEach(async () => {
 });
 
 describe('exact slug location parsing', () => {
-  it.each(['', 'Work', 'Work/TeAm', 'a'.repeat(64), `${'A'.repeat(64)}/${'b'.repeat(64)}`])(
-    'preserves root, case, segment bounds and the exact origin port',
-    (slug) => {
-      expect(scopeFromSlugLocation(origin, { pathname: `/${slug}`, search: '', hash: '' })).toEqual(
-        { origin, slug },
-      );
-    },
-  );
+  it.each([
+    '',
+    'Work',
+    'bla-bla',
+    'Work/TeAm',
+    'a'.repeat(64),
+    `${'A'.repeat(64)}/${'b'.repeat(64)}`,
+  ])('preserves root, case, segment bounds and the exact origin port', (slug) => {
+    expect(scopeFromSlugLocation(origin, { pathname: `/${slug}`, search: '', hash: '' })).toEqual({
+      origin,
+      slug,
+    });
+  });
 
   it.each([
     '',
@@ -49,7 +54,6 @@ describe('exact slug location parsing', () => {
     '/Work%252fTeam',
     '/_bifroest',
     '/assets/app.js',
-    '/Work-Team',
     '/Work_Team',
     '/Wörk',
     '/Work Team',
@@ -115,7 +119,10 @@ function RouteWorkspace({
   return null;
 }
 
-async function mountRoute(initialEntries = ['/', '/Work'], initiallyBlocked = false) {
+async function mountRoute(
+  initialEntries: (string | Partial<Location>)[] = ['/', '/Work'],
+  initiallyBlocked = false,
+) {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   // Vitest serves its browser on HTTP. Adapt only that test origin; the real
   // validator still checks every slug, and parser tests use it unmodified.
@@ -176,6 +183,114 @@ async function mountRoute(initialEntries = ['/', '/Work'], initiallyBlocked = fa
 }
 
 describe('data-router slug navigation', () => {
+  it('coalesces focus and click activation before the first location commit', async () => {
+    const view = await mountRoute(['/Work']);
+    await act(async () => {
+      await view.route().activate('Work', 1, true);
+    });
+    const originalKey = view.route().key;
+    await act(async () => {
+      const route = view.route();
+      await Promise.all([route.activate('bla-bla', 2), route.activate('bla-bla', 2)]);
+    });
+    expect(view.route().view).toBe(2);
+    await act(async () => {
+      await view.router.navigate(-1);
+    });
+    expect(view.route().view).toBe(1);
+    expect(view.route().scope?.slug).toBe('Work');
+    expect(view.route().key).toBe(originalKey);
+  });
+
+  it('allows a previously blocked activation after the operation is resolved', async () => {
+    const view = await mountRoute(['/Work']);
+    await act(async () => {
+      await view.route().activate('Work', 1, true);
+    });
+    await view.setBlocked(true);
+    await act(async () => {
+      await view.route().activate('bla-bla', 2);
+    });
+    expect(view.route().view).toBe(1);
+    expect(view.onBlocked).toHaveBeenCalledTimes(1);
+    await view.setBlocked(false);
+    await act(async () => {
+      await view.route().activate('bla-bla', 2);
+    });
+    expect(view.route().view).toBe(2);
+    expect(view.route().scope?.slug).toBe('bla-bla');
+  });
+
+  it('pushes distinct local views even on the same alias, and replaces successful-login entries', async () => {
+    const view = await mountRoute(['/bla-bla']);
+    await act(async () => {
+      await view.route().activate('bla-bla', 1, true);
+    });
+    const first = view.router.state.location;
+    expect(view.route().view).toBe(1);
+    expect(first.state).toEqual({ generation: expect.any(String), view: 1 });
+    await act(async () => {
+      await view.route().activate('bla-bla', 2);
+    });
+    expect(view.route().view).toBe(2);
+    expect(view.route().scope?.slug).toBe('bla-bla');
+    await act(async () => {
+      await view.router.navigate(-1);
+    });
+    expect(view.route().view).toBe(1);
+    expect(view.route().key).toBe(first.key);
+    await act(async () => {
+      await view.router.navigate(1);
+    });
+    expect(view.route().view).toBe(2);
+    await act(async () => {
+      await view.route().navigate('bla-bla');
+    });
+    expect(view.route().view).toBeNull();
+    expect(view.router.state.location.state).toBeNull();
+    expect(view.mounted).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats history view IDs from a previous app generation as fresh login intents', async () => {
+    const original = await mountRoute(['/bla-bla']);
+    await act(async () => {
+      await original.route().activate('bla-bla', 1, true);
+    });
+    const reloaded = await mountRoute([original.router.state.location]);
+    expect(reloaded.route().scope?.slug).toBe('bla-bla');
+    expect(reloaded.route().view).toBeNull();
+    const foreign = await mountRoute([
+      { pathname: '/Work', state: { generation: 'old', view: 1, token: 'ignored' } },
+    ]);
+    expect(foreign.route().view).toBeNull();
+  });
+
+  it('blocks same-URL view activation and login intents atomically, including POP', async () => {
+    const view = await mountRoute(['/Work']);
+    await act(async () => {
+      await view.route().activate('Work', 1, true);
+    });
+    await act(async () => {
+      await view.route().activate('Work', 2);
+    });
+    await view.setBlocked(true);
+    const key = view.route().key;
+    for (const action of [
+      () => view.route().activate('Work', 1),
+      () => view.route().navigate('Work'),
+      () => view.router.navigate(-1),
+    ]) {
+      await act(async () => {
+        await action();
+      });
+      expect(view.route().key).toBe(key);
+      expect(view.route().view).toBe(2);
+    }
+    expect(view.onBlocked).toHaveBeenCalledTimes(3);
+    await view.setBlocked(false);
+    expect(view.route().view).toBe(2);
+  });
+
   it('updates push/back/forward scope and key without remounting the workspace', async () => {
     const view = await mountRoute();
     const firstKey = view.route().key;

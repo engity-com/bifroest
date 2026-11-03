@@ -161,7 +161,8 @@ export const messages = {
     'Sign-in options for this Slug could not be loaded. Existing connections are unchanged.',
   retrySlug: 'Retry loading options',
   slugNavigationBlocked: 'Complete or resolve the current operation before changing the Slug.',
-  slugRouteHint: 'The URL selects sign-in options. Existing connection tabs stay unchanged.',
+  slugRouteHint:
+    'Switching tabs shows their original Slug in the URL. Choosing a Slug or reloading starts a fresh sign-in, never reattaches a connection.',
   connectionLoginContext: 'Connecting to',
   connectionRequestedUser: 'Requested user',
   connectionExistingKept:

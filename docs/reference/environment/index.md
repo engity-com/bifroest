@@ -6,6 +6,12 @@ description: How environments within Bifröst work when user sessions are execut
 
 Bifröst executes user sessions within environments. These environments can either be the [local environment](local.md) of the host (on which Bifröst runs on) itself or even containers.
 
+Configure an environment inline in a [flow](../flow.md#property-environment), or
+define it once in the root [`environments` map](../configuration.md#property-environments)
+and reference its map key. The map value contains `type` and the same settings
+shown below. Omitted, `null` or empty flow values use `environments.default` only
+if explicitly defined; otherwise an environment is required.
+
 ## Types
 
 1. `docker`: [Docker](docker.md) executes each user session inside a separate Docker container.

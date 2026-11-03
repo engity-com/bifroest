@@ -312,11 +312,23 @@ Discovery returns `loginOptions` with `method`, `requestUser` and
 `certificateRequired`, not the former global name flag/unconditional login URLs.
 The UI handles a missing method set without credential fields; None uses an
 explicit no-secret action through its existing adapter. Root may expose a public
-link directory without becoming a permitted authentication target.
+link directory without becoming a permitted authentication target or selectable
+login scope. Slugs have one or two 1–64-byte ASCII letter/digit/hyphen segments;
+underscores, dots, encoded aliases and trailing slashes are rejected. With both
+flow slug rules empty, only root matches; published slugs must match the actual
+include/exclude rules, checked at configuration validation.
+Sign-in choices describe the active flow's methods, not a provider/MFA chain.
 
 React Router owns Slug URLs/history in one stable wildcard route. Routing never
 stores credentials or access objects, remounts connection tabs, reauthenticates,
-reconnects, or chooses a prior actor. Metadata requests have separate cancellation
+reconnects, or recreates a retired authorization. Selecting an existing tab restores its
+immutable, initially used access scope to the URL without fetching discovery,
+changing session/workload state or starting another operation. With
+`discoverAsSlug: docker` and `includedSlug: '^(docker|bla-bla)$'`, a tab opened
+through `/bla-bla` keeps `/bla-bla`, not `/docker`. Back/Forward keeps the visible
+scope and URL consistent without replaying authentication or execution; reload
+requires fresh login or explicit saved-access resumption and starts a new
+execution, never reattaches. Metadata requests have separate cancellation
 and generation guards; old results cannot rebind a new scope. Name modes stay
 separate both in discovery and authoritative HTTP matching. Critical operations
 block in-app navigation; metadata failures have explicit read-only retries.
@@ -502,8 +514,9 @@ unselected lookahead content is not verified or promoted into evidence.
 Catalog rows are server metadata only, including `verificationScope`, producer ID
 and recipient. The native encrypted format remains `becast-cbor/v1`. Choosing a
 row sets only download selectors, clears old local evidence/expectations, and does
-not fetch content or populate trust pins. Disabled auditlogs remain visible as
-configuration metadata. Reads are explicit, never automatic on login/selection.
+not fetch content or populate trust pins. Configured auditlogs remain visible as
+configuration metadata; there is no audit-log `enabled` configuration flag.
+Reads are explicit, never automatic on login/selection.
 Completed same-actor pages can remain visible while other artifact work disables
 selection; cancellation joins the owned request and rejects late/partial pages.
 Authentication changes/logout clear actor-owned catalog state.

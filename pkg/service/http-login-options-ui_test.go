@@ -19,7 +19,7 @@ func TestBrowserSlugRouterAndLoginOptionsKeepWorkspacesAndInputModes(t *testing.
 		password := oidc
 		password.Name, password.DiscoverAsSlug = "password", "Work"
 		password.Http.RequestUser = commonBool(true)
-		password.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
+		password.Requirement.Http.IncludedSlug = common.MustNewRegexp("^(Work|bla-bla)$")
 		password.Authorization.V = &configuration.AuthorizationSimple{Entries: configuration.AuthorizationSimpleEntries{{Name: "alice", Password: crypto.Password("plain:correct")}}}
 		mixed := password
 		mixed.Name, mixed.DiscoverAsSlug = "mixed-password", ""

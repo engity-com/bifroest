@@ -27,7 +27,7 @@ export async function assertUiPreferences(page, usernames = ['alice', 'bob', 'e2
         'only UI preference keys may be persisted',
       );
       const slug = decodeURIComponent(key.slice('bifroest-ui-v1:username:'.length));
-      assert(/^(?:[A-Za-z0-9]{1,64}(?:\/[A-Za-z0-9]{1,64})?)?$/u.test(slug));
+      assert(/^(?:[A-Za-z0-9-]{1,64}(?:\/[A-Za-z0-9-]{1,64})?)?$/u.test(slug));
       assert(
         usernames.includes(value),
         'only original fixture usernames, never credentials/principals/tokens, may be persisted',

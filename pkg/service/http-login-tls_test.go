@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/browserkey"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	bnet "github.com/engity-com/bifroest/pkg/net"
@@ -40,6 +41,7 @@ func TestRealHttpsInteractiveAndKeyAttemptsOutliveTheirInitialRequest(t *testing
 		entry := &conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0]
 		entry.AuthorizedKeys = crypto.AuthorizedKeys(string(entry.AuthorizedKeys) + "\n" + string(ssh.MarshalAuthorizedKey(signer.PublicKey())) + "\ncert-authority " + string(ssh.MarshalAuthorizedKey(ca.PublicKey())))
 		conf.Flows[0].DiscoverAsSlug = "Work"
+		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 		conf.Http = &configuration.Http{}
 		require.NoError(t, conf.Http.SetDefaults())
 		conf.Http.Enabled = true

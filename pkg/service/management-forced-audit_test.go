@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
@@ -22,7 +23,7 @@ import (
 func addForcedAuditSummaries(svc *service) {
 	for index := 20; index >= 0; index-- {
 		svc.Configuration.Auditlogs = append(svc.Configuration.Auditlogs, configuration.Auditlog{
-			Name: configuration.AuditlogName(fmt.Sprintf("audit%02d", index)), Enabled: false,
+			Name:      configuration.AuditlogName(fmt.Sprintf("audit%02d", index)),
 			Directory: "private audit directory", IdentityFile: "private identity file",
 			EncryptionPublicKeyFile: crypto.PublicKeysFile("private recipient file"),
 		})
@@ -49,7 +50,7 @@ func TestForcedManagementAuditReadPagesWithoutCliAndCannotCrossOperation(t *test
 				for _, row := range result.Auditlogs.Items {
 					names = append(names, row.Name)
 					if row.Name != "default" {
-						require.False(t, row.Enabled)
+						require.True(t, row.Enabled)
 						require.False(t, row.RecordingEnabled)
 						require.True(t, row.Encrypted)
 					}
@@ -131,6 +132,7 @@ func TestForcedManagementAuditReadReferenceSSHAndHTTPExposeTheSameSummary(t *tes
 	for _, format := range []string{"table", "json", "yaml", "cbor"} {
 		t.Run(format, func(t *testing.T) {
 			server := newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, "alice", "command="+strconv.Quote("audit ls --format="+format), nil, func(conf *configuration.Configuration) {
+				conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 			})
 			svc := server.service

@@ -94,10 +94,9 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 						var current configuration.Auditlog
 						require.NoError(t, current.SetDefaults())
 						current.Name = configuration.AuditlogName(fmt.Sprintf("catalog%02d", index))
-						current.Enabled = index != 20
 						current.IdentityFile = filepath.Join(root, current.Name.String()+"-signer")
 						current.Directory = filepath.Join(root, current.Name.String()+"-journal")
-						current.Recording.Enabled = true
+						current.Recording.Enabled = index != 20
 						current.Recording.Directory = filepath.Join(root, current.Name.String()+"-recordings")
 						if strings.HasSuffix(mode, "encrypted") {
 							current.EncryptionPublicKey = bfcrypto.PublicKeys(string(ssh.MarshalAuthorizedKey(public)))

@@ -28,6 +28,8 @@ described in [Security and trust](../../../security.md).
 
 Password, interactive/device and SSH-key logins use the configured authorizer,
 not a separate web account. A flow link or known session ID does not grant access.
+Discovery describes possible methods without user-account, key, session or IdP
+lookups. The server still enforces current host and user requirements at login.
 Imported private keys and passphrases stay in the current browser tab; only the
 public key and a fresh signature are sent to authenticate.
 
@@ -35,6 +37,8 @@ SSH and browser connections can reuse the same compatible session and workload
 after authentication. Their permissions remain connection-specific. A new tab
 starts a new shell, not a second view of an existing process. Reload discards the
 local tabs; another login or explicit saved-access action starts a fresh shell.
+Switching existing tabs only restores each tab's original access scope in the
+URL, preserving aliases; it does not authenticate, reconnect or start work.
 
 | Limit | Effect |
 | --- | --- |

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
@@ -31,6 +32,7 @@ func TestForcedManagementVersionReferenceSSHAndHTTPKeepExactNativeOutput(t *test
 	} {
 		t.Run(test.command, func(t *testing.T) {
 			server := newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, "alice", "command="+strconv.Quote(test.command), nil, func(conf *configuration.Configuration) {
+				conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{IncludingCredentials: true, AllowArtifactTransfer: true}
 			})
 			client := server.mustDial(t)

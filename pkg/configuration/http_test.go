@@ -168,7 +168,7 @@ func TestHttpRejectsUnknownNullOrMistypedPropertiesIncludingAliasesAndMerges(t *
 		})
 	}
 	var configured Configuration
-	require.NoError(t, configured.LoadFromYaml(strings.NewReader("off: &off false\n<<: {http: {enabled: *off}}\n"+httpTestFlows), ""))
+	require.NoError(t, configured.LoadFromYaml(strings.NewReader("<<: {http: {enabled: &off false, tls: {acme: {enabled: *off}}}}\n"+httpTestFlows), ""))
 	require.NotNil(t, configured.Http)
 	require.False(t, configured.Http.IsEnabled())
 }
@@ -235,6 +235,7 @@ func TestConfigurationHttpDiscoveryChecksOnlyEnabledEndpointDomains(t *testing.T
 	var conf Configuration
 	require.NoError(t, conf.LoadFromYaml(strings.NewReader(httpTestFlows), ""))
 	conf.Flows[0].DiscoverAsSlug = "foo"
+	conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^foo$")
 	second := conf.Flows[0]
 	second.Name = "second"
 	second.Requirement.Http.IncludedHost = common.MustNewRegexp(`^other\.example\.org$`)
@@ -274,12 +275,12 @@ func TestConfigurationHttpDiscoveryCollisionFailsConfigurationLoading(t *testing
 flows:
   - name: first
     discoverAsSlug: foo
-    requirement: {includedRequestingName: '^alice$'}
+    requirement: {includedRequestingName: '^alice$', http: {includedSlug: '^foo$'}}
     authorization: {type: none}
     environment: {type: dummy}
   - name: second
     discoverAsSlug: foo
-    requirement: {includedRequestingName: '^bob$'}
+    requirement: {includedRequestingName: '^bob$', http: {includedSlug: '^foo$'}}
     authorization: {type: none}
     environment: {type: dummy}
 `), "collision.yaml")

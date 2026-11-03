@@ -8,7 +8,11 @@ import { exerciseConnectionRaces, exerciseManagementOwner } from './connection-r
 import { exerciseConnections } from './connections-ui.mjs';
 import { exerciseKeepAlive } from './keepalive-ui.mjs';
 import { exerciseKey, exerciseKeyDiagnostic, exerciseKeyVariant } from './key-ui.mjs';
-import { exerciseLoginOptions } from './login-options-ui.mjs';
+import {
+  exerciseLoginOptions,
+  exerciseRootAccess,
+  exerciseRootDirectory,
+} from './login-options-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
 import { exerciseManagementForcedAction } from './management-forced-action-ui.mjs';
@@ -20,6 +24,7 @@ import {
 import { exerciseManagement } from './management-ui.mjs';
 import { exercisePreferences } from './preferences-ui.mjs';
 import { installPreparationObserver } from './response-capture.mjs';
+import { exerciseSlugHistory } from './slug-history-ui.mjs';
 import { exerciseStoppedAuthRoute } from './stopped-auth-route-ui.mjs';
 import { exerciseTerminalExpiry } from './terminal-expiry-ui.mjs';
 import { exerciseLostTerminalLogout } from './terminal-logout-ui.mjs';
@@ -95,9 +100,14 @@ try {
         failedResources.push({ path, status: response.status() });
       }
     });
-    const response = await page.goto(
-      `${origin}/${process.argv[3] === 'login-options' ? 'Mixed' : 'Work'}`,
-    );
+    const initialSlug = ['root-directory', 'root-access'].includes(process.argv[3])
+      ? ''
+      : process.argv[3] === 'login-options'
+        ? 'Mixed'
+        : process.argv[3] === 'slug-history'
+          ? 'bla-bla'
+          : 'Work';
+    const response = await page.goto(`${origin}/${initialSlug}`);
     assert.equal(response.status(), 200);
     const policy = response.headers()['content-security-policy'];
     assert(
@@ -204,9 +214,14 @@ try {
       await settledLogin(
         page,
         user,
-        ['terminal', 'terminal-expiry', 'terminal-logout-lost', 'workspace', 'keepalive'].includes(
-          process.argv[3],
-        ),
+        [
+          'terminal',
+          'terminal-expiry',
+          'terminal-logout-lost',
+          'workspace',
+          'keepalive',
+          'slug-history',
+        ].includes(process.argv[3]),
       );
     } catch (error) {
       throw new Error(
@@ -284,6 +299,21 @@ try {
     }
     if (process.argv[3] === 'login-options') {
       await exerciseLoginOptions(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'root-access') {
+      await exerciseRootAccess(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'root-directory') {
+      await exerciseRootDirectory(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'slug-history') {
+      await exerciseSlugHistory(page, login);
       assert.deepEqual(errors, []);
       return;
     }

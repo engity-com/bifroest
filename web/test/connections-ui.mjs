@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import {
-  activeAccess,
   answerAuthentication,
   assertUiPreferences,
   captureLayout,
@@ -47,7 +46,21 @@ export async function exerciseConnections(page, login) {
       .getByRole('textbox', { name: /^Artifact auditlog/u });
   const select = async (id, user, kind) => {
     await tab(id, user, kind).click();
-    await activeAccess(page, user);
+    // The same principal can own several flows/views. Selection is controlled
+    // by the committed route, not the preceding access snapshot or metadata.
+    await page.waitForFunction(
+      ({ id, user }) => {
+        const pane = document.getElementById(`terminal-pane-${id}`);
+        return (
+          document.getElementById(`terminal-tab-${id}`)?.getAttribute('aria-selected') === 'true' &&
+          pane?.getAttribute('data-connection-active') === 'true' &&
+          pane.getAttribute('data-connection-principal') === user &&
+          pane.getAttribute('data-connection-scope') === location.pathname.slice(1) &&
+          history.state?.usr?.view === id
+        );
+      },
+      { id, user },
+    );
   };
   async function newConnection(slug) {
     await page.getByRole('button', { name: 'New connection', exact: true }).click();
@@ -63,7 +76,11 @@ export async function exerciseConnections(page, login) {
     assert.equal(response.request().headers().authorization, undefined);
     assert.equal(response.request().headers().cookie, undefined);
     await page.waitForFunction(
-      (slug) => document.querySelector('.login-dialog [role="combobox"]')?.textContent === slug,
+      (slug) =>
+        document
+          .querySelector('.login-dialog [data-login-ready="true"]')
+          ?.getAttribute('data-login-scope') === slug &&
+        document.querySelector('.login-dialog [role="combobox"]')?.textContent === slug,
       slug,
     );
     assert.equal(
@@ -119,6 +136,11 @@ export async function exerciseConnections(page, login) {
   await page.keyboard.press('Enter');
   await active('STDIN:still-owned-by-alice');
   await select(6, 'alice', 'Management');
+  assert.equal(
+    await version.count(),
+    1,
+    'reactivating the same management view must retain its loaded server version',
+  );
   await version.waitFor();
   await exactArtifactSelection(page);
   await captureLayout(page, 'connections-artifact-selection');

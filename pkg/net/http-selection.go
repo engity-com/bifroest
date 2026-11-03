@@ -77,7 +77,7 @@ func CanonicalHttpHost(authority string) (string, error) {
 }
 
 // ValidateHttpSlug accepts the root slug or one/two case-sensitive ASCII
-// alphanumeric segments, each at most MaxHttpSlugSegmentBytes bytes long.
+// alphanumeric/hyphen segments, each at most MaxHttpSlugSegmentBytes bytes long.
 // Internal routes use a different namespace, not a more permissive slug grammar.
 func ValidateHttpSlug(slug string) error {
 	if slug == "" {
@@ -92,10 +92,10 @@ func ValidateHttpSlug(slug string) error {
 			return fmt.Errorf("HTTP slug segment must contain 1 to %d bytes", MaxHttpSlugSegmentBytes)
 		}
 		for _, character := range segment {
-			if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+			if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' {
 				continue
 			}
-			return fmt.Errorf("HTTP slug segments must be ASCII alphanumeric")
+			return fmt.Errorf("HTTP slug segments must be ASCII alphanumeric or hyphen")
 		}
 	}
 	return nil

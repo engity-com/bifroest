@@ -6,6 +6,13 @@ description: Everything in Bifröst starts here. A user must be authorized at fi
 
 Everything in Bifröst starts here. Firstly, a user must be authorized. Bifröst supports [different types of authorizations](#types) you can choose from to adjust to your needs.
 
+Each [flow](../flow.md#property-authorization) selects exactly one authorization:
+an inline object with `type` and its settings, or a name from the root
+[`authorizations` map](../configuration.md#property-authorizations). Omitted,
+`null` or empty values use `authorizations.default` only if explicitly defined;
+otherwise an authorization is required. This is not a list of login providers
+or a multi-authorization/MFA chain.
+
 ## Types
 
 1. `local`: [Local](local.md)

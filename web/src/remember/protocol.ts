@@ -55,7 +55,7 @@ export function validateScope(scope: Scope): void {
     parsed.origin !== scope.origin ||
     parsed.hostname.endsWith('.') ||
     scope.origin.length > 320 ||
-    !/^(?:[a-zA-Z0-9]{1,64}(?:\/[a-zA-Z0-9]{1,64})?)?$/.test(scope.slug)
+    !/^(?:[a-zA-Z0-9-]{1,64}(?:\/[a-zA-Z0-9-]{1,64})?)?$/.test(scope.slug)
   ) {
     throw new RememberMeError('unavailable');
   }

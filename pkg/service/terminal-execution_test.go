@@ -16,6 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -97,6 +98,7 @@ func executionTestFixture(t *testing.T, run func(environment.TerminalTask) (int,
 	t.Helper()
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)
+	conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 	enableSessionRecordingForLifecycleTest(&conf, root)
 	conf.Flows[0].Authorization.V = &configuration.AuthorizationSimple{Entries: configuration.AuthorizationSimpleEntries{{Name: "alice", Password: crypto.Password("plain:correct")}}}
 	for _, fn := range configure {

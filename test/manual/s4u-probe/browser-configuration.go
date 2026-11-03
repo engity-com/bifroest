@@ -35,9 +35,8 @@ session:
   maxConnections: 4
   idleTimeout: 2m
   maxTimeout: 5m
-auditlog:
-  - name: default
-    enabled: true
+auditlogs:
+  default:
     identityFile: %q
     directory: %q
     minimumFreeBytes: 1048576
@@ -59,6 +58,9 @@ flows:
   - name: %s
     discoverAsSlug: Work
     auditlog: default
+    requirement:
+      http:
+        includedSlug: '^Work$'
     authorization:
       type: local
       authorizedKeys: [%q]

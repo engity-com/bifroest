@@ -29,6 +29,7 @@ func TestEmptyAndExcludedRequirementMatchers(t *testing.T) {
 	var requirement Requirement
 	require.True(t, requirement.MatchesSsh(""))
 	require.True(t, requirement.MatchesHttp("", "app.example", ""))
+	require.False(t, requirement.MatchesHttp("", "app.example", "foo"), "an empty slug rule pair only permits root")
 	requirement.IncludedRequestingName = common.MustNewRegexp(`^sso$`)
 	require.False(t, requirement.MatchesHttp("", "app.example", ""))
 	requirement.IncludedRequestingName = common.MustNewRegexp("")
@@ -43,6 +44,32 @@ func TestEmptyAndExcludedRequirementMatchers(t *testing.T) {
 	require.False(t, requirement.MatchesSsh("blocked"))
 	requirement.ExcludedRequestingName = common.MustNewRegexp(`^$`)
 	require.False(t, requirement.MatchesHttp("", "other.example", "foo"))
+}
+
+func TestHttpSlugOptInUsesOnlyTheTrulyEmptyPair(t *testing.T) {
+	for _, test := range []struct {
+		name, included, excluded string
+		root, alias, other       bool
+	}{
+		{name: "absent pair", root: true},
+		{name: "explicit root regex", included: "^$", root: true},
+		{name: "explicit wildcard", included: ".*", root: true, alias: true, other: true},
+		{name: "named aliases", included: "^(docker|bla-bla)$", alias: true},
+		{name: "exclude root only", excluded: "^$", alias: true, other: true},
+		{name: "exclusion still wins", included: ".*", excluded: "^bla-bla$", root: true, other: true},
+		{name: "whitespace is not empty", included: " "},
+		{name: "empty-matching regex is not empty", included: "(?:)", root: true, alias: true, other: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rules := RequirementHttp{IncludedSlug: common.MustNewRegexp(test.included), ExcludedSlug: common.MustNewRegexp(test.excluded)}
+			require.Equal(t, test.root, rules.MatchesSlug(""))
+			require.Equal(t, test.alias, rules.MatchesSlug("bla-bla"))
+			require.Equal(t, test.other, rules.MatchesSlug("other"))
+			require.Equal(t, test.included, rules.IncludedSlug.String(), "matching must not rewrite the configured expression")
+			require.Equal(t, test.excluded, rules.ExcludedSlug.String())
+			require.True(t, (Requirement{Http: rules}).MatchesSsh("unrelated"), "HTTP slug opt-in must not restrict SSH")
+		})
+	}
 }
 
 func TestTransportRequirementRoundTripAndValidation(t *testing.T) {

@@ -4,19 +4,20 @@ description: Configure Bifröst's cryptographically verifiable audit log.
 
 # Audit log
 
-Defines named audit logs that Bifröst uses to record security-relevant actions separately from the regular application log. Each [flow](../flow.md) references one of these entries by name.
+Defines audit logs in the root `auditlogs` map, separately from the regular application log. The map key is the logger's name; its value contains the settings below, without a `name` or `enabled` field. A [flow](../flow.md#property-auditlog) selects a logger by name.
 
-If `auditlog` is omitted or empty, Bifröst creates a disabled `default` entry. With both audit logging and recording disabled, no signing key, journal, Recording repository or delivery connection is created. Recording can be enabled independently, without an audit journal.
+A defined, selected logger is active. An omitted, `null` or empty flow `auditlog`
+selects `auditlogs.default` if defined; otherwise no audit logging or recording
+runs for that flow. No default definition is created implicitly, and an explicit
+unknown reference is a configuration error. Session recording remains a separate
+opt-in on the selected logger through `recording.enabled`.
 
 ## Properties
 
-<<property("name", "Audit log Name", default="default")>>
-The unique name used by flows to reference this audit log. The implicit entry and an omitted name default to `default`.
-
-<<property("enabled", "bool", default=False)>>
-Enables the audit journal and security events. Set `recording.enabled: true` independently to record sessions **without** an audit journal or audit events.
-
-Enabled audit logs must use distinct identity files and non-overlapping journal directories. Identity files must be outside every enabled journal directory.
+Audit logs must use distinct identity files and non-overlapping journal directories.
+Recording repositories must also be separate. Identity files must be outside all
+journal and Recording directories. Names do not change default paths: configure
+different paths explicitly when defining multiple logs.
 
 <<property("failurePolicy", "string", default="strict")>>
 Controls what happens when this audit log or its session-recording repository fails:
@@ -27,7 +28,7 @@ Controls what happens when this audit log or its session-recording repository fa
 Only `strict` and `bestEffort` are accepted. Remote-delivery outages continue to use their documented asynchronous retry behavior and do not by themselves disable the local audit log.
 
 <<property("identityFile", "File Path", "../data-type.md#file-path", default="<os specific>")>>
-Signing key for the journal and/or Recording. Bifröst creates an Ed25519 key when an enabled journal or Recording needs one and neither repository contains prior state.
+Signing key for the journal and optional Recording. Bifröst creates an Ed25519 key when the logger is initialized and neither repository contains prior state.
 
 If history exists, a missing or invalid signing key prevents startup. Existing keys must be regular, at most 1 MiB, owned by the Bifröst user, and neither symlinked nor hard-linked:
 
@@ -55,12 +56,12 @@ Filesystem space reserved for authenticated and other essential audit events. `0
 When the reserve is reached, Bifröst suppresses pre-authentication detail and counts it in bounded aggregates. A signed `journal-reserve` marker and pending/final aggregates may still use the emergency reserve. Authenticated events remain synchronous and fail closed; a dedicated filesystem is recommended because other processes can consume the reserved space.
 
 <<property("encryptionPublicKey", "SSH Public Key", "../data-type.md#ssh-public-key")>>
-Optional OpenSSH Ed25519 or RSA **public** age recipient key, also used by Recording. For an enabled audit journal, Bifröst encrypts confidential fields independently for each event:
+Optional OpenSSH Ed25519 or RSA **public** age recipient key, also used by Recording. Bifröst encrypts confidential fields independently for each event:
 
 * No recipient: signed `.baudit`; private fields are readable after decompression.
 * With a recipient: signed `.beaudit`; private fields are compressed and encrypted. Only `name`, optional `domain` and `outcome`, plus signed envelope data such as time, record ID, chain and producer remain visible. See the [exact field boundary](../../formats/audit.md#public-and-confidential-audit-fields).
 
-With recording alone, the same recipient selects `.becast`; no `.beaudit` journal is created.
+With recording enabled, the same recipient selects `.becast` for recorded output.
 
 !!! warning "Encryption does not cover all local state"
      A [Recording lifecycle outbox](recording.md#storage-and-recovery) can contain signed, **unencrypted** flow and correlation data even with `.beaudit`. Protect the entire Recording repository and its backups.
@@ -68,13 +69,13 @@ With recording alone, the same recipient selects `.becast`; no `.beaudit` journa
 Use exactly one recipient and **keep its private key offline**. It must differ from all server keys, including host, signing, static SSH-environment and SFTP keys; also check dynamically rendered identity paths. A journal with records cannot change recipients: use a new empty journal and retain the old private key for its evidence.
 
 <<property("encryptionPublicKeyFile", ref("File Path", "../data-type.md#file-path", ref("SSH Public Key", "../data-type.md#ssh-public-key")))>>
-Loads the single encryption public key from an OpenSSH public-key file when the enabled auditlog is initialized. This is an alternative to [`encryptionPublicKey`](#property-encryptionPublicKey); the two properties cannot be combined. The file must exist and contain exactly one supported public key without authorized-key options or certificates.
+Loads the single encryption public key from an OpenSSH public-key file when the auditlog is initialized. This is an alternative to [`encryptionPublicKey`](#property-encryptionPublicKey); the two properties cannot be combined. The file must exist and contain exactly one supported public key without authorized-key options or certificates.
 
 <<property("recording", "Session recording", "recording.md")>>
-Configures fail-closed shell and exec recording, local retention, and optional artifact delivery. Recording is disabled by default but can run without the audit journal. See [Recording-only](recording.md#recording-only).
+Configures shell and exec recording, local retention, and optional artifact delivery. Recording is disabled by default; `recording.enabled: true` adds it to the selected audit log. The default `strict` failure policy remains fail-closed.
 
 <<property("targets", array_ref("Remote target", "remote-targets/index.md"))>>
-Optional destinations for sealed audit segments. Recording may inherit these targets even when the journal is disabled; then only sealed Recordings are delivered. See [remote targets](remote-targets/index.md).
+Optional destinations for sealed audit segments. Recording may inherit these targets or select its own. See [remote targets](remote-targets/index.md).
 
 ## Journal
 
@@ -96,15 +97,11 @@ See [audit events](events.md) for the recorded security transitions, their struc
 
 ### Basic audit logs
 
-1. Enable the `default` audit log of Bifröst:
+1. Define the `default` audit log of Bifröst:
 
     ```yaml title="/etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - ## 'default' is the default name
-        # name: default
-        enabled: true
-        ## Writes the auditlog into this directory by default
-        # directory: /var/lib/engity/bifroest/auditlog
+    auditlogs:
+      default: {}
     flows:
       - name: foo
         ## 'default' auditlog is used by default
@@ -147,8 +144,8 @@ See [audit events](events.md) for the recorded security transitions, their struc
 3. Configure Bifröst:
 
     ```yaml title="/etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - enabled: true
+    auditlogs:
+      default:
         encryptionPublicKeyFile: /etc/engity/bifroest/audit-recipient.pub
         # Only for a NEW empty journal; existing .baudit history cannot switch.
         # Bifröst creates /etc/engity/bifroest/auditlog-key on first start.

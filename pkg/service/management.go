@@ -125,9 +125,6 @@ func (this *service) writeManagementAudit(ctx context.Context, name configuratio
 		if conf.Name != name {
 			continue
 		}
-		if !conf.Enabled {
-			return fmt.Errorf("auditlog %q is disabled", name)
-		}
 		key, err := audit.ResolveEncryptionPublicKey(conf.EncryptionPublicKey, conf.EncryptionPublicKeyFile)
 		if err != nil {
 			return err

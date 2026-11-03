@@ -25,7 +25,7 @@ Where the session information is stored locally.
 
 Only one Bifröst process can use a filesystem session repository at a time. Startup fails if the repository is already in use or exclusive access cannot be established.
 
-The storage must not overlap an enabled audit log's journal, signing identity, encryption public-key file, or local SFTP target `known_hosts` and identity files. Unsafe paths are rejected during startup.
+The storage must not overlap a configured audit log's journal, signing identity, encryption public-key file, or local SFTP target `known_hosts` and identity files. Unsafe paths are rejected during startup.
 
 The default value is different, depending on the platform Bifröst runs on:
 

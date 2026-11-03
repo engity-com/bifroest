@@ -38,7 +38,7 @@ func Flow(flow configuration.Flow) protocol.FlowSummary {
 
 func Auditlog(current configuration.Auditlog) protocol.AuditlogSummary {
 	return protocol.AuditlogSummary{
-		Name: current.Name.String(), Enabled: current.Enabled, RecordingEnabled: current.Recording.Enabled,
+		Name: current.Name.String(), Enabled: true, RecordingEnabled: current.Recording.Enabled,
 		Encrypted: !current.EncryptionPublicKey.IsZero() || !current.EncryptionPublicKeyFile.IsZero(),
 	}
 }

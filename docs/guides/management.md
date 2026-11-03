@@ -17,19 +17,19 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
 2. Configure two audit logs and two flows:
 
     ```yaml title="Bifröst host: /etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - name: workload
-        enabled: true
+    auditlogs:
+      workload:
         identityFile: /etc/engity/bifroest/workload-signing-key
         directory: /var/lib/engity/bifroest/workload-audit
         recording:
           enabled: true
           directory: /var/lib/engity/bifroest/workload-recordings
 
-      - name: administration
-        enabled: true
+      administration:
         identityFile: /etc/engity/bifroest/administration-signing-key
         directory: /var/lib/engity/bifroest/administration-audit
+        recording:
+          directory: /var/lib/engity/bifroest/administration-recordings
 
     flows:
       - name: administration
@@ -148,7 +148,7 @@ Disposal can remove containers, Pods or managed accounts and home directories, d
 
 ## Browser alternative
 
-Add the HTTPS settings from [Browser access](browser-access.md) and publish this administration flow with `discoverAsSlug: Admin`. Open `/Admin`, choose **SSH key**, and sign in as `management` using its local private-key file. The browser provides metadata views and confirmed disconnect/dispose actions, not a configuration editor or a separate admin role. This example keeps artifact downloads disabled; [encrypted evidence](evidence.md) enables them separately.
+Add the HTTPS settings from [Browser access](browser-access.md) and publish this administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`. Keep its existing requesting-name requirement. Open `/Admin`, choose **SSH key**, and sign in as `management` using its local private-key file. The browser provides metadata views and confirmed disconnect/dispose actions, not a configuration editor or a separate admin role. This example keeps artifact downloads disabled; [encrypted evidence](evidence.md) enables them separately.
 
 ## Next steps
 

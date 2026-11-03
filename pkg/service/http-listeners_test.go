@@ -41,8 +41,8 @@ func httpListenerTestConfiguration(t *testing.T) configuration.Configuration {
 	t.Helper()
 	root := t.TempDir()
 	conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
-	conf.Auditlogs[0].Enabled = false
-	conf.Auditlogs[0].Targets = nil
+	conf.Auditlogs = nil
+	conf.Flows[0].Auditlog = ""
 	conf.Http = &configuration.Http{}
 	require.NoError(t, conf.Http.SetDefaults())
 	conf.Http.Enabled = true
@@ -227,6 +227,7 @@ func TestJointListenersServeSshAndHttpsAndStopTogether(t *testing.T) {
 	for _, stop := range []string{"cancel", "SSH listener failure", "HTTPS listener failure"} {
 		t.Run(stop, func(t *testing.T) {
 			conf := httpListenerTestConfiguration(t)
+			conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^work$")
 			root := httpListenerTestCertificate(t, &conf, nil)
 			svc := prepareHTTPListenerTestService(t, conf)
 			ctx, cancel := context.WithCancel(context.Background())

@@ -26,7 +26,12 @@ export async function exerciseKeepAlive(page, login) {
       }
     }),
   );
-  const connected = () => page.locator('[data-terminal-phase="connected"]').waitFor();
+  const connected = (view) =>
+    page
+      .locator(
+        `#terminal-pane-${view}[data-connection-active="true"] [data-terminal-phase="connected"]`,
+      )
+      .waitFor();
   const settings = () => page.getByRole('dialog', { name: 'Connection settings', exact: true });
   const interval = () => settings().getByLabel('Keepalive interval', { exact: true });
   const stored = (slug) =>
@@ -42,7 +47,7 @@ export async function exerciseKeepAlive(page, login) {
   }
   await login(page, false);
   await activeAccess(page, 'alice');
-  await connected();
+  await connected(1);
   await openSettings('10s');
   captureInput = true;
   await interval().fill('0s');
@@ -61,7 +66,7 @@ export async function exerciseKeepAlive(page, login) {
   assert.deepEqual(changes, [{ interval: '1s', requestId: '1' }]);
   assert.equal(await stored('Work'), '1s');
   await duplicateTab(page);
-  await connected();
+  await connected(2);
   assert.deepEqual(openings[1], { slug: 'Work', keepAlive: '1s' });
   await openSettings('1s');
   await settings().getByRole('button', { name: 'Close', exact: true }).click();
@@ -69,7 +74,7 @@ export async function exerciseKeepAlive(page, login) {
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   await login(page, false, 'bob');
   await activeAccess(page, 'bob');
-  await connected();
+  await connected(3);
   assert.equal(
     openings[2].keepAlive,
     undefined,
@@ -96,7 +101,7 @@ export async function exerciseKeepAlive(page, login) {
   );
   await login(page, false);
   await activeAccess(page, 'alice');
-  await connected();
+  await connected(4);
   assert.equal(openings[3].keepAlive, undefined);
   await openSettings('30s');
   await interval().fill('20s');
@@ -110,7 +115,7 @@ export async function exerciseKeepAlive(page, login) {
   await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor();
   assert.equal(openings.length, 4, 'preferences cannot authenticate or start a shell after reload');
   await login(page, false);
-  await connected();
+  await connected(1);
   assert.deepEqual(openings[4], { slug: 'Other', keepAlive: '20s' });
   await openSettings('20s');
   await settings().getByRole('button', { name: 'Close', exact: true }).click();

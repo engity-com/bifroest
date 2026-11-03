@@ -61,6 +61,7 @@ func ShowAuditlog(output io.Writer, selected cliformat.Format, conf *configurati
 		if err := yaml.Unmarshal(encoded, &settings); err != nil {
 			return err
 		}
+		settings["name"] = current.Name.String()
 		flow.RedactSettings(settings, "name", "targets.[].name", "targets.[].type",
 			"recording.targets.[].name", "recording.targets.[].type")
 		return cliformat.WriteSettings(output, selected, settings)

@@ -25,9 +25,8 @@ The management login uses a separate SSH identity and trusted host key as in [th
 3. Configure the evidence and administration flows:
 
     ```yaml title="Bifröst host: /etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - name: evidence
-        enabled: true
+    auditlogs:
+      evidence:
         identityFile: /etc/engity/bifroest/evidence-signing-key
         directory: /var/lib/engity/bifroest/evidence-audit
         encryptionPublicKeyFile: /etc/engity/bifroest/evidence-recipient.pub
@@ -35,10 +34,11 @@ The management login uses a separate SSH identity and trusted host key as in [th
           enabled: true
           directory: /var/lib/engity/bifroest/evidence-recordings
 
-      - name: administration
-        enabled: true
+      administration:
         identityFile: /etc/engity/bifroest/administration-signing-key
         directory: /var/lib/engity/bifroest/administration-audit
+        recording:
+          directory: /var/lib/engity/bifroest/administration-recordings
 
     flows:
       - name: administration
@@ -167,7 +167,7 @@ The management login uses a separate SSH identity and trusted host key as in [th
 
 ## Browser alternative
 
-Add the HTTPS settings from [Browser access](browser-access.md), publish this administration flow with `discoverAsSlug: Admin`, and sign in through **SSH key** as `management`. This flow already opts into original downloads with `allowArtifactTransfer: true`. In the browser, select the recipient private key locally to verify, decrypt and export downloaded originals or prepare recording playback. Use the independently retained producer ID and your recipient key's fingerprint, not unverified server metadata. The application code still comes from the server; keep the CLI workflow above when a separately trusted verification environment is required. See [Security and limits](../reference/connection/http/security.md).
+Add the HTTPS settings from [Browser access](browser-access.md), publish this administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`, and keep its existing requesting-name requirement. Sign in through **SSH key** as `management`. This flow already opts into original downloads with `allowArtifactTransfer: true`. In the browser, select the recipient private key locally to verify, decrypt and export downloaded originals or prepare recording playback. Use the independently retained producer ID and your recipient key's fingerprint, not unverified server metadata. The application code still comes from the server; keep the CLI workflow above when a separately trusted verification environment is required. See [Security and limits](../reference/connection/http/security.md).
 
 ## Offline alternatives
 

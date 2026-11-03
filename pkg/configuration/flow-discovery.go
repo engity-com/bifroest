@@ -6,6 +6,13 @@ import (
 	"github.com/engity-com/bifroest/pkg/net"
 )
 
+func (this Flow) validateDiscoverySlug() error {
+	if this.DiscoverAsSlug != "" && !this.Requirement.Http.MatchesSlug(this.DiscoverAsSlug) {
+		return fmt.Errorf("[discoverAsSlug] %q is not accepted by [requirement][http] slug rules", this.DiscoverAsSlug)
+	}
+	return nil
+}
+
 // HttpDiscovery returns only explicitly published slugs, in configuration order.
 // The HTTP endpoint must enforce its domain allowlist before calling this method.
 // Name/slug requirements and authorization are still checked when a link is used.
@@ -22,6 +29,9 @@ func (this Flows) HttpDiscovery(host string) ([]string, error) {
 		}
 		if err := net.ValidateHttpSlug(flow.DiscoverAsSlug); err != nil {
 			return nil, fmt.Errorf("flow %q has an invalid discovery slug: %w", flow.Name, err)
+		}
+		if err := flow.validateDiscoverySlug(); err != nil {
+			return nil, fmt.Errorf("flow %q: %w", flow.Name, err)
 		}
 		if previous, exists := seen[flow.DiscoverAsSlug]; exists {
 			return nil, fmt.Errorf("flows %q and %q publish the same slug %q on host %q", previous, flow.Name, flow.DiscoverAsSlug, host)

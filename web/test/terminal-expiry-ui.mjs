@@ -7,6 +7,7 @@ export async function exerciseTerminalExpiry(page, login, logout) {
     sockets++;
   });
   const pane = () => page.locator('[data-terminal-active="true"]');
+  let originalOwner;
   const output = async (text) =>
     page.waitForFunction(
       (text) =>
@@ -17,13 +18,31 @@ export async function exerciseTerminalExpiry(page, login, logout) {
       { timeout: 5000 },
     );
   const type = async (text) => {
-    await pane().locator('.xterm-helper-textarea').focus();
+    assert(originalOwner);
+    // All three input probes belong to the original execution, including after
+    // a fresh login. Wait for that owner's route commit and enabled xterm input.
+    await page.waitForFunction((owner) => {
+      const panel = document.getElementById(owner);
+      const tab = document.getElementById(panel?.getAttribute('aria-labelledby'));
+      const input = panel?.querySelector('.xterm-helper-textarea');
+      return (
+        panel?.getAttribute('data-terminal-active') === 'true' &&
+        tab?.getAttribute('aria-selected') === 'true' &&
+        panel.querySelector('[data-terminal-phase="connected"]') !== null &&
+        input !== null &&
+        input !== undefined &&
+        !input.readOnly &&
+        !input.disabled
+      );
+    }, originalOwner);
+    await page.locator(`#${originalOwner} .xterm-helper-textarea`).focus();
     await page.keyboard.type(text);
     await page.keyboard.press('Enter');
     await output(`STDIN:${text}`);
   };
   await login(page, false);
   await output('EXECUTION_START:1');
+  originalOwner = await pane().getAttribute('id');
   const expiry = await page.evaluate(async () => {
     const response = await fetch('/_bifroest/test/expire-current-access', {
       method: 'POST',

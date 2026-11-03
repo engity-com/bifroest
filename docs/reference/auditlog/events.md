@@ -4,7 +4,7 @@ description: Reference for Bifröst audit events and their privacy and failure s
 
 # Audit events
 
-For each enabled audit journal, Bifröst writes structured events for security-relevant SSH and browser transitions selected by the active [flow](../flow.md). With `auditlog.enabled: false`, even if session recording is enabled, **no audit events or journal files are written**. Events contain controlled classifications and technical correlation IDs rather than request contents.
+For each selected audit logger, Bifröst writes structured events for security-relevant SSH and browser transitions of the active [flow](../flow.md). A flow without an explicit logger or a defined `auditlogs.default` writes no audit events or recordings. Events contain controlled classifications and technical correlation IDs rather than request contents.
 
 ## Event model
 
@@ -346,7 +346,7 @@ Fields: `domain: housekeeping`. On success, `durationMillis: 0` keeps retries id
 
 If a persisted session's flow is missing, housekeeping cannot safely interpret its environment or authorization tokens. It **preserves the whole session** for operator recovery, even past retention; it neither reads tokens nor disposes or deletes that session.
 
-* The original audit-log assignment is unknown. The identical skip event goes to **every enabled audit log**, never a guessed replacement; without enabled logs, only a normal log entry is possible.
+* The original audit-log assignment is unknown. The identical skip event goes to **every active audit log**, never a guessed replacement; without active logs, only a normal log entry is possible.
 * Fields: `domain: housekeeping`; `flow` is the unknown original flow, `sessionId` the preserved session, `reason: missing-flow`, `outcome: denied`. No operation ID, token contents, environment details or retention timestamps are emitted.
 
 ## Privacy

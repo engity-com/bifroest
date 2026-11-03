@@ -947,8 +947,8 @@ housekeeping:
   initialDelay: 100ms
   autoRepair: true
   keepExpiredFor: 0s
-auditlog:
-  - enabled: true
+auditlogs:
+  default:
     identityFile: %s
     directory: %s
 %s

@@ -507,9 +507,8 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string, recording
 	configurationPath := filepath.Join(k.tempDir, "kubernetes-environment.yaml")
 	auditlogConfiguration := ""
 	if recording {
-		auditlogConfiguration = fmt.Sprintf(`auditlog:
-  - name: default
-    enabled: true
+		auditlogConfiguration = fmt.Sprintf(`auditlogs:
+  default:
     identityFile: %s
     directory: %s
     minimumFreeBytes: 1048576

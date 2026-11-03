@@ -17,6 +17,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
@@ -240,10 +241,12 @@ func TestForcedManagementActionReferenceSSHAndHTTPUseSameOperationTargetAndForma
 		for _, format := range []string{"table", "json", "yaml", "cbor"} {
 			t.Run(action+"/"+format, func(t *testing.T) {
 				server := newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, "alice", `command="flow ls"`, nil, func(conf *configuration.Configuration) {
+					conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 					conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 					worker := conf.Flows[0]
 					worker.Name = "worker"
 					worker.DiscoverAsSlug = "Worker"
+					worker.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Worker$")
 					worker.Environment.V = &configuration.EnvironmentDummy{}
 					conf.Flows = append(conf.Flows, worker)
 				})

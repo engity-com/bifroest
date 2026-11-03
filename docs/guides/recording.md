@@ -13,9 +13,8 @@ This Linux example adds audit logging and session recording to a local-account h
 1. Add the auditlog and flow to the host configuration. This complete example uses the named `default` audit log:
 
     ```yaml title="Bifröst host: /etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - name: default
-        enabled: true
+    auditlogs:
+      default:
         recording:
           enabled: true
 
@@ -29,7 +28,7 @@ This Linux example adds audit logging and session recording to a local-account h
           portForwardingAllowed: false
     ```
 
-    The flow selects `default` automatically. Audit journals and Recordings are enabled independently; the default strict failure policy stops an affected task if local persistence fails. See [audit configuration](../reference/auditlog/index.md) and [Recording configuration](../reference/auditlog/recording.md).
+    The flow selects the explicitly defined `default` logger automatically; `recording.enabled: true` adds output recording. Without a defined default or explicit logger selection, neither runs. The default strict failure policy stops an affected task if local persistence fails. See [audit configuration](../reference/auditlog/index.md) and [Recording configuration](../reference/auditlog/recording.md).
 
 2. Restart Bifröst using the host's service manager. For a fresh installation, the default signing key, audit journal and Recording repository are created when enabled.
 

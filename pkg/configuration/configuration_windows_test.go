@@ -50,15 +50,6 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     type: local
     name: foosel`,
 			expected: Configuration{
-				Auditlogs: Auditlogs{{
-					Name:             DefaultAuditlogName,
-					Enabled:          DefaultAuditlogEnabled,
-					FailurePolicy:    DefaultAuditlogFailurePolicy,
-					IdentityFile:     DefaultAuditlogIdentityFile,
-					Directory:        DefaultAuditlogJournalDirectory,
-					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
-					Recording:        expectedDefaultAuditlogRecording(),
-				}},
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,
 					Keys: Keys{
@@ -112,8 +103,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					FileMode:       DefaultSessionFsFileMode,
 				}},
 				Flows: []Flow{{
-					Name:     "foo",
-					Auditlog: DefaultAuditlogName,
+					Name: "foo",
 					Requirement: Requirement{
 						IncludedRequestingName: common.MustNewRegexp(""),
 						ExcludedRequestingName: common.MustNewRegexp(""),

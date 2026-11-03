@@ -129,11 +129,21 @@ export async function exercisePreferences(page) {
   assert.equal(await pref('NameFree'), null);
   await dialog().getByRole('button', { name: 'Close', exact: true }).click();
   await dialog().waitFor({ state: 'hidden' });
+  await page.waitForURL('**/Other');
+  assert.equal(
+    new URL(page.url()).pathname,
+    '/Other',
+    'closing sign-in restores the active tab entry scope, not the unselected NameFree login scope',
+  );
   await logoutAccess(page);
   await notification(page, 'Logout confirmed.');
   await page.reload();
   await dialog().waitFor({ state: 'visible' });
-  assert.equal(new URL(page.url()).pathname, '/NameFree');
+  assert.equal(
+    new URL(page.url()).pathname,
+    '/Other',
+    'reload retains the last active tab entry scope after its explicit logout',
+  );
   await flow('Work');
   assert.equal(await input().inputValue(), 'alice');
   assert.equal(

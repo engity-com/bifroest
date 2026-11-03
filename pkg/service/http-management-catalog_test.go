@@ -106,7 +106,7 @@ func TestWebAuditlogCatalogPagesPublicConfigurationIncludingDisabledEntries(t *t
 	svc, handler, _, token := managementWebFixture(t)
 	for _, name := range []string{"zz", "aa"} {
 		conf := svc.Configuration.Auditlogs[0]
-		conf.Name, conf.Enabled = configuration.AuditlogName(name), false
+		conf.Name = configuration.AuditlogName(name)
 		conf.IdentityFile, conf.Directory = "private signing path", "private archive path"
 		svc.Configuration.Auditlogs = append(svc.Configuration.Auditlogs, conf)
 	}
@@ -120,7 +120,7 @@ func TestWebAuditlogCatalogPagesPublicConfigurationIncludingDisabledEntries(t *t
 		after = result.Auditlogs.Next
 		require.NotContains(t, body, "private")
 		if result.Auditlogs.Items[0].Name != "default" {
-			require.False(t, result.Auditlogs.Items[0].Enabled)
+			require.True(t, result.Auditlogs.Items[0].Enabled)
 		}
 	}
 	require.Equal(t, []string{"aa", "default", "zz"}, names)

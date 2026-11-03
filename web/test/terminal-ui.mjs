@@ -42,7 +42,25 @@ export async function exerciseTerminal(page, login) {
     );
   };
   const type = async (text) => {
-    await pane().locator('.xterm-helper-textarea').focus();
+    const owner = await pane().getAttribute('id');
+    assert(owner);
+    // A route-selected pane can be visible before TerminalPanel's input effect
+    // enables xterm. Its textarea readOnly property mirrors disableStdin.
+    await page.waitForFunction((owner) => {
+      const panel = document.getElementById(owner);
+      const tab = document.getElementById(panel?.getAttribute('aria-labelledby'));
+      const input = panel?.querySelector('.xterm-helper-textarea');
+      return (
+        panel?.getAttribute('data-terminal-active') === 'true' &&
+        tab?.getAttribute('aria-selected') === 'true' &&
+        panel.querySelector('[data-terminal-phase="connected"]') !== null &&
+        input !== null &&
+        input !== undefined &&
+        !input.readOnly &&
+        !input.disabled
+      );
+    }, owner);
+    await page.locator(`#${owner} .xterm-helper-textarea`).focus();
     await page.keyboard.type(text);
     await page.keyboard.press('Enter');
   };
@@ -51,6 +69,21 @@ export async function exerciseTerminal(page, login) {
   };
   const select = async (number, user) => {
     await page.getByRole('tab', { name: `Terminal ${number} ${user}`, exact: true }).click();
+    // Locator.click completes pointer delivery, not the router's layout commit.
+    // Do not resolve the old active pane when focusing the selected execution.
+    await page.waitForFunction(
+      ({ number, user }) => {
+        const panel = document.getElementById(`terminal-pane-${number}`);
+        return (
+          history.state?.usr?.view === number &&
+          document.getElementById(`terminal-tab-${number}`)?.getAttribute('aria-selected') ===
+            'true' &&
+          panel?.getAttribute('data-terminal-active') === 'true' &&
+          panel.getAttribute('data-connection-principal') === user
+        );
+      },
+      { number, user },
+    );
   };
   await login(page, false);
   await output('EXECUTION_START:1');

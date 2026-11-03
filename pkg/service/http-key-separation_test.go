@@ -15,7 +15,7 @@ import (
 )
 
 func TestHTTPSKeyReuseFailsRegardlessOfAuditFailurePolicy(t *testing.T) {
-	for _, role := range []string{"SSH host", "audit signing", "audit recipient", "disabled audit recipient", "SFTP identity"} {
+	for _, role := range []string{"SSH host", "audit signing", "audit recipient", "SFTP identity"} {
 		for _, bestEffort := range []bool{false, true} {
 			t.Run(role+map[bool]string{false: "/required", true: "/best effort"}[bestEffort], func(t *testing.T) {
 				conf := httpListenerTestConfiguration(t)
@@ -23,8 +23,9 @@ func TestHTTPSKeyReuseFailsRegardlessOfAuditFailurePolicy(t *testing.T) {
 				require.NoError(t, err)
 				block, err := key.MarshalPemBlock()
 				require.NoError(t, err)
-				auditlog := &conf.Auditlogs[0]
-				auditlog.Enabled = true
+				auditlog := configureDefaultTestAuditlog(&conf)
+				auditlog.IdentityFile = filepath.Join(t.TempDir(), "audit-key")
+				auditlog.Directory = filepath.Join(t.TempDir(), "journal")
 				if bestEffort {
 					auditlog.FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
 				}
@@ -35,10 +36,7 @@ func TestHTTPSKeyReuseFailsRegardlessOfAuditFailurePolicy(t *testing.T) {
 					require.NoError(t, crypto.WriteBootstrapFile(paths[0], pem.EncodeToMemory(block), false))
 				case "audit signing":
 					require.NoError(t, crypto.WriteBootstrapFile(auditlog.IdentityFile, pem.EncodeToMemory(block), false))
-				case "audit recipient", "disabled audit recipient":
-					if role == "disabled audit recipient" {
-						auditlog.Enabled = false
-					}
+				case "audit recipient":
 					auditlog.EncryptionPublicKey = crypto.PublicKeys(strings.TrimSpace(string(gossh.MarshalAuthorizedKey(key.PublicKey().ToSsh()))))
 				case "SFTP identity":
 					// Use a copied file at an unrelated path: path checks alone cannot detect key reuse.

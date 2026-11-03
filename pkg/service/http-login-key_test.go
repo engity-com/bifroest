@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 )
@@ -96,6 +97,7 @@ func TestWebPublishedKeyRejectionDoesNotFallThrough(t *testing.T) {
 	svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
 		fixed := conf.Flows[0]
 		fixed.DiscoverAsSlug = "Private"
+		fixed.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Private$")
 		fallback := fixed
 		fallback.Name = "fallback"
 		fallback.DiscoverAsSlug = ""

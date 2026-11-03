@@ -480,12 +480,21 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 	if description.Options == nil {
 		description.Options = []authorization.LoginOption{}
 	}
+	root := description
+	if slug != "" {
+		root, err = this.service.authorizerDiscovery.DescribeHttpLogin(host, "")
+		if err != nil {
+			webError(w, http.StatusServiceUnavailable, "discovery unavailable")
+			return
+		}
+	}
 	webJSONResponse(w, http.StatusOK, struct {
 		Scope             webScope                    `json:"scope"`
 		PublishedSlugs    []string                    `json:"publishedSlugs,omitempty"`
 		LoginOptions      []authorization.LoginOption `json:"loginOptions"`
+		RootAvailable     bool                        `json:"rootAvailable"`
 		FrontendAvailable bool                        `json:"frontendAvailable"`
-	}{scope, links, description.Options, this.assets != nil && this.assets.Available()})
+	}{scope, links, description.Options, root.Available, this.assets != nil && this.assets.Available()})
 }
 
 // The current protocol has a flat string-only payload. Reject duplicate keys,

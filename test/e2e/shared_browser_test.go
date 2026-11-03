@@ -172,7 +172,7 @@ func (f *fixture) browserConfiguration(configuration string) (string, error) {
 	if strings.Count(configuration, needle) != 1 {
 		return "", errors.New("ambiguous browser fixture flow")
 	}
-	configuration = strings.Replace(configuration, needle, needle+"    discoverAsSlug: Work\n", 1)
+	configuration = strings.Replace(configuration, needle, needle+"    discoverAsSlug: Work\n    requirement:\n      http:\n        includedSlug: '^Work$'\n", 1)
 	return configuration + fmt.Sprintf("\nhttp:\n  enabled: true\n  addresses: [%s]\n  domains: [app.example.org]\n  tls:\n    certificates:\n      - certificateFile: %s\n        privateKeyFile: %s\n", yamlString(fmt.Sprintf("127.0.0.1:%d", port)), yamlString(certPath), yamlString(keyPath)), nil
 }
 

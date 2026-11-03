@@ -41,8 +41,8 @@ The WebDAV account needs to create producer collections and create, read, move a
 ## Example
 
 ```yaml
-auditlog:
-  - enabled: true
+auditlogs:
+  default:
     targets:
       - name: webdav-archive
         type: webdav
