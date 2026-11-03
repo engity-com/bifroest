@@ -17,10 +17,9 @@ The filesystem session repository now holds an exclusive operating-system lock. 
 The lock file, `.<storage-name>.bifroest.lock`, is created next to the **resolved** storage directory. Check that its parent directory and any existing lock file are writable. Storage symlinks resolve to the same lock; a symlink pointing to a missing directory prevents startup. Existing session metadata needs no conversion.
 
 !!! warning "Downgrades and session metadata"
-    Session associations (`sa`) and browser RememberMe bindings (`wb`) add files
-    that older binaries may delete as unexpected content. Before downgrading,
-    stop Bifröst and back up the complete session repository. Do not rely on an
-    older version's automatic cleanup preserving this metadata; see
+    Before downgrading, stop Bifröst and back up the complete session repository.
+    Older versions may delete metadata used for session reuse and saved browser
+    access because they do not recognize it. See
     [session reuse](../reference/session/fs.md#session-association-groundwork).
 
 ### `session.maxTimeout`
@@ -34,24 +33,6 @@ Sessions saved by the previous minor series have no creation timestamp. For them
 ### `flows[].name`
 
 Flow names must be unique, may not be `.` or `..`, and may not exceed 255 bytes. Correct existing names that violate these rules before starting the upgraded version, or configuration validation will fail.
-
-Replace the root `auditlog` list with an `auditlogs` map keyed by each former
-entry's name. Remove entry-level `name` and `enabled`; a selected logger is now
-active. Keep `recording.enabled`, targets, failure policies and separate storage
-and identity paths. Omitted, `null` or empty flow selections use an explicitly
-defined `auditlogs.default`, otherwise neither audit logging nor recording runs.
-Do not retain a formerly disabled logger expecting it to stay disabled.
-
-Flows can now reference typed definitions in the root `environments` and
-`authorizations` maps, or keep their inline objects. Each selection uses the
-corresponding map's `default` for omitted, `null` or empty values only when that
-entry exists. No definitions are created automatically; unknown references fail
-validation. Older recording-only repositories need a new empty Recording
-directory before use with an active journal; preserve their existing evidence.
-
-For browser access, two empty slug rules now match only `/`. Set explicit
-`requirement.http.includedSlug` rules for non-root links; every `discoverAsSlug`
-must satisfy both slug rules or startup fails. See [flow requirements](../reference/flow.md#http-requirements).
 
 ## Authorizations
 
