@@ -578,10 +578,10 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
 	}
 	expectedSessions := 1
-	if mode == "no-login-options" || mode == "oidc-cancel" || mode == "bootstrap-retry" || mode == "root-access" || mode == "root-directory" {
+	if mode == "no-login-options" || mode == "oidc-cancel" || mode == "bootstrap-retry" || mode == "root-access" || mode == "root-directory" || mode == "single-root-directory" {
 		expectedSessions = 0
 	}
-	if mode == "root-access" || mode == "root-directory" {
+	if mode == "root-access" || mode == "root-directory" || mode == "single-root-directory" {
 		require.Zero(t, terminalSockets.Load(), "root metadata and discovery must not open terminal sockets")
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted), "root metadata and discovery must not authenticate")
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionTaskStarted), "root metadata and discovery must not start executions")

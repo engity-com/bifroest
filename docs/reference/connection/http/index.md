@@ -23,6 +23,12 @@ a selectable **Slug**. With both flow slug rules empty, that flow accepts only
 the root; [explicit slug requirements](../../flow.md#http-requirements) are
 needed for a published non-root link.
 
+A directory-only root with just one available published link selects it
+automatically and replaces `/` in browser history. This never signs in or resumes
+saved access. The **Slug** selector is hidden when there is only one choice;
+an actual root login or other known tab scopes remain separate choices. Direct
+alias URLs are never rewritten to their published name.
+
 The **Slug** selector updates the browser URL without reloading the workspace.
 Only potentially supported sign-in methods are offered. Credentials and dynamic
 host/user policy rules are still checked during authentication. These methods

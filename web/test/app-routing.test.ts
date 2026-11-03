@@ -71,7 +71,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function metadata(slug: string, rootAvailable = false): LinkMetadata {
+function metadata(
+  slug: string,
+  rootAvailable = false,
+  publishedSlugs: readonly string[] = ['docker', 'Other', 'Work'],
+): LinkMetadata {
   return {
     scope: { origin: location.origin, slug },
     rootAvailable,
@@ -79,7 +83,7 @@ function metadata(slug: string, rootAvailable = false): LinkMetadata {
       slug === '' && !rootAvailable
         ? []
         : [{ method: 'password', requestUser: false, certificateRequired: false }],
-    publishedSlugs: ['docker', 'Other', 'Work'],
+    publishedSlugs,
   };
 }
 
@@ -87,6 +91,11 @@ async function mountApp(
   initial: string | Partial<Location> = '/bla-bla',
   rootAvailable = false,
   management = false,
+  scenario: {
+    publishedSlugs?: readonly string[];
+    precedingPath?: string;
+    failDiscovery?: boolean;
+  } = {},
 ) {
   const requests: {
     path: string;
@@ -96,7 +105,7 @@ async function mountApp(
   let holdLogin: (() => Promise<void>) | null = null;
   let holdLogout: (() => Promise<void>) | null = null;
   let grants = 0;
-  let failDiscovery = false;
+  let failDiscovery = scenario.failDiscovery ?? false;
   const transport = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const path = new URL(String(input)).pathname;
     const fields = options?.body
@@ -104,10 +113,13 @@ async function mountApp(
       : undefined;
     requests.push({ path, options, fields });
     if (options?.method !== 'POST') {
-      return new Response(JSON.stringify(metadata(path.slice(1), rootAvailable)), {
-        status: failDiscovery ? 503 : 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify(metadata(path.slice(1), rootAvailable, scenario.publishedSlugs)),
+        {
+          status: failDiscovery ? 503 : 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
     }
     if (path.endsWith('/login/password')) {
       await holdLogin?.();
@@ -149,13 +161,13 @@ async function mountApp(
       {
         path: '*',
         element: createElement(App, {
-          metadata: metadata(slug, rootAvailable),
+          metadata: metadata(slug, rootAvailable, scenario.publishedSlugs),
           scheme: 'auto',
           onScheme: () => {},
         }),
       },
     ],
-    { initialEntries: [initial] },
+    { initialEntries: scenario.precedingPath ? [scenario.precedingPath, initial] : [initial] },
   );
   const container = document.createElement('div');
   document.body.append(container);
@@ -237,6 +249,117 @@ function selectedID(): string | null {
 }
 
 describe('owned workspace view routing with the real router and workspace', () => {
+  it('does not expose the new login form before its route commits and resets the password field', async () => {
+    const app = await mountApp('/Work');
+    await signIn();
+    await vi.waitFor(() => {
+      expect(app.router.state.location.state).toMatchObject({ view: 1 });
+      expect(document.querySelector('.login-dialog[role="dialog"]')).toBeNull();
+    });
+    const requests = app.requests.length;
+    const navigate = app.router.navigate.bind(app.router);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(app.router, 'navigate').mockImplementationOnce(async (to, options) => {
+      await pending;
+      if (typeof to === 'number') {
+        await navigate(to);
+      } else {
+        await navigate(to, options);
+      }
+    });
+    await click(button('New connection'));
+    try {
+      expect(document.querySelector('.login-dialog[role="dialog"]')).toBeNull();
+      expect(app.requests).toHaveLength(requests);
+    } finally {
+      await act(async () => {
+        release();
+        await pending;
+      });
+    }
+    expect(dialog().querySelector('form')).not.toBeNull();
+    expect(app.router.state.location.state).toBeNull();
+    await signIn();
+    expect(selectedID()).toBe('terminal-pane-2');
+    expect(app.requests.filter((request) => request.path.endsWith('/login/password'))).toHaveLength(
+      2,
+    );
+  });
+
+  it('replaces a directory-only root with its single choice without authenticating or resuming saved access', async () => {
+    vi.mocked(BrowserBinding.load).mockResolvedValue({ binding: {} } as unknown as BrowserBinding);
+    const app = await mountApp('/', false, false, {
+      publishedSlugs: ['foo'],
+      precedingPath: '/before',
+    });
+    expect(app.router.state.location.pathname).toBe('/foo');
+    expect(app.router.state.historyAction).toBe('REPLACE');
+    expect(dialog().querySelector('[role="combobox"]')).toBeNull();
+    expect(dialog().querySelector('form')).not.toBeNull();
+    expect(app.requests.map((request) => request.path)).toEqual(['/foo']);
+    expect(app.requests[0]?.options).toMatchObject({
+      credentials: 'omit',
+      cache: 'no-store',
+      mode: 'same-origin',
+      redirect: 'error',
+    });
+    expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(0);
+    expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
+    expect(panels.mounted).toEqual([]);
+    await act(async () => {
+      await app.router.navigate(-1);
+    });
+    expect(app.router.state.location.pathname).toBe('/before');
+  });
+
+  it('retains the root choice when it is an actual login alongside the single published slug', async () => {
+    const app = await mountApp('/', true, false, { publishedSlugs: ['foo'] });
+    expect(app.router.state.location.pathname).toBe('/');
+    expect(dialog().querySelector('[role="combobox"]')).not.toBeNull();
+    expect(app.requests).toEqual([]);
+  });
+
+  it.each(['/foo', '/bla-bla'])(
+    'never redirects the explicitly entered scope %s to its published name',
+    async (initial) => {
+      const app = await mountApp(initial, false, false, { publishedSlugs: ['foo'] });
+      expect(app.router.state.location.pathname).toBe(initial);
+      expect(Boolean(dialog().querySelector('[role="combobox"]'))).toBe(initial !== '/foo');
+      expect(app.requests).toEqual([]);
+      expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not skip a known alias tab when returning to a directory with one published slug', async () => {
+    const app = await mountApp('/bla-bla', false, false, { publishedSlugs: ['foo'] });
+    await signIn();
+    const posts = app.requests.filter((request) => request.options?.method === 'POST').length;
+    await act(async () => {
+      await app.router.navigate('/');
+    });
+    expect(app.router.state.location.pathname).toBe('/');
+    expect(dialog().querySelector('[role="combobox"]')).not.toBeNull();
+    expect(dialog().querySelector('form')).toBeNull();
+    expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(
+      posts,
+    );
+    expect(panels.unmounted).toEqual([]);
+    expect(panels.signals.get(1)?.aborted).toBe(false);
+  });
+
+  it('leaves a failed automatic metadata load at the selected slug without retrying or authenticating', async () => {
+    const app = await mountApp('/', false, false, { publishedSlugs: ['foo'], failDiscovery: true });
+    expect(app.router.state.location.pathname).toBe('/foo');
+    expect(app.requests.map((request) => request.path)).toEqual(['/foo']);
+    expect(dialog().querySelector('[role="combobox"]')).toBeNull();
+    expect(button('Retry loading options')).toBeDefined();
+    expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(0);
+    expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
+  });
+
   it('retains management results across login and view navigation without changing the owning access', async () => {
     const app = await mountApp('/bla-bla', false, true);
     await signIn();

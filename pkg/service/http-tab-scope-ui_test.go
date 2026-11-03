@@ -11,6 +11,17 @@ func TestBrowserRootDirectoryDoesNotOfferRootAsLoginSlug(t *testing.T) {
 	testBrowserLoginUi(t, true, "root-directory", func(conf *configuration.Configuration) {
 		conf.Flows[0].DiscoverAsSlug = "Work"
 		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
+		other := conf.Flows[0]
+		other.Name, other.DiscoverAsSlug = "other", "Other"
+		other.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Other$")
+		conf.Flows = append(conf.Flows, other)
+	})
+}
+
+func TestBrowserSinglePublishedDirectorySelectsSlugWithoutAuthentication(t *testing.T) {
+	testBrowserLoginUi(t, true, "single-root-directory", func(conf *configuration.Configuration) {
+		conf.Flows[0].DiscoverAsSlug = "foo"
+		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^foo$")
 	})
 }
 

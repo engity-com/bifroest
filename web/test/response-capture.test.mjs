@@ -1,7 +1,39 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { inspect } from 'node:util';
 import { runInNewContext } from 'node:vm';
+import { observeSingleRootDirectory } from './login-options-ui.mjs';
 import { installPreparationObserver } from './response-capture.mjs';
+
+test('single-link discovery assertion failures never expose credential or query values', () => {
+  const secret = 'PRIVATE-DISCOVERY-SENTINEL';
+  for (const field of ['authorization', 'cookie', 'query']) {
+    const callbacks = new Map();
+    observeSingleRootDirectory({ on: (event, callback) => callbacks.set(event, callback) });
+    const headers = {
+      accept: 'application/json',
+      ...(field === 'query' ? {} : { [field]: secret }),
+    };
+    let failure;
+    try {
+      callbacks.get('request')({
+        method: () => 'GET',
+        resourceType: () => 'fetch',
+        headers: () => headers,
+        url: () => `https://app.example.org/foo${field === 'query' ? `?private=${secret}` : ''}`,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert(failure instanceof assert.AssertionError);
+    assert.equal(
+      inspect(failure, { depth: 8 }).includes(secret),
+      false,
+      'failure details must contain only booleans, never request credentials',
+    );
+    assert.equal(JSON.stringify(failure).includes(secret), false);
+  }
+});
 
 function fixture(options = {}) {
   const events = [];

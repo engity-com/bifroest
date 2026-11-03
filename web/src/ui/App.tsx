@@ -119,6 +119,7 @@ export function App({
   const confirmationHandle = useRef<BrowserBinding | null>(null);
   const operation = useRef<AbortController | null>(null);
   const routeOperation = useRef<AbortController | null>(null);
+  const automaticSelection = useRef<string | null>(null);
   const seenRoute = useRef<{ key: string; revision: number } | null>(null);
   const generation = useRef(0);
   const [snapshot, setSnapshot] = useState<AccessSnapshot | null>(null);
@@ -384,6 +385,44 @@ export function App({
   );
 
   const linkChoices = linkSlugs(metadata, loginMetadata, routeSlug, tabScopes);
+  const soleLink = linkChoices.length === 1 ? linkChoices[0] : undefined;
+  const automaticDirectorySlug =
+    metadataReady &&
+    loginOpen &&
+    routeSlug === '' &&
+    slugRoute.view === null &&
+    !loginMetadata.rootAvailable &&
+    soleLink !== undefined &&
+    loginMetadata.publishedSlugs.includes(soleLink)
+      ? soleLink
+      : null;
+  useEffect(() => {
+    if (
+      automaticDirectorySlug === null ||
+      automaticSelection.current === slugRoute.key ||
+      operation.current !== null ||
+      busy ||
+      closing ||
+      managementLocked ||
+      rememberUncertain ||
+      confirm !== null
+    ) {
+      return;
+    }
+    // This selects only an access link, never credentials, a saved grant or an
+    // execution. Do not leave an otherwise empty directory in browser history.
+    automaticSelection.current = slugRoute.key;
+    void slugRoute.navigate(automaticDirectorySlug, true);
+  }, [
+    automaticDirectorySlug,
+    slugRoute.key,
+    slugRoute.navigate,
+    busy,
+    closing,
+    managementLocked,
+    rememberUncertain,
+    confirm,
+  ]);
 
   function selectLoginOption(choice: string) {
     const option = loginOptionFor(link.current, choice);
@@ -755,7 +794,6 @@ export function App({
       return;
     }
     setApplicationMenuOpen(false);
-    setLoginOpen(true);
     setTerminalLogin(null);
     setOptIn(false);
     setProviderInformation(null);
@@ -767,9 +805,12 @@ export function App({
     ) {
       // Explicit sign-in clears the local view intent, even for the same URL.
       // Its route effect may discover metadata for a previously selected tab.
+      // Open the form only from that committed effect, after its password reset,
+      // or input entered into an earlier form could be discarded by the commit.
       void slugRoute.navigate(scope.slug);
       return;
     }
+    setLoginOpen(true);
     if (routing) {
       return;
     }
@@ -921,7 +962,7 @@ export function App({
           data-login-scope={loginMetadata.scope.slug}
           data-login-ready={metadataReady}
         >
-          {linkChoices.length > 1 || (routeSlug === '' && !loginMetadata.rootAvailable) ? (
+          {linkChoices.length > 1 ? (
             <Select
               label={t('connectionLink')}
               value={routeSlug !== null && linkChoices.includes(routeSlug) ? routeSlug : ''}

@@ -25,9 +25,9 @@ export async function exerciseLoginOptions(page) {
       logins.push({ method: url.pathname.split('/').at(-1), slug: body.slug, user: body.user });
     }
     if (request.method() === 'GET' && request.headers().accept === 'application/json') {
-      assert.equal(request.headers().authorization, undefined);
-      assert.equal(request.headers().cookie, undefined);
-      assert.equal(url.search, '');
+      assert.equal(request.headers().authorization === undefined, true);
+      assert.equal(request.headers().cookie === undefined, true);
+      assert.equal(url.search === '', true);
     }
   });
   await page.evaluate(() => {
@@ -240,4 +240,62 @@ export async function exerciseRootDirectory(page) {
   assert.equal(authentications, 0, 'choosing a published link only loads sign-in metadata');
   assert.equal(sockets, 0);
   assert.equal(documents, 0, 'the root directory uses the same live router, not a document reload');
+}
+
+export function observeSingleRootDirectory(page) {
+  const state = { metadata: [], posts: 0, documents: 0, sockets: 0 };
+  page.on('request', (request) => {
+    if (request.method() === 'POST') {
+      state.posts++;
+    }
+    if (request.resourceType() === 'document') {
+      state.documents++;
+    }
+    if (request.headers().accept === 'application/json') {
+      assert.equal(request.headers().authorization === undefined, true);
+      assert.equal(request.headers().cookie === undefined, true);
+      assert.equal(new URL(request.url()).search === '', true);
+      state.metadata.push(new URL(request.url()).pathname);
+    }
+  });
+  page.on('websocket', () => state.sockets++);
+  return state;
+}
+
+export async function exerciseSingleRootDirectory(page, state) {
+  await page.waitForURL('**/foo');
+  const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
+  await dialog.getByLabel('User name', { exact: true }).waitFor();
+  await dialog.getByLabel('Password', { exact: true }).waitFor();
+  assert.equal(await dialog.getByLabel('Slug', { exact: true }).count(), 0);
+  assert.deepEqual(state.metadata, ['/', '/foo']);
+  assert.equal(
+    state.posts,
+    0,
+    'choosing the only published access must not authenticate or resume a grant',
+  );
+  assert.equal(state.sockets, 0);
+  assert.equal(state.documents, 1, 'the automatic selection must not reload the document');
+  const history = await page.evaluate(() => ({
+    initial: window.singleRootInitialHistoryLength,
+    current: window.history.length,
+    entries: window.singleRootHistoryEvents,
+  }));
+  assert.equal(
+    history.current,
+    history.initial,
+    'automatic choice replaces, never pushes a root redirect loop',
+  );
+  assert.deepEqual(
+    history.entries.filter((entry) => entry.path === '/foo').map((entry) => entry.method),
+    ['replaceState'],
+  );
+  await page.reload();
+  await dialog.getByLabel('User name', { exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/foo');
+  assert.equal(await dialog.getByLabel('Slug', { exact: true }).count(), 0);
+  assert.deepEqual(state.metadata, ['/', '/foo', '/foo']);
+  assert.equal(state.posts, 0);
+  assert.equal(state.sockets, 0);
+  assert.equal(state.documents, 2);
 }

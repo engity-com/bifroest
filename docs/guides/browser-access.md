@@ -77,8 +77,10 @@ Configured SSH and HTTPS listeners must both start successfully. If startup fail
 
 Other flows can offer **Interactive** for keyboard-interactive/OIDC device login or **SSH key** for locally signed key login. Only potentially supported methods appear; dynamic rules and credentials are checked at login. Choose another **Slug** to update the URL and its sign-in options. Existing connection tabs stay unchanged.
 
-Opening `/` shows the published links even though this flow accepts login only
-at `/Shell`. This directory-only root is not a selectable login Slug. The
+Opening `/` selects `/Shell` automatically if it is the only available link,
+without signing in or resuming saved access. No Slug dropdown is shown unless
+another access scope is available. With several links, `/` instead offers the
+selection; this directory-only root is not a selectable login Slug. The
 published link must match the flow's slug requirements; a contradiction prevents
 startup. Without slug rules, a flow accepts only `/`.
 

@@ -12,6 +12,8 @@ import {
   exerciseLoginOptions,
   exerciseRootAccess,
   exerciseRootDirectory,
+  exerciseSingleRootDirectory,
+  observeSingleRootDirectory,
 } from './login-options-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
@@ -53,6 +55,7 @@ const errors = [];
 const failedResources = [];
 const failedRequests = [];
 const loginResponses = [];
+let singleRootState;
 try {
   const open = async () => {
     context = await chromium.launchPersistentContext(profile, {
@@ -75,6 +78,20 @@ try {
       await context.addInitScript(installPreparationObserver);
     }
     const page = await context.newPage();
+    if (process.argv[3] === 'single-root-directory') {
+      singleRootState = observeSingleRootDirectory(page);
+      await context.addInitScript(() => {
+        window.singleRootInitialHistoryLength = history.length;
+        window.singleRootHistoryEvents = [];
+        for (const method of ['pushState', 'replaceState']) {
+          const original = history[method].bind(history);
+          history[method] = (state, unused, url) => {
+            original(state, unused, url);
+            window.singleRootHistoryEvents.push({ method, path: location.pathname });
+          };
+        }
+      });
+    }
     const initializationErrors = [];
     const initializationConsole = (message) => {
       if (message.type() === 'error') {
@@ -100,7 +117,9 @@ try {
         failedResources.push({ path, status: response.status() });
       }
     });
-    const initialSlug = ['root-directory', 'root-access'].includes(process.argv[3])
+    const initialSlug = ['root-directory', 'root-access', 'single-root-directory'].includes(
+      process.argv[3],
+    )
       ? ''
       : process.argv[3] === 'login-options'
         ? 'Mixed'
@@ -309,6 +328,11 @@ try {
     }
     if (process.argv[3] === 'root-directory') {
       await exerciseRootDirectory(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'single-root-directory') {
+      await exerciseSingleRootDirectory(page, singleRootState);
       assert.deepEqual(errors, []);
       return;
     }
