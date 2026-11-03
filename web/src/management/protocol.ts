@@ -58,6 +58,70 @@ export interface RecordingSummary {
   readonly encrypted: boolean;
   readonly recipientFingerprint?: string;
   readonly verificationScope: 'outer' | 'full';
+  readonly flow?: string;
+  readonly sessionId?: string;
+  readonly user?: string;
+  readonly target?: string;
+  readonly metadataUnavailable?: true;
+}
+export interface RecordingOptions extends PageOptions {
+  readonly flow?: string;
+  readonly user?: string;
+  readonly target?: string;
+  readonly startedFrom?: string;
+  readonly startedUntil?: string;
+  readonly status?: 'all' | RecordingSummary['status'];
+  readonly sort?: 'started-desc';
+}
+
+function recordingTime(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new RememberMeError('unavailable');
+  }
+  const match = /^(\d{4})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d{1,9}))?Z$/u.exec(value);
+  if (
+    match === null ||
+    Number(match[1]) < 1970 ||
+    !Number.isFinite(Date.parse(value)) ||
+    new Date(value).toISOString().slice(0, 19) !== value.slice(0, 19)
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  return value;
+}
+function recordingTimeKey(value: string): string {
+  return `${value.slice(0, 19)}.${value.slice(19, -1).replace('.', '').padEnd(9, '0')}`;
+}
+export function recordingFields(options: RecordingOptions): Record<string, string> {
+  const status = options.status ?? 'all';
+  const sort = options.sort ?? 'started-desc';
+  const startedFrom = options.startedFrom ?? '';
+  const startedUntil = options.startedUntil ?? '';
+  if (startedFrom !== '') {
+    recordingTime(startedFrom);
+  }
+  if (startedUntil !== '') {
+    recordingTime(startedUntil);
+  }
+  if (
+    !['all', 'completed', 'failed', 'incomplete'].includes(status) ||
+    sort !== 'started-desc' ||
+    (startedFrom !== '' &&
+      startedUntil !== '' &&
+      recordingTimeKey(startedFrom) > recordingTimeKey(startedUntil))
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  return {
+    ...pageFields(options),
+    flow: text(options.flow ?? '', 255),
+    user: text(options.user ?? '', 256),
+    target: text(options.target ?? '', 1024),
+    startedFrom,
+    startedUntil,
+    status,
+    sort,
+  };
 }
 export interface SessionItem {
   readonly id: string;
@@ -143,10 +207,14 @@ function auditlog(value: unknown): AuditlogSummary {
   });
 }
 function recording(value: unknown): RecordingSummary {
-  const optional =
-    value !== null && typeof value === 'object' && Object.hasOwn(value, 'recipientFingerprint')
-      ? ['recipientFingerprint']
-      : [];
+  const optional = [
+    'recipientFingerprint',
+    'flow',
+    'sessionId',
+    'user',
+    'target',
+    'metadataUnavailable',
+  ].filter((field) => value !== null && typeof value === 'object' && Object.hasOwn(value, field));
   const row = object(value, [
     'auditlog',
     'id',
@@ -178,12 +246,39 @@ function recording(value: unknown): RecordingSummary {
     (row.containerBytes as number) > 32 * 2 ** 30 ||
     !Number.isSafeInteger(row.chunkCount) ||
     (row.chunkCount as number) < 1 ||
+    (row.chunkCount as number) > 2 ** 18 ||
     (row.encrypted &&
       (typeof row.recipientFingerprint !== 'string' ||
         !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(row.recipientFingerprint))) ||
-    (!row.encrypted && row.recipientFingerprint !== undefined)
+    (!row.encrypted && row.recipientFingerprint !== undefined) ||
+    (optional.includes('metadataUnavailable') && row.metadataUnavailable !== true) ||
+    ((row.encrypted || row.metadataUnavailable === true) &&
+      ['flow', 'sessionId', 'user', 'target'].some((field) => optional.includes(field))) ||
+    (optional.includes('sessionId') &&
+      (typeof row.sessionId !== 'string' ||
+        !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(row.sessionId) ||
+        /^0{8}-(?:0{4}-){3}0{12}$/u.test(row.sessionId)))
   ) {
     throw new RememberMeError('unavailable');
+  }
+  const startedAt = recordingTime(row.startedAt);
+  const endedAt = recordingTime(row.endedAt);
+  if (recordingTimeKey(endedAt) < recordingTimeKey(startedAt)) {
+    throw new RememberMeError('unavailable');
+  }
+  const context: { flow?: string; user?: string; target?: string } = {};
+  for (const [field, maximum] of [
+    ['flow', 255],
+    ['user', 256],
+    ['target', 1024],
+  ] as const) {
+    if (optional.includes(field)) {
+      const selected = text(row[field], maximum);
+      if (selected === '') {
+        throw new RememberMeError('unavailable');
+      }
+      context[field] = selected;
+    }
   }
   return Object.freeze({
     auditlog: auditlogName(row.auditlog),
@@ -191,8 +286,8 @@ function recording(value: unknown): RecordingSummary {
     producerId: row.producerId,
     format: row.format as RecordingSummary['format'],
     status: row.status as RecordingSummary['status'],
-    startedAt: time(row.startedAt),
-    endedAt: time(row.endedAt),
+    startedAt,
+    endedAt,
     containerBytes: row.containerBytes as number,
     chunkCount: row.chunkCount as number,
     encrypted: row.encrypted,
@@ -200,6 +295,9 @@ function recording(value: unknown): RecordingSummary {
     ...(row.recipientFingerprint === undefined
       ? {}
       : { recipientFingerprint: row.recipientFingerprint as string }),
+    ...context,
+    ...(optional.includes('sessionId') ? { sessionId: row.sessionId as string } : {}),
+    ...(row.metadataUnavailable === true ? { metadataUnavailable: true as const } : {}),
   });
 }
 function flow(value: unknown): FlowSummary {

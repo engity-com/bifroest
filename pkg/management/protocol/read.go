@@ -41,6 +41,11 @@ type ReadRequest struct {
 	Auditlog      string        `json:"auditlog,omitempty"`
 	ID            string        `json:"id,omitempty"`
 	VersionDetail string        `json:"versionDetail,omitempty"`
+	Target        string        `json:"target,omitempty"`
+	StartedFrom   string        `json:"startedFrom,omitempty"`
+	StartedUntil  string        `json:"startedUntil,omitempty"`
+	Status        string        `json:"status,omitempty"`
+	Sort          string        `json:"sort,omitempty"`
 }
 
 func text(value string, maximum int) bool {
@@ -54,6 +59,9 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 		return this, ErrRequest
 	}
 	if this.VersionDetail != "" && this.Operation != ShowVersion {
+		return this, ErrRequest
+	}
+	if this.Operation != ListRecordings && (this.Target != "" || this.StartedFrom != "" || this.StartedUntil != "" || this.Status != "" || this.Sort != "") {
 		return this, ErrRequest
 	}
 	switch this.Operation {
@@ -73,8 +81,36 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 			return this, ErrRequest
 		}
 	case ListRecordings:
-		if !ValidAuditlogName(this.Auditlog) || this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" {
+		if !ValidAuditlogName(this.Auditlog) || !text(this.Target, 1024) || this.State != "" || this.ID != "" {
 			return this, ErrRequest
+		}
+		if this.Status == "" {
+			this.Status = "all"
+		}
+		if this.Status != "all" && this.Status != "completed" && this.Status != "failed" && this.Status != "incomplete" {
+			return this, ErrRequest
+		}
+		if this.Sort == "" {
+			this.Sort = "started-desc"
+		}
+		if this.Sort != "started-desc" {
+			return this, ErrRequest
+		}
+		for _, value := range []*string{&this.StartedFrom, &this.StartedUntil} {
+			if *value != "" {
+				parsed, err := RecordingTime(*value)
+				if err != nil {
+					return this, err
+				}
+				*value = parsed.Format(time.RFC3339Nano)
+			}
+		}
+		if this.StartedFrom != "" && this.StartedUntil != "" {
+			from, _ := RecordingTime(this.StartedFrom)
+			until, _ := RecordingTime(this.StartedUntil)
+			if until.Before(from) {
+				return this, ErrRequest
+			}
 		}
 	case ListSessions:
 		if this.ID != "" {
@@ -149,6 +185,10 @@ func (this ReadRequest) Cursor() (string, string, error) {
 	if this.After == "" {
 		return "", "", nil
 	}
+	if this.Operation == ListRecordings {
+		selected, err := this.RecordingCursor()
+		return selected.Auditlog, selected.ID, err
+	}
 	if len(this.After) > MaximumCursorBytes || !strings.HasPrefix(this.After, "bmp1.") {
 		return "", "", ErrRequest
 	}
@@ -218,14 +258,14 @@ type Page[T any] struct {
 	Skipped int    `json:"skipped"`
 }
 type ReadResult struct {
-	Version     int                    `json:"version"`
-	Operation   ReadOperation          `json:"operation"`
-	Flows       *Page[FlowSummary]     `json:"flows,omitempty"`
-	Sessions    *Page[SessionItem]     `json:"sessions,omitempty"`
-	Session     *SessionItem           `json:"session,omitempty"`
-	Auditlogs   *Page[AuditlogSummary] `json:"auditlogs,omitempty"`
-	Recordings  *Page[RecordingView]   `json:"recordings,omitempty"`
-	VersionInfo *VersionInfo           `json:"versionInfo,omitempty"`
+	Version     int                     `json:"version"`
+	Operation   ReadOperation           `json:"operation"`
+	Flows       *Page[FlowSummary]      `json:"flows,omitempty"`
+	Sessions    *Page[SessionItem]      `json:"sessions,omitempty"`
+	Session     *SessionItem            `json:"session,omitempty"`
+	Auditlogs   *Page[AuditlogSummary]  `json:"auditlogs,omitempty"`
+	Recordings  *Page[RecordingSummary] `json:"recordings,omitempty"`
+	VersionInfo *VersionInfo            `json:"versionInfo,omitempty"`
 }
 
 // VersionInfo is the exact native formatter output, not an independent build or

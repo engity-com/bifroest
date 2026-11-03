@@ -76,6 +76,9 @@ func verifyNativeRecordingFull(source io.ReaderAt, size int64, identities *bfcry
 	if cast.verification == nil || cast.verification.Digest != CastDigest(verification.Seal.CastDigest) {
 		return nil, fmt.Errorf("reconstructed native Cast digest differs from seal")
 	}
+	if options.VerifiedMetadata != nil {
+		options.VerifiedMetadata(cast.verification.Metadata)
+	}
 	return verification, nil
 }
 
@@ -83,6 +86,7 @@ func verifyNativeRecordingFull(source io.ReaderAt, size int64, identities *bfcry
 // decoded group resident. It rechecks the chain and exact physical content
 // digest so a changed input between the outer and inner passes fails closed.
 func walkNativeRecordingGroups(source io.ReaderAt, size int64, identities *bfcrypto.AgeSshIdentities, verification *NativeRecordingVerification, options NativeRecordingVerifyOptions, renderer *nativeCastRenderer) error {
+	options.catalogBudget.beginPass()
 	offset := int64(len(nativeformat.RecordingMagic))
 	unit, next, tail, err := nativeformat.ReadUnitAt(source, offset, size, nativeformat.MaxMetadataPayload)
 	if err != nil || tail || unit.Type != nativeformat.HeaderUnit {
@@ -119,7 +123,11 @@ func walkNativeRecordingGroups(source io.ReaderAt, size int64, identities *bfcry
 		if err := nativeRecordingVerify(publicKey, nativeRecordingChunkDomain, nativeRecordingChunkFields(chunk), chunk.Signature, nativeformat.MaxRecordingChunkPayload); err != nil {
 			return err
 		}
-		decoded, err := nativeformat.DecodeStoredPayload(chunk.StoredPayload, identities, verification.Header.Recipient, nativeRecordingPayloadLimits)
+		payloadLimits, err := options.catalogBudget.payloadLimits(chunk.DecodedLength)
+		if err != nil {
+			return err
+		}
+		decoded, err := nativeformat.DecodeStoredPayload(chunk.StoredPayload, identities, verification.Header.Recipient, payloadLimits)
 		if err != nil || len(decoded) != int(chunk.DecodedLength) {
 			return fmt.Errorf("cannot fully decode native chunk %d: %v", sequence, err)
 		}

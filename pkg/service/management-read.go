@@ -106,7 +106,7 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 		}
 		result.Auditlogs = &page
 	case protocol.ListRecordings:
-		page, err := this.managementRecordingPage(ctx, request)
+		page, err := this.managementRecordingPage(ctx, request, task.Authorization())
 		if err != nil {
 			return -1, err
 		}

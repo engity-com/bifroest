@@ -21,6 +21,10 @@ type NativeRecordingVerifyOptions struct {
 	MaximumCastBytes      int64
 	MaximumChunks         uint64
 	Context               context.Context
+	// VerifiedMetadata runs only after full inner verification has succeeded.
+	// Outer verification never calls it and requires no decryption identities.
+	VerifiedMetadata func(CastMetadata)
+	catalogBudget    *nativeCatalogDecodeBudget
 }
 
 type NativeRecordingVerification struct {
@@ -100,6 +104,7 @@ func VerifyNativeRecordingOuter(source io.ReaderAt, size int64, options NativeRe
 		return nil, fmt.Errorf("native recording requires a trusted expected producer")
 	}
 	maxChunks := effectiveMaximumNativeRecordingChunks(options.MaximumChunks)
+	options.catalogBudget.beginPass()
 	var magic [len(nativeformat.RecordingMagic)]byte
 	if _, err := source.ReadAt(magic[:], 0); err != nil || string(magic[:]) != nativeformat.RecordingMagic {
 		return nil, fmt.Errorf("invalid native recording magic: %v", err)
@@ -146,6 +151,16 @@ func VerifyNativeRecordingOuter(source io.ReaderAt, size int64, options NativeRe
 			if chunk.Sequence != count+1 || chunk.PreviousUnitHash != previous || len(chunk.StoredPayload) == 0 || chunk.StoredHash != sha256.Sum256(chunk.StoredPayload) || len(chunk.StoredPayload) > nativeformat.MaxRecordingChunkPayload-256 {
 				return nil, fmt.Errorf("invalid native recording chunk chain or stored payload")
 			}
+			// Keep the catalog's canonical Cast allowance independent from its
+			// decoded-CBOR allowance. Classify budget excess before the legacy
+			// continuation validator and, for a final chunk, before any decode.
+			// Ordinary verification retains its existing validation/error contract.
+			if options.catalogBudget != nil {
+				if chunk.CastHashBytes > uint64(castMaximum)+uint64(len(castContentHashDomain)) ||
+					chunk.CastHashBytes == 0 && chunk.CastBytes != nil && *chunk.CastBytes > uint64(castMaximum) {
+					return nil, ErrNativeCatalogCastBudget
+				}
+			}
 			if chunk.CastHashBytes == 0 {
 				finalSeen, finalChunk = true, chunk
 			} else {
@@ -161,11 +176,15 @@ func VerifyNativeRecordingOuter(source io.ReaderAt, size int64, options NativeRe
 			if err := nativeRecordingVerify(key, nativeRecordingChunkDomain, nativeRecordingChunkFields(chunk), chunk.Signature, nativeformat.MaxRecordingChunkPayload); err != nil {
 				return nil, err
 			}
+			payloadLimits, err := options.catalogBudget.payloadLimits(chunk.DecodedLength)
+			if err != nil {
+				return nil, err
+			}
 			if header.Encryption == 1 && !bytes.HasPrefix(chunk.StoredPayload, []byte(nativeRecordingAgePrefix)) {
 				return nil, fmt.Errorf("encrypted native recording chunk has no age message")
 			}
 			if header.Encryption == 0 {
-				decoded, err := nativeformat.DecodeStoredPayload(chunk.StoredPayload, nil, "", nativeformat.PayloadLimits{MaxDecoded: nativeformat.MaxRecordingDecodedChunk, MaxStored: nativeformat.MaxRecordingChunkPayload})
+				decoded, err := nativeformat.DecodeStoredPayload(chunk.StoredPayload, nil, "", payloadLimits)
 				if err != nil || len(decoded) != int(chunk.DecodedLength) {
 					return nil, fmt.Errorf("invalid native recording compressed chunk: %v", err)
 				}

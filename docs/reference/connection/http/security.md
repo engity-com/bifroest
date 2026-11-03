@@ -42,7 +42,7 @@ URL, preserving aliases; it does not authenticate, reconnect or start work.
 
 | Limit | Effect |
 | --- | --- |
-| Web access expires after 10 minutes | Opening another connection requires fresh authentication or an explicit saved-access action. Existing terminals continue. |
+| Web access expires after 10 minutes | New connections and management reads require fresh authentication or an explicit saved-access action. The management view offers **Sign in again**; existing terminals and already loaded local recordings remain available. |
 | Session idle/maximum timeout | Remains authoritative for SSH and browser access. Terminal keepalive does not extend it. |
 | Closed browser tab | Disconnects that execution; does not dispose the shared session or workload. |
 | Explicit logout | Revokes that web access and its linked connections. For remembered access, all web access linked to that binding is revoked. Other browser bindings and SSH connections are not logged out. |
@@ -85,7 +85,10 @@ Action-only credentials do not also gain list or inspection rights.
 
 Artifact download additionally requires
 [`allowArtifactTransfer`](../../environment/management.md#property-allowArtifactTransfer).
-Selecting a catalog row does not download or verify it automatically.
+The first active view loads only its authorized metadata, not recording content.
+**Open recording** explicitly downloads the selected original into this tab.
+**Check and open** uses your protection and trust choices for full verification
+and player preparation; **Play** remains a separate local action.
 Verification, decryption, export preparation and playback run locally. Private
 decryption keys and decrypted content are not uploaded or persisted by the app.
 Explicitly saved files remain on the user's machine after logout.
@@ -96,6 +99,12 @@ records were not withheld. The application code also comes from that server:
 use the [CLI](../../cli/verification.md) in a separately trusted environment when
 independent verification matters.
 
+The catalog is server-reported metadata, not independent evidence. Its filters
+apply across the bounded inventory, with newest recordings first. New recordings
+can contain the original requesting name; older or encrypted recordings may not
+expose identity details. Missing names and target accounts are not reconstructed
+from current sessions or authorization.
+
 ## Practical limits
 
 | Browser operation | Limit |
@@ -105,6 +114,7 @@ independent verification matters.
 | Private-key import | One PEM/OpenSSH key, at most 64 KiB; optional matching OpenSSH certificate at most 12 KiB |
 | Key algorithms | Ed25519, RSA 2048–8192, NIST P-256/P-384/P-521; no DSA or hardware/security-key formats |
 | Artifact payload | 64 MiB in tab memory; use native tools for larger artifacts |
+| Recording catalog | At most 1,024 sealed recordings; bounded 128 MiB verification budgets and a four-second query deadline. Filters do not bypass these inventory limits. CLI UUID-paged listing remains available for larger archives. |
 | Recording playback | 100,000 events, at most 512 columns, 256 rows and 32,768 cells |
 
 Encrypted PKCS#8, PPK and multi-key files are not supported. Browser terminals

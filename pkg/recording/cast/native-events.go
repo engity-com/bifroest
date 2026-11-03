@@ -104,6 +104,9 @@ func EncodeNativeRecordingEvents(events []NativeCastEvent) ([]byte, error) {
 				hm[4] = h.Terminal.Type
 			}
 			mm := map[uint64]any{1: [16]byte(meta.RecordingId), 2: [16]byte(meta.ConnectionId), 3: [16]byte(meta.SessionId), 4: [16]byte(meta.OperationId), 5: string(meta.Flow), 6: string(meta.Task), 7: meta.Pty, 8: [32]byte(meta.ProducerId), 9: nativeformat.TimestampOf(meta.StartedAt)}
+			if meta.User != "" {
+				mm[10] = meta.User // Private setup metadata, never the outer header.
+			}
 			m[2], m[3] = hm, mm
 		case NativeEventOutput, NativeEventResize, NativeEventMarker, NativeEventResult:
 			if event.Elapsed < 0 || event.Elapsed > maximumEventElapsed {
@@ -275,7 +278,7 @@ func decodeNativeRecordingEvents(payload []byte) ([]NativeCastEvent, error) {
 					return nil, fmt.Errorf("invalid native terminal type")
 				}
 			}
-			meta, err := nativeMap(m[uint64(3)], []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9}, nil)
+			meta, err := nativeMap(m[uint64(3)], []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{10})
 			if err != nil {
 				return nil, err
 			}
@@ -292,6 +295,12 @@ func decodeNativeRecordingEvents(payload []byte) ([]NativeCastEvent, error) {
 				return nil, fmt.Errorf("invalid native cast metadata")
 			}
 			e.Metadata = CastMetadata{RecordingId: Id(*(*[16]byte)(id)), ConnectionId: connection.Id(*(*[16]byte)(connectionID)), SessionId: session.Id(*(*[16]byte)(sessionID)), OperationId: uuid.UUID(*(*[16]byte)(operationID)), Flow: configuration.FlowName(flow), Task: audit.SessionTask(task), Pty: pty, ProducerId: audit.ProducerId(*(*[32]byte)(producer)), StartedAt: started}
+			if value, exists := meta[uint64(10)]; exists {
+				e.Metadata.User, err = nativeString(value)
+				if err != nil || e.Metadata.User == "" || validateRecordingUser(e.Metadata.User) != nil {
+					return nil, fmt.Errorf("invalid native recording requesting user")
+				}
+			}
 		case NativeEventPaddingCheckpoint:
 			if _, err = nativeMap(m, []uint64{1}, nil); err != nil {
 				return nil, err

@@ -74,6 +74,8 @@ func TestPortableNativeFullDecryptVerifyAndExportFrozenEvidence(t *testing.T) {
 			cast, err := VerifyCast(bytes.NewReader(output.Bytes()), CastVerifyOptions{ExpectedProducerId: expected})
 			require.NoError(t, err)
 			require.True(t, cast.Trusted)
+			require.Empty(t, cast.Metadata.User, "frozen legacy artifacts must not acquire a synthetic requesting user")
+			require.NotContains(t, output.String(), `"user"`)
 			require.EqualValues(t, 7, *cast.ExitStatus)
 			head := portableNativeVector(t, name+"-head.cbor")
 			require.NoError(t, VerifyNativeRecordingCheckpoint(bytes.NewReader(data), int64(len(data)), head, vectorPublicIdentity{key, expected}, options))

@@ -147,7 +147,21 @@ async function mountApp(
         JSON.stringify({
           version: 1,
           operation: 'version.show',
-          versionInfo: { detail: 'long', text: 'Retained owner version' },
+          versionInfo: {
+            detail: fields?.long === 'false' ? 'short' : 'long',
+            text: 'Retained owner version',
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    if (path.endsWith('/management/sessions/list') || path.endsWith('/management/flows/list')) {
+      const kind = path.endsWith('/sessions/list') ? 'sessions' : 'flows';
+      return new Response(
+        JSON.stringify({
+          version: 1,
+          operation: `${kind}.list`,
+          [kind]: { items: [], next: '', skipped: 0 },
         }),
         { headers: { 'Content-Type': 'application/json' } },
       );
@@ -363,14 +377,25 @@ describe('owned workspace view routing with the real router and workspace', () =
   it('retains management results across login and view navigation without changing the owning access', async () => {
     const app = await mountApp('/bla-bla', false, true);
     await signIn();
-    await click(button('Server'));
-    // The actor-owned panel is loaded through Suspense independently of the
-    // login/route commit. Join its rendered controls before submitting a read.
     await vi.waitFor(async () => {
       await act(async () => {});
-      expect(button('Load server version')).toBeDefined();
+      expect(
+        app.requests
+          .filter((request) => request.path.includes('/management/'))
+          .map((request) => request.path.split('/management/')[1]),
+      ).toEqual(['sessions/list']);
     });
-    await click(button('Load server version'));
+    await click(button('Server'));
+    // The first active view now reads its metadata once. Join those exact
+    // requests before testing that pure tab/history activation does not reread.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(
+        app.requests
+          .filter((request) => request.path.includes('/management/'))
+          .map((request) => request.path.split('/management/')[1]),
+      ).toEqual(['sessions/list', 'version/show', 'flows/list']);
+    });
     const owned = document.getElementById('terminal-pane-1');
     expect(owned?.querySelector('[aria-label="Server version"]')?.textContent).toContain(
       'Retained owner version',

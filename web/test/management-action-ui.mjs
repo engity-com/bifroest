@@ -3,13 +3,31 @@ import {
   assertAccessActionsBlocked,
   assertUiPreferences,
   captureLayout,
-  sessionLayout,
   workspace,
 } from './workspace-ui.mjs';
+
+async function sessionLayout(page, id) {
+  const viewport = page.viewportSize();
+  await captureLayout(page, 'sessions-desktop');
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const cards = page.getByRole('region', { name: 'Live session metadata', exact: true });
+    await cards.getByRole('button', { name: `Session details ${id}`, exact: true }).click();
+    await page.getByRole('region', { name: 'Session details', exact: true }).waitFor();
+    assert.equal(
+      await page.getByRole('table', { name: 'Live session metadata', exact: true }).count(),
+      0,
+      'mobile sessions must use cards, not a clipped table',
+    );
+    await captureLayout(page, `sessions-${width}`);
+  }
+  await page.setViewportSize(viewport);
+}
 
 export async function exerciseManagementActions(page, login, logout) {
   let commits = 0;
   let managementCalls = 0;
+  const managementPaths = [];
   const responses = [];
   const networkFailures = [];
   page.on('response', (response) => {
@@ -27,6 +45,7 @@ export async function exerciseManagementActions(page, login, logout) {
   page.on('request', (request) => {
     if (new URL(request.url()).pathname.includes('/api/v1/management/')) {
       managementCalls++;
+      managementPaths.push(new URL(request.url()).pathname.split('/management/')[1]);
     }
     if (request.url().endsWith('/management/sessions/confirm')) {
       commits++;
@@ -42,10 +61,59 @@ export async function exerciseManagementActions(page, login, logout) {
     'the exact-ID specialist path starts collapsed',
   );
   await captureLayout(page, 'sessions-initial');
+  await page.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
+  const draftID = (
+    await page
+      .getByRole('table', { name: 'Live session metadata', exact: true })
+      .getByRole('button', { name: /^Session details / })
+      .first()
+      .getAttribute('aria-label')
+  ).slice('Session details '.length);
+  await page.locator('.advanced-action > summary').click();
+  const direct = page.getByRole('region', { name: 'Advanced: target by ID', exact: true });
+  await direct.getByLabel('Target flow', { exact: false }).fill('work');
+  await direct.getByLabel('Target session ID', { exact: false }).fill(draftID);
+  await workspace(page, 'Server');
+  await page
+    .getByRole('table', { name: 'Configured flows (not public discovery links)', exact: true })
+    .waitFor();
+  assert.deepEqual(
+    managementPaths,
+    ['sessions/list', 'version/show', 'flows/list'],
+    'only the exact authorized first-view reads, never preparation or download',
+  );
+  await workspace(page, 'Recordings & audit');
+  await page.getByRole('table', { name: 'Recordings · default', exact: true }).waitFor();
+  assert.deepEqual(
+    managementPaths,
+    ['sessions/list', 'version/show', 'flows/list', 'auditlogs/list', 'recordings/list'],
+    'the first Artifacts visit reads only its sources and sole recording source; never transfers or prepares',
+  );
+  const afterFirstViews = managementCalls;
+  await workspace(page, 'Sessions');
+  assert.equal(await direct.getByLabel('Target flow', { exact: false }).inputValue(), 'work');
+  assert.equal(
+    await direct.getByLabel('Target session ID', { exact: false }).inputValue(),
+    draftID,
+  );
   for (const name of ['Server', 'Recordings & audit', 'Sessions']) {
     await workspace(page, name);
   }
-  assert.equal(managementCalls, 0, 'navigation must not automatically read, prepare or download');
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  assert.equal(
+    managementCalls,
+    afterFirstViews,
+    'returning to initialized views must not repeat any reads, downloads or preparations',
+  );
+  assert.equal(afterFirstViews, 5);
+  assert.equal(await direct.getByLabel('Target flow', { exact: false }).inputValue(), 'work');
+  assert.equal(
+    await direct.getByLabel('Target session ID', { exact: false }).inputValue(),
+    draftID,
+  );
+  await page.locator('.advanced-action > summary').click();
   async function connection() {
     return page.evaluate(async () => {
       const { BrowserClient } = await import('/_bifroest/test/client.js');
@@ -92,10 +160,9 @@ export async function exerciseManagementActions(page, login, logout) {
   await connection();
   const table = page.getByRole('table', { name: 'Live session metadata', exact: true });
   async function target() {
-    await page.getByRole('button', { name: 'Load sessions', exact: true }).click();
+    await page.getByRole('button', { name: 'Refresh sessions', exact: true }).click();
     const row = table.locator('tbody tr').filter({ has: page.getByText('bob', { exact: true }) });
     await row.waitFor();
-    const id = await row.locator('td').first().textContent();
     await row.getByRole('button', { name: /^Session details / }).click();
     try {
       await page.getByRole('region', { name: 'Session details', exact: true }).waitFor();
@@ -142,11 +209,16 @@ export async function exerciseManagementActions(page, login, logout) {
         { cause: error },
       );
     }
+    const details = page.getByRole('region', { name: 'Session details', exact: true });
+    const id = await details
+      .locator('dt')
+      .filter({ hasText: /^Session ID$/ })
+      .evaluate((node) => node.nextElementSibling.textContent);
     return `worker/${id}`;
   }
   const id = await target();
   await sessionLayout(page, id.split('/')[1]);
-  await page.getByRole('button', { name: 'Dispose session', exact: true }).click();
+  await page.getByRole('button', { name: 'End session', exact: true }).click();
   let dialog = page.getByRole('dialog');
   await dialog.getByText(id, { exact: true }).waitFor();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -159,7 +231,7 @@ export async function exerciseManagementActions(page, login, logout) {
     2,
   );
   assert.equal(commits, 0);
-  await page.getByRole('button', { name: 'Disconnect session connections', exact: true }).click();
+  await page.getByRole('button', { name: 'Disconnect connections', exact: true }).click();
   dialog = page.getByRole('dialog');
   await dialog.getByText(id, { exact: true }).waitFor();
   const confirm = dialog.getByRole('button', { name: 'Confirm session action', exact: true });
@@ -191,7 +263,7 @@ export async function exerciseManagementActions(page, login, logout) {
       throw new Error('fixture not armed');
     }
   });
-  await page.getByRole('button', { name: 'Dispose session', exact: true }).click();
+  await page.getByRole('button', { name: 'End session', exact: true }).click();
   dialog = page.getByRole('dialog');
   await dialog.getByLabel('Type the exact flow/session ID shown above', { exact: true }).fill(id);
   await dialog.getByRole('button', { name: 'Confirm session action', exact: true }).click();
@@ -220,13 +292,14 @@ export async function exerciseManagementActions(page, login, logout) {
   );
   await page.waitForTimeout(1300);
   assert.equal(commits, 2, 'no automatic confirmation replay after a lost response');
+  await page.locator('.session-filter-details > summary').click();
   await page.getByRole('combobox', { name: 'Session state', exact: true }).click();
-  await page.getByRole('option', { name: 'all', exact: true }).click();
-  await page.getByRole('button', { name: 'Load sessions', exact: true }).click();
+  await page.getByRole('option', { name: 'All statuses', exact: true }).click();
+  await page.getByRole('button', { name: 'Search sessions', exact: true }).click();
   await table
     .locator('tbody tr')
     .filter({ has: page.getByText('bob', { exact: true }) })
-    .getByText('disposed', { exact: true })
+    .getByText('Ended', { exact: true })
     .waitFor();
   await page
     .getByRole('button', { name: 'Dismiss local warning (does not confirm result)', exact: true })

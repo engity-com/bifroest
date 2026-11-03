@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,7 +21,9 @@ func TestCatalogReadCursorsBindOperationAndAuditlogWithoutChangingLegacyFilters(
 	}
 	request, err := (ReadRequest{Operation: ListRecordings, Auditlog: "production"}).Normalize()
 	require.NoError(t, err)
-	request.After = request.Next("production", id)
+	request.After = (RecordingPageCursor{Auditlog: "production", Filter: request.RecordingFilter(),
+		ActorFlow: "management", ActorSession: id, StartedAt: "2026-01-01T00:00:00Z", ID: id,
+		Expires: 1, MAC: base64.RawURLEncoding.EncodeToString(make([]byte, 32))}).Token()
 	name, selected, err := request.Cursor()
 	require.NoError(t, err)
 	require.Equal(t, "production", name)
@@ -70,4 +73,51 @@ func TestCatalogReadCursorsBindOperationAndAuditlogWithoutChangingLegacyFilters(
 	logs.After = "bmp1." + base64.RawURLEncoding.EncodeToString(append(raw, '\n'))
 	_, err = logs.Normalize()
 	require.ErrorIs(t, err, ErrRequest)
+}
+
+func TestRecordingCatalogFilterValidationAndCursorMixup(t *testing.T) {
+	base, err := (ReadRequest{Operation: ListRecordings, Auditlog: "default"}).Normalize()
+	require.NoError(t, err)
+	require.Equal(t, "all", base.Status)
+	require.Equal(t, "started-desc", base.Sort)
+	for _, change := range []func(*ReadRequest){
+		func(r *ReadRequest) { r.Flow = strings.Repeat("é", 128) },
+		func(r *ReadRequest) { r.User = "\xff" },
+		func(r *ReadRequest) { r.Target = "host\nprivate" },
+		func(r *ReadRequest) { r.Status = "running" },
+		func(r *ReadRequest) { r.Sort = "uuid" },
+		func(r *ReadRequest) { r.StartedFrom = "2026-02-30T00:00:00Z" },
+		func(r *ReadRequest) { r.StartedFrom = "2026-01-01" },
+		func(r *ReadRequest) { r.StartedFrom = "2026-01-01T00:00:00+00:00" },
+		func(r *ReadRequest) { r.StartedFrom = "2026-01-01T00:00:00,5Z" },
+		func(r *ReadRequest) { r.StartedFrom = "2026-01-02T00:00:00Z"; r.StartedUntil = "2026-01-01T00:00:00Z" },
+	} {
+		request := base
+		change(&request)
+		_, err := request.Normalize()
+		require.ErrorIs(t, err, ErrRequest, "%+v", request)
+	}
+	base.StartedFrom, base.StartedUntil = "2026-01-01T00:00:00.000000001Z", "2026-01-01T00:00:00.000000001Z"
+	base, err = base.Normalize()
+	require.NoError(t, err)
+	id := "34e34ab8-7457-4d88-a5e4-c57791775c3a"
+	base.After = (RecordingPageCursor{Auditlog: base.Auditlog, Filter: base.RecordingFilter(), ActorFlow: "management", ActorSession: id,
+		StartedAt: base.StartedFrom, ID: id, Expires: 1, MAC: base64.RawURLEncoding.EncodeToString(make([]byte, 32))}).Token()
+	for _, change := range []func(*ReadRequest){
+		func(r *ReadRequest) { r.Flow = "other" },
+		func(r *ReadRequest) { r.User = "alice" },
+		func(r *ReadRequest) { r.Target = "host" },
+		func(r *ReadRequest) { r.Status = "failed" },
+		func(r *ReadRequest) { r.StartedUntil = "2026-01-02T00:00:00Z" },
+		func(r *ReadRequest) { r.Limit = 1 },
+	} {
+		request := base
+		change(&request)
+		_, err := request.Normalize()
+		require.ErrorIs(t, err, ErrRequest)
+	}
+	for _, operation := range []ReadOperation{ListFlows, ListSessions, ListAuditlogs, ShowVersion} {
+		_, err := (ReadRequest{Operation: operation, Status: "completed"}).Normalize()
+		require.ErrorIs(t, err, ErrRequest)
+	}
 }

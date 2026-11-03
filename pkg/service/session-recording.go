@@ -950,6 +950,16 @@ func (this *service) beginRecording(source *recordingExecution, pty terminalReco
 		ProducerId:   repository.producerId,
 		StartedAt:    startedAt,
 	}
+	// Optional catalog context must not introduce a login/account policy. Keep
+	// the original transport/audit identity unchanged. If its name cannot be
+	// represented in this bounded field, omit it; never truncate, sanitize or
+	// turn it into a recording/execution failure (including under best-effort).
+	if remote := connection.Remote(); !isNilDependency(remote) {
+		metadata.User = remote.User()
+		if metadata.ValidateRequestingUser() != nil {
+			metadata.User = ""
+		}
+	}
 	terminal, err := executionRecordingTerminal(pty)
 	if err != nil {
 		auditErr := this.recordSessionRecordingEvent(source.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, err, 0, nil, nil)

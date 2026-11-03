@@ -405,6 +405,78 @@ describe('browser HTTP RememberMe orchestration', () => {
     expect(await BrowserBinding.load(scope)).toBeNull();
   });
 
+  it('isolates a throwing status observer without exposing its error or interrupting authoritative logout and key cleanup', async () => {
+    const server = new Server();
+    const access = await server.client().password('alice', 'correct');
+    await access.remember({ explicitOptIn: true });
+    expect(await BrowserBinding.load(scope)).not.toBeNull();
+    const secret = 'PRIVATE-STATUS-OBSERVER-SENTINEL';
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let notified = false;
+    access.subscribeStatus(() => {
+      throw new Error(secret, { cause: secret });
+    });
+    access.subscribeStatus(() => {
+      notified = true;
+    });
+    try {
+      await expect(access.logout()).resolves.toEqual({ localState: 'removed' });
+      expect(notified).toBe(true);
+      expect(server.requests.filter((request) => request.action === 'logout')).toHaveLength(1);
+      expect(server.bindings.size).toBe(0);
+      expect(await BrowserBinding.load(scope)).toBeNull();
+      expect(diagnostics).toHaveBeenCalledExactlyOnceWith(
+        '[Bifröst/access-status]',
+        'listener-failed',
+      );
+      expect(JSON.stringify(diagnostics.mock.calls)).not.toContain(secret);
+      await expect(access.logout()).resolves.toEqual({ localState: 'removed' });
+      expect(server.requests.filter((request) => request.action === 'logout')).toHaveLength(1);
+    } finally {
+      diagnostics.mockRestore();
+    }
+  });
+
+  it('shares a logout with a reentrant status observer and aborts pending enrollment before notifying it', async () => {
+    const server = new Server();
+    const access = await server.client().password('alice', 'correct');
+    const held = barrier();
+    server.beforeProof = async () => {
+      held.enter();
+      await held.released;
+    };
+    const enrollment = access.remember({ explicitOptIn: true }).catch((error) => error as unknown);
+    await held.entered;
+    const proof = required(server.requests.find((request) => request.action === 'remember/prove'));
+    let entered = false;
+    let reentrant: ReturnType<WebAccess['logout']> | undefined;
+    let notifiedAfterAbort = false;
+    access.subscribeStatus(() => {
+      notifiedAfterAbort = proof.options.signal?.aborted === true;
+      if (!entered) {
+        entered = true;
+        reentrant = access.logout();
+      }
+    });
+    const logout = access.logout();
+    try {
+      expect(access.status()).toBe('closed');
+      expect(notifiedAfterAbort).toBe(true);
+      expect(server.requests.filter((request) => request.action === 'logout')).toHaveLength(1);
+      expect(reentrant).toBeDefined();
+    } finally {
+      held.release();
+      await enrollment;
+      await Promise.allSettled([logout, reentrant]);
+    }
+    expect(await enrollment).toMatchObject({ code: 'outcome-unknown' });
+    await expect(logout).resolves.toEqual({ localState: 'removed' });
+    await expect(reentrant).resolves.toEqual({ localState: 'removed' });
+    expect(server.bindings.size).toBe(0);
+    expect(await BrowserBinding.load(scope)).toBeNull();
+    expect(server.requests.filter((request) => request.action === 'logout')).toHaveLength(1);
+  });
+
   it('does not revoke sibling grants or discard remembered state when a late resume is cancelled', async () => {
     const server = new Server();
     const client = server.client();

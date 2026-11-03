@@ -12,6 +12,7 @@ import type {
   FlowSummary,
   Page,
   PageOptions,
+  RecordingOptions,
   RecordingSummary,
   SessionItem,
   SessionOptions,
@@ -22,6 +23,7 @@ import {
   detail,
   page,
   pageFields,
+  recordingFields,
   sessionFields,
   versionInfo,
 } from '../management/protocol';
@@ -40,6 +42,8 @@ export interface AccessSnapshot {
   readonly terminalAvailable: boolean;
   readonly keepAlive?: KeepAlivePolicy;
 }
+
+export type AccessStatus = 'active' | 'expired' | 'closed';
 
 interface AccessResponse extends AccessSnapshot {
   readonly accessToken: string;
@@ -146,6 +150,7 @@ export class WebAccess {
   readonly #http: Http;
   readonly #response: AccessResponse;
   #closed = false;
+  readonly #statusListeners = new Set<() => void>();
   #binding: BrowserBinding | null;
   #enrollment: {
     handle: BrowserBinding | null;
@@ -175,6 +180,22 @@ export class WebAccess {
   }
   toJSON(): AccessSnapshot {
     return this.snapshot();
+  }
+
+  // Local web-grant lifetime only, not the server session or a running shell.
+  // An individual operation being denied does not close/revoke this access.
+  status(): AccessStatus {
+    if (this.#closed) {
+      return 'closed';
+    }
+    return Date.now() >= Date.parse(this.#response.expiresAt) ? 'expired' : 'active';
+  }
+
+  subscribeStatus(listener: () => void): () => void {
+    this.#statusListeners.add(listener);
+    return () => {
+      this.#statusListeners.delete(listener);
+    };
   }
 
   terminalToken(): string {
@@ -330,12 +351,12 @@ export class WebAccess {
   }
   async managementRecordings(
     auditlog: string,
-    options: PageOptions = {},
+    options: RecordingOptions = {},
     signal?: AbortSignal,
   ): Promise<Page<RecordingSummary>> {
     this.#managementAllowed();
     const fields: Record<string, string> = {
-      ...pageFields(options),
+      ...recordingFields(options),
       auditlog: auditlogName(auditlog),
     };
     const result = page<RecordingSummary>(
@@ -352,12 +373,26 @@ export class WebAccess {
     if (this.#closed) {
       throw new RememberMeError('denied');
     }
+    const startKey = (value: string) =>
+      `${value.slice(0, 19)}.${value.slice(19, -1).replace('.', '').padEnd(9, '0')}`;
     if (
-      result.items.some(
-        (row, index) =>
+      new Set(result.items.map((row) => row.id)).size !== result.items.length ||
+      result.items.some((row, index) => {
+        const previous = result.items[index - 1];
+        const at = startKey(row.startedAt);
+        return (
           row.auditlog !== fields.auditlog ||
-          (index > 0 && row.id <= (result.items[index - 1]?.id ?? '')),
-      ) ||
+          (fields.flow !== '' && row.flow !== fields.flow) ||
+          (fields.user !== '' && row.user !== fields.user) ||
+          (fields.target !== '' && row.target !== fields.target) ||
+          (fields.status !== 'all' && row.status !== fields.status) ||
+          (fields.startedFrom !== '' && at < startKey(fields.startedFrom ?? '')) ||
+          (fields.startedUntil !== '' && at > startKey(fields.startedUntil ?? '')) ||
+          (previous !== undefined &&
+            (at > startKey(previous.startedAt) ||
+              (at === startKey(previous.startedAt) && row.id <= previous.id)))
+        );
+      }) ||
       (result.next !== '' && (result.items.length === 0 || result.next === fields.after))
     ) {
       throw new RememberMeError('unavailable');
@@ -576,6 +611,15 @@ export class WebAccess {
     if (this.#logout !== null) {
       return this.#logout;
     }
+    let complete!: (result: LogoutResult) => void;
+    let fail!: (error: unknown) => void;
+    const shared = new Promise<LogoutResult>((resolve, reject) => {
+      complete = resolve;
+      fail = reject;
+    });
+    // Establish the shared operation before any observer or abort callback can
+    // reenter. Observation must never replace authoritative logout/cleanup.
+    this.#logout = shared;
     this.#closed = true;
     const enrollment = this.#enrollment;
     enrollment?.controller.abort();
@@ -608,9 +652,18 @@ export class WebAccess {
       }
       return forgetOwned(handle);
     })();
-    this.#logout = operation;
+    void operation.then(complete, fail);
+    for (const listener of [...this.#statusListeners]) {
+      try {
+        listener();
+      } catch {
+        // A subscriber may hold arbitrary private data in its error. Report
+        // only the fixed diagnostic; cleanup and other observers still run.
+        console.error('[Bifröst/access-status]', 'listener-failed');
+      }
+    }
     try {
-      return await operation;
+      return await shared;
     } catch (error) {
       this.#logout = null;
       throw error;

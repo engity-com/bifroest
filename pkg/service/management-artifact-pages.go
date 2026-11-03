@@ -2,8 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"encoding/base64"
 	"fmt"
+	"sort"
+	"time"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	managementview "github.com/engity-com/bifroest/pkg/management/view"
@@ -37,44 +42,140 @@ func (this *service) managementAuditlogPage(ctx context.Context, request protoco
 	return page, nil
 }
 
-func (this *service) managementRecordingPage(ctx context.Context, request protocol.ReadRequest) (protocol.Page[protocol.RecordingView], error) {
-	page := protocol.Page[protocol.RecordingView]{Items: make([]protocol.RecordingView, 0)}
-	_, after, err := request.Cursor()
-	if err != nil {
-		return page, err
+func (this *service) managementRecordingPage(ctx context.Context, request protocol.ReadRequest, actor authorization.Authorization) (protocol.Page[protocol.RecordingSummary], error) {
+	page := protocol.Page[protocol.RecordingSummary]{Items: make([]protocol.RecordingSummary, 0)}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	if actor == nil || !actor.IsAuthorized() || actor.FindSession() == nil || actor.FindSession().Flow() != actor.Flow() || !this.isManagementFlow(actor.Flow()) {
+		return page, errManagementPolicy
 	}
-	options := recording.SealedPageOptions{Limit: uint(request.Limit + 1)}
-	if after != "" {
-		if err := options.After.UnmarshalText([]byte(after)); err != nil {
-			return page, err
-		}
+	if _, err := managementReadCeiling(actor, request); err != nil {
+		return page, err
 	}
 	name := configuration.AuditlogName(request.Auditlog)
 	repository := this.recordingRepositories[name]
 	if repository == nil || repository.native == nil {
 		return page, fmt.Errorf("no active recording repository")
 	}
-	// The native bounded, ordered inventory supplies one lookahead ID. Only
-	// selected records are inspected; an unselected artifact's content cannot
-	// change this page's verification scope or turn the lookahead into evidence.
-	ids, err := repository.native.ListSealedPage(ctx, options)
+	expires := time.Now().Add(5 * time.Minute).Unix()
+	var after protocol.RecordingPageCursor
+	if request.After != "" {
+		var err error
+		after, err = request.RecordingCursor()
+		if err != nil {
+			return page, err
+		}
+		mac, err := repository.native.CatalogCursorMAC(after.Payload())
+		provided, decodeErr := base64.RawURLEncoding.Strict().DecodeString(after.MAC)
+		if err != nil || decodeErr != nil || !hmac.Equal(mac, provided) || after.ActorFlow != actor.Flow().String() || after.ActorSession != actor.FindSession().Id().String() || after.Expires <= time.Now().Unix() {
+			return page, protocol.ErrRequest
+		}
+		expires = after.Expires
+	}
+	rows, err := repository.native.CatalogMetadata(ctx)
 	if err != nil {
 		return page, err
 	}
-	browser := managementRecordingBrowser{service: this}
-	for index, id := range ids {
+	from, until, position := time.Time{}, time.Time{}, time.Time{}
+	if request.StartedFrom != "" {
+		from, _ = protocol.RecordingTime(request.StartedFrom)
+	}
+	if request.StartedUntil != "" {
+		until, _ = protocol.RecordingTime(request.StartedUntil)
+	}
+	if after.ID != "" {
+		position, _ = protocol.RecordingTime(after.StartedAt)
+	}
+	selected := rows[:0]
+	for _, row := range rows {
+		// Older recordings lack the requesting user; target accounts remain
+		// unknown. Encrypted private context never enters this index. Unknown
+		// values cannot match concrete filters; never enrich from live sessions
+		// or historical journals.
+		if request.User != "" && request.User != row.User || request.Target != "" || request.Flow != "" && request.Flow != row.Flow ||
+			request.Status != "all" && request.Status != string(row.Status) ||
+			!from.IsZero() && row.StartedAt.Before(from) || !until.IsZero() && row.StartedAt.After(until) ||
+			!position.IsZero() && (row.StartedAt.After(position) || row.StartedAt.Equal(position) && row.RecordingId.String() <= after.ID) {
+			continue
+		}
+		selected = append(selected, row)
+	}
+	sort.Slice(selected, func(i, j int) bool {
+		if selected[i].StartedAt.Equal(selected[j].StartedAt) {
+			return selected[i].RecordingId.String() < selected[j].RecordingId.String()
+		}
+		return selected[i].StartedAt.After(selected[j].StartedAt)
+	})
+	remainingContainer, remainingCast := uint64(recording.MaximumNativeCatalogBytes), uint64(recording.MaximumNativeCatalogBytes)
+	for index, row := range selected {
 		if err := ctx.Err(); err != nil {
 			return page, err
 		}
 		if index == request.Limit {
-			page.Next = request.Next(request.Auditlog, page.Items[len(page.Items)-1].ID)
+			last := page.Items[len(page.Items)-1]
+			cursor := protocol.RecordingPageCursor{Auditlog: request.Auditlog, Filter: request.RecordingFilter(),
+				ActorFlow: actor.Flow().String(), ActorSession: actor.FindSession().Id().String(),
+				StartedAt: last.StartedAt.Format(time.RFC3339Nano), ID: last.ID, Expires: expires}
+			mac, err := repository.native.CatalogCursorMAC(cursor.Payload())
+			if err != nil {
+				return page, err
+			}
+			cursor.MAC = base64.RawURLEncoding.EncodeToString(mac)
+			page.Next = cursor.Token()
 			break
 		}
-		row, err := browser.Detail(ctx, name, id)
+		// A cache entry is selection metadata, never authority to publish a row.
+		if row.Bytes > remainingContainer || row.CastBytes > remainingCast {
+			return page, fmt.Errorf("recording page exceeds bounded reverification budget")
+		}
+		current, err := reverifyManagementRecording(ctx, repository.native, row, &remainingContainer, &remainingCast)
 		if err != nil {
 			return page, err
 		}
-		page.Items = append(page.Items, row)
+		page.Items = append(page.Items, managementRecordingSummary(request.Auditlog, current))
 	}
 	return page, nil
+}
+
+// Called only inside the authenticated/policy-checked catalog path. Keeping the
+// selected snapshot separate from actual open-file costs makes replacements and
+// page-wide budget exhaustion fail before publication, never after extra decode.
+func reverifyManagementRecording(ctx context.Context, repository *recording.LocalNativeRecordingRepository, selected recording.NativeRecordingSummary, remainingContainer, remainingCast *uint64) (recording.NativeRecordingSummary, error) {
+	artifact, err := repository.OpenCatalogSealed(ctx, selected.RecordingId, recording.CatalogVerifyLimits{
+		MaximumContainerBytes: *remainingContainer, MaximumCastBytes: *remainingCast,
+	})
+	if err != nil {
+		return recording.NativeRecordingSummary{}, err
+	}
+	current := artifact.Summary()
+	containerBytes, castVerificationBytes := uint64(artifact.Size()), artifact.VerificationCastBytes()
+	if err := artifact.Close(); err != nil {
+		return recording.NativeRecordingSummary{}, err
+	}
+	if current != selected {
+		return recording.NativeRecordingSummary{}, fmt.Errorf("recording changed after catalog selection")
+	}
+	if containerBytes > *remainingContainer || castVerificationBytes > *remainingCast {
+		return recording.NativeRecordingSummary{}, fmt.Errorf("recording page exceeds actual reverification budget")
+	}
+	*remainingContainer -= containerBytes
+	*remainingCast -= castVerificationBytes
+	return current, nil
+}
+
+func managementRecordingSummary(auditlog string, row recording.NativeRecordingSummary) protocol.RecordingSummary {
+	encrypted := row.RecipientFingerprint != ""
+	result := protocol.RecordingSummary{RecordingView: protocol.RecordingView{
+		Auditlog: auditlog, ID: row.RecordingId.String(), ProducerID: row.ProducerId.String(),
+		Format: "bcast/v1", Status: string(row.Status), StartedAt: row.StartedAt, EndedAt: row.EndedAt,
+		ContainerBytes: int64(row.Bytes), ChunkCount: row.ChunkCount, Encrypted: encrypted,
+		RecipientFingerprint: row.RecipientFingerprint, VerificationScope: "full",
+	}}
+	if encrypted {
+		result.Format, result.VerificationScope, result.MetadataUnavailable = "becast-cbor/v1", "outer", true
+	} else {
+		result.Flow, result.SessionID, result.User = row.Flow, row.SessionID, row.User
+		result.MetadataUnavailable = row.Flow == "" || row.SessionID == ""
+	}
+	return result
 }

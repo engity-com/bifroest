@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import type { RecordingSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { reportUiError } from '../ui/error-report';
@@ -43,10 +44,22 @@ function failure(error: unknown): Message {
     ? 'artifactLimit'
     : error instanceof RememberMeError && error.code === 'cancelled'
       ? 'artifactCancelled'
-      : 'artifactDownloadFailed';
+      : error instanceof RememberMeError && error.code === 'denied'
+        ? 'artifactDownloadDenied'
+        : 'artifactDownloadFailed';
 }
 
-export function ArtifactPanel({ access, disabled }: { access: WebAccess; disabled: boolean }) {
+export function ArtifactPanel({
+  access,
+  disabled,
+  remoteDisabled = false,
+  active = true,
+}: {
+  access: WebAccess;
+  disabled: boolean;
+  remoteDisabled?: boolean;
+  active?: boolean;
+}) {
   const keyInputID = useId();
   const passphraseInputID = useId();
   const [kind, setKind] = useState<'recording' | 'audit'>('recording');
@@ -59,15 +72,22 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
   const [untrusted, setUntrusted] = useState(false);
   const [encryption, setEncryption] = useState('');
   const [recipient, setRecipient] = useState('');
-  const [level, setLevel] = useState<'outer' | 'private'>('outer');
+  const [level, setLevel] = useState<'outer' | 'private'>('private');
   const [scope, setScope] = useState<'complete' | 'captured-prefix'>('complete');
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState(true);
   const [sensitive, setSensitive] = useState(false);
   const [phase, setPhase] = useState<'downloading' | 'verifying' | null>(null);
   const [notice, setNotice] = useState<Message | null>(null);
   const [keyRevision, setKeyRevision] = useState(0);
   const [selectionOpen, setSelectionOpen] = useState(true);
   const [manualOpen, setManualOpen] = useState(false);
+  const [opened, setOpened] = useState<ArtifactRequest | null>(null);
+  const [chosen, setChosen] = useState<ArtifactRequest | null>(null);
+  const [selection, setSelection] = useState<RecordingSummary | null>(null);
+  const [keyPresent, setKeyPresent] = useState(false);
+  const heading = useRef<HTMLHeadingElement | null>(null);
+  const wasActive = useRef(active);
+  wasActive.current = active;
   const form = useRef<HTMLFormElement | null>(null);
   const operation = useRef<AbortController | null>(null);
   const generation = useRef(0);
@@ -81,6 +101,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       }
     }
     setKeyRevision((value) => value + 1); // Reset Mantine's uncontrolled internal state too.
+    setKeyPresent(false);
   }
 
   function invalidateResult() {
@@ -96,9 +117,9 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
     setUntrusted(false);
     setEncryption('');
     setRecipient('');
-    setLevel('outer');
+    setLevel('private');
     setScope('complete');
-    setExporting(false);
+    setExporting(true);
     setSensitive(false);
     invalidateResult();
   }
@@ -115,6 +136,18 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
     setVerified(null);
     setPhase(null);
     setNotice(null);
+    setOpened(null);
+    setChosen(null);
+    setSelection(null);
+    setSelectionOpen(true);
+    setProducer('');
+    setUntrusted(false);
+    setEncryption('');
+    setRecipient('');
+    setLevel('private');
+    setScope('complete');
+    setExporting(true);
+    setSensitive(false);
     clearKey();
     return () => {
       generation.current++;
@@ -129,6 +162,13 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       }
     };
   }, [access, disabled]);
+  useEffect(() => {
+    if (remoteDisabled && phase === 'downloading') {
+      generation.current++;
+      operation.current?.abort();
+      setNotice('artifactCancelled');
+    }
+  }, [remoteDisabled, phase]);
 
   async function run(
     next: 'downloading' | 'verifying',
@@ -171,13 +211,24 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
     setNotice('artifactCancelled');
   }
 
-  async function download() {
+  async function download(request?: ArtifactRequest, summary?: RecordingSummary) {
+    if (disabled || remoteDisabled || operation.current !== null) {
+      return;
+    }
+    const selected: ArtifactRequest =
+      request ?? (kind === 'recording' ? { kind, auditlog, id } : { kind, auditlog });
+    selectionChanged();
+    setKind(selected.kind);
+    setAuditlog(selected.auditlog);
+    setID(selected.kind === 'recording' ? selected.id : '');
+    setOpened(selected);
+    setChosen(selected);
+    setSelection(summary ?? null);
+    setSelectionOpen(false);
     clearKey();
     await run('downloading', async (signal, current) => {
       setReceived(null);
       setFilePage(0);
-      const selected: ArtifactRequest =
-        kind === 'recording' ? { kind, auditlog, id } : { kind, auditlog };
       try {
         artifactFields(selected);
       } catch {
@@ -187,6 +238,9 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       if (current === generation.current && !signal.aborted) {
         setReceived(result);
         setSelectionOpen(false);
+        if (wasActive.current) {
+          heading.current?.focus();
+        }
       }
     });
   }
@@ -246,7 +300,14 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
   }
 
   const locked = disabled || phase !== null;
+  const downloadLocked = locked || remoteDisabled;
   const metadata = verified?.metadata;
+  const pinReady = untrusted || (/^[0-9a-f]{64}$/u.test(producer) && !/^0+$/u.test(producer));
+  const protectionReady =
+    encryption === 'clear' ||
+    (encryption === 'encrypted' && /^SHA256:[A-Za-z0-9+/]{43}$/u.test(recipient));
+  const keyReady = level !== 'private' || encryption !== 'encrypted' || keyPresent;
+  const verificationReady = pinReady && protectionReady && keyReady;
   return (
     <Paper
       withBorder
@@ -255,42 +316,72 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       component="section"
       aria-label={t('artifactTitle')}
     >
-      <Title order={2}>{t('artifactTitle')}</Title>
-      <p className="caption subtle">{t('artifactIntroduction')}</p>
-      <ol className="workflow-steps" aria-label={t('artifactWorkflow')}>
-        <li aria-current={received === null ? 'step' : undefined}>{t('artifactStepSelect')}</li>
-        <li aria-current={received !== null && verified === null ? 'step' : undefined}>
-          {t('artifactStepVerify')}
-        </li>
-        <li aria-current={verified !== null ? 'step' : undefined}>{t('artifactStepUse')}</li>
-      </ol>
-      <details
-        className="artifact-selection"
-        open={selectionOpen}
-        onToggle={(event) => setSelectionOpen(event.currentTarget.open)}
-      >
-        <summary>
-          {received === null
-            ? t('artifactStepSelect')
-            : `${t('artifactChangeSelection')}: ${received.request.auditlog}${received.request.kind === 'recording' ? ` / ${received.request.id}` : ''}`}
-        </summary>
+      <div className="section-heading">
+        <h2 ref={heading} tabIndex={-1} className="recording-heading">
+          {t(
+            opened === null || selectionOpen
+              ? 'artifactTitle'
+              : opened.kind === 'recording'
+                ? 'recordingSelected'
+                : 'recordingAuditExports',
+          )}
+        </h2>
+        {opened !== null && !selectionOpen && (
+          <Button
+            variant="default"
+            disabled={locked}
+            onClick={() => {
+              setOpened(null);
+              setSelection(null);
+              setReceived(null);
+              setSelectionOpen(true);
+              invalidateResult();
+            }}
+          >
+            {t('recordingBack')}
+          </Button>
+        )}
+      </div>
+      {opened !== null && !selectionOpen && (
+        <div className="recording-summary">
+          <strong>
+            {selection
+              ? selection.user || selection.flow || t('recordingSelected')
+              : opened.auditlog}
+          </strong>
+          {selection && (
+            <span className="caption subtle">
+              {selection.target ? `→ ${selection.target} · ` : ''}
+              {selection.user && selection.flow ? `${selection.flow} · ` : ''}
+              {new Intl.DateTimeFormat(undefined, {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              }).format(new Date(selection.startedAt))}
+            </span>
+          )}
+          <details className="context-help">
+            <summary>{t('recordingDetails')}</summary>
+            <p className="identifier">
+              {opened.auditlog}
+              {opened.kind === 'recording' ? ` / ${opened.id}` : ''}
+            </p>
+            <p>{t('recordingServerMetadata')}</p>
+          </details>
+        </div>
+      )}
+      <section className="artifact-selection" hidden={!selectionOpen}>
         <div className="artifact-selection-grid">
           <ArtifactCatalog
             access={access}
-            disabled={locked}
-            onSelect={(request) => {
-              if (disabled || operation.current !== null) {
-                return;
-              }
-              setKind(request.kind);
-              setAuditlog(request.auditlog);
-              setID(request.kind === 'recording' ? request.id : '');
-              selectionChanged();
-              setManualOpen(true);
+            disabled={downloadLocked}
+            active={active && selectionOpen}
+            selected={chosen}
+            onSelect={(request, summary) => {
+              void download(request, summary);
             }}
           />
           <details open={manualOpen} onToggle={(event) => setManualOpen(event.currentTarget.open)}>
-            <summary>{t('artifactExactSelection')}</summary>
+            <summary>{t('recordingManual')}</summary>
             <p className="caption subtle">{t('artifactExplicitDownload')}</p>
             <form
               method="dialog"
@@ -303,7 +394,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
               <Select
                 label={t('artifactKind')}
                 value={kind}
-                disabled={locked}
+                disabled={downloadLocked}
                 data={[
                   { value: 'recording', label: t('artifactRecording') },
                   { value: 'audit', label: t('artifactAudit') },
@@ -320,7 +411,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
                 value={auditlog}
                 required
                 maxLength={128}
-                disabled={locked}
+                disabled={downloadLocked}
                 onChange={(event) => {
                   setAuditlog(event.currentTarget.value);
                   selectionChanged();
@@ -332,28 +423,45 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
                   value={id}
                   required
                   maxLength={36}
-                  disabled={locked}
+                  disabled={downloadLocked}
                   onChange={(event) => {
                     setID(event.currentTarget.value);
                     selectionChanged();
                   }}
                 />
               )}
-              <Button type="submit" disabled={locked}>
-                {t('artifactDownload')}
+              <Button
+                type="submit"
+                disabled={downloadLocked || auditlog === '' || (kind === 'recording' && id === '')}
+              >
+                {t(kind === 'recording' ? 'recordingOpen' : 'recordingOpenAudit')}
               </Button>
             </form>
           </details>
         </div>
-      </details>
+      </section>
       {notice !== null && (
         <Alert role="status" color={notice === 'artifactCancelled' ? 'yellow' : 'red'}>
           {t(notice)}
         </Alert>
       )}
+      {notice !== null &&
+        opened !== null &&
+        received === null &&
+        phase === null &&
+        !selectionOpen && (
+          <Button
+            disabled={downloadLocked}
+            onClick={() => {
+              void download(opened, selection ?? undefined);
+            }}
+          >
+            {t('recordingRetryOpen')}
+          </Button>
+        )}
       {phase !== null && (
         <div role="status" className="actions">
-          <p>{t(phase === 'downloading' ? 'artifactDownloading' : 'artifactVerifying')}</p>
+          <p>{t(phase === 'downloading' ? 'recordingOpening' : 'recordingVerifying')}</p>
           <Button variant="default" onClick={cancel}>
             {t('artifactCancel')}
           </Button>
@@ -361,7 +469,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       )}
       {received !== null && (
         <>
-          {verified === null && <Alert color="yellow">{t('artifactTransportComplete')}</Alert>}
+          {verified === null && <p className="caption subtle">{t('recordingTrustIntroduction')}</p>}
           <details className="context-help">
             <summary>{t('artifactHints')}</summary>
             <section aria-label={t('artifactHints')}>
@@ -429,243 +537,284 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
               </div>
             </section>
           </details>
-          <form
-            ref={form}
-            method="dialog"
-            className="stack artifact-verification"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void verify();
-            }}
-          >
-            <Title order={3}>{t('artifactExpectations')}</Title>
-            <p className="caption">{t('artifactPinsInstruction')}</p>
-            <details className="context-help">
-              <summary>{t('artifactTrustHelp')}</summary>
-              <p>{t('artifactIndependentPins')}</p>
-            </details>
-            <Checkbox
-              label={t('artifactAllowUntrusted')}
-              checked={untrusted}
-              disabled={locked}
-              onChange={(event) => {
-                setUntrusted(event.currentTarget.checked);
-                invalidateResult();
+          {verified === null && (
+            <form
+              ref={form}
+              method="dialog"
+              className="stack artifact-verification"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void verify();
               }}
-            />
-            <TextInput
-              label={t('artifactExpectedProducer')}
-              value={producer}
-              maxLength={64}
-              required={!untrusted}
-              disabled={locked || untrusted}
-              autoComplete="off"
-              onChange={(event) => {
-                setProducer(event.currentTarget.value);
-                invalidateResult();
-              }}
-            />
-            <Select
-              label={t('artifactEncryption')}
-              value={encryption}
-              required
-              disabled={locked}
-              placeholder={t('artifactChooseEncryption')}
-              data={[
-                { value: 'clear', label: t('artifactClear') },
-                { value: 'encrypted', label: t('artifactEncrypted') },
-              ]}
-              onChange={(value) => {
-                setEncryption(value ?? '');
-                invalidateResult();
-              }}
-            />
-            {encryption === 'encrypted' && (
-              <TextInput
-                label={t('artifactExpectedRecipient')}
-                value={recipient}
-                required
-                maxLength={50}
+            >
+              <Title order={3}>{t('artifactExpectations')}</Title>
+              <details className="context-help">
+                <summary>{t('artifactTrustHelp')}</summary>
+                <p>{t('artifactIndependentPins')}</p>
+              </details>
+              <Checkbox
+                label={t('artifactAllowUntrusted')}
+                checked={untrusted}
                 disabled={locked}
-                autoComplete="off"
                 onChange={(event) => {
-                  setRecipient(event.currentTarget.value);
+                  setUntrusted(event.currentTarget.checked);
                   invalidateResult();
                 }}
               />
-            )}
-            <Radio.Group
-              label={t('artifactPurpose')}
-              value={
-                level === 'private' && exporting ? 'use' : level === 'outer' ? 'check' : 'advanced'
-              }
-              onChange={(value) => {
-                setLevel(value === 'use' ? 'private' : 'outer');
-                setExporting(value === 'use');
-                invalidateResult();
-              }}
-            >
-              <div className="stack verification-purpose">
-                <Radio value="check" label={t('artifactPurposeCheck')} disabled={locked} />
-                <Radio
-                  value="use"
-                  label={t('artifactPurposeUse')}
-                  description={t('artifactPurposeUseHint')}
+              {untrusted && <p className="caption subtle">{t('recordingTrustWithoutPin')}</p>}
+              <TextInput
+                label={t('artifactExpectedProducer')}
+                value={producer}
+                maxLength={64}
+                required={!untrusted}
+                disabled={locked || untrusted}
+                autoComplete="off"
+                onChange={(event) => {
+                  setProducer(event.currentTarget.value);
+                  invalidateResult();
+                }}
+              />
+              {!untrusted && <p className="caption subtle">{t('recordingPinHelp')}</p>}
+              <Select
+                label={t('artifactEncryption')}
+                value={encryption}
+                required
+                disabled={locked}
+                placeholder={t('artifactChooseEncryption')}
+                data={[
+                  { value: 'clear', label: t('artifactClear') },
+                  { value: 'encrypted', label: t('artifactEncrypted') },
+                ]}
+                onChange={(value) => {
+                  setEncryption(value ?? '');
+                  invalidateResult();
+                }}
+              />
+              {encryption === 'encrypted' && (
+                <TextInput
+                  label={t('artifactExpectedRecipient')}
+                  value={recipient}
+                  required
+                  maxLength={50}
                   disabled={locked}
-                />
-              </div>
-            </Radio.Group>
-            {level === 'private' && !exporting && (
-              <p className="caption subtle">{t('artifactCustomPurpose')}</p>
-            )}
-            <details>
-              <summary>{t('artifactAdvancedVerification')}</summary>
-              <div className="stack">
-                <Select
-                  label={t('artifactLevel')}
-                  value={level}
-                  disabled={locked}
-                  data={[
-                    { value: 'outer', label: t('artifactOuter') },
-                    { value: 'private', label: t('artifactPrivate') },
-                  ]}
-                  onChange={(value) => {
-                    setLevel(value === 'private' ? 'private' : 'outer');
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setRecipient(event.currentTarget.value);
                     invalidateResult();
                   }}
                 />
-                {kind === 'audit' && (
+              )}
+              <details>
+                <summary>{t('recordingAdvanced')}</summary>
+                <div className="stack">
+                  <Radio.Group
+                    label={t('artifactPurpose')}
+                    value={
+                      level === 'private' && exporting
+                        ? 'use'
+                        : level === 'outer'
+                          ? 'check'
+                          : 'advanced'
+                    }
+                    onChange={(value) => {
+                      setLevel(value === 'use' ? 'private' : 'outer');
+                      setExporting(value === 'use');
+                      invalidateResult();
+                    }}
+                  >
+                    <div className="stack verification-purpose">
+                      <Radio value="check" label={t('artifactPurposeCheck')} disabled={locked} />
+                      <Radio
+                        value="use"
+                        label={t('artifactPurposeUse')}
+                        description={t('artifactPurposeUseHint')}
+                        disabled={locked}
+                      />
+                    </div>
+                  </Radio.Group>
+                  {level === 'private' && !exporting && (
+                    <p className="caption subtle">{t('artifactCustomPurpose')}</p>
+                  )}
                   <Select
-                    label={t('artifactAuditScope')}
-                    value={scope}
+                    label={t('artifactLevel')}
+                    value={level}
                     disabled={locked}
                     data={[
-                      { value: 'complete', label: t('artifactComplete') },
-                      { value: 'captured-prefix', label: t('artifactPrefix') },
+                      { value: 'outer', label: t('artifactOuter') },
+                      { value: 'private', label: t('artifactPrivate') },
                     ]}
                     onChange={(value) => {
-                      setScope(value === 'captured-prefix' ? 'captured-prefix' : 'complete');
+                      setLevel(value === 'private' ? 'private' : 'outer');
                       invalidateResult();
                     }}
                   />
-                )}
-                {level === 'private' && (
-                  <>
-                    <Checkbox
-                      label={t('artifactPrepareExport')}
-                      checked={exporting}
+                  {kind === 'audit' && (
+                    <Select
+                      label={t('artifactAuditScope')}
+                      value={scope}
                       disabled={locked}
-                      onChange={(event) => {
-                        setExporting(event.currentTarget.checked);
+                      data={[
+                        { value: 'complete', label: t('artifactComplete') },
+                        { value: 'captured-prefix', label: t('artifactPrefix') },
+                      ]}
+                      onChange={(value) => {
+                        setScope(value === 'captured-prefix' ? 'captured-prefix' : 'complete');
                         invalidateResult();
                       }}
                     />
-                    {kind === 'audit' && (
+                  )}
+                  {level === 'private' && (
+                    <>
                       <Checkbox
-                        label={t('artifactSensitive')}
-                        checked={sensitive}
+                        label={t('artifactPrepareExport')}
+                        checked={exporting}
                         disabled={locked}
                         onChange={(event) => {
-                          setSensitive(event.currentTarget.checked);
+                          setExporting(event.currentTarget.checked);
                           invalidateResult();
                         }}
                       />
-                    )}
-                  </>
-                )}
-              </div>
-            </details>
-            {level === 'private' && encryption === 'encrypted' && (
-              <>
-                <Alert color="blue">{t('artifactKeyLocal')}</Alert>
-                <label className="stack" htmlFor={keyInputID}>
-                  {t('artifactKeyFile')}
-                  <input
-                    key={`private:${keyRevision}`}
-                    id={keyInputID}
-                    name="evidence-private"
-                    type="file"
-                    required
+                      {kind === 'audit' && (
+                        <Checkbox
+                          label={t('artifactSensitive')}
+                          checked={sensitive}
+                          disabled={locked}
+                          onChange={(event) => {
+                            setSensitive(event.currentTarget.checked);
+                            invalidateResult();
+                          }}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+              </details>
+              {level === 'private' && encryption === 'encrypted' && (
+                <>
+                  <Alert color="blue">{t('artifactKeyLocal')}</Alert>
+                  <label className="stack" htmlFor={keyInputID}>
+                    {t('artifactKeyFile')}
+                    <input
+                      key={`private:${keyRevision}`}
+                      id={keyInputID}
+                      name="evidence-private"
+                      type="file"
+                      required
+                      disabled={locked}
+                      onChange={(event) =>
+                        setKeyPresent((event.currentTarget.files?.length ?? 0) > 0)
+                      }
+                    />
+                  </label>
+                  <PasswordInput
+                    key={`passphrase:${keyRevision}`}
+                    id={passphraseInputID}
+                    name="evidence-passphrase"
+                    label={t('artifactPassphrase')}
                     disabled={locked}
+                    autoComplete="off"
+                    visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
                   />
-                </label>
-                <PasswordInput
-                  key={`passphrase:${keyRevision}`}
-                  id={passphraseInputID}
-                  name="evidence-passphrase"
-                  label={t('artifactPassphrase')}
-                  disabled={locked}
-                  autoComplete="off"
-                  visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
-                />
-              </>
-            )}
-            <Button type="submit" disabled={locked}>
-              {t('artifactVerify')}
-            </Button>
-          </form>
+                </>
+              )}
+              {!verificationReady && (
+                <p className="caption" role="status">
+                  {t(keyReady ? 'recordingRequiredOptions' : 'recordingRequiredKey')}
+                </p>
+              )}
+              <Button type="submit" disabled={locked || !verificationReady}>
+                {t('artifactVerify')}
+              </Button>
+            </form>
+          )}
         </>
       )}
       {verified !== null && metadata !== undefined && (
         <section className="stack" aria-label={t('artifactResult')} aria-live="polite">
-          <Title order={3}>{t('artifactResult')}</Title>
-          {metadata.trust === 'untrusted' && (
-            <Alert color="yellow">{t('artifactUntrustedResult')}</Alert>
-          )}
-          <dl className="metadata-grid">
-            <dt>{t('artifactTrust')}</dt>
-            <dd>
-              {t(metadata.trust === 'pinned' ? 'artifactPinnedResult' : 'artifactUntrustedResult')}
-            </dd>
-            <dt>{t('artifactVerifiedProducer')}</dt>
-            <dd>{metadata.producer}</dd>
-            <dt>{t('artifactValidation')}</dt>
-            <dd>{t(metadata.validation === 'private' ? 'artifactPrivate' : 'artifactOuter')}</dd>
-            <dt>{t('artifactDecryption')}</dt>
-            <dd>
-              {t(
-                metadata.decryption === 'authenticated'
-                  ? 'artifactDecrypted'
-                  : metadata.decryption === 'no-private-records'
-                    ? 'artifactNoPrivate'
-                    : metadata.decryption === 'not-encrypted'
-                      ? 'artifactNotEncrypted'
-                      : 'artifactNotChecked',
-              )}
-            </dd>
-            <dt>{t('artifactProvenance')}</dt>
-            <dd>{t('artifactBytesOnly')}</dd>
-            <dt>{t('artifactFreshness')}</dt>
-            <dd>{t('artifactNotFresh')}</dd>
-            {metadata.kind === 'audit' && (
-              <>
-                <dt>{t('artifactExportFields')}</dt>
-                <dd>
-                  {t(
-                    verified.output === null
-                      ? 'artifactNoExport'
-                      : sensitive
-                        ? 'artifactSensitiveFields'
-                        : 'artifactRedactedFields',
-                  )}
-                </dd>
-                <dt>{t('artifactAuditScope')}</dt>
-                <dd>
-                  {t(
-                    metadata.auditScope === 'captured-prefix'
-                      ? 'artifactPrefix'
-                      : 'artifactComplete',
-                  )}
-                </dd>
-                <dt>{t('artifactRecordCount')}</dt>
-                <dd>{new Intl.NumberFormat('en-US').format(BigInt(metadata.records))}</dd>
-                <dt>{t('artifactPrivateCount')}</dt>
-                <dd>{new Intl.NumberFormat('en-US').format(BigInt(metadata.privateRecords))}</dd>
-              </>
+          <Alert color={metadata.trust === 'untrusted' ? 'yellow' : 'green'}>
+            {t(
+              metadata.trust === 'untrusted'
+                ? 'recordingIdentityUnknown'
+                : 'recordingIdentityPinned',
             )}
-          </dl>
+          </Alert>
+          {verified.request.kind === 'recording' &&
+            verified.output !== null &&
+            metadata.validation === 'private' &&
+            metadata.outputFormat === 'cast' && (
+              <RecordingPlayer
+                source={verified.output}
+                expected={{
+                  id: verified.request.id,
+                  producer: untrusted ? '' : producer,
+                  allowUntrusted: untrusted,
+                }}
+                disabled={locked}
+                autoPrepare
+                active={active}
+              />
+            )}
+          <details>
+            <summary>{t('recordingVerificationDetails')}</summary>
+            <Title order={3}>{t('artifactResult')}</Title>
+            <dl className="metadata-grid">
+              <dt>{t('artifactTrust')}</dt>
+              <dd>
+                {t(
+                  metadata.trust === 'pinned' ? 'artifactPinnedResult' : 'artifactUntrustedResult',
+                )}
+              </dd>
+              <dt>{t('artifactVerifiedProducer')}</dt>
+              <dd>{metadata.producer}</dd>
+              <dt>{t('artifactValidation')}</dt>
+              <dd>{t(metadata.validation === 'private' ? 'artifactPrivate' : 'artifactOuter')}</dd>
+              <dt>{t('artifactDecryption')}</dt>
+              <dd>
+                {t(
+                  metadata.decryption === 'authenticated'
+                    ? 'artifactDecrypted'
+                    : metadata.decryption === 'no-private-records'
+                      ? 'artifactNoPrivate'
+                      : metadata.decryption === 'not-encrypted'
+                        ? 'artifactNotEncrypted'
+                        : 'artifactNotChecked',
+                )}
+              </dd>
+              <dt>{t('artifactProvenance')}</dt>
+              <dd>{t('artifactBytesOnly')}</dd>
+              <dt>{t('artifactFreshness')}</dt>
+              <dd>{t('artifactNotFresh')}</dd>
+              {metadata.kind === 'audit' && (
+                <>
+                  <dt>{t('artifactExportFields')}</dt>
+                  <dd>
+                    {t(
+                      verified.output === null
+                        ? 'artifactNoExport'
+                        : sensitive
+                          ? 'artifactSensitiveFields'
+                          : 'artifactRedactedFields',
+                    )}
+                  </dd>
+                  <dt>{t('artifactAuditScope')}</dt>
+                  <dd>
+                    {t(
+                      metadata.auditScope === 'captured-prefix'
+                        ? 'artifactPrefix'
+                        : 'artifactComplete',
+                    )}
+                  </dd>
+                  <dt>{t('artifactRecordCount')}</dt>
+                  <dd>{new Intl.NumberFormat('en-US').format(BigInt(metadata.records))}</dd>
+                  <dt>{t('artifactPrivateCount')}</dt>
+                  <dd>{new Intl.NumberFormat('en-US').format(BigInt(metadata.privateRecords))}</dd>
+                </>
+              )}
+            </dl>
+          </details>
           {verified.output !== null && (
             <Button
+              variant="default"
               disabled={locked}
               onClick={() => {
                 if (verified.output !== null) {
@@ -681,20 +830,9 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
               {t('artifactSaveExport')}
             </Button>
           )}
-          {verified.request.kind === 'recording' &&
-            verified.output !== null &&
-            metadata.validation === 'private' &&
-            metadata.outputFormat === 'cast' && (
-              <RecordingPlayer
-                source={verified.output}
-                expected={{
-                  id: verified.request.id,
-                  producer: untrusted ? '' : producer,
-                  allowUntrusted: untrusted,
-                }}
-                disabled={locked}
-              />
-            )}
+          <Button variant="subtle" disabled={locked} onClick={invalidateResult}>
+            {t('recordingChangeVerification')}
+          </Button>
         </section>
       )}
       {received !== null && (
@@ -703,6 +841,8 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
           disabled={locked}
           onClick={() => {
             setReceived(null);
+            setOpened(null);
+            setSelection(null);
             setSelectionOpen(true);
             invalidateResult();
           }}

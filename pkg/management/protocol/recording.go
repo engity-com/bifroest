@@ -22,3 +22,16 @@ type RecordingView struct {
 	RecipientFingerprint string    `json:"recipientFingerprint,omitempty" yaml:"recipientFingerprint,omitempty"`
 	VerificationScope    string    `json:"verificationScope" yaml:"verificationScope"`
 }
+
+// RecordingSummary extends only the authenticated management catalog. The
+// legacy CLI RecordingView and its UUID-ordered streaming contract stay intact.
+// Older recordings lack a requesting user; target accounts are not recorded.
+// Missing context stays unknown rather than being inferred from live accounts.
+type RecordingSummary struct {
+	RecordingView
+	Flow                string `json:"flow,omitempty"`
+	SessionID           string `json:"sessionId,omitempty"`
+	User                string `json:"user,omitempty"`
+	Target              string `json:"target,omitempty"`
+	MetadataUnavailable bool   `json:"metadataUnavailable,omitempty"`
+}

@@ -99,7 +99,7 @@ action before changing Slug.
 
 * Confirming closure of a live terminal tab closes that connection, not other tabs or the session. Closing the page is not logout either.
 * **Log out** closes connections owned by that browser access and revokes its linked saved access, if present. It does not disconnect unrelated SSH access or dispose of the workspace.
-* **Dispose session** is a separate management action. It revokes the session and runs its configured cleanup, which can remove workloads or managed accounts.
+* **End session** is a separate management action. It revokes the session and runs its configured cleanup, which can remove workloads or managed accounts.
 
 The terminal's **Connection settings** can change its keepalive interval unless the flow enforces one. Keepalive does not extend session or login lifetimes; see [flow keepalive](../reference/flow.md#http-property-keepAlive).
 

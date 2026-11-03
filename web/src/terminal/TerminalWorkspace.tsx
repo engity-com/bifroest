@@ -81,6 +81,7 @@ export function TerminalWorkspace({
   const nextID = useRef(0);
   const lastAuthorization = useRef<WebAccess | null>(null);
   const actionOwners = useRef<ReadonlySet<number>>(new Set());
+  const [actionsLocked, setActionsLocked] = useState(false);
   const lastRetired = useRef<WebAccess | null>(null);
   const tabList = useRef<HTMLDivElement | null>(null);
   const controls = useRef(new Map<number, TerminalActions>());
@@ -127,6 +128,7 @@ export function TerminalWorkspace({
   const lockOwner = useCallback(
     (owner: number, locked: boolean) => {
       actionOwners.current = ownerLocks(actionOwners.current, owner, locked);
+      setActionsLocked(actionOwners.current.size > 0);
       if (locked) {
         // Retire any older close intent. It must not outlive this action and
         // later unmount its owner/unknown warning through a stale confirmation.
@@ -299,7 +301,7 @@ export function TerminalWorkspace({
     if (blocked || focusBlocked || settingsTab !== null || actionOwners.current.size > 0) {
       return;
     }
-    if (Date.parse(selectedAccess.snapshot().expiresAt) <= Date.now()) {
+    if (selectedAccess.status() !== 'active') {
       onSignIn(selectedAccess.snapshot().scope);
       return;
     }
@@ -338,6 +340,12 @@ export function TerminalWorkspace({
       });
     }
   };
+  const reauthenticate = (id: number) => {
+    if (authentication !== null || tabs.length >= maximumTabs) {
+      return;
+    }
+    operate(id, (tab) => onSignIn(tab.scope));
+  };
   const showConnectionMenu = () => {
     if (blocked || focusBlocked || settingsTab !== null || actionOwners.current.size > 0) {
       return;
@@ -347,7 +355,7 @@ export function TerminalWorkspace({
   };
   const available = tabs
     .filter((tab, index) => tabs.findIndex((entry) => entry.access === tab.access) === index)
-    .filter((tab) => Date.parse(tab.access.snapshot().expiresAt) > Date.now());
+    .filter((tab) => tab.access.status() === 'active');
   const menuOwner = tabs.find((tab) => tab.id === menuTab);
   const settingsOwner = tabs.find((tab) => tab.id === settingsTab);
   const settingsActions = settingsOwner ? controls.current.get(settingsOwner.id) : undefined;
@@ -393,6 +401,7 @@ export function TerminalWorkspace({
                   id={tab.id}
                   value={tab.id}
                   kind={tab.kind}
+                  access={tab.access}
                   scope={tab.scope.slug}
                   principal={tab.access.snapshot().principal}
                   state={tab.state}
@@ -463,9 +472,7 @@ export function TerminalWorkspace({
                   <Menu.Item
                     icon={<RefreshIcon fontSize="small" />}
                     disabled={blocked || focusBlocked || tabs.length >= maximumTabs}
-                    onClick={() =>
-                      operate(menuOwner.id, (entry) => onSignIn(entry.access.snapshot().scope))
-                    }
+                    onClick={() => reauthenticate(menuOwner.id)}
                   >
                     {t('reauthenticate')}
                   </Menu.Item>
@@ -685,6 +692,19 @@ export function TerminalWorkspace({
                 }
                 disabled={unavailableAccess === tab.access}
                 onActionLock={lockOwner}
+                onReauthenticate={() => reauthenticate(tab.id)}
+                reauthenticationBlocked={
+                  blocked ||
+                  focusBlocked ||
+                  actionsLocked ||
+                  authentication !== null ||
+                  settingsTab !== null ||
+                  closing !== null ||
+                  limit ||
+                  menuTab !== null ||
+                  newMenuOpen ||
+                  tabs.length >= maximumTabs
+                }
               />
             )}
             {authentication === null && tab.kind === 'terminal' && active === tab.id && (

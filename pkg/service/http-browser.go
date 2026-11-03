@@ -587,7 +587,7 @@ func webRequestFields(path string) []string {
 	case webAPI + "management/auditlogs/list":
 		return []string{"limit", "after"}
 	case webAPI + "management/recordings/list":
-		return []string{"auditlog", "limit", "after"}
+		return []string{"auditlog", "limit", "after", "flow", "user", "target", "startedFrom", "startedUntil", "status", "sort"}
 	case webAPI + "management/sessions/list":
 		return []string{"limit", "after", "flow", "user", "state"}
 	case webAPI + "management/sessions/show":

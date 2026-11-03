@@ -133,7 +133,12 @@ export function TextInput({
       size="small"
       inputRef={ref}
       autoFocus={autofocus ?? props.autoFocus}
-      slotProps={{ htmlInput: { maxLength, pattern, 'aria-label': ariaLabel } }}
+      slotProps={{
+        htmlInput: { maxLength, pattern, 'aria-label': ariaLabel },
+        ...(['date', 'time', 'datetime-local'].includes(props.type ?? '')
+          ? { inputLabel: { shrink: true } }
+          : {}),
+      }}
     />
   );
 }
@@ -215,7 +220,7 @@ export function Select({
       size="small"
       value={value ?? ''}
       onChange={(event) => onChange(event.target.value)}
-      slotProps={{ select: { displayEmpty: true } }}
+      slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}
     >
       {data.map((entry) =>
         typeof entry === 'string' ? (

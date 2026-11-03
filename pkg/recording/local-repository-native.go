@@ -18,6 +18,7 @@ const localNativeHeadFileName = "head.cbor"
 
 type LocalNativeRecordingRepository struct {
 	repository *localRepository[[]byte, NativeRecordingSummary]
+	catalog    nativeRecordingCatalog
 }
 
 type RecoveredNativeRecording struct {
@@ -55,7 +56,10 @@ func NewLocalNativeRecordingRepositoryWithArtifactPreparer(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	return &LocalNativeRecordingRepository{repository: repository}, nil
+	return &LocalNativeRecordingRepository{
+		repository: repository,
+		catalog:    nativeRecordingCatalog{mutex: newLocalRepositoryMutex()},
+	}, nil
 }
 
 func (r *LocalNativeRecordingRepository) StartupRecoveries() []RecoveredNativeRecording {
@@ -384,20 +388,28 @@ func (f *localNativeRecordingFormat) recover(file RecoveryFile, head []byte, at 
 	if err != nil {
 		return localRecovery[NativeRecordingSummary]{}, err
 	}
-	return localRecovery[NativeRecordingSummary]{summary: nativeSummary(verification, status, uint64(size)), truncated: result.Truncated, alreadySealed: result.AlreadySealed}, nil
+	return localRecovery[NativeRecordingSummary]{summary: nativeSummary(verification, status, uint64(size), nil), truncated: result.Truncated, alreadySealed: result.AlreadySealed}, nil
 }
 
-func nativeSummary(v *NativeRecordingVerification, status CastStatus, size uint64) NativeRecordingSummary {
-	return NativeRecordingSummary{
+func nativeSummary(v *NativeRecordingVerification, status CastStatus, size uint64, metadata *CastMetadata) NativeRecordingSummary {
+	result := NativeRecordingSummary{
 		RecordingId: Id(v.Header.RecordingId), ProducerId: audit.ProducerId(v.Header.ProducerId),
 		RecipientFingerprint: v.Header.Recipient, Status: status, ChunkCount: v.Seal.ChunkCount,
 		CastBytes: v.Seal.CastBytes, Digest: CastDigest(v.Seal.CastDigest), Bytes: size,
 	}
+	result.StartedAt, _ = v.Header.StartedAt.Time() // Already validated by verification.
+	result.EndedAt, _ = v.Seal.EndedAt.Time()
+	if metadata != nil && v.Header.Encryption == 0 {
+		result.Flow, result.SessionID, result.User = metadata.Flow.String(), metadata.SessionId.String(), metadata.User
+	}
+	return result
 }
 
 func (f *localNativeRecordingFormat) verifyPublished(file *os.File, size int64, head *[]byte, ctx context.Context) (NativeRecordingSummary, error) {
 	options := f.options
 	options.Context = ctx
+	var metadata *CastMetadata
+	options.VerifiedMetadata = func(value CastMetadata) { metadata = &value }
 	var verification *NativeRecordingVerification
 	var err error
 	if f.recipient == nil {
@@ -422,7 +434,7 @@ func (f *localNativeRecordingFormat) verifyPublished(file *os.File, size int64, 
 	if err != nil {
 		return NativeRecordingSummary{}, err
 	}
-	return nativeSummary(verification, status, uint64(size)), nil
+	return nativeSummary(verification, status, uint64(size), metadata), nil
 }
 func (f *localNativeRecordingFormat) summaryId(summary NativeRecordingSummary) Id {
 	return summary.RecordingId

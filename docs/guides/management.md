@@ -150,6 +150,18 @@ Disposal can remove containers, Pods or managed accounts and home directories, d
 
 Add the HTTPS settings from [Browser access](browser-access.md) and publish this administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`. Keep its existing requesting-name requirement. Open `/Admin`, choose **SSH key**, and sign in as `management` using its local private-key file. The browser provides metadata views and confirmed disconnect/dispose actions, not a configuration editor or a separate admin role. This example keeps artifact downloads disabled; [encrypted evidence](evidence.md) enables them separately.
 
+**Sessions** loads its first page when opened. Search by requesting user and use
+the flow/status filters, then open a session's details. **Disconnect connections**
+keeps the session reusable; **End session** revokes it and runs cleanup. Both
+require confirmation of the exact target. A denied list does not grant or remove
+other permissions; action-only access can use **Advanced: target by ID**.
+
+**Server** loads the short version and configured flows. Detailed build
+information is optional. Returning to a loaded view does not repeat its reads;
+use the refresh controls for current data. When the web sign-in expires, choose
+**Sign in again**. This creates a new access view without discarding local
+recording data from the old view.
+
 ## Next steps
 
 * [Verify encrypted evidence on a workstation](evidence.md) enables controlled artifact transfer and keeps decryption local.

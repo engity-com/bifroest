@@ -35,6 +35,8 @@ func managementReadRequest(path string, values map[string]string) (protocol.Read
 		request.Operation = protocol.ListAuditlogs
 	case webAPI + "management/recordings/list":
 		request.Operation = protocol.ListRecordings
+		request.Target, request.StartedFrom, request.StartedUntil = values["target"], values["startedFrom"], values["startedUntil"]
+		request.Status, request.Sort = values["status"], values["sort"]
 	default:
 		return request, protocol.ErrRequest
 	}

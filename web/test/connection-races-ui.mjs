@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   activeAccess,
+  assertAccessActionsBlocked,
   duplicateTab,
   logoutAccess,
   notification,
@@ -175,25 +176,43 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
     );
   };
   let commits = 0;
+  const reads = [];
   page.on('request', (request) => {
+    if (
+      /\/management\/(?:sessions|flows|version)\/(?:list|show)$/u.test(
+        new URL(request.url()).pathname,
+      )
+    ) {
+      reads.push(new URL(request.url()).pathname.split('/management/')[1]);
+    }
     if (request.url().endsWith('/management/sessions/confirm')) {
       commits++;
     }
   });
   await login(page, false);
   await committedView(1, 'alice');
+  await page
+    .getByRole('tabpanel', { name: 'Management 1 alice', exact: true })
+    .getByRole('table', { name: 'Live session metadata', exact: true })
+    .waitFor();
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   await login(page, false, 'bob');
   await committedView(2, 'bob');
-  await page.getByRole('button', { name: 'Load sessions', exact: true }).click();
   await page.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
+  assert.deepEqual(
+    reads,
+    ['sessions/list', 'sessions/list'],
+    'each newly active actor reads only its own initial session page',
+  );
   const alice = page.getByRole('tab', { name: 'Management 1 alice', exact: true });
   const bob = page.getByRole('tab', { name: 'Management 2 bob', exact: true });
   const alicePanel = page.getByRole('tabpanel', { name: 'Management 1 alice', exact: true });
   const bobPanel = page.getByRole('tabpanel', { name: 'Management 2 bob', exact: true });
+  const aliceNode = await page.locator('#terminal-pane-1').elementHandle();
+  const bobNode = await page.locator('#terminal-pane-2').elementHandle();
   await alice.click();
   await committedView(1, 'alice');
-  await alicePanel.getByText('Action on a known session', { exact: true }).click();
+  await alicePanel.getByText('Advanced: target by ID', { exact: true }).click();
   await page.getByRole('textbox', { name: /^Target flow/u }).fill(target.flow);
   await page.getByRole('textbox', { name: /^Target session ID/u }).fill(target.id);
   await page.getByRole('button', { name: 'Prepare session action', exact: true }).click();
@@ -240,7 +259,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
       'a late Alice preparation cannot open a portal over Bob',
     );
     await committedView(2, 'bob');
-    await bobPanel.getByText('Action on a known session', { exact: true }).click();
+    await bobPanel.getByText('Advanced: target by ID', { exact: true }).click();
     assert.equal(
       await bobPanel.getByRole('textbox', { name: /^Target flow/u }).inputValue(),
       '',
@@ -272,7 +291,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
     'reactivating Alice must preserve her independently owned target session',
   );
   await page.getByRole('combobox', { name: 'Session action', exact: true }).click();
-  await page.getByRole('option', { name: 'dispose', exact: true }).click();
+  await page.getByRole('option', { name: 'End session', exact: true }).click();
   await page.evaluate(async () => {
     const response = await fetch('/_bifroest/test/interrupt-management-confirm', {
       method: 'POST',
@@ -290,6 +309,23 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
     .fill(`${target.flow}/${target.id}`);
   await dialog.getByRole('button', { name: 'Confirm session action', exact: true }).click();
   await page.getByText('The session action result is unknown.', { exact: false }).waitFor();
+  await frames(page);
+  assert.equal(commits, 1, 'the lost reply must not replay confirmation');
+  assert.equal(
+    await aliceNode.evaluate((node) => node.isConnected),
+    true,
+    'the unknown action owner must remain mounted',
+  );
+  assert.equal(
+    await bobNode.evaluate((node) => node.isConnected),
+    true,
+    'switching and locking owners must not unmount the sibling',
+  );
+  assert.deepEqual(
+    reads,
+    ['sessions/list', 'sessions/list'],
+    'view activation and mutation outcomes cannot repeat metadata reads',
+  );
   assert.equal(await alice.getAttribute('aria-selected'), 'true');
   assert.equal(await bob.isEnabled(), false);
   assert.equal(
@@ -305,6 +341,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
     await page.getByRole('button', { name: 'New connection', exact: true }).isEnabled(),
     false,
   );
+  await assertAccessActionsBlocked(page);
   await page
     .getByRole('button', { name: 'Dismiss local warning (does not confirm result)', exact: true })
     .click();

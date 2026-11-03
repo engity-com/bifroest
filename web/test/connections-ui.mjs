@@ -21,10 +21,23 @@ export async function exerciseConnections(page, login) {
     }
   });
   const requests = [];
+  const managementReads = [];
+  let resumes = 0;
   let sockets = 0;
   page.on('websocket', () => sockets++);
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname;
+    if (path.includes('/api/v1/management/')) {
+      const body = JSON.parse(request.postData() ?? '{}');
+      managementReads.push({
+        path: path.split('/management/')[1],
+        slug: body.slug,
+        long: body.long,
+      });
+    }
+    if (path.endsWith('/remember/resume')) {
+      resumes++;
+    }
     if (request.method() === 'POST' && /\/login\/(?:password|interactive)$/u.test(path)) {
       const body = JSON.parse(request.postData());
       requests.push({ slug: body.slug, user: body.user, method: path.split('/').at(-1) });
@@ -119,6 +132,7 @@ export async function exerciseConnections(page, login) {
   await newConnection('Manage');
   await login(page, false);
   const manager = tab(6, 'alice', 'Management');
+  const managerPanel = page.getByRole('tabpanel', { name: 'Management 6 alice', exact: true });
   await manager.waitFor();
   assert.equal(await page.getByRole('tab').count(), 6);
   assert.equal(
@@ -126,10 +140,44 @@ export async function exerciseConnections(page, login) {
     5,
     'management login does not open a terminal or reconnect existing shells',
   );
+  await managerPanel.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
+  assert.deepEqual(managementReads, [{ path: 'sessions/list', slug: 'Manage', long: undefined }]);
+  const initialVersion = page.waitForResponse((response) =>
+    response.url().endsWith('/management/version/show'),
+  );
+  const initialFlows = page.waitForResponse((response) =>
+    response.url().endsWith('/management/flows/list'),
+  );
   await workspace(page, 'Server');
-  await page.getByRole('button', { name: 'Load server version', exact: true }).click();
-  const version = page.getByRole('region', { name: 'Server version', exact: true });
+  assert.equal((await initialVersion).status(), 200);
+  assert.equal((await initialFlows).status(), 200);
+  const version = managerPanel.getByRole('region', { name: 'Server version', exact: true });
   await version.waitFor();
+  await managerPanel
+    .getByRole('table', { name: 'Configured flows (not public discovery links)', exact: true })
+    .waitFor();
+  assert.deepEqual(
+    managementReads,
+    [
+      { path: 'sessions/list', slug: 'Manage', long: undefined },
+      { path: 'version/show', slug: 'Manage', long: 'false' },
+      { path: 'flows/list', slug: 'Manage', long: undefined },
+    ],
+    'the first Server visit reads only the short version and flows for its own grant',
+  );
+  const refresh = page.waitForResponse((response) =>
+    response.url().endsWith('/management/version/show'),
+  );
+  await managerPanel.getByRole('button', { name: 'Refresh server version', exact: true }).click();
+  assert.equal((await refresh).status(), 200);
+  await version.locator('.server-version').waitFor();
+  assert.equal(managementReads.length, 4);
+  assert.deepEqual(
+    managementReads[3],
+    { path: 'version/show', slug: 'Manage', long: 'false' },
+    'only the explicit refresh rereads the short version',
+  );
+  const retainedVersion = await version.elementHandle();
   await select(1, 'alice');
   await page.locator('[data-terminal-active="true"] .xterm-helper-textarea').focus();
   await page.keyboard.type('still-owned-by-alice');
@@ -142,6 +190,16 @@ export async function exerciseConnections(page, login) {
     'reactivating the same management view must retain its loaded server version',
   );
   await version.waitFor();
+  assert.equal(
+    await retainedVersion.evaluate((node) => node.isConnected),
+    true,
+    'selecting a terminal must not remount the management result',
+  );
+  assert.equal(
+    managementReads.length,
+    4,
+    'returning to an initialized management view must not reread',
+  );
   await exactArtifactSelection(page);
   await captureLayout(page, 'connections-artifact-selection');
   await auditlogInput().fill('local-review-selection');
@@ -233,6 +291,18 @@ export async function exerciseConnections(page, login) {
   );
   assert(requests.some((r) => r.slug === 'Other' && r.user === 'bob'));
   assert(requests.some((r) => r.slug === 'Manage' && r.user === 'alice'));
+  assert.deepEqual(
+    requests,
+    [
+      { slug: 'Work', user: 'alice', method: 'password' },
+      { slug: 'Work', user: 'bob', method: 'interactive' },
+      { slug: 'Other', user: 'bob', method: 'password' },
+      { slug: 'Manage', user: 'alice', method: 'password' },
+      { slug: 'Manage', user: 'bob', method: 'password' },
+    ],
+    'metadata reads, tab activation and refresh cannot authenticate or execute again',
+  );
+  assert.equal(resumes, 0);
   await assertUiPreferences(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
 }

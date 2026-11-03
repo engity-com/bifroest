@@ -33,7 +33,7 @@ details > summary + * { margin-top: .75rem; }
 .table-scroll table { min-width: 36rem; }
 .table-scroll th, .table-scroll td { overflow-wrap: anywhere; }
 .session-table { table-layout: fixed; }
-.session-table th:first-child { width: 25%; }
+.session-table th:first-child { width: 20%; }
 .identifier { font-family: ui-monospace, monospace; overflow-wrap: anywhere; font-size: .875rem; }
 .mobile-sessions { display: none; }
 .session-card { padding: 1rem; border: 1px solid var(--app-border); border-radius: 4px; }
@@ -55,10 +55,28 @@ details > summary + * { margin-top: .75rem; }
 .workflow-steps { display: flex; flex-wrap: wrap; gap: .75rem 2rem; list-style: none; margin: 0; padding: .75rem 0; border-bottom: 1px solid var(--app-border); color: var(--workspace-muted); }
 .verification-purpose { margin-top: .75rem; }
 .workflow-steps [aria-current="step"] { color: var(--app-primary); font-weight: 600; }
-.artifact-selection { border: 1px solid var(--app-border); border-radius: 4px; padding: 1rem; }
+.artifact-selection { min-width: 0; }
 .artifact-selection > summary { overflow-wrap: anywhere; }
-.artifact-selection-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.artifact-selection-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .artifact-verification { max-width: 50rem; }
+.recording-heading { margin: 0; font-size: 1.5rem; font-weight: 500; outline-offset: 4px; }
+h3.recording-heading { font-size: 1.125rem; }
+.recording-summary { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline; padding-bottom: .75rem; border-bottom: 1px solid var(--app-border); }
+.recording-summary > span { overflow-wrap: anywhere; }
+.admin-toolbar { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: .75rem 1rem; }
+.session-search { width: 100%; max-width: 36rem; }
+.admin-filter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; align-items: end; }
+.recording-filters, .session-filter-details { padding: .75rem 0; border-block: 1px solid var(--app-border); }
+.selected-row { background: var(--app-hover); outline: 2px solid var(--app-primary); outline-offset: -2px; }
+.record-card, .recording-card { padding: 1rem; border: 1px solid var(--app-border); border-radius: 6px; }
+.session-actions { display: flex; flex-wrap: wrap; gap: 1rem; }
+.session-actions > * { flex: 1 1 16rem; }
+.server-version { max-width: 52rem; }
+.build-details { padding: 1rem; background: var(--app-hover); border-radius: 6px; }
+.mobile-recordings { display: none; }
+.recording-table { table-layout: auto; }
+.recording-table td:first-child { min-width: 10rem; }
+.recording-table td:nth-child(2) { min-width: 12rem; }
 .playback-surface { max-width: 100%; height: 24rem; overflow: auto; }
 .workspace.terminal-workspace { width: 100%; max-width: none; height: 100dvh; margin: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .application-bar { padding: 0 .25rem; border-bottom: 1px solid var(--app-border); background: var(--app-paper); min-width: 0; }
@@ -91,6 +109,7 @@ details > summary + * { margin-top: .75rem; }
 @media (max-width: 60rem) {
   .account-identity { flex-direction: column; align-items: start; }
   .session-filters { grid-template-columns: 1fr 1fr; }
+  .admin-filter-grid { grid-template-columns: 1fr 1fr; }
   .artifact-selection-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 48rem) {
@@ -100,8 +119,11 @@ details > summary + * { margin-top: .75rem; }
   .account-actions > button { white-space: normal; height: auto; min-height: 2.25rem; }
   .login-methods { flex-direction: column; }
   .session-filters { grid-template-columns: minmax(0, 1fr); }
+  .admin-filter-grid { grid-template-columns: minmax(0, 1fr); }
   .desktop-sessions { display: none; }
   .mobile-sessions { display: flex; }
+  .desktop-recordings { display: none; }
+  .mobile-recordings { display: flex; }
   .metadata-grid { grid-template-columns: minmax(0, 1fr); gap: .25rem; }
   .metadata-grid dd { margin-bottom: .5rem; }
   .terminal-surface { height: max(20rem, calc(100dvh - 29rem)); }

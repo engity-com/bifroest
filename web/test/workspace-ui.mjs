@@ -373,10 +373,11 @@ export async function workspace(page, name) {
 export async function exactArtifactSelection(page) {
   await workspace(page, 'Recordings & audit');
   const selection = page.locator('[role="tabpanel"]:not([hidden]) .artifact-selection');
-  if (!(await selection.evaluate((node) => node.open))) {
-    await selection.locator(':scope > summary').click();
+  if (!(await selection.isVisible())) {
+    await page.getByRole('button', { name: 'Back to recordings', exact: true }).click();
   }
-  const summary = selection.getByText('Enter an exact auditlog / recording ID', { exact: true });
+  await selection.waitFor({ state: 'visible' });
+  const summary = selection.getByText('Advanced: open by ID', { exact: true });
   if (!(await summary.locator('..').evaluate((node) => node.open))) {
     await summary.click();
   }

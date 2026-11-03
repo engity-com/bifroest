@@ -35,6 +35,12 @@ type NativeRecordingSummary struct {
 	CastBytes            uint64
 	Digest               CastDigest
 	Bytes                uint64
+	// Verified catalog context, never populated from journals or live sessions.
+	StartedAt time.Time
+	EndedAt   time.Time
+	Flow      string
+	SessionID string
+	User      string
 }
 
 // NativeRecordingWriter emits signed framed units. Plain io.Writer is only for
@@ -383,11 +389,16 @@ func (w *NativeRecordingWriter) Seal(elapsed time.Duration, result CastResult, e
 	if w.recipient != nil {
 		fingerprint = w.recipient.Fingerprint()
 	}
+	flow, sessionID, requestingUser := "", "", ""
+	if w.recipient == nil {
+		flow, sessionID, requestingUser = w.metadata.Flow.String(), w.metadata.SessionId.String(), w.metadata.User
+	}
 	return NativeRecordingSummary{
 		RecordingId: w.metadata.RecordingId, ProducerId: w.metadata.ProducerId,
 		RecipientFingerprint: fingerprint,
 		Status:               result.Status, ChunkCount: w.chunkCount, CastBytes: castBytes,
 		Digest: digest, Bytes: w.prefixBytes,
+		StartedAt: w.metadata.StartedAt, EndedAt: result.EndedAt, Flow: flow, SessionID: sessionID, User: requestingUser,
 	}, nil
 }
 

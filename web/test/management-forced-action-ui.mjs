@@ -12,8 +12,20 @@ export async function exerciseManagementForcedAction(page, file, logout) {
       calls.push(path);
     }
   });
+  const initialRead = page.waitForResponse((response) =>
+    response.url().endsWith('/management/sessions/list'),
+  );
   await forcedKeyLogin(page, file);
-  assert.deepEqual(calls, [], 'login must not enumerate sessions or prepare automatically');
+  assert.equal(
+    (await initialRead).status(),
+    403,
+    'the active Sessions view does not gain list permission',
+  );
+  assert.deepEqual(
+    calls.map((path) => path.split('/management/')[1]),
+    ['sessions/list'],
+    'only the intentional first Sessions read, never automatic preparation',
+  );
   async function connect() {
     await page.evaluate(async () => {
       const { BrowserClient } = await import('/_bifroest/test/client.js');
@@ -58,13 +70,18 @@ export async function exerciseManagementForcedAction(page, file, logout) {
   await connect();
   await connect();
   await page.locator('.advanced-action > summary').click();
-  const direct = page.getByRole('region', { name: 'Action on a known session', exact: true });
+  const direct = page.getByRole('region', { name: 'Advanced: target by ID', exact: true });
   await direct.waitFor();
   await direct.getByLabel('Target flow', { exact: false }).fill(flow);
   await direct.getByLabel('Target session ID', { exact: false }).fill(id);
   async function choose(value) {
     await direct.getByRole('combobox', { name: 'Session action', exact: true }).click();
-    await page.getByRole('option', { name: value, exact: true }).click();
+    await page
+      .getByRole('option', {
+        name: value === 'dispose' ? 'End session' : 'Disconnect connections',
+        exact: true,
+      })
+      .click();
   }
   await choose(action === 'dispose' ? 'disconnect' : 'dispose');
   const denied = page.waitForResponse(
@@ -133,10 +150,12 @@ export async function exerciseManagementForcedAction(page, file, logout) {
   await page.waitForFunction(() =>
     window.targetSockets.every((socket) => socket.readyState === WebSocket.CLOSED),
   );
-  assert.equal(
-    calls.filter((path) => path.endsWith('/show') || path.endsWith('/list')).length,
-    0,
-    'no hidden read needed to act',
+  assert.deepEqual(
+    calls
+      .filter((path) => path.endsWith('/show') || path.endsWith('/list'))
+      .map((path) => path.split('/management/')[1]),
+    ['sessions/list'],
+    'the initial denied view read is not a prerequisite for acting; no target inspection or additional list read',
   );
   if (action === 'disconnect') {
     await connect();

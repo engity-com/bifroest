@@ -82,7 +82,24 @@ This Linux example adds audit logging and session recording to a local-account h
 
 ## Browser alternative
 
-The same recording settings also capture output from [browser shells](browser-access.md). For browser playback, use a management flow with `allowArtifactTransfer: true`, download the sealed Recording and choose **Open content, prepare playback or export**. Verify it locally before preparing playback, using an independently retained producer ID rather than trusting downloaded metadata. See [encrypted evidence](evidence.md) for the trust setup and [browser limits](../reference/connection/http/security.md) for size and playback bounds.
+The same settings capture output from [browser shells](browser-access.md). With
+a management flow and `allowArtifactTransfer: true`:
+
+1. Open **Recordings & audit**. The first page loads newest recordings first;
+   choose a source only when several are available. Use **Filter recordings** to
+   search by recorded requesting user, flow, time or status.
+2. Choose **Open recording**. Set the expected protection and signing identity,
+   using an independently retained ID rather than downloaded metadata. Without
+   an independent ID, continuing requires an explicit choice and the source
+   remains marked as unconfirmed.
+3. Choose **Check and open**, then **Play**. Full verification and player
+   preparation run locally; playback does not start automatically. Saving an
+   export is a separate action.
+
+Older recordings may lack the requesting user; encrypted identity details are
+not exposed by the catalog. Missing values are not inferred from current
+accounts. See [encrypted evidence](evidence.md) for trust setup and
+[browser limits](../reference/connection/http/security.md) for bounds.
 
 ## Next steps
 

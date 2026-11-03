@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"strconv"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -91,6 +92,9 @@ type CastMetadata struct {
 	Pty          bool                   `json:"pty"`
 	ProducerId   audit.ProducerId       `json:"producerId"`
 	StartedAt    time.Time              `json:"startedAt"`
+	// User is the original transport-requesting name, not an authenticated
+	// subject, display principal or target account. Absent in older recordings.
+	User string `json:"user,omitempty"`
 }
 
 type CastStatus string
@@ -202,7 +206,26 @@ func validateCastMetadata(header CastHeader, metadata CastMetadata) error {
 	if metadata.StartedAt.Unix() != header.Timestamp {
 		return errors.System.Newf("recording start time does not match cast timestamp")
 	}
+	return validateRecordingUser(metadata.User)
+}
+
+func validateRecordingUser(value string) error {
+	if len(value) > 256 || !utf8.ValidString(value) {
+		return errors.System.Newf("recording requesting user must be valid UTF-8 within 256 bytes")
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return errors.System.Newf("recording requesting user contains a control character")
+		}
+	}
 	return nil
+}
+
+// ValidateRequestingUser checks this optional field's representability, not a
+// transport login/account policy. A producer may omit an unrepresentable name;
+// explicitly invalid metadata must still be rejected by writers and verifiers.
+func (metadata CastMetadata) ValidateRequestingUser() error {
+	return validateRecordingUser(metadata.User)
 }
 
 func validateCastResult(metadata CastMetadata, result CastResult, hasExitStatus bool) error {

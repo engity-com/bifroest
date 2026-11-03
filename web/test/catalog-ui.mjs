@@ -119,18 +119,29 @@ try {
   const response = await page.goto(`${origin}/Work`);
   assert.equal(response.status(), 200);
   await login('alice');
+  await page.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
+  assert.deepEqual(
+    requests.map((request) => request.path.split('/management/')[1]),
+    ['sessions/list'],
+    'the active Sessions view reads once; sign-in cannot discover artifacts or download',
+  );
+  const firstSourcesReply = page.waitForResponse((response) =>
+    response.url().endsWith('/management/auditlogs/list'),
+  );
   await workspace(page, 'Recordings & audit');
   const catalog = page.getByRole('region', {
     name: 'Artifact catalog (server metadata)',
     exact: true,
   });
   const panel = page.getByRole('region', {
-    name: 'Artifacts and client-side evidence',
+    name: 'Recordings & audit',
     exact: true,
   });
   await panel.evaluate((panel) => {
     window.catalogDownloadProbe = { submits: 0, invalid: 0 };
-    const form = panel.querySelector('.artifact-selection form');
+    const form = panel.querySelector(
+      '.artifact-selection > .artifact-selection-grid > details > form',
+    );
     form.addEventListener(
       'submit',
       () => {
@@ -146,79 +157,178 @@ try {
       true,
     );
   });
-  assert.equal(requests.length, 0, 'login must not automatically list or download artifacts');
-  await catalog.getByRole('button', { name: 'Load auditlogs', exact: true }).click();
+  async function readPage(response, kind) {
+    assert.equal(response.status(), 200);
+    const body = await response.json();
+    assert.equal(body.version, 1);
+    assert.equal(body.operation, `${kind}.list`);
+    return body[kind];
+  }
+  const firstSources = await readPage(await firstSourcesReply, 'auditlogs');
+  assert.equal(firstSources.items.length, 20);
+  assert.deepEqual(
+    firstSources.items.map((row) => row.name),
+    Array.from({ length: 20 }, (_, index) => `catalog${String(index).padStart(2, '0')}`),
+  );
+  assert.match(firstSources.next, /^bmp1\./u);
+  assert.deepEqual(
+    requests.map((request) => request.path.split('/management/')[1]),
+    ['sessions/list', 'auditlogs/list'],
+    'only first-visible source metadata loads; multiple sources require an explicit choice',
+  );
+  await catalog.getByText('Audit log exports', { exact: true }).click();
   const logs = catalog.getByRole('table', {
     name: 'Configured auditlogs (server metadata)',
     exact: true,
   });
   await logs.getByText('catalog00', { exact: true }).waitFor();
   assert.equal(await logs.locator('tbody tr').count(), 20);
-  await catalog.getByRole('button', { name: 'Next auditlog page', exact: true }).click();
+  const nextSourcesReply = page.waitForResponse((response) =>
+    response.url().endsWith('/management/auditlogs/list'),
+  );
+  await catalog.getByRole('button', { name: 'More recording sources', exact: true }).click();
+  const nextSources = await readPage(await nextSourcesReply, 'auditlogs');
+  assert.deepEqual(
+    nextSources.items.map((row) => row.name),
+    ['catalog20', 'default'],
+  );
+  assert.equal(nextSources.next, '');
   await logs.getByText('catalog20', { exact: true }).waitFor();
-  assert.equal(await logs.locator('tbody tr').count(), 2);
-  assert(
-    await logs
-      .getByRole('button', { name: 'Select audit inventory catalog20', exact: true })
-      .isEnabled(),
-    'every configured audit log is active; there is no separate enabled flag',
-  );
-  assert(
-    await logs
-      .getByRole('button', { name: 'List sealed recordings catalog20', exact: true })
-      .isDisabled(),
-    'recording remains a separate opt-in and unavailable recording actions stay disabled',
-  );
-  await catalog
-    .getByRole('button', { name: 'Select audit inventory default', exact: true })
-    .click();
   assert.equal(
-    await panel.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).inputValue(),
-    'default',
+    await logs.locator('tbody tr').count(),
+    22,
+    'source pagination retains the first 20 and appends exactly the two final sources',
   );
-  assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 0);
-  await catalog.getByRole('button', { name: 'Load auditlogs', exact: true }).click();
-  await catalog
-    .getByRole('button', { name: 'List sealed recordings catalog00', exact: true })
-    .click();
-  const recordings = catalog.getByRole('table', {
-    name: 'Sealed recordings (server metadata only)',
-    exact: true,
-  });
-  await recordings.getByText('00000001-0000-4000-8000-000000000000', { exact: true }).waitFor();
-  assert.equal(await recordings.locator('tbody tr').count(), 20);
-  await recordings
-    .getByText(
-      mode !== 'catalog-encrypted'
-        ? 'Server claims full inspection; not browser verification'
-        : 'Server claims outer inspection only; not browser verification',
-      { exact: true },
-    )
-    .first()
-    .waitFor();
-  await catalog.getByRole('button', { name: 'Next recording page', exact: true }).click();
-  const id = '00000015-0000-4000-8000-000000000000';
-  await recordings.getByText(id, { exact: true }).waitFor();
-  assert.equal(await recordings.locator('tbody tr').count(), 1);
   assert.equal(
-    await catalog.getByRole('button', { name: 'Next recording page', exact: true }).count(),
+    await catalog.getByRole('button', { name: 'More recording sources', exact: true }).count(),
     0,
   );
-  await recordings.getByRole('button', { name: `Select recording ${id}`, exact: true }).click();
-  assert.equal(
-    await panel.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).inputValue(),
-    'catalog00',
+  assert(
+    await logs.getByRole('button', { name: 'Open audit log catalog20', exact: true }).isEnabled(),
+    'every configured audit log is active; there is no separate enabled flag',
   );
+  await logs
+    .getByRole('row')
+    .filter({ has: page.getByRole('cell', { name: 'catalog20', exact: true }) })
+    .getByText('Recording disabled', { exact: false })
+    .waitFor();
+  await catalog.getByRole('combobox', { name: 'Recording source', exact: true }).click();
+  assert.equal(await page.getByRole('option').count(), 21);
   assert.equal(
-    await panel.getByRole('textbox', { name: 'Recording ID', exact: true }).inputValue(),
-    id,
+    await page.getByRole('option', { name: 'catalog20', exact: true }).count(),
+    0,
+    'recording remains a separate opt-in: the recording-disabled logger is not a recording source',
   );
+  await page.keyboard.press('Escape');
   assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 0);
-  await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
+  const beforeAuditOpen = requests.length;
+  await logs.getByRole('button', { name: 'Open audit log default', exact: true }).click();
+  await waitDownload('audit-open');
+  await panel.getByText('Unverified server hints and original files', { exact: true }).click();
+  await panel
+    .getByRole('region', { name: 'Unverified server hints and original files', exact: true })
+    .getByText('default', { exact: true })
+    .waitFor();
+  assert.equal(await panel.getByLabel('Trusted signing ID', { exact: false }).inputValue(), '');
+  assert.equal(
+    await panel.getByRole('region', { name: 'Verification details', exact: true }).count(),
+    0,
+  );
+  assert.deepEqual(
+    requests
+      .slice(beforeAuditOpen)
+      .map((request) => [request.path.split('/management/')[1], request.body]),
+    [['artifacts/audit', { slug: 'Work', auditlog: 'default' }]],
+    'opening an audit row is one explicit transfer of its exact target, not a separate selection plus download',
+  );
+  const beforeBack = requests.length;
+  await panel.getByRole('button', { name: 'Back to recordings', exact: true }).click();
+  await logs.getByText('catalog20', { exact: true }).waitFor();
+  assert.equal(await logs.locator('tbody tr').count(), 22);
+  assert.equal(
+    requests.length,
+    beforeBack,
+    'Back retains the catalog without rereading or replaying its open action',
+  );
+  const firstRecordingsReply = page.waitForResponse((response) =>
+    response.url().endsWith('/management/recordings/list'),
+  );
+  await catalog.getByRole('combobox', { name: 'Recording source', exact: true }).click();
+  await page.getByRole('option', { name: 'catalog00', exact: true }).click();
+  const firstRecordings = await readPage(await firstRecordingsReply, 'recordings');
+  const recordings = catalog.getByRole('table', {
+    name: 'Recordings · catalog00',
+    exact: true,
+  });
+  await recordings
+    .getByRole('button', { name: `Open recording ${firstRecordings.items[0].id}`, exact: true })
+    .waitFor();
+  assert.equal(firstRecordings.items.length, 20);
+  assert.equal(await recordings.locator('tbody tr').count(), 20);
+  assert.deepEqual(
+    await recordings
+      .getByRole('button', { name: /^Open recording / })
+      .evaluateAll((buttons) =>
+        buttons.map((button) => button.getAttribute('aria-label').slice('Open recording '.length)),
+      ),
+    firstRecordings.items.map((row) => row.id),
+  );
+  await catalog
+    .getByText('Details reported by the server; not independent verification.', { exact: true })
+    .waitFor();
+  assert.match(firstRecordings.next, /^bmp1\./u);
+  const nextRecordingsReply = page.waitForResponse((response) =>
+    response.url().endsWith('/management/recordings/list'),
+  );
+  await catalog.getByRole('button', { name: 'More recordings', exact: true }).click();
+  const nextRecordings = await readPage(await nextRecordingsReply, 'recordings');
+  assert.equal(nextRecordings.items.length, 1);
+  assert.equal(nextRecordings.next, '');
+  const allRecordings = [...firstRecordings.items, ...nextRecordings.items];
+  assert.deepEqual(
+    allRecordings.map((row) => row.id).sort(),
+    Array.from(
+      { length: 21 },
+      (_, index) => `${(index + 1).toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`,
+    ),
+    'both real cursor pages contain exactly the 21 fixture recordings, without duplicates or omissions',
+  );
+  for (const [index, row] of allRecordings.entries()) {
+    assert.equal(
+      row.verificationScope,
+      mode === 'catalog-encrypted' ? 'outer' : 'full',
+      'server inspection scope remains metadata, never browser verification',
+    );
+    assert.equal(row.encrypted, mode === 'catalog-encrypted');
+    assert.equal(row.format, mode === 'catalog-encrypted' ? 'becast-cbor/v1' : 'bcast/v1');
+    if (index > 0) {
+      const previous = allRecordings[index - 1];
+      assert(
+        previous.startedAt > row.startedAt ||
+          (previous.startedAt === row.startedAt && previous.id < row.id),
+        'newest order must apply globally across the real server cursor boundary',
+      );
+    }
+  }
+  const id = nextRecordings.items[0].id;
+  await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).waitFor();
+  assert.equal(await recordings.locator('tbody tr').count(), 1);
+  await catalog.getByText('Page 2', { exact: true }).waitFor();
+  assert.equal(
+    await catalog.getByRole('button', { name: 'More recordings', exact: true }).count(),
+    0,
+  );
+  assert.equal(requests.filter((request) => request.path.endsWith('/artifacts/audit')).length, 1);
+  assert.equal(
+    requests.filter((request) => request.path.endsWith('/artifacts/recording')).length,
+    0,
+    'source choice and pagination must not download recordings',
+  );
+  await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).click();
   async function waitDownload(stage) {
     try {
       const heading = panel.getByRole('heading', {
-        name: 'Independent verification expectations',
+        name: 'Check the recording',
         exact: true,
       });
       const failed = panel
@@ -233,7 +343,9 @@ try {
       await heading.waitFor();
     } catch (error) {
       const state = await panel.evaluate((panel) => {
-        const form = panel.querySelector('.artifact-selection form');
+        const form = panel.querySelector(
+          '.artifact-selection > .artifact-selection-grid > details > form',
+        );
         return {
           ...window.catalogDownloadProbe,
           disabled: form.querySelector('button[type="submit"]').disabled,
@@ -242,9 +354,7 @@ try {
             missing: input.validity?.valueMissing,
             pattern: input.validity?.patternMismatch,
           })),
-          receiving: panel.textContent.includes(
-            'Receiving artifact; waiting for complete audited transfer…',
-          ),
+          receiving: panel.textContent.includes('Opening recording…'),
           statuses: [...panel.querySelectorAll('[role="status"]')].length,
           hidden: panel.closest('[hidden]') !== null,
         };
@@ -265,7 +375,16 @@ try {
     }
   }
   await waitDownload('first-download');
-  assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
+  await panel.getByText('Unverified server hints and original files', { exact: true }).click();
+  await panel
+    .getByRole('region', { name: 'Unverified server hints and original files', exact: true })
+    .getByText(`catalog00 / ${id}`, { exact: true })
+    .waitFor();
+  assert.equal(await panel.getByLabel('Trusted signing ID', { exact: false }).inputValue(), '');
+  assert.equal(
+    await panel.getByLabel('Trusted signing ID', { exact: false }).getAttribute('maxlength'),
+    '64',
+  );
   assert.equal(
     await panel
       .getByRole('combobox', { name: 'Expected encryption', exact: true })
@@ -276,26 +395,36 @@ try {
   );
   await panel.getByRole('combobox', { name: 'Expected encryption', exact: true }).click();
   await page
-    .getByRole('option', { name: 'Expect SSH-recipient encrypted data', exact: true })
+    .getByRole('option', { name: 'This recording should be encrypted', exact: true })
     .click();
   assert.equal(
     await panel.getByLabel('Expected recipient fingerprint', { exact: false }).inputValue(),
     '',
   );
-  await panel.getByLabel('Expected producer ID', { exact: false }).fill('a'.repeat(64));
+  await panel.getByLabel('Trusted signing ID', { exact: false }).fill('a'.repeat(64));
   await panel
     .getByLabel('Expected recipient fingerprint', { exact: false })
     .fill(`SHA256:${'A'.repeat(43)}`);
-  await panel.locator('.artifact-selection > summary').click();
-  await recordings.getByRole('button', { name: `Select recording ${id}`, exact: true }).click();
   assert.equal(
-    await panel
-      .getByRole('heading', { name: 'Independent verification expectations', exact: true })
-      .count(),
+    await panel.getByRole('button', { name: 'Check and open', exact: true }).isEnabled(),
+    false,
+    'private verification also requires the local decryption key',
+  );
+  const beforeReturn = requests.length;
+  await panel.getByRole('button', { name: 'Back to recordings', exact: true }).click();
+  await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).waitFor();
+  assert.equal(await recordings.locator('tbody tr').count(), 1);
+  assert.equal(
+    requests.length,
+    beforeReturn,
+    'returning to page 2 cannot replay metadata reads or downloads',
+  );
+  assert.equal(
+    await panel.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
     0,
   );
   assert.equal(
-    await panel.getByRole('region', { name: 'Evidence result', exact: true }).count(),
+    await panel.getByRole('region', { name: 'Verification details', exact: true }).count(),
     0,
   );
   if (mode === 'catalog-startup-failure') {
@@ -308,36 +437,40 @@ try {
       },
       { times: 1 },
     );
-    await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
+    await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).click();
     await panel
       .getByRole('status')
       .filter({ hasText: 'The artifact download could not be confirmed or is not permitted.' })
       .waitFor();
     assert.equal(blockedStarts, 1);
     assert.equal(
-      requests.filter((request) => request.path.includes('/artifacts/')).length,
+      requests.filter((request) => request.path.endsWith('/artifacts/recording')).length,
       1,
-      'a worker startup failure must not start an artifact request or replay the previous download',
+      'a worker startup failure must not start a recording request or replay the previous download',
     );
     assert.equal(
-      await panel
-        .getByRole('heading', { name: 'Independent verification expectations', exact: true })
-        .count(),
+      await panel.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
       0,
     );
     assert.equal(
-      await panel.getByRole('region', { name: 'Evidence result', exact: true }).count(),
+      await panel.getByRole('region', { name: 'Verification details', exact: true }).count(),
       0,
     );
     await page.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
     );
     assert.equal(blockedStarts, 1, 'there must be no automatic worker restart');
-    assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 1);
+    assert.equal(
+      requests.filter((request) => request.path.endsWith('/artifacts/recording')).length,
+      1,
+    );
+    assert.equal(requests.filter((request) => request.path.endsWith('/artifacts/audit')).length, 1);
+    await panel.getByRole('button', { name: 'Try opening again', exact: true }).click();
+  } else {
+    await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).click();
   }
-  await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
   await waitDownload('second-download');
-  assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
+  assert.equal(await panel.getByLabel('Trusted signing ID', { exact: false }).inputValue(), '');
   assert.equal(
     await panel
       .getByRole('combobox', { name: 'Expected encryption', exact: true })
@@ -347,41 +480,92 @@ try {
     '',
   );
   assert.equal(
-    requests.filter((request) => request.path.includes('/artifacts/')).length,
+    requests.filter((request) => request.path.endsWith('/artifacts/recording')).length,
     2,
     'only the two explicit clicks with a ready worker may download',
+  );
+  assert.deepEqual(
+    requests
+      .filter((request) => request.path.includes('/artifacts/'))
+      .map((request) => [request.path.split('/management/')[1], request.body]),
+    [
+      ['artifacts/audit', { slug: 'Work', auditlog: 'default' }],
+      ['artifacts/recording', { slug: 'Work', auditlog: 'catalog00', id }],
+      ['artifacts/recording', { slug: 'Work', auditlog: 'catalog00', id }],
+    ],
+    'the audit Open and two ready recording Opens are the only transfers; startup failure and Back never replay',
   );
   const recordPages = requests.filter((request) => request.path.endsWith('/recordings/list'));
   assert.equal(recordPages.length, 2);
   assert.equal(recordPages[0].body.auditlog, 'catalog00');
   assert.equal(recordPages[0].body.after, '');
+  assert.equal(recordPages[0].body.sort, 'started-desc');
+  assert.equal(recordPages[1].body.auditlog, 'catalog00');
+  assert.equal(recordPages[1].body.after, firstRecordings.next);
   assert.match(recordPages[1].body.after, /^bmp1\./u);
+  const sourcePages = requests.filter((request) => request.path.endsWith('/auditlogs/list'));
+  assert.equal(sourcePages.length, 2);
+  assert.equal(sourcePages[0].body.after, '');
+  assert.equal(sourcePages[1].body.after, firstSources.next);
   await reauthenticate(page);
   await login('bob');
-  await workspace(page, 'Recordings & audit');
-  assert.equal(
-    await catalog.getByRole('table').count(),
-    0,
-    'new actor must not inherit old catalog data',
-  );
+  await page.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
   await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-arm', { method: 'POST', credentials: 'omit' }),
   );
-  await catalog.getByRole('button', { name: 'Load auditlogs', exact: true }).click();
+  // Arm before the first visible catalog: its deliberate initial source read is
+  // the provisional operation, and must still wait for the final audit gate.
+  const beforeBobCatalog = requests.length;
+  await workspace(page, 'Recordings & audit');
   await page.evaluate(() => fetch('/_bifroest/test/artifact-entered', { credentials: 'omit' }));
   assert.equal(
-    await catalog.getByRole('table').count(),
+    await catalog.locator('table').count(),
+    0,
+    'new actor must not inherit old catalog data, including collapsed tables',
+  );
+  assert.equal(
+    await catalog.locator('table').count(),
     0,
     'a provisional page must not bypass final audit',
+  );
+  assert.deepEqual(
+    requests.slice(beforeBobCatalog).map((request) => request.path.split('/management/')[1]),
+    ['auditlogs/list'],
+    'only the new actor’s first-visible source read is in progress; no transfer or old-source recording read',
   );
   await catalog.getByRole('button', { name: 'Cancel catalog request', exact: true }).click();
   await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-release', { method: 'POST', credentials: 'omit' }),
   );
   await catalog.getByText('Catalog request cancelled.', { exact: false }).waitFor();
-  assert.equal(await catalog.getByRole('table').count(), 0);
-  await catalog.getByRole('button', { name: 'Load auditlogs', exact: true }).click();
+  assert.equal(await catalog.locator('table').count(), 0);
+  const afterCancellation = requests.length;
+  await workspace(page, 'Sessions');
+  await workspace(page, 'Recordings & audit');
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  assert.equal(
+    requests.length,
+    afterCancellation,
+    'navigation cannot retry a cancelled first-visible read',
+  );
+  assert.equal(await catalog.locator('table').count(), 0);
+  await catalog.getByRole('button', { name: 'Refresh recordings', exact: true }).click();
+  await catalog.getByText('Audit log exports', { exact: true }).click();
   await logs.getByText('catalog00', { exact: true }).waitFor();
+  assert.equal(await logs.locator('tbody tr').count(), 20);
+  assert.equal(
+    requests.filter((request) => request.path.endsWith('/auditlogs/list')).length,
+    4,
+    'two Alice source pages, one cancelled Bob initial read and one explicit Bob refresh',
+  );
+  assert.equal(requests.filter((request) => request.path.endsWith('/recordings/list')).length, 2);
+  assert.equal(
+    requests.filter((request) => request.path.includes('/artifacts/')).length,
+    3,
+    'catalog cancellation and refresh never start or replay a transfer',
+  );
   await logoutAccess(page);
   await notification(page, 'Logout confirmed.');
   assert.equal(await catalog.count(), 0);

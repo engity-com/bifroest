@@ -75,7 +75,19 @@ describe('catalog metadata client (not evidence verification)', () => {
     expect('trusted' in required(page.items[0])).toBe(false);
     expect(server.requests.map((request) => request.body)).toEqual([
       { slug: 'Work', limit: '20', after: '' },
-      { slug: 'Work', auditlog: 'default', limit: '20', after: '' },
+      {
+        slug: 'Work',
+        auditlog: 'default',
+        limit: '20',
+        after: '',
+        flow: '',
+        user: '',
+        target: '',
+        startedFrom: '',
+        startedUntil: '',
+        status: 'all',
+        sort: 'started-desc',
+      },
     ]);
     for (const request of server.requests) {
       expect(request.path).toMatch(/\/management\/(?:auditlogs|recordings)\/list$/u);
@@ -191,5 +203,82 @@ describe('catalog metadata client (not evidence verification)', () => {
     await access.logout();
     reply?.(json(envelope('recordings', [recording])));
     await observed;
+  });
+
+  it('validates newest-first order at nanosecond precision, UUID ties and duplicate identities', async () => {
+    const newer = { ...recording, startedAt: '2026-01-01T00:00:00.000000002Z' };
+    const older = {
+      ...recording,
+      id: '44e34ab8-7457-4d88-a5e4-c57791775c3a',
+      startedAt: '2026-01-01T00:00:00.000000001Z',
+    };
+    const equalTime = { ...older, startedAt: newer.startedAt };
+    expect(
+      (
+        await fixture(() => envelope('recordings', [newer, older])).access.managementRecordings(
+          'default',
+        )
+      ).items,
+    ).toEqual([newer, older]);
+    expect(
+      (
+        await fixture(() => envelope('recordings', [newer, equalTime])).access.managementRecordings(
+          'default',
+        )
+      ).items,
+    ).toEqual([newer, equalTime]);
+    for (const items of [
+      [older, newer],
+      [equalTime, newer],
+      [newer, { ...older, id: newer.id }],
+    ]) {
+      await expect(
+        fixture(() => envelope('recordings', items)).access.managementRecordings('default'),
+      ).rejects.toMatchObject({ code: 'unavailable' });
+    }
+  });
+
+  it('sends bounded filters and rejects rows that do not match the requested server query', async () => {
+    const context = { ...recording, flow: 'ops', user: 'alice', target: 'service-account' };
+    const options = {
+      flow: 'ops',
+      user: 'alice',
+      target: 'service-account',
+      status: 'completed',
+      startedFrom: '2026-01-01T00:00:00Z',
+      startedUntil: '2026-01-01T00:00:00Z',
+    } as const;
+    const server = fixture(() => envelope('recordings', [context]));
+    expect((await server.access.managementRecordings('default', options)).items).toEqual([context]);
+    expect(server.requests[0]?.body).toEqual({
+      slug: 'Work',
+      auditlog: 'default',
+      limit: '20',
+      after: '',
+      sort: 'started-desc',
+      ...options,
+    });
+    for (const other of [
+      { ...context, flow: 'elsewhere' },
+      { ...context, user: 'bob' },
+      { ...context, target: 'root' },
+      { ...context, status: 'incomplete' },
+      { ...context, startedAt: '2026-01-01T00:00:00.000000001Z' },
+    ]) {
+      await expect(
+        fixture(() => envelope('recordings', [other])).access.managementRecordings(
+          'default',
+          options,
+        ),
+      ).rejects.toMatchObject({ code: 'unavailable' });
+    }
+    const invalid = fixture();
+    await expect(
+      invalid.access.managementRecordings('default', {
+        startedFrom: '2026-01-02T00:00:00Z',
+        startedUntil: '2026-01-01T00:00:00Z',
+      }),
+    ).rejects.toMatchObject({ code: 'unavailable' });
+    expect(invalid.requests).toHaveLength(0);
   });
 });

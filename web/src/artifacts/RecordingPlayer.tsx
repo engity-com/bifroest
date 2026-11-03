@@ -1,5 +1,5 @@
 import type { IDisposable, Terminal as Xterm } from '@xterm/xterm';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Select, Title, useComputedColorScheme } from '../ui/material';
 import '@xterm/xterm/css/xterm.css';
 import { noncedDocument } from '../terminal/document';
@@ -16,10 +16,14 @@ export function RecordingPlayer({
   source,
   expected,
   disabled,
+  autoPrepare = false,
+  active = true,
 }: {
   source: Blob;
   expected: PlaybackOptions;
   disabled: boolean;
+  autoPrepare?: boolean;
+  active?: boolean;
 }) {
   const container = useRef<HTMLElement | null>(null);
   const preparing = useRef<AbortController | null>(null);
@@ -34,6 +38,12 @@ export function RecordingPlayer({
   const palette = useComputedColorScheme('light');
   const currentPalette = useRef(palette);
   currentPalette.current = palette;
+  const activeNow = useRef(active);
+  activeNow.current = active;
+  const automaticAttempt = useRef(false);
+  const automaticAllowed = useRef(autoPrepare && active && !disabled);
+  automaticAllowed.current = autoPrepare && active && !disabled;
+  const { id, producer, allowUntrusted } = expected;
 
   function retire() {
     generation.current++;
@@ -69,6 +79,12 @@ export function RecordingPlayer({
       emulator.current = null;
     };
   }, [source, expected.id, expected.producer, expected.allowUntrusted, disabled]);
+  // A verified immutable image represents one explicit open intent. Returning
+  // to its tab, closing the player or a transient disabled state never replays it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reset only for a new immutable source/expectation, never for availability or tab activation.
+  useEffect(() => {
+    automaticAttempt.current = false;
+  }, [source, id, producer, allowUntrusted]);
   useEffect(() => {
     if (emulator.current !== null) {
       emulator.current.options.theme = {
@@ -78,7 +94,7 @@ export function RecordingPlayer({
     }
   }, [palette]);
 
-  async function prepare() {
+  const prepare = useCallback(async () => {
     if (disabled || preparing.current !== null || player.current !== null) {
       return;
     }
@@ -89,7 +105,11 @@ export function RecordingPlayer({
     setFailure(null);
     let image: Awaited<ReturnType<typeof prepareRecordingPlayback>> | null = null;
     try {
-      image = await prepareRecordingPlayback(source, expected, controller.signal);
+      image = await prepareRecordingPlayback(
+        source,
+        { id, producer, allowUntrusted },
+        controller.signal,
+      );
       const { Terminal } = await import('@xterm/xterm');
       if (
         controller.signal.aborted ||
@@ -122,6 +142,7 @@ export function RecordingPlayer({
       });
       emulator.current = terminal;
       terminal.open(container.current);
+      terminal.textarea?.setAttribute('aria-label', t('playbackViewport'));
       subscriptions.current.push(installTerminalRenderer(terminal, container.current));
       subscriptions.current.push(terminal.parser.registerOscHandler(52, () => true));
       const info = image.metadata;
@@ -147,7 +168,9 @@ export function RecordingPlayer({
       image = null; // Ownership moved into the playback controller.
       player.current = recording;
       setMetadata(info);
-      container.current.scrollIntoView({ block: 'nearest' });
+      if (activeNow.current) {
+        container.current.scrollIntoView({ block: 'nearest' });
+      }
     } catch (error) {
       image?.dispose();
       if (current === generation.current && !controller.signal.aborted) {
@@ -172,12 +195,27 @@ export function RecordingPlayer({
         setBusy(false);
       }
     }
-  }
+  }, [source, id, producer, allowUntrusted, disabled]);
+  useEffect(() => {
+    if (autoPrepare && active && !disabled && !automaticAttempt.current) {
+      const current = generation.current;
+      queueMicrotask(() => {
+        if (
+          current === generation.current &&
+          automaticAllowed.current &&
+          !automaticAttempt.current
+        ) {
+          automaticAttempt.current = true;
+          void prepare();
+        }
+      });
+    }
+  }, [autoPrepare, active, disabled, prepare]);
 
   return (
     <section className="stack" aria-label={t('playbackTitle')}>
       <Title order={4}>{t('playbackTitle')}</Title>
-      <Alert color="blue">{t('playbackLocalOnly')}</Alert>
+      <p className="caption subtle">{t('playbackReadOnly')}</p>
       {failure !== null && (
         <Alert role="status" color="red">
           {t(
@@ -190,14 +228,17 @@ export function RecordingPlayer({
         </Alert>
       )}
       <div className="actions">
-        <Button
-          disabled={disabled || busy || metadata !== null}
-          onClick={() => {
-            void prepare();
-          }}
-        >
-          {t('playbackPrepare')}
-        </Button>
+        {metadata === null && (!autoPrepare || !busy) && (
+          <Button
+            disabled={disabled || busy}
+            onClick={() => {
+              automaticAttempt.current = true;
+              void prepare();
+            }}
+          >
+            {t('playbackPrepare')}
+          </Button>
+        )}
         {(busy || metadata !== null) && (
           <Button variant="default" onClick={retire}>
             {t('playbackDiscard')}
@@ -208,7 +249,9 @@ export function RecordingPlayer({
       {metadata !== null && (
         <>
           <p>
-            {t(metadata.trust === 'pinned' ? 'artifactPinnedResult' : 'artifactUntrustedResult')}
+            {t(
+              metadata.trust === 'pinned' ? 'recordingIdentityPinned' : 'recordingIdentityUnknown',
+            )}
           </p>
           <p>
             {t('playbackRecordedStatus')}:{' '}
@@ -223,10 +266,17 @@ export function RecordingPlayer({
           </p>
           <div className="actions">
             <Button
-              disabled={disabled || state?.phase !== 'paused'}
-              onClick={() => player.current?.play()}
+              disabled={disabled || !['paused', 'ended'].includes(state?.phase ?? '')}
+              onClick={() => {
+                const selected = player.current;
+                if (state?.phase === 'ended' && selected) {
+                  void selected.restart().then(() => selected.play());
+                } else {
+                  selected?.play();
+                }
+              }}
             >
-              {t('playbackPlay')}
+              {t(state?.phase === 'ended' ? 'playbackReplay' : 'playbackPlay')}
             </Button>
             <Button
               disabled={disabled || state?.phase !== 'playing'}
@@ -275,6 +325,10 @@ export function RecordingPlayer({
         </>
       )}
       <section ref={container} className="playback-surface" aria-label={t('playbackViewport')} />
+      <details className="context-help">
+        <summary>{t('playbackDetails')}</summary>
+        <p>{t('playbackLocalOnly')}</p>
+      </details>
     </section>
   );
 }
