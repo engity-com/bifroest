@@ -38,7 +38,10 @@ func newArtifactHTTPSFixture(t *testing.T, configure ...func(*configuration.Conf
 	fixture := newWebSocketFixture(t, nil, setup)
 	flow := fixture.svc.Configuration.Flows[0]
 	// Keep the real signed journal as well as the real recording repository.
-	fixture.svc.flowAuditRecorders[flow.Name] = fixture.svc.auditRecorders[flow.Auditlog]
+	timed := &artifactTimedRecorder{Recorder: fixture.svc.auditRecorders[flow.Auditlog]}
+	fixture.svc.flowAuditRecorders[flow.Name] = timed
+	fixture.svc.auditRecorders[flow.Auditlog] = timed
+	fixture.client.Transport = &artifactTraceTransport{RoundTripper: fixture.client.Transport, report: t.Logf, audit: timed}
 	fixture.svc.managementApplication = nil // No CLI parser may implement this path.
 	fixture.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return fixture
