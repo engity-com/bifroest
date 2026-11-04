@@ -34,7 +34,7 @@ func (this *webService) handleManagementArtifact(w http.ResponseWriter, r *http.
 		webError(w, 400, "invalid artifact request")
 		return
 	}
-	access, err := this.lookup(scope, webBearer(r), false)
+	access, err := this.managementAccess(r, scope)
 	if err != nil {
 		webError(w, 401, "web access denied")
 		return

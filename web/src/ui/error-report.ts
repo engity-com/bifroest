@@ -9,6 +9,7 @@ const contexts = [
   'preferences',
   'logout',
   'management-read',
+  'management-channel',
   'management-mutation',
   'artifact',
   'artifact-save',

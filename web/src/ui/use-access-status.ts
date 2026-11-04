@@ -3,7 +3,7 @@ import type { AccessStatus, WebAccess } from '../remember/client';
 
 // Observe only tab-memory state and the web-grant deadline. Never probe the
 // server, inspect saved credentials or turn an expired grant into a new actor.
-export function useAccessStatus(access: WebAccess): AccessStatus {
+export function useAccessStatus(access: WebAccess, management = false): AccessStatus {
   const subscribe = useCallback(
     (changed: () => void) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -33,6 +33,9 @@ export function useAccessStatus(access: WebAccess): AccessStatus {
     },
     [access],
   );
-  const snapshot = useCallback(() => access.status(), [access]);
+  const snapshot = useCallback(
+    () => (management ? access.managementStatus() : access.status()),
+    [access, management],
+  );
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }

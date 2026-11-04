@@ -21,6 +21,7 @@ import { canCloseView, ownerLocks } from '../ui/workspace-state';
 import { AuthenticationTerminal, type AuthenticationView } from './AuthenticationTerminal';
 import { ConnectionSettings } from './ConnectionSettings';
 import { ConnectionTab } from './ConnectionTab';
+import type { ConnectionActions } from './connection-actions';
 import type { TerminalState } from './socket';
 import type { TerminalActions } from './TerminalPanel';
 import { TerminalPanel, terminalStatus } from './TerminalPanel';
@@ -85,6 +86,7 @@ export function TerminalWorkspace({
   const lastRetired = useRef<WebAccess | null>(null);
   const tabList = useRef<HTMLDivElement | null>(null);
   const controls = useRef(new Map<number, TerminalActions>());
+  const connectionControls = useRef(new Map<number, ConnectionActions>());
   const [closing, setClosing] = useState<number | null>(null);
   const [limit, setLimit] = useState(false);
   const [menuTab, setMenuTab] = useState<number | null>(null);
@@ -156,8 +158,17 @@ export function TerminalWorkspace({
   const onActions = useCallback((id: number, actions: TerminalActions | null) => {
     if (actions) {
       controls.current.set(id, actions);
+      connectionControls.current.set(id, actions);
     } else {
       controls.current.delete(id);
+      connectionControls.current.delete(id);
+    }
+  }, []);
+  const onConnectionActions = useCallback((id: number, actions: ConnectionActions | null) => {
+    if (actions) {
+      connectionControls.current.set(id, actions);
+    } else {
+      connectionControls.current.delete(id);
     }
   }, []);
   const open = useCallback(
@@ -301,14 +312,14 @@ export function TerminalWorkspace({
     if (blocked || focusBlocked || settingsTab !== null || actionOwners.current.size > 0) {
       return;
     }
-    if (selectedAccess.status() !== 'active') {
+    if (
+      selectedAccess.status() !== 'active' ||
+      selectedAccess.snapshot().environment === 'management'
+    ) {
       onSignIn(selectedAccess.snapshot().scope);
       return;
     }
-    if (
-      selectedAccess.snapshot().terminalAvailable ||
-      selectedAccess.snapshot().environment === 'management'
-    ) {
+    if (selectedAccess.snapshot().terminalAvailable) {
       open(selectedAccess);
     }
   };
@@ -355,10 +366,12 @@ export function TerminalWorkspace({
   };
   const available = tabs
     .filter((tab, index) => tabs.findIndex((entry) => entry.access === tab.access) === index)
-    .filter((tab) => tab.access.status() === 'active');
+    .filter((tab) => tab.access.status() === 'active' && tab.access.snapshot().terminalAvailable);
   const menuOwner = tabs.find((tab) => tab.id === menuTab);
   const settingsOwner = tabs.find((tab) => tab.id === settingsTab);
-  const settingsActions = settingsOwner ? controls.current.get(settingsOwner.id) : undefined;
+  const settingsActions = settingsOwner
+    ? connectionControls.current.get(settingsOwner.id)
+    : undefined;
 
   return (
     <main className="workspace terminal-workspace" aria-label={title}>
@@ -476,22 +489,22 @@ export function TerminalWorkspace({
                   >
                     {t('reauthenticate')}
                   </Menu.Item>
+                  <Menu.Item
+                    icon={<SettingsIcon fontSize="small" />}
+                    disabled={blocked || menuOwner.state.phase !== 'connected'}
+                    onClick={() =>
+                      operate(menuOwner.id, (tab) => {
+                        setClosing(null);
+                        setLimit(false);
+                        setSettingsTab(tab.id);
+                        setFocusTerminal(false);
+                      })
+                    }
+                  >
+                    {t('connectionSettings')}
+                  </Menu.Item>
                   {menuOwner.kind === 'terminal' && (
                     <>
-                      <Menu.Item
-                        icon={<SettingsIcon fontSize="small" />}
-                        disabled={blocked || menuOwner.state.phase !== 'connected'}
-                        onClick={() =>
-                          operate(menuOwner.id, (tab) => {
-                            setClosing(null);
-                            setLimit(false);
-                            setSettingsTab(tab.id);
-                            setFocusTerminal(false);
-                          })
-                        }
-                      >
-                        {t('connectionSettings')}
-                      </Menu.Item>
                       <Menu.Divider />
                       <Menu.Label>{t('terminalSpecial')}</Menu.Label>
                       <Menu.Item
@@ -682,6 +695,9 @@ export function TerminalWorkspace({
               <ManagementWorkspace
                 owner={tab.id}
                 access={tab.access}
+                signal={tab.cancellation.signal}
+                onState={onState}
+                onConnectionActions={onConnectionActions}
                 active={
                   authentication === null &&
                   active === tab.id &&

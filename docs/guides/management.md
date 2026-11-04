@@ -150,17 +150,38 @@ Disposal can remove containers, Pods or managed accounts and home directories, d
 
 Add the HTTPS settings from [Browser access](browser-access.md) and publish this administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`. Keep its existing requesting-name requirement. Open `/Admin`, choose **SSH key**, and sign in as `management` using its local private-key file. The browser provides metadata views and confirmed disconnect/dispose actions, not a configuration editor or a separate admin role. This example keeps artifact downloads disabled; [encrypted evidence](evidence.md) enables them separately.
 
-**Sessions** loads its first page when opened. Search by requesting user and use
-the flow/status filters, then open a session's details. **Disconnect connections**
+The management tab starts at **Bifröst**. Its own side navigation is expanded
+when the tab has enough space; on narrow tabs it opens over that tab's content.
+The menu button expands or collapses it. Breadcrumbs remain visible, including
+the selected session or Recording ID. Other connection tabs have independent
+navigation and access.
+A second management tab requires a separate explicit sign-in; **Duplicate**
+opens sign-in rather than sharing another tab's admitted channel.
+
+**Sessions** loads its first page when opened. Use the table's search, sortable
+column header and pagination, or the additional requesting-user/flow/status
+filters, then open a session's details. Search and sorting apply on the server,
+not just to the currently loaded page. **Disconnect connections**
 keeps the session reusable; **End session** revokes it and runs cleanup. Both
 require confirmation of the exact target. A denied list does not grant or remove
 other permissions; action-only access can use **Advanced: target by ID**.
 
-**Server** loads the short version and configured flows. Detailed build
+**Bifröst** loads the short version and configured flows. Detailed build
 information is optional. Returning to a loaded view does not repeat its reads;
-use the refresh controls for current data. When the web sign-in expires, choose
-**Sign in again**. This creates a new access view without discarding local
-recording data from the old view.
+use the refresh controls for current data.
+
+Like a terminal, each management tab owns one admitted connection. Its
+**Connection settings** use the flow's keepalive policy and saved preference;
+enforced intervals cannot be changed. A channel admitted before the ten-minute
+web-access deadline can continue serving authorized management operations after
+that deadline. Keepalive does not renew the web credential, session timeout or
+RememberMe lifetime. Each operation still checks current authorization and uses
+the normal audit/Recording and confirmation paths. Opening a management channel
+does not start a shell or workload process.
+
+After a disconnect or denied access, choose **Sign in again**. There is no
+automatic reconnect or authentication. The new access view does not discard
+locally loaded recording data from the old view.
 
 ## Next steps
 

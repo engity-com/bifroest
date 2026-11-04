@@ -11,6 +11,7 @@ import { EvidenceError } from './evidence-protocol';
 import { PlaybackControls } from './PlaybackControls';
 import type { PlaybackState } from './playback';
 import { RecordingPlayback } from './playback';
+import { initializePlaybackCursor } from './playback-cursor';
 import { observePlaybackLayout } from './playback-layout';
 import { claimPlaybackMediaSession } from './playback-media-session';
 import type { PlaybackMetadata, PlaybackOptions } from './playback-protocol';
@@ -431,6 +432,8 @@ export function RecordingPlayer({
         allowProposedApi: false,
         disableStdin: true,
         cursorBlink: false,
+        cursorStyle: 'block',
+        cursorInactiveStyle: 'block',
         screenReaderMode: true,
         scrollback: 1000,
         fontSize: 13,
@@ -453,6 +456,15 @@ export function RecordingPlayer({
       subscriptions.current.push(terminal.parser.registerOscHandler(52, () => true));
       if (video.current) {
         subscriptions.current.push(observePlaybackLayout(video.current, container.current));
+      }
+      await initializePlaybackCursor(terminal, controller.signal);
+      if (
+        controller.signal.aborted ||
+        current !== generation.current ||
+        emulator.current !== terminal
+      ) {
+        image.dispose();
+        return;
       }
       const info = image.metadata;
       const recording = new RecordingPlayback(

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
+import { exerciseAdminShell } from './admin-shell-ui.mjs';
 import { exerciseCompactWorkspace } from './compact-workspace-ui.mjs';
 import { exerciseConnectionRaces, exerciseManagementOwner } from './connection-races-ui.mjs';
 import { exerciseConnections } from './connections-ui.mjs';
@@ -24,8 +25,8 @@ import {
   exerciseManagementForcedVersion,
 } from './management-forced-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
+import { managementWire } from './management-wire.mjs';
 import { exercisePreferences } from './preferences-ui.mjs';
-import { installPreparationObserver } from './response-capture.mjs';
 import { exerciseSlugHistory } from './slug-history-ui.mjs';
 import { exerciseStoppedAuthRoute } from './stopped-auth-route-ui.mjs';
 import { exerciseTerminalExpiry } from './terminal-expiry-ui.mjs';
@@ -74,10 +75,8 @@ try {
         window.cspViolations.push(event.violatedDirective),
       );
     });
-    if (['management-forced-disconnect', 'management-forced-dispose'].includes(process.argv[3])) {
-      await context.addInitScript(installPreparationObserver);
-    }
     const page = await context.newPage();
+    managementWire(page);
     if (process.argv[3] === 'single-root-directory') {
       singleRootState = observeSingleRootDirectory(page);
       await context.addInitScript(() => {
@@ -309,6 +308,11 @@ try {
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'admin-shell') {
+      await exerciseAdminShell(page, login, logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.argv[3] === 'dummy-banner') {
       await login(page, false);
       const expected = ['DUMMY_BANNER_ONE', 'DUMMY_BANNER_TWO', 'DUMMY_BANNER_THREE'];

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
@@ -51,6 +52,10 @@ type browserArtifactResponseObserver struct {
 	http.ResponseWriter
 	observed bool
 	status   func(int)
+}
+
+func (w *browserArtifactResponseObserver) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(w.ResponseWriter).Hijack()
 }
 
 func (w *browserArtifactResponseObserver) WriteHeader(code int) {
@@ -187,7 +192,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 			svc.flowAuditRecorders[flow.Name] = auditGate
 			svc.managementApplication = nil
 			require.True(t, svc.web.assets.Available(), "run mise run build:web before the requested browser test")
-			var cookies, queries atomic.Int32
+			var cookies, queries, socketCookies atomic.Int32
 			var admissionMutex sync.Mutex
 			var rejectedAdmissions []string
 			var release sync.Once
@@ -245,7 +250,11 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 				}
 				if strings.HasPrefix(r.URL.Path, webAPI) {
 					if r.Header.Get("Cookie") != "" {
-						cookies.Add(1)
+						if r.URL.Path == webAPI+"management/channel" {
+							socketCookies.Add(1)
+						} else {
+							cookies.Add(1)
+						}
 					}
 					if r.URL.RawQuery != "" {
 						queries.Add(1)
@@ -339,6 +348,9 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 			require.NoError(t, json.Unmarshal(output, &result))
 			require.True(t, result.Success)
 			require.Zero(t, cookies.Load())
+			if strings.HasPrefix(mode, "catalog-") {
+				require.Positive(t, socketCookies.Load(), "browser WebSockets attach unrelated same-origin cookies, but ONLY the open proof authorizes the channel")
+			}
 			require.Zero(t, queries.Load())
 		})
 	}

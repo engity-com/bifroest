@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { managementInterruption } from './management-interruption.mjs';
+import { managementWire } from './management-wire.mjs';
 import {
   assertAccessActionsBlocked,
   assertUiPreferences,
   captureLayout,
+  reauthenticate,
   workspace,
 } from './workspace-ui.mjs';
 
@@ -21,13 +24,15 @@ async function sessionLayout(page, id, requestCount) {
       beforeReturn,
       'returning through the breadcrumb uses retained metadata, never another read',
     );
-    const cards = page.getByRole('region', { name: 'Live session metadata', exact: true });
+    const cards = page.getByRole('grid', { name: 'Live session metadata', exact: true });
+    await cards.waitFor();
+    assert.equal(await cards.count(), 1, 'the mobile list uses the native grid');
     await cards.getByRole('button', { name: `Session details ${id}`, exact: true }).click();
     await page.getByRole('region', { name: 'Session details', exact: true }).waitFor();
     assert.equal(
-      await page.getByRole('table', { name: 'Live session metadata', exact: true }).count(),
+      await page.getByRole('grid', { name: 'Live session metadata', exact: true }).count(),
       0,
-      'mobile sessions must use cards, not a clipped table',
+      'opening a detail replaces the list while its metadata remains retained',
     );
     await captureLayout(page, `sessions-${width}`);
   }
@@ -35,12 +40,14 @@ async function sessionLayout(page, id, requestCount) {
 }
 
 export async function exerciseManagementActions(page, login, logout) {
+  const wire = managementWire(page);
+  const interruption = await managementInterruption(page);
   let commits = 0;
   let managementCalls = 0;
   const managementPaths = [];
   const responses = [];
   const networkFailures = [];
-  page.on('response', (response) => {
+  wire.on('response', (response) => {
     if (new URL(response.url()).pathname.includes('/management/')) {
       responses.push(response);
     }
@@ -52,7 +59,7 @@ export async function exerciseManagementActions(page, login, logout) {
       error: request.failure()?.errorText,
     });
   });
-  page.on('request', (request) => {
+  wire.on('request', (request) => {
     if (new URL(request.url()).pathname.includes('/api/v1/management/')) {
       managementCalls++;
       managementPaths.push(new URL(request.url()).pathname.split('/management/')[1]);
@@ -62,6 +69,10 @@ export async function exerciseManagementActions(page, login, logout) {
     }
   });
   await login(page, false);
+  await page
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+    .waitFor();
+  await workspace(page, 'Sessions');
   await page.getByRole('heading', { name: 'Sessions', exact: true }).waitFor();
   const heading = await page.getByRole('heading', { name: 'Sessions', exact: true }).boundingBox();
   assert(heading && heading.y < 350, 'sessions must be in the initial desktop viewport');
@@ -71,10 +82,10 @@ export async function exerciseManagementActions(page, login, logout) {
     'the exact-ID specialist path starts collapsed',
   );
   await captureLayout(page, 'sessions-initial');
-  await page.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
+  await page.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
   const draftID = (
     await page
-      .getByRole('table', { name: 'Live session metadata', exact: true })
+      .getByRole('grid', { name: 'Live session metadata', exact: true })
       .getByRole('button', { name: /^Session details / })
       .first()
       .getAttribute('aria-label')
@@ -85,18 +96,18 @@ export async function exerciseManagementActions(page, login, logout) {
   await direct.getByLabel('Target session ID', { exact: false }).fill(draftID);
   await workspace(page, 'Server');
   await page
-    .getByRole('table', { name: 'Configured flows (not public discovery links)', exact: true })
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
     .waitFor();
   assert.deepEqual(
     managementPaths,
-    ['sessions/list', 'version/show', 'flows/list'],
+    ['version/show', 'flows/list', 'sessions/list'],
     'only the exact authorized first-view reads, never preparation or download',
   );
   await workspace(page, 'Recordings & audit');
-  await page.getByRole('table', { name: 'Recordings · default', exact: true }).waitFor();
+  await page.getByRole('grid', { name: 'Recordings · default', exact: true }).waitFor();
   assert.deepEqual(
     managementPaths,
-    ['sessions/list', 'version/show', 'flows/list', 'auditlogs/list', 'recordings/list'],
+    ['version/show', 'flows/list', 'sessions/list', 'auditlogs/list', 'recordings/list'],
     'the first Artifacts visit reads only its sources and sole recording source; never transfers or prepares',
   );
   const afterFirstViews = managementCalls;
@@ -168,7 +179,7 @@ export async function exerciseManagementActions(page, login, logout) {
   }
   await connection();
   await connection();
-  const table = page.getByRole('table', { name: 'Live session metadata', exact: true });
+  const table = page.getByRole('grid', { name: 'Live session metadata', exact: true });
   async function target() {
     const back = page
       .getByRole('navigation', { name: 'Breadcrumb', exact: true })
@@ -183,7 +194,9 @@ export async function exerciseManagementActions(page, login, logout) {
       );
     }
     await page.getByRole('button', { name: 'Refresh sessions', exact: true }).click();
-    const row = table.locator('tbody tr').filter({ has: page.getByText('bob', { exact: true }) });
+    const row = table
+      .locator('[role="row"][data-id]')
+      .filter({ has: page.getByText('bob', { exact: true }) });
     await row.waitFor();
     await row.getByRole('button', { name: /^Session details / }).click();
     try {
@@ -192,12 +205,10 @@ export async function exerciseManagementActions(page, login, logout) {
       const replies = [];
       for (const response of responses) {
         const path = new URL(response.url()).pathname;
-        const headers = response.headers();
         const reply = {
           path,
           status: response.status(),
-          mediaType: headers['content-type'],
-          length: headers['content-length'],
+          mediaType: response.contentType(),
         };
         if (path.endsWith('/sessions/show') && response.status() === 200) {
           try {
@@ -285,18 +296,27 @@ export async function exerciseManagementActions(page, login, logout) {
       throw new Error('fixture not armed');
     }
   });
+  interruption.arm('management/sessions/confirm');
   await page.getByRole('button', { name: 'End session', exact: true }).click();
   dialog = page.getByRole('dialog');
   await dialog.getByLabel('Type the exact flow/session ID shown above', { exact: true }).fill(id);
   await dialog.getByRole('button', { name: 'Confirm session action', exact: true }).click();
   await page.getByText('The session action result is unknown.', { exact: false }).waitFor();
-  const navigation = page.getByRole('navigation', { name: 'Workspace', exact: true });
+  const navigation = page.getByRole('navigation', {
+    name: 'Workspace',
+    exact: true,
+    includeHidden: true,
+  });
   assert.equal(
-    await navigation.getByRole('tab', { name: 'Recordings & audit', exact: true }).isEnabled(),
+    await navigation
+      .getByRole('button', { name: 'Recordings & audit', exact: true, includeHidden: true })
+      .isEnabled(),
     false,
   );
   assert.equal(
-    await navigation.getByRole('tab', { name: 'Server', exact: true }).isEnabled(),
+    await navigation
+      .getByRole('button', { name: 'Bifröst', exact: true, includeHidden: true })
+      .isEnabled(),
     false,
     'view changes cannot dismiss the unknown outcome or its action lock',
   );
@@ -317,18 +337,30 @@ export async function exerciseManagementActions(page, login, logout) {
   );
   await page.waitForTimeout(1300);
   assert.equal(commits, 2, 'no automatic confirmation replay after a lost response');
-  await page.locator('.session-filter-details > summary').click();
+  assert.equal(interruption.losses(), 1, 'exactly one real committed action lost its completion');
+  assert.equal(
+    await page.getByRole('button', { name: 'Search sessions', exact: true }).isEnabled(),
+    false,
+    'a lost management channel cannot silently fall back to HTTP',
+  );
+  await page
+    .getByRole('button', { name: 'Dismiss local warning (does not confirm result)', exact: true })
+    .click();
+  await reauthenticate(page);
+  await login(page, false);
+  await page
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+    .waitFor();
+  await workspace(page, 'Sessions');
+  await page.locator('[data-connection-active="true"] .session-filter-details > summary').click();
   await page.getByRole('combobox', { name: 'Session state', exact: true }).click();
   await page.getByRole('option', { name: 'All statuses', exact: true }).click();
   await page.getByRole('button', { name: 'Search sessions', exact: true }).click();
   await table
-    .locator('tbody tr')
+    .locator('[role="row"][data-id]')
     .filter({ has: page.getByText('bob', { exact: true }) })
     .getByText('Ended', { exact: true })
     .waitFor();
-  await page
-    .getByRole('button', { name: 'Dismiss local warning (does not confirm result)', exact: true })
-    .click();
   await logout(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   await assertUiPreferences(page);

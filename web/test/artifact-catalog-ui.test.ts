@@ -7,6 +7,7 @@ import type { AuditlogSummary, Page, RecordingSummary } from '../src/management/
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
 import { t } from '../src/ui/messages';
+import '../src/ui/app.css';
 
 const source: AuditlogSummary = {
   name: 'default',
@@ -71,6 +72,7 @@ afterEach(async () => {
 });
 async function mount(initial = access(), active = true, strict = false) {
   const element = document.createElement('div');
+  element.style.width = '1200px';
   document.body.append(element);
   const root = createRoot(element);
   const selected = vi.fn<(request: ArtifactRequest, summary?: RecordingSummary) => void>();
@@ -179,7 +181,7 @@ describe('finding and opening recordings without API choreography', () => {
       row,
     );
     await app.render({ selected: { kind: 'recording', auditlog: row.auditlog, id: row.id } });
-    expect(document.querySelector('tr.selected-row')?.getAttribute('aria-current')).toBe('true');
+    expect(button(`${t('recordingOpen')} ${row.id}`).getAttribute('aria-current')).toBe('true');
     expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
   });
 
@@ -192,7 +194,7 @@ describe('finding and opening recordings without API choreography', () => {
       skipped: 0,
     });
     await mount();
-    expect(document.querySelector('.recording-table tbody td:nth-child(2)')?.textContent).toBe(
+    expect(document.querySelector('[role="gridcell"][data-field="user"]')?.textContent).toBe(
       'alice',
     );
   });
@@ -203,7 +205,7 @@ describe('finding and opening recordings without API choreography', () => {
       skipped: 0,
     });
     await mount();
-    expect(document.querySelector('.recording-table tbody td:nth-child(5)')?.textContent).toBe(
+    expect(document.querySelector('[role="gridcell"][data-field="duration"]')?.textContent).toBe(
       '30 min 12 s',
     );
   });
@@ -222,12 +224,12 @@ describe('finding and opening recordings without API choreography', () => {
       vi.mocked(WebAccess.prototype.managementRecordings).mock.calls.at(-1)?.[1],
     ).toMatchObject({ user: 'alice', after: '' });
     await field(t('recordingFilterUser'), 'unapplied-draft');
-    await click(button(t('recordingMore')));
+    await click(button('Go to next page'));
     expect(
       vi.mocked(WebAccess.prototype.managementRecordings).mock.calls.at(-1)?.[1],
     ).toMatchObject({ user: 'alice', after: 'bmp1.next' });
     expect(document.body.textContent).toContain(t('recordingFiltersPending'));
-    await click(button(t('recordingPrevious')));
+    await click(button('Go to previous page'));
     expect(
       vi.mocked(WebAccess.prototype.managementRecordings).mock.calls.at(-1)?.[1],
     ).toMatchObject({ user: 'alice', after: '' });
@@ -275,7 +277,9 @@ describe('finding and opening recordings without API choreography', () => {
         }),
     );
     const app = await mount();
-    expect(document.querySelector('table.recording-table')).toBeNull();
+    expect(
+      document.querySelector(`[role="grid"][aria-label="${t('recordingList')} · default"]`),
+    ).toBeNull();
     await click(button(t('artifactCatalogCancel')));
     expect(vi.mocked(WebAccess.prototype.managementRecordings).mock.calls[0]?.[2]?.aborted).toBe(
       true,
@@ -283,7 +287,9 @@ describe('finding and opening recordings without API choreography', () => {
     await act(async () => release({ items: [row], next: '', skipped: 0 }));
     await app.render({ active: false });
     await app.render({ active: true });
-    expect(document.querySelector('table.recording-table')).toBeNull();
+    expect(
+      document.querySelector(`[role="grid"][aria-label="${t('recordingList')} · default"]`),
+    ).toBeNull();
     expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).toContain(t('artifactCatalogCancelled'));
   });

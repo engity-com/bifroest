@@ -7,8 +7,8 @@ import { reportUiError } from '../ui/error-report';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import { preferredKeepAlive, saveKeepAlivePreference } from '../ui/preferences';
+import type { ConnectionActions } from './connection-actions';
 import { noncedDocument } from './document';
-import type { KeepAlivePolicy } from './keepalive';
 import { ownTerminalKey } from './keyboard';
 import { installTerminalRenderer } from './renderer';
 import type { TerminalState } from './socket';
@@ -27,12 +27,9 @@ const light: ITheme = {
   selectionBackground: '#c4ddf0',
 };
 
-export interface TerminalActions {
-  keepAliveSettings(): KeepAlivePolicy;
-  setKeepAlive(interval: string): Promise<KeepAlivePolicy>;
+export interface TerminalActions extends ConnectionActions {
   eof(): boolean;
   signal(value: 'INT' | 'TERM'): boolean;
-  disconnect(): void;
 }
 
 export function terminalStatus(state: TerminalState): Message {

@@ -30,7 +30,7 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
   { id, principal, scope, kind, access, state, active, onSelect, onMenu, onClose, ...props },
   ref,
 ) {
-  const status = useAccessStatus(access);
+  const status = useAccessStatus(access, kind === 'management');
   const phase = kind === 'terminal' ? state.phase : status === 'active' ? 'connected' : status;
   const accessLabel = kind === 'management' && status !== 'active' ? accessMessages[status] : null;
   return (

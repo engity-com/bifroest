@@ -100,7 +100,7 @@ The requesting name is not the verified
 [principal](context/authentication.md#property-principal) or the target account.
 
 <<property("keepAlive", ref("Enforceable", "data-type.md#enforceable", ref("Duration", "data-type.md#duration")), template_context="context/authorization.md", default="15s", id_prefix="http-", heading=4)>>
-Browser terminal keepalive interval, from `1s` to `5m`. Users can change it in
+Browser terminal and management-channel keepalive interval, from `1s` to `5m`. Users can change it in
 **Connection settings**, unless the value is enforced.
 
 The template is evaluated after authentication using the current session context.

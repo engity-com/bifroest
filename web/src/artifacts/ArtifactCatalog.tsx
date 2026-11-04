@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { RecordingOptions } from '../management/protocol';
 import type { AuditlogSummary, Page, RecordingSummary, WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
+import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { reportUiError } from '../ui/error-report';
-import { Alert, Button, Select, Table, TextInput } from '../ui/material';
+import { Alert, Button, Select, TextInput } from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import type { ArtifactRequest } from './protocol';
@@ -51,11 +52,18 @@ export function ArtifactCatalog({
   onSelect: (request: ArtifactRequest, summary?: RecordingSummary) => void;
 }) {
   const [auditlogs, setAuditlogs] = useState<Page<AuditlogSummary> | null>(null);
+  const [auditRows, setAuditRows] = useState<Page<AuditlogSummary> | null>(null);
+  const [auditPage, setAuditPage] = useState(0);
+  const [auditQuery, setAuditQuery] = useState('');
+  const [auditSort, setAuditSort] = useState<'asc' | 'desc'>('asc');
+  const auditCursors = useRef<string[]>(['']);
   const [source, setSource] = useState('');
   const [recordings, setRecordings] = useState<Page<RecordingSummary> | null>(null);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [applied, setApplied] = useState<Filters>(emptyFilters);
   const [pageIndex, setPageIndex] = useState(0);
+  const [gridQuery, setGridQuery] = useState('');
+  const [gridSort, setGridSort] = useState<'asc' | 'desc'>('desc');
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<Message | null>(null);
   const [cancelled, setCancelled] = useState(false);
@@ -77,11 +85,18 @@ export function ArtifactCatalog({
     initialAttempt.current = false;
     cursors.current = [''];
     setAuditlogs(null);
+    setAuditRows(null);
+    setAuditPage(0);
+    setAuditQuery('');
+    setAuditSort('asc');
+    auditCursors.current = [''];
     setSource('');
     setRecordings(null);
     setFilters(emptyFilters);
     setApplied(emptyFilters);
     setPageIndex(0);
+    setGridQuery('');
+    setGridSort('desc');
     setBusy(false);
     setFailed(null);
     setCancelled(false);
@@ -127,10 +142,16 @@ export function ArtifactCatalog({
       }
     }
   }
-  function query(values: Filters, after = ''): RecordingOptions {
+  function query(
+    values: Filters,
+    after = '',
+    search = gridQuery,
+    direction = gridSort,
+  ): RecordingOptions {
     return {
       after,
-      sort: 'started-desc',
+      sort: direction === 'asc' ? 'started-asc' : 'started-desc',
+      query: search,
       flow: values.flow,
       user: values.user,
       target: '',
@@ -140,11 +161,17 @@ export function ArtifactCatalog({
         values.status === '' ? 'all' : (values.status as NonNullable<RecordingOptions['status']>),
     };
   }
-  async function loadRecordings(name: string, values = filters, index = 0) {
+  async function loadRecordings(
+    name: string,
+    values = filters,
+    index = 0,
+    search = gridQuery,
+    direction = gridSort,
+  ) {
     await run(async (signal, current) => {
       const result = await access.managementRecordings(
         name,
-        query(values, cursors.current[index] ?? ''),
+        query(values, cursors.current[index] ?? '', search, direction),
         signal,
       );
       if (current === generation.current && !signal.aborted) {
@@ -152,6 +179,8 @@ export function ArtifactCatalog({
         setRecordings(result);
         setApplied({ ...values });
         setPageIndex(index);
+        setGridQuery(search);
+        setGridSort(direction);
         if (index === 0) {
           cursors.current = [''];
         }
@@ -167,6 +196,13 @@ export function ArtifactCatalog({
       }
       const items = after === '' ? result.items : [...(auditlogs?.items ?? []), ...result.items];
       setAuditlogs({ ...result, items });
+      if (after === '') {
+        setAuditRows(result);
+        setAuditPage(0);
+        setAuditQuery('');
+        setAuditSort('asc');
+        auditCursors.current = ['', result.next];
+      }
       const available = items.filter((row) => row.enabled && row.recordingEnabled);
       // A sole source is established only after the complete source inventory,
       // including later pages. Keep its identity even if its read is denied.
@@ -200,6 +236,29 @@ export function ArtifactCatalog({
       });
     }
   });
+  async function loadAuditRows(index: number, search = auditQuery, direction = auditSort) {
+    await run(async (signal, current) => {
+      const rows = await access.managementAuditlogs(
+        {
+          after: index === 0 ? '' : (auditCursors.current[index] ?? ''),
+          query: search,
+          ...(direction === 'desc' ? { sort: 'name-desc' } : {}),
+        },
+        signal,
+      );
+      if (current !== generation.current || signal.aborted) {
+        return;
+      }
+      setAuditRows(rows);
+      setAuditPage(index);
+      setAuditQuery(search);
+      setAuditSort(direction);
+      if (index === 0) {
+        auditCursors.current = [''];
+      }
+      auditCursors.current[index + 1] = rows.next;
+    });
+  }
   function cancel() {
     generation.current++;
     operation.current?.abort();
@@ -353,196 +412,166 @@ export function ArtifactCatalog({
         </>
       )}
       {recordings !== null && (
-        <>
-          <div className="table-scroll desktop-recordings">
-            <Table captionSide="top" className="recording-table">
-              <caption>
-                {t('recordingList')} · {source}
-              </caption>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>{t('recordingStarted')}</Table.Th>
-                  <Table.Th>{t('recordingIdentity')}</Table.Th>
-                  <Table.Th>{t('recordingFilterFlow')}</Table.Th>
-                  <Table.Th>{t('recordingFilterStatus')}</Table.Th>
-                  <Table.Th>{t('recordingDuration')}</Table.Th>
-                  <Table.Th>{t('recordingSize')}</Table.Th>
-                  <Table.Th>{t('recordingOpen')}</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {recordings.items.map((row) => (
-                  <Table.Tr
-                    key={row.id}
-                    className={selectionMatches(row) ? 'selected-row' : undefined}
-                    aria-current={selectionMatches(row) ? 'true' : undefined}
-                  >
-                    <Table.Td>{when(row.startedAt)}</Table.Td>
-                    <Table.Td>
-                      {identity(row) ? (
-                        <>
-                          <strong>{identity(row)?.user || t('recordingMetadataUnknown')}</strong>
-                          {identity(row)?.target && (
-                            <>
-                              <br />
-                              <span className="caption subtle">
-                                {t('recordingFilterTarget')}: {identity(row)?.target}
-                              </span>
-                            </>
-                          )}
-                        </>
-                      ) : (
-                        <span className="caption subtle">
-                          {t(
-                            row.encrypted
-                              ? 'recordingMetadataProtected'
-                              : 'recordingMetadataUnknown',
-                          )}
-                        </span>
-                      )}
-                    </Table.Td>
-                    <Table.Td>{identity(row)?.flow || '—'}</Table.Td>
-                    <Table.Td>
-                      {t(
-                        row.status === 'completed'
-                          ? 'artifactCatalogCompleted'
-                          : row.status === 'failed'
-                            ? 'artifactCatalogFailedStatus'
-                            : 'artifactCatalogIncomplete',
-                      )}
-                    </Table.Td>
-                    <Table.Td>{duration(row)}</Table.Td>
-                    <Table.Td>{bytes(row.containerBytes)}</Table.Td>
-                    <Table.Td>
-                      <Button
-                        disabled={locked}
-                        aria-label={`${t('recordingOpen')} ${row.id}`}
-                        onClick={() => choose(row)}
-                      >
-                        {t('recordingOpen')}
-                      </Button>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </div>
-          <div className="mobile-recordings stack">
-            {recordings.items.map((row) => (
-              <article
-                key={row.id}
-                className={`recording-card stack${selectionMatches(row) ? ' selected-row' : ''}`}
-              >
-                <div className="section-heading">
-                  <strong>{when(row.startedAt)}</strong>
-                  <span>
-                    {t(
-                      row.status === 'completed'
-                        ? 'artifactCatalogCompleted'
-                        : row.status === 'failed'
-                          ? 'artifactCatalogFailedStatus'
-                          : 'artifactCatalogIncomplete',
+        <AdminDataGrid<RecordingSummary>
+          actionField="open"
+          label={`${t('recordingList')} · ${source}`}
+          rows={recordings.items}
+          columns={[
+            {
+              field: 'startedAt',
+              headerName: t('recordingStarted'),
+              minWidth: 190,
+              flex: 1,
+              valueFormatter: (value) => when(value as string),
+            },
+            {
+              field: 'user',
+              headerName: t('recordingIdentity'),
+              minWidth: 170,
+              flex: 1,
+              valueGetter: (_value, row) => identity(row)?.user ?? '',
+              renderCell: (params) => (
+                <span>
+                  {identity(params.row)?.user ||
+                    t(
+                      params.row.encrypted
+                        ? 'recordingMetadataProtected'
+                        : 'recordingMetadataUnknown',
                     )}
-                  </span>
-                </div>
-                <p>
-                  {identity(row)?.user ||
-                    t(row.encrypted ? 'recordingMetadataProtected' : 'recordingMetadataUnknown')}
-                </p>
-                <p className="caption subtle">
-                  {identity(row)?.flow || '—'} ·{' '}
-                  {identity(row)?.target
-                    ? `${t('recordingFilterTarget')}: ${identity(row)?.target} · `
-                    : ''}
-                  {duration(row)} · {bytes(row.containerBytes)}
-                </p>
+                  {identity(params.row)?.target && (
+                    <small>
+                      {' '}
+                      · {t('recordingFilterTarget')}: {identity(params.row)?.target}
+                    </small>
+                  )}
+                </span>
+              ),
+            },
+            {
+              field: 'flow',
+              headerName: t('recordingFilterFlow'),
+              minWidth: 130,
+              valueGetter: (_value, row) => identity(row)?.flow || '—',
+            },
+            {
+              field: 'status',
+              headerName: t('recordingFilterStatus'),
+              minWidth: 130,
+              valueFormatter: (value) =>
+                t(
+                  value === 'completed'
+                    ? 'artifactCatalogCompleted'
+                    : value === 'failed'
+                      ? 'artifactCatalogFailedStatus'
+                      : 'artifactCatalogIncomplete',
+                ),
+            },
+            {
+              field: 'duration',
+              headerName: t('recordingDuration'),
+              minWidth: 120,
+              valueGetter: (_value, row) => duration(row),
+            },
+            {
+              field: 'containerBytes',
+              headerName: t('recordingSize'),
+              minWidth: 100,
+              valueFormatter: (value) => bytes(value as number),
+            },
+            {
+              field: 'open',
+              headerName: t('recordingOpen'),
+              minWidth: 170,
+              renderCell: (params) => (
                 <Button
                   disabled={locked}
-                  aria-label={`${t('recordingOpen')} ${row.id}`}
-                  onClick={() => choose(row)}
+                  aria-current={selectionMatches(params.row) ? 'true' : undefined}
+                  aria-label={`${t('recordingOpen')} ${params.row.id}`}
+                  onClick={() => choose(params.row)}
                 >
                   {t('recordingOpen')}
                 </Button>
-              </article>
-            ))}
-          </div>
-          {recordings.items.length === 0 && (
-            <p className="empty-state">{t('recordingNoMatches')}</p>
-          )}
-          <div className="actions">
-            {pageIndex > 0 && (
-              <Button
-                variant="default"
-                disabled={locked}
-                onClick={() => {
-                  void loadRecordings(source, applied, pageIndex - 1);
-                }}
-              >
-                {t('recordingPrevious')}
-              </Button>
-            )}
-            <span className="caption subtle">
-              {t('recordingPage')} {pageIndex + 1}
-            </span>
-            {recordings.next !== '' && (
-              <Button
-                variant="default"
-                disabled={locked}
-                onClick={() => {
-                  void loadRecordings(source, applied, pageIndex + 1);
-                }}
-              >
-                {t('recordingMore')}
-              </Button>
-            )}
-          </div>
-        </>
+              ),
+            },
+          ]}
+          busy={busy}
+          disabled={disabled}
+          page={pageIndex}
+          hasNext={recordings.next !== ''}
+          query={gridQuery}
+          sortField="startedAt"
+          sortDirection={gridSort}
+          onPage={(index) => {
+            if (index <= pageIndex + 1 && cursors.current[index] !== undefined) {
+              void loadRecordings(source, applied, index);
+            }
+          }}
+          onQuery={(search) => {
+            void loadRecordings(source, applied, 0, search, gridSort);
+          }}
+          onSort={(direction) => {
+            void loadRecordings(source, applied, 0, gridQuery, direction);
+          }}
+        />
       )}
       <details className="context-help">
         <summary>{t('recordingAuditExports')}</summary>
         <div className="stack">
           <p>{t('recordingServerMetadata')}</p>
-          {auditlogs !== null && (
-            <div className="table-scroll">
-              <Table captionSide="top">
-                <caption>{t('artifactAuditlogCaption')}</caption>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>{t('artifactAuditlog')}</Table.Th>
-                    <Table.Th>{t('artifactCatalogConfiguration')}</Table.Th>
-                    <Table.Th>{t('recordingOpenAudit')}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {auditlogs.items.map((row) => (
-                    <Table.Tr key={row.name}>
-                      <Table.Td>{row.name}</Table.Td>
-                      <Table.Td>
-                        {t(
-                          row.recordingEnabled
-                            ? 'artifactCatalogRecordingOn'
-                            : 'artifactCatalogRecordingOff',
-                        )}{' '}
-                        · {t(row.encrypted ? 'artifactCatalogEncrypted' : 'artifactCatalogClear')}
-                      </Table.Td>
-                      <Table.Td>
-                        <Button
-                          disabled={locked || !row.enabled}
-                          aria-label={`${t('recordingOpenAudit')} ${row.name}`}
-                          onClick={() => {
-                            if (!locked && row.enabled) {
-                              onSelect({ kind: 'audit', auditlog: row.name });
-                            }
-                          }}
-                        >
-                          {t('recordingOpenAudit')}
-                        </Button>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </div>
+          {auditRows !== null && (
+            <AdminDataGrid<AuditlogSummary>
+              actionField="open"
+              label={t('artifactAuditlogCaption')}
+              rows={auditRows.items}
+              getRowId={(row) => row.name}
+              columns={[
+                { field: 'name', headerName: t('artifactAuditlog'), minWidth: 190, flex: 1 },
+                {
+                  field: 'configuration',
+                  headerName: t('artifactCatalogConfiguration'),
+                  minWidth: 300,
+                  flex: 1,
+                  valueGetter: (_value, row) =>
+                    `${t(row.recordingEnabled ? 'artifactCatalogRecordingOn' : 'artifactCatalogRecordingOff')} · ${t(row.encrypted ? 'artifactCatalogEncrypted' : 'artifactCatalogClear')}`,
+                },
+                {
+                  field: 'open',
+                  headerName: t('recordingOpenAudit'),
+                  minWidth: 170,
+                  renderCell: (params) => (
+                    <Button
+                      disabled={locked || !params.row.enabled}
+                      aria-label={`${t('recordingOpenAudit')} ${params.row.name}`}
+                      onClick={() => {
+                        if (!locked && params.row.enabled) {
+                          onSelect({ kind: 'audit', auditlog: params.row.name });
+                        }
+                      }}
+                    >
+                      {t('recordingOpenAudit')}
+                    </Button>
+                  ),
+                },
+              ]}
+              busy={busy}
+              disabled={disabled}
+              page={auditPage}
+              hasNext={auditRows.next !== ''}
+              query={auditQuery}
+              sortField="name"
+              sortDirection={auditSort}
+              onPage={(index) => {
+                if (index <= auditPage + 1 && auditCursors.current[index] !== undefined) {
+                  void loadAuditRows(index);
+                }
+              }}
+              onQuery={(search) => {
+                void loadAuditRows(0, search, auditSort);
+              }}
+              onSort={(direction) => {
+                void loadAuditRows(0, auditQuery, direction);
+              }}
+            />
           )}
           <p>{t('artifactCatalogWarning')}</p>
         </div>

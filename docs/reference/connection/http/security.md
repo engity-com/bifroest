@@ -42,8 +42,8 @@ URL, preserving aliases; it does not authenticate, reconnect or start work.
 
 | Limit | Effect |
 | --- | --- |
-| Web access expires after 10 minutes | New connections and management reads require fresh authentication or an explicit saved-access action. The management view offers **Sign in again**; existing terminals and already loaded local recordings remain available. |
-| Session idle/maximum timeout | Remains authoritative for SSH and browser access. Terminal keepalive does not extend it. |
+| Web access expires after 10 minutes | New connections and standalone HTTP management operations require fresh authentication or an explicit saved-access action. An existing terminal or pre-expiry admitted management channel can continue within its original scope and current authorization. Keepalive does not renew the credential. Locally loaded recordings remain available. |
+| Session idle/maximum timeout | Remains authoritative for SSH and browser access. Terminal and management keepalive do not extend it. |
 | Closed browser tab | Disconnects that execution; does not dispose the shared session or workload. |
 | Explicit logout | Revokes that web access and its linked connections. For remembered access, all web access linked to that binding is revoked. Other browser bindings and SSH connections are not logged out. |
 
@@ -82,6 +82,24 @@ Authorized-key restrictions still apply. Supported forced commands include
 `session disconnect` and `session dispose`. Their filters and permitted fields
 remain restricted. Other forced commands do not gain a browser equivalent.
 Action-only credentials do not also gain list or inspection rights.
+
+Each management tab owns a separate, same-origin channel admitted with its web
+credential before expiry. Requests on it retain the admitted actor and scope;
+there is no reusable replacement bearer or HTTP-header bypass. Requests execute
+serially under that connection's quota lease, with at most four pending requests.
+Responses are collected in fixed-size bounded blocks, not one retained object
+per network fragment. Partial responses are discarded on cancellation or error.
+Current authorization, revocation, target compatibility and per-operation
+permissions, audit and Recording policies remain enforced. Confirmation grants
+are one-use and bound to their own channel as well as the actor and target.
+Closing the channel cancels its operations. It neither starts a shell nor
+reconnects automatically. Loss of an action result still means an uncertain
+outcome, not permission to repeat it.
+
+Browsers automatically attach applicable same-origin cookies to WebSocket
+upgrades. Bifröst does not use them for authentication: only the explicit
+access proof in the channel's opening frame can admit it. Ordinary JSON API
+requests continue to omit browser credentials.
 
 Artifact download additionally requires
 [`allowArtifactTransfer`](../../environment/management.md#property-allowArtifactTransfer).

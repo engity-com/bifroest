@@ -22,15 +22,20 @@ func (this *service) managementAuditlogPage(ctx context.Context, request protoco
 		return page, err
 	}
 	var items []readSlot[protocol.AuditlogSummary]
+	descending := request.Sort == "name-desc"
+	position := ""
+	if after != "" {
+		position = managementGridKey(after, descending)
+	}
 	for _, conf := range this.Configuration.Auditlogs {
 		if err := ctx.Err(); err != nil {
 			return page, err
 		}
 		name := conf.Name.String()
-		if name <= after {
+		if managementGridKey(name, descending) <= position || !managementSearch(request.Query, name) {
 			continue
 		}
-		items = insertRead(items, name, managementview.Auditlog(conf), request.Limit+1)
+		items = insertRead(items, managementGridKey(name, descending), managementview.Auditlog(conf), request.Limit+1)
 	}
 	for i, item := range items {
 		if i == request.Limit {
@@ -87,6 +92,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		position, _ = protocol.RecordingTime(after.StartedAt)
 	}
 	selected := rows[:0]
+	ascending := request.Sort == "started-asc"
 	for _, row := range rows {
 		// Older recordings lack the requesting user; target accounts remain
 		// unknown. Encrypted private context never enters this index. Unknown
@@ -95,7 +101,8 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		if request.User != "" && request.User != row.User || request.Target != "" || request.Flow != "" && request.Flow != row.Flow ||
 			request.Status != "all" && request.Status != string(row.Status) ||
 			!from.IsZero() && row.StartedAt.Before(from) || !until.IsZero() && row.StartedAt.After(until) ||
-			!position.IsZero() && (row.StartedAt.After(position) || row.StartedAt.Equal(position) && row.RecordingId.String() <= after.ID) {
+			!managementSearch(request.Query, row.RecordingId.String(), row.User, row.Flow, string(row.Status)) ||
+			!position.IsZero() && ((!ascending && row.StartedAt.After(position)) || (ascending && row.StartedAt.Before(position)) || row.StartedAt.Equal(position) && row.RecordingId.String() <= after.ID) {
 			continue
 		}
 		selected = append(selected, row)
@@ -103,6 +110,9 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 	sort.Slice(selected, func(i, j int) bool {
 		if selected[i].StartedAt.Equal(selected[j].StartedAt) {
 			return selected[i].RecordingId.String() < selected[j].RecordingId.String()
+		}
+		if ascending {
+			return selected[i].StartedAt.Before(selected[j].StartedAt)
 		}
 		return selected[i].StartedAt.After(selected[j].StartedAt)
 	})

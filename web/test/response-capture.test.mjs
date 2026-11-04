@@ -1,13 +1,94 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { observeSingleRootDirectory } from './login-options-ui.mjs';
+import { managementWire } from './management-wire.mjs';
 import {
   assertCatalogRequestPrivacy,
   captureJsonResponse,
   installPreparationObserver,
 } from './response-capture.mjs';
+
+function wireFixture() {
+  const page = new EventEmitter();
+  const socket = new EventEmitter();
+  socket.url = () => 'wss://app.example.org/_bifroest/api/v1/management/channel';
+  const wire = managementWire(page);
+  page.emit('websocket', socket);
+  const sent = (value) => socket.emit('framesent', { payload: JSON.stringify(value) });
+  const received = (value) => socket.emit('framereceived', { payload: JSON.stringify(value) });
+  sent({ type: 'open', slug: 'Work', accessToken: 'PRIVATE-WIRE-PROOF' });
+  received({
+    type: 'ready',
+    connectionId: '12345678-1234-1234-1234-123456789abc',
+    keepAlive: { interval: '15s', locked: false },
+  });
+  const request = () =>
+    sent({
+      type: 'request',
+      requestId: '1',
+      action: 'management/auditlogs/list',
+      fields: { limit: '20', after: '' },
+    });
+  const output = (value) => {
+    const bytes = Buffer.from(JSON.stringify(value));
+    const frame = Buffer.alloc(bytes.length + 8);
+    frame.writeBigUInt64BE(1n);
+    bytes.copy(frame, 8);
+    socket.emit('framereceived', { payload: frame });
+  };
+  return { page, socket, wire, sent, received, request, output };
+}
+
+test('management capture observes real RPC identity and completion without fabricating HTTP grants', async () => {
+  const f = wireFixture();
+  const requests = [];
+  f.wire.on('request', (request) => requests.push(request));
+  const captured = captureJsonResponse(f.page, '/_bifroest/api/v1/management/auditlogs/list');
+  let finished = false;
+  void captured.then(() => {
+    finished = true;
+  });
+  f.request();
+  f.received({
+    type: 'response',
+    requestId: '1',
+    status: 200,
+    contentType: 'application/json; charset=utf-8',
+  });
+  f.output({ items: [] });
+  await Promise.resolve();
+  assert.equal(finished, false);
+  f.received({ type: 'complete', requestId: '1' });
+  assert.deepEqual(await captured, { status: 200, body: { items: [] } });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].transport, 'websocket');
+  assert.equal(requests[0].method(), 'RPC');
+  assert.deepEqual(requests[0].headers(), {});
+  assert.equal(requests[0].slug(), 'Work');
+  assert.equal(requests[0].channel(), '12345678-1234-1234-1234-123456789abc');
+  assert.equal(JSON.stringify(requests).includes('PRIVATE-WIRE-PROOF'), false);
+});
+
+test('an interrupted management frame stream remains an incomplete capture, never optimistic success or a replay', async () => {
+  const f = wireFixture();
+  let requests = 0;
+  f.wire.on('request', () => requests++);
+  const captured = captureJsonResponse(f.page, '/_bifroest/api/v1/management/auditlogs/list');
+  f.request();
+  f.received({
+    type: 'response',
+    requestId: '1',
+    status: 200,
+    contentType: 'application/json; charset=utf-8',
+  });
+  f.output({ items: [] });
+  f.socket.emit('close');
+  assert.deepEqual(await captured, { error: 'response-capture-incomplete' });
+  assert.equal(requests, 1);
+});
 
 test('catalog request privacy assertions never retain query or cookie secrets through error causes', () => {
   const secret = 'PRIVATE-CATALOG-REQUEST-SENTINEL';

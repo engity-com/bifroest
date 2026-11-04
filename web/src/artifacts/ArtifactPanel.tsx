@@ -3,6 +3,7 @@ import type { RecordingSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
+import { useAdminDetail } from '../ui/admin-navigation';
 import { reportUiError } from '../ui/error-report';
 import {
   Alert,
@@ -329,6 +330,15 @@ export function ArtifactPanel({
     (encryption === 'encrypted' && /^SHA256:[A-Za-z0-9+/]{43}$/u.test(recipient));
   const keyReady = level !== 'private' || encryption !== 'encrypted' || keyPresent;
   const verificationReady = pinReady && protectionReady && keyReady;
+  const integratedNavigation = useAdminDetail(
+    'artifacts',
+    opened !== null && !selectionOpen
+      ? opened.kind === 'recording'
+        ? opened.id
+        : opened.auditlog
+      : null,
+    closeRecording,
+  );
   return (
     <Paper
       withBorder
@@ -337,16 +347,23 @@ export function ArtifactPanel({
       component="section"
       aria-label={t('artifactTitle')}
     >
-      {opened !== null && !selectionOpen && (
+      {!integratedNavigation && (
         <AdminBreadcrumbs
           items={[
-            { label: t('artifactTitle'), onClick: closeRecording, disabled: locked },
+            { label: t('workspaceBifroest') },
             {
-              label:
-                opened.kind === 'recording'
-                  ? selection?.user || selection?.flow || t('recordingSelected')
-                  : t('recordingAuditExports'),
+              label: t('artifactTitle'),
+              ...(opened !== null && !selectionOpen
+                ? { onClick: closeRecording, disabled: locked }
+                : {}),
             },
+            ...(opened !== null && !selectionOpen
+              ? [
+                  {
+                    label: opened.kind === 'recording' ? opened.id : opened.auditlog,
+                  },
+                ]
+              : []),
           ]}
         />
       )}

@@ -4,8 +4,8 @@ import { reportUiError } from '../ui/error-report';
 import { Alert, Button, Modal, TextInput } from '../ui/material';
 import { t } from '../ui/messages';
 import { saveKeepAlivePreference } from '../ui/preferences';
+import type { ConnectionActions } from './connection-actions';
 import { keepAliveDuration } from './keepalive';
-import type { TerminalActions } from './TerminalPanel';
 
 export function ConnectionSettings({
   access,
@@ -14,7 +14,7 @@ export function ConnectionSettings({
   onClose,
 }: {
   access: WebAccess;
-  actions: TerminalActions;
+  actions: ConnectionActions;
   signal: AbortSignal;
   onClose: () => void;
 }) {

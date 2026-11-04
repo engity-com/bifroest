@@ -1,3 +1,5 @@
+import { existingManagementWire } from './management-wire.mjs';
+
 // Register before the triggering action and read as soon as headers arrive,
 // not after unrelated UI awaits. Header/body/completion share Playwright's
 // existing default 30-second budget; this observes, never retries a request.
@@ -8,11 +10,16 @@ export function captureJsonResponse(page, pathname) {
   });
   const captured = (async () => {
     try {
-      const response = await page.waitForResponse(
-        (response) =>
-          new URL(response.url()).pathname === pathname && response.request().method() === 'POST',
-        { timeout: 30_000 },
-      );
+      const wire = existingManagementWire(page);
+      const response =
+        wire === undefined
+          ? await page.waitForResponse(
+              (response) =>
+                new URL(response.url()).pathname === pathname &&
+                response.request().method() === 'POST',
+              { timeout: 30_000 },
+            )
+          : await wire.waitForResponse((response) => new URL(response.url()).pathname === pathname);
       const [body, finished] = await Promise.allSettled([
         Promise.resolve().then(() => response.json()),
         Promise.resolve().then(() => response.finished()),

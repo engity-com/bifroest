@@ -242,7 +242,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		})
 		protocolHandler = svc.web
 	}
-	if mode == "dummy-banner" {
+	if mode == "dummy-banner" || mode == "admin-shell" {
 		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 	}
 	if mode == "management" || mode == "management-actions" || workspaceActionMode || forcedReadMode || forcedActionMode || mode == "workspace" {
@@ -383,6 +383,15 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			w.WriteHeader(204)
 			return
 		}
+		if workspaceActionMode && r.URL.Path == "/_bifroest/test/preparation-channel-entered" && r.Method == http.MethodPost {
+			if !holdPreparation.CompareAndSwap(true, false) {
+				http.Error(w, "preparation barrier not armed", http.StatusConflict)
+				return
+			}
+			close(preparationEntered)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if workspaceActionMode && r.URL.Path == webAPI+"management/sessions/prepare" && holdPreparation.CompareAndSwap(true, false) {
 			recorder := httptest.NewRecorder()
 			protocolHandler.ServeHTTP(recorder, r)
@@ -415,7 +424,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			// delivering headers. No fake success/failure or handler replay.
 			panic(http.ErrAbortHandler)
 		}
-		if mode == "terminal-expiry" && r.URL.Path == "/_bifroest/test/expire-current-access" && r.Method == http.MethodPost {
+		if (mode == "terminal-expiry" || mode == "admin-shell") && r.URL.Path == "/_bifroest/test/expire-current-access" && r.Method == http.MethodPost {
 			// Test-only clock boundary: expire the real server grant without
 			// waiting ten minutes or changing a production timeout/policy.
 			svc.web.mutex.Lock()
@@ -467,6 +476,18 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		if (mode == "management-actions" || workspaceActionMode || forcedActionMode) && r.URL.Path == "/_bifroest/test/interrupt-management-confirm" && r.Method == http.MethodPost {
 			interrupt.Store(true)
 			w.WriteHeader(204)
+			return
+		}
+		if (mode == "management-actions" || workspaceActionMode || forcedActionMode) && r.URL.Path == "/_bifroest/test/management-confirm-response-cut" && r.Method == http.MethodPost {
+			// The browser's real-server WS bridge reports only after observing a
+			// successful confirm header AND final completion, then discards that
+			// completion and closes the client channel. Keep the one-loss proof.
+			if !interrupt.CompareAndSwap(true, false) {
+				http.Error(w, "response-cut not armed", http.StatusConflict)
+				return
+			}
+			interrupted.Add(1)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if (mode == "management-actions" || workspaceActionMode || forcedActionMode) && r.URL.Path == webAPI+"management/sessions/confirm" && interrupt.Load() {

@@ -101,7 +101,7 @@ action before changing Slug.
 * **Log out** closes connections owned by that browser access and revokes its linked saved access, if present. It does not disconnect unrelated SSH access or dispose of the workspace.
 * **End session** is a separate management action. It revokes the session and runs its configured cleanup, which can remove workloads or managed accounts.
 
-The terminal's **Connection settings** can change its keepalive interval unless the flow enforces one. Keepalive does not extend session or login lifetimes; see [flow keepalive](../reference/flow.md#http-property-keepAlive).
+The terminal or management tab's **Connection settings** can change its keepalive interval unless the flow enforces one. Keepalive does not extend session or login lifetimes; see [flow keepalive](../reference/flow.md#http-property-keepAlive). An already admitted management channel, like an existing terminal, can remain usable after the web credential expires; it does not authorize a new connection.
 
 ## Next steps
 

@@ -344,18 +344,19 @@ export async function sessionLayout(page, id) {
   await captureLayout(page, 'sessions-desktop');
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    const cards = page.getByRole('region', { name: 'Live session metadata', exact: true });
-    await cards.getByText(id, { exact: true }).waitFor();
-    await cards
-      .locator('article')
-      .filter({ hasText: id })
-      .getByRole('button', { name: `Session details ${id}`, exact: true })
-      .click();
+    const back = page
+      .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+      .getByRole('button', { name: 'Sessions', exact: true });
+    if (await back.count()) {
+      await back.click();
+    }
+    const grid = page.getByRole('grid', { name: 'Live session metadata', exact: true });
+    await grid.getByRole('button', { name: `Session details ${id}`, exact: true }).click();
     await page.getByRole('region', { name: 'Session details', exact: true }).waitFor();
     assert.equal(
-      await page.getByRole('table', { name: 'Live session metadata', exact: true }).count(),
+      await page.getByRole('grid', { name: 'Live session metadata', exact: true }).count(),
       0,
-      'mobile sessions must use cards, not a clipped table',
+      'the detail view replaces the retained native mobile grid',
     );
     await captureLayout(page, `sessions-${width}`);
   }
@@ -363,11 +364,27 @@ export async function sessionLayout(page, id) {
 }
 
 export async function workspace(page, name) {
-  const button = page
+  const pane = page.locator('[data-connection-active="true"]');
+  await pane.locator('.admin-shell').waitFor();
+  await page.waitForFunction(() => {
+    const shell = document.querySelector('[data-connection-active="true"] .admin-shell');
+    return (
+      shell?.getAttribute('data-admin-drawer') ===
+      (shell?.clientWidth >= 900 ? 'persistent' : 'temporary')
+    );
+  });
+  const button = pane
     .getByRole('navigation', { name: 'Workspace', exact: true })
-    .getByRole('tab', { name, exact: true });
+    .getByRole('button', { name: name === 'Server' ? 'Bifröst' : name, exact: true });
+  if (
+    (await pane
+      .getByRole('button', { name: 'Open management navigation', exact: true })
+      .getAttribute('aria-expanded')) !== 'true'
+  ) {
+    await pane.getByRole('button', { name: 'Open management navigation', exact: true }).click();
+  }
   await button.click();
-  assert.equal(await button.getAttribute('aria-selected'), 'true');
+  assert.equal(await button.getAttribute('aria-current'), 'page');
 }
 
 export async function exactArtifactSelection(page) {

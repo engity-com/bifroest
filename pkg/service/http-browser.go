@@ -197,6 +197,10 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		this.serveWebSocketTerminal(w, r)
 		return
 	}
+	if r.URL.Path == webAPI+"management/channel" {
+		this.serveWebSocketManagement(w, r)
+		return
+	}
 	switch r.URL.Path {
 	case webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", webAPI + "login/poll", webAPI + "login/reply", webAPI + "login/cancel", webAPI + "access", webAPI + "logout":
 	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
@@ -581,15 +585,15 @@ func webRequestFields(path string) []string {
 	case webAPI + "remember/prove":
 		return []string{"signature"}
 	case webAPI + "management/flows/list":
-		return []string{"limit", "after"}
+		return []string{"limit", "after", "sort", "query"}
 	case webAPI + "management/version/show":
 		return []string{"long"}
 	case webAPI + "management/auditlogs/list":
-		return []string{"limit", "after"}
+		return []string{"limit", "after", "sort", "query"}
 	case webAPI + "management/recordings/list":
-		return []string{"auditlog", "limit", "after", "flow", "user", "target", "startedFrom", "startedUntil", "status", "sort"}
+		return []string{"auditlog", "limit", "after", "flow", "user", "target", "startedFrom", "startedUntil", "status", "sort", "query"}
 	case webAPI + "management/sessions/list":
-		return []string{"limit", "after", "flow", "user", "state"}
+		return []string{"limit", "after", "flow", "user", "state", "sort", "query"}
 	case webAPI + "management/sessions/show":
 		return []string{"flow", "id"}
 	case webAPI + "management/artifacts/recording":

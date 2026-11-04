@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -27,6 +28,7 @@ type webManagementConfirmation struct {
 	claiming   bool
 	preparing  bool
 	connection bconn.Id
+	channel    *webManagementChannel
 }
 
 func managementConfirmationKey(value string) ([32]byte, bool) {
@@ -41,7 +43,7 @@ func managementConfirmationKey(value string) ([32]byte, bool) {
 }
 
 func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Request, scope webScope, values map[string]string) {
-	access, err := this.lookup(scope, webBearer(r), false)
+	access, err := this.managementAccess(r, scope)
 	if err != nil {
 		webError(w, 401, "web access denied")
 		return
@@ -104,12 +106,17 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 		token := "bmc1." + base64.RawURLEncoding.EncodeToString(nonce[:])
 		index, _ := managementConfirmationKey(token)
 		expires := minDeadline(time.Now().Add(webManagementConfirmationLifetime), access.expires)
+		channel, _ := r.Context().Value(webManagementContextKey{}).(*webManagementChannel)
+		if channel != nil {
+			expires = time.Now().Add(webManagementConfirmationLifetime)
+		}
 		encoded, err := json.Marshal(protocol.ActionPreparation{Version: 1, Status: "confirmation-required", ConfirmationToken: token, ExpiresAt: expires, Action: request.Action, Target: target})
 		if err != nil {
 			webError(w, 503, "management confirmation could not be encoded")
 			return
 		}
 		permission.expires = expires
+		permission.channel = channel
 		this.mutex.Lock()
 		this.pruneLocked(time.Now())
 		count := 0
@@ -143,7 +150,8 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 	}
 	this.mutex.Lock()
 	permission := this.confirmations[index]
-	if permission == nil || permission.access != access || permission.peer != peer || permission.claiming || !time.Now().Before(permission.expires) {
+	channel, _ := r.Context().Value(webManagementContextKey{}).(*webManagementChannel)
+	if permission == nil || permission.access != access || permission.channel != channel || permission.peer != peer || permission.claiming || !time.Now().Before(permission.expires) {
 		this.mutex.Unlock()
 		webError(w, 403, "management confirmation denied")
 		return
@@ -191,6 +199,15 @@ func (this *webService) managementConnection(w http.ResponseWriter, r *http.Requ
 		return nil, nil, err
 	}
 	transport := &managementHTTPConnection{webLoginConnection: base, controller: http.NewResponseController(w)}
+	if parent, ok := r.Context().Value(webManagementContextKey{}).(*webManagementChannel); ok {
+		if parent.access != access || parent.conn.check(false) != nil {
+			_ = transport.Close()
+			return nil, nil, errWebAccessDenied
+		}
+		ctx, cancel := context.WithCancel(transport.Lifetime())
+		child := &terminalConnection{terminalTransport: transport, service: this.service, authorization: access.auth, session: parent.conn.session, ctx: ctx, cancel: cancel, parent: parent.conn, done: make(chan struct{})}
+		return child, transport, nil
+	}
 	conn, err := this.connect(scope, webBearer(r), transport)
 	if err != nil {
 		_ = transport.Close()

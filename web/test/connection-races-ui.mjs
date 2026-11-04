@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { managementInterruption } from './management-interruption.mjs';
+import { managementWire } from './management-wire.mjs';
 import {
   activeAccess,
   assertAccessActionsBlocked,
@@ -8,6 +10,7 @@ import {
   notification,
   settledLogin,
   terminalAction,
+  workspace,
 } from './workspace-ui.mjs';
 
 const frames = (page) =>
@@ -158,6 +161,8 @@ export async function exerciseConnectionRaces(page) {
 
 export async function exerciseManagementOwner(page, fixture, login, logout, closeProbe = false) {
   const target = JSON.parse(readFileSync(fixture, 'utf8'));
+  const wire = managementWire(page);
+  const interruption = await managementInterruption(page, { holdPreparation: true });
   const committedView = async (id, user) => {
     // Alice and Bob use the same Slug. Wait for this exact local view after the
     // route commit, not merely a matching principal or ready login metadata.
@@ -177,7 +182,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
   };
   let commits = 0;
   const reads = [];
-  page.on('request', (request) => {
+  wire.on('request', (request) => {
     if (
       /\/management\/(?:sessions|flows|version)\/(?:list|show)$/u.test(
         new URL(request.url()).pathname,
@@ -193,16 +198,22 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
   await committedView(1, 'alice');
   await page
     .getByRole('tabpanel', { name: 'Management 1 alice', exact: true })
-    .getByRole('table', { name: 'Live session metadata', exact: true })
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
     .waitFor();
+  await workspace(page, 'Sessions');
+  await page.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   await login(page, false, 'bob');
   await committedView(2, 'bob');
-  await page.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
+  await page
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+    .waitFor();
+  await workspace(page, 'Sessions');
+  await page.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
   assert.deepEqual(
     reads,
-    ['sessions/list', 'sessions/list'],
-    'each newly active actor reads only its own initial session page',
+    ['version/show', 'flows/list', 'sessions/list', 'version/show', 'flows/list', 'sessions/list'],
+    'each actor reads only its own entry metadata and explicit Sessions page',
   );
   const alice = page.getByRole('tab', { name: 'Management 1 alice', exact: true });
   const bob = page.getByRole('tab', { name: 'Management 2 bob', exact: true });
@@ -238,6 +249,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
       throw new Error('controlled preparation did not leave its barrier');
     }
   });
+  interruption.releasePreparation();
   await frames(page);
   if (closeProbe) {
     const closing = page.getByRole('dialog', { name: 'Close this management view?', exact: true });
@@ -301,6 +313,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
       throw new Error('controlled management fault was not armed');
     }
   });
+  interruption.arm('management/sessions/confirm');
   await page.getByRole('button', { name: 'Prepare session action', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByText('Work · alice', { exact: true }).waitFor();
@@ -311,6 +324,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
   await page.getByText('The session action result is unknown.', { exact: false }).waitFor();
   await frames(page);
   assert.equal(commits, 1, 'the lost reply must not replay confirmation');
+  assert.equal(interruption.losses(), 1);
   assert.equal(
     await aliceNode.evaluate((node) => node.isConnected),
     true,
@@ -323,10 +337,15 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
   );
   assert.deepEqual(
     reads,
-    ['sessions/list', 'sessions/list'],
+    ['version/show', 'flows/list', 'sessions/list', 'version/show', 'flows/list', 'sessions/list'],
     'view activation and mutation outcomes cannot repeat metadata reads',
   );
-  assert.equal(await alice.getAttribute('aria-selected'), 'true');
+  assert.equal(await page.locator('#terminal-tab-1').getAttribute('aria-selected'), 'true');
+  assert.equal(
+    await page.locator('#terminal-tab-1').getAttribute('data-access-status'),
+    'closed',
+    'the lost owner remains mounted but cannot borrow another channel or fall back to HTTP',
+  );
   assert.equal(await bob.isEnabled(), false);
   assert.equal(
     await page.getByRole('button', { name: 'Close management view 1', exact: true }).isEnabled(),

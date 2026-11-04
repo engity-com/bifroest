@@ -7,6 +7,7 @@ import type { LoginKey } from '../login/key';
 import { publicKeyLogin } from '../login/key';
 import type { SessionAction } from '../management/action';
 import { actionPreparation, actionResult, SessionActionConfirmation } from '../management/action';
+import { ManagementConnection } from '../management/channel';
 import type {
   AuditlogSummary,
   FlowSummary,
@@ -28,6 +29,7 @@ import {
   versionInfo,
 } from '../management/protocol';
 import { type KeepAlivePolicy, keepAlivePolicy } from '../terminal/keepalive';
+import type { SocketFactory, TerminalState } from '../terminal/socket';
 import type { Transport } from './http';
 import { Http, isToken, object, time } from './http';
 import type { Binding, ProofPurpose, Scope } from './protocol';
@@ -148,6 +150,9 @@ async function revoke(http: Http, handle: BrowserBinding, signal?: AbortSignal):
 // execution or implicitly log out unrelated grants/bindings.
 export class WebAccess {
   readonly #http: Http;
+  #managementHttp: Pick<Http, 'post' | 'artifactImage'>;
+  #managementChannel: ManagementConnection | null = null;
+  #managementAttempted = false;
   readonly #response: AccessResponse;
   #closed = false;
   readonly #statusListeners = new Set<() => void>();
@@ -162,6 +167,7 @@ export class WebAccess {
 
   constructor(http: Http, response: AccessResponse, binding: BrowserBinding | null) {
     this.#http = http;
+    this.#managementHttp = http;
     this.#response = response;
     this.#binding = binding;
   }
@@ -198,6 +204,60 @@ export class WebAccess {
     };
   }
 
+  managementStatus(): AccessStatus {
+    if (this.#closed) {
+      return 'closed';
+    }
+    if (this.#managementChannel !== null) {
+      return this.#managementChannel.connected()
+        ? 'active'
+        : this.#managementChannel.available()
+          ? this.status()
+          : 'closed';
+    }
+    return this.#managementAttempted ? 'closed' : this.status();
+  }
+  managementToken(): string {
+    this.#managementAllowed();
+    if (this.status() !== 'active') {
+      throw new RememberMeError('denied');
+    }
+    return this.#response.accessToken;
+  }
+  openManagement(
+    changed: (state: TerminalState) => void,
+    options: { keepAlive?: string } = {},
+    factory?: SocketFactory,
+  ): ManagementConnection {
+    this.#managementAllowed();
+    if (this.#managementAttempted) {
+      throw new RememberMeError('busy');
+    }
+    this.#managementAttempted = true;
+    const channel = new ManagementConnection(
+      this,
+      (state) => {
+        changed(state);
+        for (const listener of [...this.#statusListeners]) {
+          try {
+            listener();
+          } catch {
+            console.error('[Bifröst/access-status]', 'listener-failed');
+          }
+        }
+      },
+      factory,
+      options,
+    );
+    this.#managementChannel = channel;
+    this.#managementHttp = {
+      post: (action, fields, _token, status, signal) =>
+        channel.post(action, fields, status, signal),
+      artifactImage: (request, _token, signal) => channel.artifactImage(request, signal),
+    };
+    return channel;
+  }
+
   terminalToken(): string {
     if (
       this.#closed ||
@@ -213,7 +273,9 @@ export class WebAccess {
     if (
       this.#closed ||
       this.#response.environment !== 'management' ||
-      Date.now() >= Date.parse(this.#response.expiresAt)
+      (this.#managementChannel === null
+        ? this.#managementAttempted || Date.now() >= Date.parse(this.#response.expiresAt)
+        : !this.#managementChannel.available())
     ) {
       throw new RememberMeError('denied');
     }
@@ -237,7 +299,8 @@ export class WebAccess {
       done: (async () => {
         const result = await receiveArtifact(
           selected,
-          (receiving) => this.#http.artifactImage(selected, this.#response.accessToken, receiving),
+          (receiving) =>
+            this.#managementHttp.artifactImage(selected, this.#response.accessToken, receiving),
           stopped,
         );
         if (this.#closed) {
@@ -261,7 +324,7 @@ export class WebAccess {
       throw new RememberMeError('unavailable');
     }
     const result = versionInfo(
-      await this.#http.post(
+      await this.#managementHttp.post(
         'management/version/show',
         { long: String(long) },
         this.#response.accessToken,
@@ -282,7 +345,7 @@ export class WebAccess {
     this.#managementAllowed();
     const fields = pageFields(options);
     const result = page<FlowSummary>(
-      await this.#http.post(
+      await this.#managementHttp.post(
         'management/flows/list',
         fields,
         this.#response.accessToken,
@@ -304,7 +367,7 @@ export class WebAccess {
     this.#managementAllowed();
     const fields = sessionFields(options);
     const result = page<SessionItem>(
-      await this.#http.post(
+      await this.#managementHttp.post(
         'management/sessions/list',
         fields,
         this.#response.accessToken,
@@ -326,7 +389,7 @@ export class WebAccess {
     this.#managementAllowed();
     const fields = pageFields(options);
     const result = page<AuditlogSummary>(
-      await this.#http.post(
+      await this.#managementHttp.post(
         'management/auditlogs/list',
         fields,
         this.#response.accessToken,
@@ -341,7 +404,11 @@ export class WebAccess {
     }
     if (
       result.items.some(
-        (row, index) => index > 0 && row.name <= (result.items[index - 1]?.name ?? ''),
+        (row, index) =>
+          index > 0 &&
+          (fields.sort === 'name-desc'
+            ? row.name >= (result.items[index - 1]?.name ?? '')
+            : row.name <= (result.items[index - 1]?.name ?? '')),
       ) ||
       (result.next !== '' && (result.items.length === 0 || result.next === fields.after))
     ) {
@@ -360,7 +427,7 @@ export class WebAccess {
       auditlog: auditlogName(auditlog),
     };
     const result = page<RecordingSummary>(
-      await this.#http.post(
+      await this.#managementHttp.post(
         'management/recordings/list',
         fields,
         this.#response.accessToken,
@@ -389,7 +456,9 @@ export class WebAccess {
           (fields.startedFrom !== '' && at < startKey(fields.startedFrom ?? '')) ||
           (fields.startedUntil !== '' && at > startKey(fields.startedUntil ?? '')) ||
           (previous !== undefined &&
-            (at > startKey(previous.startedAt) ||
+            ((fields.sort === 'started-asc'
+              ? at < startKey(previous.startedAt)
+              : at > startKey(previous.startedAt)) ||
               (at === startKey(previous.startedAt) && row.id <= previous.id)))
         );
       }) ||
@@ -411,7 +480,7 @@ export class WebAccess {
       throw new RememberMeError('unavailable');
     }
     const result = detail(
-      await this.#http.post(
+      await this.#managementHttp.post(
         'management/sessions/show',
         { flow, id },
         this.#response.accessToken,
@@ -443,7 +512,7 @@ export class WebAccess {
       throw new RememberMeError('unavailable');
     }
     const prepared = actionPreparation(
-      await this.#http.post(
+      await this.#managementHttp.post(
         'management/sessions/prepare',
         { action, flow, id },
         this.#response.accessToken,
@@ -459,7 +528,7 @@ export class WebAccess {
       async (stopped) => {
         this.#managementAllowed();
         const result = actionResult(
-          await this.#http.post(
+          await this.#managementHttp.post(
             'management/sessions/confirm',
             { confirmationToken: prepared.confirmationToken },
             this.#response.accessToken,
@@ -475,7 +544,7 @@ export class WebAccess {
       },
       async () => {
         this.#managementAllowed();
-        await this.#http.post(
+        await this.#managementHttp.post(
           'management/sessions/cancel',
           { confirmationToken: prepared.confirmationToken },
           this.#response.accessToken,
@@ -631,6 +700,8 @@ export class WebAccess {
         await this.#http.post('logout', {}, this.#response.accessToken, 204);
       } catch (error) {
         failed = error;
+      } finally {
+        this.#managementChannel?.disconnect();
       }
       await enrollment?.done.catch(() => undefined);
       await artifact?.done.catch(() => undefined);

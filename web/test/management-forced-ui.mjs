@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { managementWire } from './management-wire.mjs';
 import {
   activeAccess,
   assertUiPreferences,
@@ -25,32 +26,34 @@ export async function forcedKeyLogin(page, file) {
 }
 
 export async function exerciseManagementForcedVersion(page, file, logout) {
+  const wire = managementWire(page);
   const calls = [];
-  page.on('request', (request) => {
+  wire.on('request', (request) => {
     const path = new URL(request.url()).pathname;
     if (path.includes('/api/v1/management/')) {
       calls.push({ path, body: JSON.parse(request.postData() ?? '{}') });
     }
   });
-  const initialRead = page.waitForResponse((response) =>
-    response.url().endsWith('/management/sessions/list'),
-  );
-  await forcedKeyLogin(page, file);
-  assert.equal((await initialRead).status(), 403);
-  assert.deepEqual(
-    calls.map((call) => call.path.split('/management/')[1]),
-    ['sessions/list'],
-    'no server metadata reads before entering Server',
-  );
-  const shortReply = page.waitForResponse((response) =>
+  const initialRead = wire.waitForResponse((response) =>
     response.url().endsWith('/management/version/show'),
   );
-  const flowsReply = page.waitForResponse((response) =>
+  const flowsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/flows/list'),
   );
-  await workspace(page, 'Server');
-  assert.equal((await shortReply).status(), 200);
+  await forcedKeyLogin(page, file);
+  assert.equal((await initialRead).status(), 200);
   assert.equal((await flowsReply).status(), 403);
+  assert.deepEqual(
+    calls.map((call) => call.path.split('/management/')[1]),
+    ['version/show', 'flows/list'],
+    'the Bifröst entry view attempts only its short version and flow metadata',
+  );
+  const sessionsReply = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/sessions/list'),
+  );
+  await workspace(page, 'Sessions');
+  assert.equal((await sessionsReply).status(), 403);
+  await workspace(page, 'Server');
   const version = page.getByRole('region', { name: 'Server version', exact: true });
   await version.locator('.server-version').waitFor();
   const text = await version.locator('.server-version').textContent();
@@ -59,7 +62,7 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
   assert.equal(await version.locator('b, script, pre').count(), 0);
   assert.equal(await page.evaluate(() => window.versionInjected), undefined);
   await page.locator('.build-details > summary').click();
-  const denied = page.waitForResponse(
+  const denied = wire.waitForResponse(
     (response) => response.url().endsWith('/management/version/show') && response.status() === 403,
   );
   await page.getByRole('button', { name: 'Load detailed build information', exact: true }).click();
@@ -73,9 +76,9 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
   assert.deepEqual(
     calls.map((call) => [call.path.split('/management/')[1], call.body.long]),
     [
-      ['sessions/list', undefined],
       ['version/show', 'false'],
       ['flows/list', undefined],
+      ['sessions/list', undefined],
       ['version/show', 'true'],
     ],
   );
@@ -88,7 +91,7 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
       exact: false,
     })
     .waitFor();
-  assert.equal(await page.getByRole('table').count(), 0);
+  assert.equal(await page.getByRole('grid').count(), 0);
   await logout(page);
   assert.equal(await page.getByRole('region', { name: 'Server version', exact: true }).count(), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
@@ -96,16 +99,17 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
 }
 
 export async function exerciseManagementForced(page, file, logout) {
+  const wire = managementWire(page);
+  const flowsReply = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/flows/list'),
+  );
   await forcedKeyLogin(page, file);
+  assert.equal((await flowsReply).status(), 403);
   await page.evaluate(async () => {
     const { BrowserClient } = await import('/_bifroest/test/client.js');
     await new BrowserClient({ origin: location.origin, slug: 'Work' }).password('bob', 'correct');
   });
-  const flowsReply = page.waitForResponse((response) =>
-    response.url().endsWith('/management/flows/list'),
-  );
   await workspace(page, 'Server');
-  assert.equal((await flowsReply).status(), 403);
   await page
     .getByText('This sign-in is not permitted to read these details.', {
       exact: false,
@@ -116,9 +120,9 @@ export async function exerciseManagementForced(page, file, logout) {
   await page.getByRole('combobox', { name: 'Session state', exact: true }).click();
   await page.getByRole('option', { name: 'All statuses', exact: true }).click();
   await page.getByRole('button', { name: 'Search sessions', exact: true }).click();
-  const table = page.getByRole('table', { name: 'Live session metadata', exact: true });
+  const table = page.getByRole('grid', { name: 'Live session metadata', exact: true });
   await table.getByText('alice', { exact: true }).waitFor();
-  assert.equal(await table.locator('tbody tr').count(), 1);
+  assert.equal(await table.locator('[role="row"][data-id]').count(), 1);
   await page
     .getByText('Some fields are withheld under the configured forced-command policy.', {
       exact: false,
@@ -138,7 +142,7 @@ export async function exerciseManagementForced(page, file, logout) {
     .waitFor();
   assert.equal(await page.getByRole('region', { name: 'Session details', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'End session', exact: true }).count(), 0);
-  const auditlogsReply = page.waitForResponse((response) =>
+  const auditlogsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/auditlogs/list'),
   );
   await workspace(page, 'Recordings & audit');
@@ -154,7 +158,7 @@ export async function exerciseManagementForced(page, file, logout) {
   await catalog
     .getByText('This sign-in cannot list recordings from this source.', { exact: false })
     .waitFor();
-  assert.equal(await catalog.getByRole('table').count(), 0);
+  assert.equal(await catalog.getByRole('grid').count(), 0);
   await exactArtifactSelection(page);
   await artifacts.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
   await artifacts
@@ -176,21 +180,22 @@ export async function exerciseManagementForced(page, file, logout) {
 }
 
 export async function exerciseManagementForcedAudit(page, file, logout) {
+  const wire = managementWire(page);
   const calls = [];
   const network = [];
-  page.on('request', (request) => {
+  wire.on('request', (request) => {
     const path = new URL(request.url()).pathname;
     if (path.includes('/api/v1/management/')) {
       calls.push(path);
     }
   });
-  page.on('response', (response) => {
+  wire.on('response', (response) => {
     const path = new URL(response.url()).pathname;
     if (path.includes('/api/v1/management/')) {
       network.push({
         path,
         status: response.status(),
-        type: response.headers()['content-type'] ?? '',
+        type: response.contentType(),
       });
     }
   });
@@ -200,16 +205,22 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
       network.push({ path, failure: request.failure()?.errorText ?? 'unavailable' });
     }
   });
-  const initialRead = page.waitForResponse((response) =>
-    response.url().endsWith('/management/sessions/list'),
+  const initialRead = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/flows/list'),
   );
   await forcedKeyLogin(page, file);
   assert.equal((await initialRead).status(), 403);
-  const auditlogsReply = page.waitForResponse((response) =>
+  const sessionsReply = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/sessions/list'),
+  );
+  await workspace(page, 'Sessions');
+  assert.equal((await sessionsReply).status(), 403);
+  const auditlogsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/auditlogs/list'),
   );
   await workspace(page, 'Recordings & audit');
-  assert.equal((await auditlogsReply).status(), 200);
+  const auditlogsResponse = await auditlogsReply;
+  assert.equal(auditlogsResponse.status(), 200);
   const artifacts = page.getByRole('region', {
     name: 'Recordings & audit',
     exact: true,
@@ -220,40 +231,54 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
   });
   assert.deepEqual(
     calls.map((path) => path.split('/management/')[1]),
-    ['sessions/list', 'auditlogs/list'],
+    ['version/show', 'flows/list', 'sessions/list', 'auditlogs/list'],
     'each first visible view attempts only its authorized metadata read; no artifact download',
   );
   await catalog.getByText('Audit log exports', { exact: true }).click();
-  const table = catalog.getByRole('table', {
+  const table = catalog.getByRole('grid', {
     name: 'Configured auditlogs (server metadata)',
     exact: true,
   });
   try {
-    await table.getByRole('cell', { name: 'audit00', exact: true }).waitFor();
+    await table.getByRole('gridcell', { name: 'audit00', exact: true }).waitFor();
   } catch (error) {
     throw new Error(
       JSON.stringify({
         network,
         notices: await catalog.getByRole('status').allTextContents(),
-        tables: await catalog.getByRole('table').count(),
+        grids: await catalog.getByRole('grid').count(),
       }),
       { cause: error },
     );
   }
-  assert.equal(await table.locator('tbody tr').count(), 20);
+  assert.equal((await auditlogsResponse.json()).auditlogs.items.length, 20);
   assert((await table.textContent()).includes('Encryption configured'));
-  const deniedRecordingsReply = page.waitForResponse((response) =>
+  const deniedRecordingsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/recordings/list'),
   );
   await catalog.getByRole('button', { name: 'More recording sources', exact: true }).click();
-  await table.getByRole('cell', { name: 'audit20', exact: true }).waitFor();
-  await table.getByRole('cell', { name: 'default', exact: true }).waitFor();
-  assert.equal(await table.locator('tbody tr').count(), 22);
+  assert.equal((await deniedRecordingsReply).status(), 403);
+  await catalog
+    .getByText('This sign-in cannot list recordings from this source.', { exact: false })
+    .waitFor();
+  const lastAuditPageReply = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/auditlogs/list'),
+  );
+  await table
+    .locator('xpath=ancestor::div[@class="admin-data-grid"][1]')
+    .getByRole('button', { name: 'Go to next page', exact: true })
+    .click();
+  const lastAuditPage = await lastAuditPageReply;
+  assert.equal(lastAuditPage.status(), 200);
+  assert.equal((await lastAuditPage.json()).auditlogs.items.length, 2);
+  await table.getByRole('gridcell', { name: 'audit20', exact: true }).waitFor();
+  await table.getByRole('gridcell', { name: 'default', exact: true }).waitFor();
+  assert.equal(await table.locator('[role="row"][data-id]').count(), 2);
   assert.equal(
     await catalog.getByRole('button', { name: 'More recording sources', exact: true }).count(),
     0,
   );
-  assert.equal(calls.filter((path) => path.endsWith('/auditlogs/list')).length, 2);
+  assert.equal(calls.filter((path) => path.endsWith('/auditlogs/list')).length, 3);
   assert.equal(calls.filter((path) => path.includes('/artifacts/')).length, 0);
   assert.equal(
     (await deniedRecordingsReply).status(),
@@ -265,10 +290,7 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     0,
     'the complete inventory has one recording source; no redundant chooser strands it',
   );
-  await catalog
-    .getByText('This sign-in cannot list recordings from this source.', { exact: false })
-    .waitFor();
-  assert.equal(await catalog.locator('.recording-table').count(), 0);
+  assert.equal(await catalog.getByRole('grid', { name: /^Recordings · /u }).count(), 0);
   assert.equal(calls.filter((path) => path.endsWith('/recordings/list')).length, 1);
   assert.equal(
     calls.filter((path) => path.includes('/artifacts/')).length,
@@ -293,11 +315,12 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
   ]) {
     assert(!(await artifacts.textContent()).includes(secret));
   }
-  const flowsReply = page.waitForResponse((response) =>
-    response.url().endsWith('/management/flows/list'),
-  );
   await workspace(page, 'Server');
-  assert.equal((await flowsReply).status(), 403);
+  assert.equal(
+    calls.filter((path) => path.endsWith('/management/flows/list')).length,
+    1,
+    'returning to the already-denied root does not silently retry',
+  );
   await page
     .getByText('This sign-in is not permitted to read these details.', {
       exact: false,
@@ -305,7 +328,7 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     .waitFor();
   assert.equal(
     await page
-      .getByRole('table', { name: 'Configured flows (not public discovery links)', exact: true })
+      .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
       .count(),
     0,
   );

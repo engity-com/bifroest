@@ -1,30 +1,39 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { forcedKeyLogin } from './management-forced-ui.mjs';
-import { assertUiPreferences } from './workspace-ui.mjs';
+import { managementInterruption } from './management-interruption.mjs';
+import { managementWire } from './management-wire.mjs';
+import { assertUiPreferences, workspace } from './workspace-ui.mjs';
 
 export async function exerciseManagementForcedAction(page, file, logout) {
   const { action, flow, id } = JSON.parse(await readFile(file, 'utf8'));
+  const wire = managementWire(page);
+  const interruption = action === 'dispose' ? await managementInterruption(page) : null;
   const calls = [];
-  page.on('request', (request) => {
+  wire.on('request', (request) => {
     const path = new URL(request.url()).pathname;
     if (path.includes('/api/v1/management/')) {
       calls.push(path);
     }
   });
-  const initialRead = page.waitForResponse((response) =>
-    response.url().endsWith('/management/sessions/list'),
+  const initialRead = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/flows/list'),
   );
   await forcedKeyLogin(page, file);
+  assert.equal((await initialRead).status(), 403);
+  const initialSessions = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/sessions/list'),
+  );
+  await workspace(page, 'Sessions');
   assert.equal(
-    (await initialRead).status(),
+    (await initialSessions).status(),
     403,
     'the active Sessions view does not gain list permission',
   );
   assert.deepEqual(
     calls.map((path) => path.split('/management/')[1]),
-    ['sessions/list'],
-    'only the intentional first Sessions read, never automatic preparation',
+    ['version/show', 'flows/list', 'sessions/list'],
+    'only the entry-view reads and intentional Sessions read, never automatic preparation',
   );
   async function connect() {
     await page.evaluate(async () => {
@@ -84,22 +93,27 @@ export async function exerciseManagementForcedAction(page, file, logout) {
       .click();
   }
   await choose(action === 'dispose' ? 'disconnect' : 'dispose');
-  const denied = page.waitForResponse(
+  const denied = wire.waitForResponse(
     (response) => response.url().endsWith('/sessions/prepare') && response.status() === 403,
   );
   await direct.getByRole('button', { name: 'Prepare session action', exact: true }).click();
   await denied;
   assert.equal(await page.getByRole('dialog').count(), 0);
   await choose(action);
+  const preparationReply = wire.waitForResponse(
+    (response) => response.url().endsWith('/sessions/prepare') && response.status() === 202,
+  );
   await direct.getByRole('button', { name: 'Prepare session action', exact: true }).click();
   let dialog = page.getByRole('dialog');
   await dialog
     .getByText('Session details are not returned under this action-only policy.', { exact: false })
     .waitFor();
+  const preparation = await (await preparationReply).json();
+  assert.deepEqual(Object.keys(preparation.target).sort(), ['flow', 'id']);
   assert.deepEqual(
-    await page.evaluate(() => globalThis.testPreparationReceipt),
-    { status: 202, target: { flow, id } },
-    'capture the real preparation before browser cleanup; no ShowSession metadata or hidden capture failure',
+    preparation.target,
+    { flow, id },
+    'the real channel receipt must contain only the action selector, never ShowSession metadata',
   );
   assert.equal(
     await dialog.getByText('No verified association available', { exact: true }).count(),
@@ -137,6 +151,7 @@ export async function exerciseManagementForcedAction(page, file, logout) {
         throw new Error('fixture not armed');
       }
     });
+    interruption.arm('management/sessions/confirm');
   }
   await dialog.getByRole('button', { name: 'Confirm session action', exact: true }).click();
   await page
@@ -154,13 +169,18 @@ export async function exerciseManagementForcedAction(page, file, logout) {
     calls
       .filter((path) => path.endsWith('/show') || path.endsWith('/list'))
       .map((path) => path.split('/management/')[1]),
-    ['sessions/list'],
+    ['version/show', 'flows/list', 'sessions/list'],
     'the initial denied view read is not a prerequisite for acting; no target inspection or additional list read',
   );
   if (action === 'disconnect') {
     await connect();
     await page.evaluate(() => window.targetSockets.at(-1).close());
   } else {
+    assert.equal(
+      interruption.losses(),
+      1,
+      'one real successful server completion was lost, without replay',
+    );
     assert.equal(
       await page.getByRole('button', { name: 'Connection options', exact: true }).isEnabled(),
       false,

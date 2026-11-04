@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { managementWire } from './management-wire.mjs';
 import {
   activeAccess,
   assertUiPreferences,
@@ -114,21 +115,60 @@ try {
     };
   });
   const page = await context.newPage();
+  const wire = managementWire(page);
   const errors = [];
   const requests = [];
   const apiRequests = [];
   const sessionGrants = [];
   const logoutGrants = [];
   let sockets = 0;
-  page.on('websocket', () => {
-    sockets++;
+  let managementSockets = 0;
+  const grantFingerprint = (value) =>
+    createHash('sha256')
+      .update(value ?? '')
+      .digest('hex');
+  page.on('websocket', (socket) => {
+    if (new URL(socket.url()).pathname.endsWith('/management/channel')) {
+      managementSockets++;
+      socket.on('framesent', ({ payload }) => {
+        if (typeof payload === 'string') {
+          const value = JSON.parse(payload);
+          if (value.type === 'open') {
+            sessionGrants.push(grantFingerprint(`Bearer ${value.accessToken}`));
+          }
+        }
+      });
+    } else {
+      sockets++;
+    }
+  });
+  wire.on('request', (request) => {
+    const body = JSON.parse(request.postData());
+    apiRequests.push(new URL(request.url()).pathname);
+    const encoded = JSON.stringify(body);
+    assert(
+      !encoded.includes('PRIVATE KEY') &&
+        !encoded.includes('fixture secret') &&
+        !encoded.includes('offline-private'),
+    );
+    assert.equal(request.slug(), 'Work');
+    if (request.url().endsWith('/management/version/show')) {
+      assert.deepEqual(
+        body,
+        { long: 'false' },
+        'the entry view requests only the short version, bound to its admitted scope',
+      );
+    }
+    // Record semantic target scope from the channel, not an invented RPC slug.
+    if (request.url().includes('/management/artifacts/')) {
+      requests.push({ slug: request.slug(), ...body });
+    }
   });
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('request', (request) => {
     if (new URL(request.url()).pathname.includes('/api/')) {
-      apiRequests.push(new URL(request.url()).pathname);
-      if (request.url().endsWith('/management/sessions/list')) {
-        sessionGrants.push(request.headers().authorization);
+      if (!request.url().endsWith('/management/channel')) {
+        apiRequests.push(new URL(request.url()).pathname);
       }
       if (request.url().endsWith('/logout')) {
         logoutGrants.push(request.headers().authorization);
@@ -139,13 +179,6 @@ try {
           !body.includes('fixture secret') &&
           !body.includes('offline-private'),
       );
-      if (request.url().endsWith('/management/version/show')) {
-        assert.deepEqual(
-          JSON.parse(body),
-          { slug: 'Work', long: 'false' },
-          'the first Server view requests only the short version',
-        );
-      }
       if (request.url().includes('/management/artifacts/')) {
         requests.push(JSON.parse(body));
       }
@@ -158,7 +191,11 @@ try {
   await page.getByLabel('Password', { exact: true }).fill('correct');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await activeAccess(page, 'alice');
-  await page.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
+  await page
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+    .waitFor();
+  await workspace(page, 'Sessions');
+  await page.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
   const alicePaneID = await page.locator('[data-connection-active="true"]').getAttribute('id');
   const alicePane = page.locator(`#${alicePaneID}`);
   const aliceNode = await alicePane.elementHandle();
@@ -166,12 +203,12 @@ try {
     apiRequests
       .filter((path) => path.includes('/management/'))
       .map((path) => path.split('/management/')[1]),
-    ['sessions/list'],
-    'sign-in reads only the first active Sessions page, without downloading or preparing evidence',
+    ['version/show', 'flows/list', 'sessions/list'],
+    'entry metadata and the explicit Sessions page never download or prepare evidence',
   );
   await workspace(page, 'Server');
   await page
-    .getByRole('table', { name: 'Configured flows (not public discovery links)', exact: true })
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
     .waitFor();
   const entry = await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-id', { credentials: 'omit' }).then((response) =>
@@ -183,7 +220,7 @@ try {
     exact: true,
   });
   await workspace(page, 'Recordings & audit');
-  const recordings = panel.getByRole('table', { name: 'Recordings · default', exact: true });
+  const recordings = panel.getByRole('grid', { name: 'Recordings · default', exact: true });
   await recordings
     .getByRole('button', { name: `Open recording ${entry.id}`, exact: true })
     .waitFor();
@@ -191,7 +228,7 @@ try {
     apiRequests
       .filter((path) => path.includes('/management/'))
       .map((path) => path.split('/management/')[1]),
-    ['sessions/list', 'version/show', 'flows/list', 'auditlogs/list', 'recordings/list'],
+    ['version/show', 'flows/list', 'sessions/list', 'auditlogs/list', 'recordings/list'],
     'first visible views read their exact metadata paths; a single recording source loads its page once',
   );
   assert.deepEqual(requests, [], 'finding a recording must never download it automatically');
@@ -964,17 +1001,25 @@ try {
     await reauthenticate(page);
     await page.getByLabel('User name', { exact: true }).fill('bob');
     await page.getByLabel('Password', { exact: true }).fill('correct');
-    const bobSessionsReply = page.waitForResponse((response) =>
-      response.url().endsWith('/management/sessions/list'),
+    const bobEntryReply = wire.waitForResponse((response) =>
+      response.url().endsWith('/management/flows/list'),
     );
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await activeAccess(page, 'bob');
+    assert.equal((await bobEntryReply).status(), 200);
+    await page
+      .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+      .waitFor();
+    const bobSessionsReply = wire.waitForResponse((response) =>
+      response.url().endsWith('/management/sessions/list'),
+    );
+    await workspace(page, 'Sessions');
     assert.equal((await bobSessionsReply).status(), 200);
     const bobPaneID = await page.locator('[data-connection-active="true"]').getAttribute('id');
     const bobPane = page.locator(`#${bobPaneID}`);
     assert.equal(bobPaneID !== alicePaneID, true);
     assert.equal(await bobPane.getAttribute('data-connection-principal'), 'bob');
-    await bobPane.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
+    await bobPane.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
     assert.equal(sessionGrants.length, 2);
     assert.equal(
       sessionGrants[0] !== undefined &&
@@ -984,7 +1029,7 @@ try {
       'the two panes must own distinct authenticated grants',
     );
     await workspace(page, 'Recordings & audit');
-    await panel.getByRole('table', { name: 'Recordings · default', exact: true }).waitFor();
+    await panel.getByRole('grid', { name: 'Recordings · default', exact: true }).waitFor();
     assert.equal(
       await panel.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
       0,
@@ -1020,7 +1065,7 @@ try {
     const bobLogout = await bobLogoutReply;
     assert.equal(bobLogout.status(), 204);
     assert.equal(
-      bobLogout.request().headers().authorization === sessionGrants[1],
+      grantFingerprint(bobLogout.request().headers().authorization) === sessionGrants[1],
       true,
       'the interrupted transfer owner, Bob, is the exact logout target',
     );
@@ -1101,6 +1146,11 @@ try {
   assert.equal(apiRequests.filter((path) => path.includes('/remember/')).length, 0);
   assert.equal(sockets, 0, 'all artifact scenarios stay local and must never open a live terminal');
   assert.equal(
+    managementSockets,
+    scenario === 'cancel' ? 2 : 1,
+    'only the explicit sign-ins open management channels; verification and playback never do',
+  );
+  assert.equal(
     await page.evaluate(() => window.artifactURLs.size),
     1,
     'the owner has exactly its deliberately saved export before explicit logout',
@@ -1110,7 +1160,7 @@ try {
   const aliceLogout = await aliceLogoutReply;
   assert.equal(aliceLogout.status(), 204);
   assert.equal(
-    aliceLogout.request().headers().authorization === sessionGrants[0],
+    grantFingerprint(aliceLogout.request().headers().authorization) === sessionGrants[0],
     true,
     'retiring Alice’s evidence requires the separately requested logout of her exact grant',
   );

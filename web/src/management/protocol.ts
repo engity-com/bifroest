@@ -4,6 +4,8 @@ import { RememberMeError } from '../remember/protocol';
 export interface PageOptions {
   readonly limit?: number;
   readonly after?: string;
+  readonly query?: string;
+  readonly sort?: string;
 }
 export interface SessionOptions extends PageOptions {
   readonly flow?: string;
@@ -71,7 +73,7 @@ export interface RecordingOptions extends PageOptions {
   readonly startedFrom?: string;
   readonly startedUntil?: string;
   readonly status?: 'all' | RecordingSummary['status'];
-  readonly sort?: 'started-desc';
+  readonly sort?: 'started-desc' | 'started-asc';
 }
 
 function recordingTime(value: unknown): string {
@@ -105,7 +107,7 @@ export function recordingFields(options: RecordingOptions): Record<string, strin
   }
   if (
     !['all', 'completed', 'failed', 'incomplete'].includes(status) ||
-    sort !== 'started-desc' ||
+    !['started-desc', 'started-asc'].includes(sort) ||
     (startedFrom !== '' &&
       startedUntil !== '' &&
       recordingTimeKey(startedFrom) > recordingTimeKey(startedUntil))
@@ -113,7 +115,7 @@ export function recordingFields(options: RecordingOptions): Record<string, strin
     throw new RememberMeError('unavailable');
   }
   return {
-    ...pageFields(options),
+    ...pageFields(options, ['started-desc', 'started-asc']),
     flow: text(options.flow ?? '', 255),
     user: text(options.user ?? '', 256),
     target: text(options.target ?? '', 1024),
@@ -152,7 +154,10 @@ function text(value: unknown, maximum: number): string {
   }
   return value;
 }
-export function pageFields(options: PageOptions): Record<string, string> {
+export function pageFields(
+  options: PageOptions,
+  sorts: readonly string[] = ['name-asc', 'name-desc'],
+): Record<string, string> {
   const limit = options.limit ?? 20;
   const after = options.after ?? '';
   if (
@@ -161,11 +166,18 @@ export function pageFields(options: PageOptions): Record<string, string> {
     limit > 20 ||
     typeof after !== 'string' ||
     after.length > 4096 ||
-    (after !== '' && !/^bmp1\.[A-Za-z0-9_-]+$/u.test(after))
+    (after !== '' && !/^bmp1\.[A-Za-z0-9_-]+$/u.test(after)) ||
+    (options.sort !== undefined && !sorts.includes(options.sort))
   ) {
     throw new RememberMeError('unavailable');
   }
-  return { limit: String(limit), after };
+  const query = text(options.query ?? '', 256);
+  return {
+    limit: String(limit),
+    after,
+    ...(query !== '' ? { query } : {}),
+    ...(options.sort ? { sort: options.sort } : {}),
+  };
 }
 export function sessionFields(options: SessionOptions): Record<string, string> {
   const state = options.state ?? 'active';
@@ -173,7 +185,7 @@ export function sessionFields(options: SessionOptions): Record<string, string> {
     throw new RememberMeError('unavailable');
   }
   return {
-    ...pageFields(options),
+    ...pageFields(options, ['flow-asc', 'flow-desc']),
     flow: text(options.flow ?? '', 255),
     user: text(options.user ?? '', 256),
     state,

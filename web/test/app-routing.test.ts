@@ -3,7 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { createMemoryRouter, type Location } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ManagementConnection } from '../src/management/channel';
 import { BrowserBinding, BrowserClient } from '../src/remember';
+import { WebAccess } from '../src/remember/client';
 import { validateScope } from '../src/remember/protocol';
 import { App } from '../src/ui/App';
 import type { LinkMetadata } from '../src/ui/link-metadata';
@@ -56,6 +58,11 @@ beforeEach(() => {
   });
   vi.spyOn(BrowserBinding, 'load').mockResolvedValue(null);
   vi.spyOn(BrowserClient.prototype, 'resume');
+  // Route/owner retention uses the standalone mock HTTP protocol here. Real
+  // channel admission, expiry and isolation have separate transport tests.
+  vi.spyOn(WebAccess.prototype, 'openManagement').mockReturnValue({
+    disconnect() {},
+  } as ManagementConnection);
   panels.mounted.length = 0;
   panels.unmounted.length = 0;
   panels.signals.clear();
@@ -383,9 +390,9 @@ describe('owned workspace view routing with the real router and workspace', () =
         app.requests
           .filter((request) => request.path.includes('/management/'))
           .map((request) => request.path.split('/management/')[1]),
-      ).toEqual(['sessions/list']);
+      ).toEqual(['version/show', 'flows/list']);
     });
-    await click(button('Server'));
+    await click(button('Sessions'));
     // The first active view now reads its metadata once. Join those exact
     // requests before testing that pure tab/history activation does not reread.
     await vi.waitFor(async () => {
@@ -394,8 +401,9 @@ describe('owned workspace view routing with the real router and workspace', () =
         app.requests
           .filter((request) => request.path.includes('/management/'))
           .map((request) => request.path.split('/management/')[1]),
-      ).toEqual(['sessions/list', 'version/show', 'flows/list']);
+      ).toEqual(['version/show', 'flows/list', 'sessions/list']);
     });
+    await click(button('Bifröst'));
     const owned = document.getElementById('terminal-pane-1');
     expect(owned?.querySelector('[aria-label="Server version"]')?.textContent).toContain(
       'Retained owner version',
@@ -404,9 +412,24 @@ describe('owned workspace view routing with the real router and workspace', () =
     await chooseSlug('Work');
     await signIn();
     expect(selectedID()).toBe('terminal-pane-2');
+    await vi.waitFor(() =>
+      expect(
+        document.getElementById('terminal-pane-2')?.querySelector('[aria-label="Server version"]')
+          ?.textContent,
+      ).toContain('Retained owner version'),
+    );
+    await vi.waitFor(() =>
+      expect(
+        app.requests.filter((request) => request.path.endsWith('/management/flows/list')),
+      ).toHaveLength(2),
+    );
+    const versionReads = app.requests.filter((request) =>
+      request.path.endsWith('/management/version/show'),
+    );
     expect(
-      document.getElementById('terminal-pane-2')?.querySelector('[aria-label="Server version"]'),
-    ).toBeNull();
+      new Headers(versionReads[0]?.options?.headers).get('Authorization') !==
+        new Headers(versionReads[1]?.options?.headers).get('Authorization'),
+    ).toBe(true);
     const requests = app.requests.length;
     const reads = vi.mocked(BrowserBinding.load).mock.calls.length;
     await click(document.getElementById('terminal-tab-1'));
@@ -419,7 +442,7 @@ describe('owned workspace view routing with the real router and workspace', () =
     expect(BrowserBinding.load).toHaveBeenCalledTimes(reads);
     expect(
       app.requests.filter((request) => request.path.endsWith('/management/version/show')),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   it('closing a background tab does not select it through its close control focus', async () => {

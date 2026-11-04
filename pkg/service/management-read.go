@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -158,6 +159,33 @@ type readSlot[T any] struct {
 	value T
 }
 
+func managementGridKey(value string, descending bool) string {
+	if !descending {
+		return value + "\x00"
+	}
+	encoded := []byte(value)
+	for index := range encoded {
+		encoded[index] = ^encoded[index]
+	}
+	return string(encoded) + "\xff"
+}
+
+func managementSearch(query string, fields ...string) bool {
+	for _, token := range strings.Fields(strings.ToLower(query)) {
+		found := false
+		for _, field := range fields {
+			if strings.Contains(strings.ToLower(field), token) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 func insertRead[T any](items []readSlot[T], key string, value T, maximum int) []readSlot[T] {
 	index := sort.Search(len(items), func(i int) bool { return items[i].key >= key })
 	if index >= maximum {
@@ -178,14 +206,21 @@ func (this *service) managementFlowPage(ctx context.Context, request protocol.Re
 		return page, err
 	}
 	var items []readSlot[protocol.FlowSummary]
+	descending := request.Sort == "name-desc"
+	position := ""
+	if after != "" {
+		position = managementGridKey(after, descending)
+	}
 	for _, flow := range this.Configuration.Flows {
 		if err := ctx.Err(); err != nil {
 			return page, err
 		}
-		if flow.Name.String() <= after {
+		key := managementGridKey(flow.Name.String(), descending)
+		item := managementview.Flow(flow)
+		if key <= position || !managementSearch(request.Query, item.Name, item.Environment, item.Authorization, item.Auditlog) {
 			continue
 		}
-		items = insertRead(items, flow.Name.String(), managementview.Flow(flow), request.Limit+1)
+		items = insertRead(items, key, item, request.Limit+1)
 	}
 	for i, item := range items {
 		if i == request.Limit {
@@ -236,7 +271,7 @@ func (this *service) managementSessionPage(ctx context.Context, request protocol
 	}
 	after := ""
 	if flow != "" {
-		after = flow + "\x00" + id
+		after = managementGridKey(flow, request.Sort == "flow-desc") + id
 	}
 	var items []readSlot[protocol.SessionItem]
 	now := time.Now()
@@ -247,7 +282,7 @@ func (this *service) managementSessionPage(ctx context.Context, request protocol
 		if request.Flow != "" && current.Flow().String() != request.Flow {
 			return true, nil
 		}
-		key := current.Flow().String() + "\x00" + current.Id().String()
+		key := managementGridKey(current.Flow().String(), request.Sort == "flow-desc") + current.Id().String()
 		if key <= after {
 			return true, nil
 		}
@@ -267,6 +302,9 @@ func (this *service) managementSessionPage(ctx context.Context, request protocol
 				return true, nil
 			}
 			item = ceiling.Project(item)
+		}
+		if !managementSearch(request.Query, item.ID, item.Flow, item.User, item.State, item.Remote) {
+			return true, nil
 		}
 		items = insertRead(items, key, item, request.Limit+1)
 		return true, nil

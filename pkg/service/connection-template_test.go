@@ -95,3 +95,23 @@ func TestConnectionMetadataRemainsAvailableDuringTargetAndSessionCompatibility(t
 	}
 	var _ environment.Context = base
 }
+
+func TestHttpConnectionMetadataSurvivesManagementRootAndBorrowedOperationLeases(t *testing.T) {
+	r := httptest.NewRequest("POST", "https://APP.EXAMPLE.ORG:8443/", nil)
+	r.RemoteAddr = "192.0.2.9:54321"
+	scope, err := requestWebScope(r, "Work")
+	require.NoError(t, err)
+	transport, err := newWebLoginConnection(t.Context(), r, scope, "alice")
+	require.NoError(t, err)
+	defer transport.Close()
+	root := &terminalConnection{terminalTransport: &webAccessTransport{terminalTransport: transport, scope: scope, user: "alice"}}
+	child := &terminalConnection{terminalTransport: transport, parent: root}
+	for _, conn := range []*terminalConnection{root, child} {
+		base := environmentContext{connection: conn}
+		for _, value := range []any{&base, &principalMappingContext{environmentContext: &base}, &environmentTask{environmentContext: base}, sessionRecordingNoticeContext{connection: conn}} {
+			actual, err := template.MustNewString(`{{.connection.transport}}|{{.connection.http.host}}|{{.connection.http.slug}}|{{.connection.remote.user}}`).Render(value)
+			require.NoError(t, err, "context %T", value)
+			require.Equal(t, "http|app.example.org|Work|alice", actual)
+		}
+	}
+}

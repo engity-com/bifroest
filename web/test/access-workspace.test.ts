@@ -2,6 +2,7 @@ import { act, type ComponentProps, createElement, useCallback, useState } from '
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionActionConfirmation } from '../src/management/action';
+import type { ManagementConnection } from '../src/management/channel';
 import { m } from '../src/management/messages';
 import { BrowserBinding, BrowserClient } from '../src/remember';
 import { WebAccess } from '../src/remember/client';
@@ -89,6 +90,12 @@ beforeEach(() => {
   );
   vi.spyOn(BrowserBinding, 'load');
   vi.spyOn(BrowserClient.prototype, 'resume');
+  // These are standalone-grant expiry/retention tests, deliberately WITHOUT
+  // admitting a live channel. Admitted post-expiry behavior is covered by the
+  // real socket and browser management-channel regressions.
+  vi.spyOn(WebAccess.prototype, 'openManagement').mockReturnValue({
+    disconnect() {},
+  } as ManagementConnection);
   panels.terminals.clear();
   panels.unmounted.length = 0;
   panels.artifactsMounted.length = 0;
@@ -191,7 +198,7 @@ async function mountWorkspace(initial: WebAccess) {
   await render();
   await vi.waitFor(async () => {
     await act(async () => {});
-    expect(container.querySelector('.workspace-tabs [role="tablist"]')).not.toBeNull();
+    expect(container.querySelector('.admin-shell')).not.toBeNull();
     expect(button('Fixture local recording', container)).toBeDefined();
   });
   return { container, render, onSignIn, onViewsChange, onActionLock };
@@ -229,7 +236,40 @@ function noAuthenticationOrSavedReads() {
   expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
 }
 
-describe('honest management grant expiry in the owned workspace', () => {
+describe('standalone management grant expiry without an admitted channel', () => {
+  it('requires explicit authentication rather than opening another management view on the same channel owner', async () => {
+    const owner = permission('Original');
+    const workspace = await mountWorkspace(owner.access);
+    const tab = required(document.getElementById('terminal-tab-1'));
+    await act(async () => {
+      tab.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 20,
+          clientY: 20,
+        }),
+      );
+    });
+    await vi.waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[role="menuitem"]')].some(
+          (node) => node.textContent === t('connectionDuplicate'),
+        ),
+      ).toBe(true),
+    );
+    await click(
+      required(
+        [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+          (node) => node.textContent === t('connectionDuplicate'),
+        ),
+      ),
+    );
+    expect(workspace.onSignIn).toHaveBeenCalledExactlyOnceWith(owner.access.snapshot().scope);
+    expect(document.getElementById('terminal-tab-2')).toBeNull();
+    expect(WebAccess.prototype.openManagement).toHaveBeenCalledTimes(1);
+    expect(panels.artifactsMounted).toEqual([owner.access]);
+  });
   it('expires on the real clock, preserves local evidence and requests only an explicit new sign-in in its own scope', async () => {
     const owner = permission('Original', 1_500);
     const workspace = await mountWorkspace(owner.access);

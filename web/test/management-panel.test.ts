@@ -5,6 +5,7 @@ import { SessionActionConfirmation } from '../src/management/action';
 import { ManagementPanel } from '../src/management/ManagementPanel';
 import type { Page, SessionItem, SessionOptions } from '../src/management/protocol';
 import { RememberMeError, type WebAccess } from '../src/remember';
+import '../src/ui/app.css';
 
 const item: SessionItem = {
   id: '9c77b24c-62f4-44c2-aea3-771c75e5a107',
@@ -61,6 +62,7 @@ async function mount(
   strict = false,
 ) {
   const container = document.createElement('div');
+  container.style.width = '1200px';
   document.body.append(container);
   const root = createRoot(container);
   const lock = vi.fn();
@@ -217,7 +219,9 @@ describe('management view read intent and retained ownership', () => {
     await click(button(`Session details ${item.id}`, container));
     const details = container.querySelector('.session-details');
     expect(document.activeElement).toBe(details);
-    expect(container.querySelector('.selected-row')).not.toBeNull();
+    expect(button(`Session details ${item.id}`, container).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
     await fill('Target flow', 'retained-flow', container);
     await fill('Target session ID', item.id, container);
     await render({ active: false });
@@ -263,7 +267,7 @@ describe('management view read intent and retained ownership', () => {
     expect(signal?.aborted).toBe(true);
     expect(next.api.managementSessions).not.toHaveBeenCalled();
     await act(async () => pending.resolve(page));
-    expect(container.querySelector('table')).toBeNull();
+    expect(container.querySelector('[role="grid"]')).toBeNull();
     expect(container.textContent).not.toContain('alice');
     await render({ disabled: false });
     expect(next.api.managementSessions).toHaveBeenCalledTimes(1);
@@ -273,9 +277,13 @@ describe('management view read intent and retained ownership', () => {
     const { api, access } = fixture();
     api.managementSessions.mockResolvedValueOnce({ ...page, next: 'bmp1.REAL' });
     const { container } = await mount(access);
-    expect(container.textContent).toContain('More sessions are available');
+    expect(button('Go to next page', container).disabled).toBe(false);
     await fill('Search by requesting user', 'draft-only', container);
-    await click(button('Next session page', container));
+    await click(button('Go to next page', container));
+    expect(api.managementSessions.mock.calls.map(([filters]) => filters.after ?? '')).toEqual([
+      '',
+      'bmp1.REAL',
+    ]);
     expect(api.managementSessions).toHaveBeenLastCalledWith(
       { flow: '', user: '', state: 'active', after: 'bmp1.REAL' },
       expect.any(AbortSignal),
@@ -283,7 +291,7 @@ describe('management view read intent and retained ownership', () => {
     expect(container.textContent).toContain('alice');
     await click(button('Search sessions', container));
     expect(api.managementSessions).toHaveBeenLastCalledWith(
-      { flow: '', user: 'draft-only', state: 'active' },
+      { flow: '', user: 'draft-only', state: 'active', query: '', sort: 'flow-asc' },
       expect.any(AbortSignal),
     );
   });

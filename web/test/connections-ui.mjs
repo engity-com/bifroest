@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { managementWire } from './management-wire.mjs';
 import {
   answerAuthentication,
   assertUiPreferences,
@@ -13,6 +14,7 @@ import {
 } from './workspace-ui.mjs';
 
 export async function exerciseConnections(page, login) {
+  const wire = managementWire(page);
   const documentOrigin = new URL(page.url()).origin;
   let documentReloads = 0;
   page.on('request', (request) => {
@@ -24,17 +26,24 @@ export async function exerciseConnections(page, login) {
   const managementReads = [];
   let resumes = 0;
   let sockets = 0;
-  page.on('websocket', () => sockets++);
+  let managementSockets = 0;
+  page.on('websocket', (socket) => {
+    if (new URL(socket.url()).pathname.endsWith('/management/channel')) {
+      managementSockets++;
+    } else {
+      sockets++;
+    }
+  });
+  wire.on('request', (request) => {
+    const body = JSON.parse(request.postData());
+    managementReads.push({
+      path: new URL(request.url()).pathname.split('/management/')[1],
+      slug: request.slug(),
+      long: body.long,
+    });
+  });
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname;
-    if (path.includes('/api/v1/management/')) {
-      const body = JSON.parse(request.postData() ?? '{}');
-      managementReads.push({
-        path: path.split('/management/')[1],
-        slug: body.slug,
-        long: body.long,
-      });
-    }
     if (path.endsWith('/remember/resume')) {
       resumes++;
     }
@@ -130,6 +139,12 @@ export async function exerciseConnections(page, login) {
   await terminalAction(page, 'Request INT signal');
   await active('SIGNAL:INT');
   await newConnection('Manage');
+  const initialVersion = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/version/show'),
+  );
+  const initialFlows = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/flows/list'),
+  );
   await login(page, false);
   const manager = tab(6, 'alice', 'Management');
   const managerPanel = page.getByRole('tabpanel', { name: 'Management 6 alice', exact: true });
@@ -146,32 +161,34 @@ export async function exerciseConnections(page, login) {
     5,
     'management login does not open a terminal or reconnect existing shells',
   );
-  await managerPanel.getByRole('table', { name: 'Live session metadata', exact: true }).waitFor();
-  assert.deepEqual(managementReads, [{ path: 'sessions/list', slug: 'Manage', long: undefined }]);
-  const initialVersion = page.waitForResponse((response) =>
-    response.url().endsWith('/management/version/show'),
-  );
-  const initialFlows = page.waitForResponse((response) =>
-    response.url().endsWith('/management/flows/list'),
-  );
-  await workspace(page, 'Server');
   assert.equal((await initialVersion).status(), 200);
   assert.equal((await initialFlows).status(), 200);
+  assert.equal(
+    managementSockets,
+    1,
+    'management gets only its own admitted channel, not a terminal',
+  );
+  await managerPanel
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+    .waitFor();
+  await workspace(page, 'Sessions');
+  await managerPanel.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
+  await workspace(page, 'Server');
   const version = managerPanel.getByRole('region', { name: 'Server version', exact: true });
   await version.waitFor();
   await managerPanel
-    .getByRole('table', { name: 'Configured flows (not public discovery links)', exact: true })
+    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
     .waitFor();
   assert.deepEqual(
     managementReads,
     [
-      { path: 'sessions/list', slug: 'Manage', long: undefined },
       { path: 'version/show', slug: 'Manage', long: 'false' },
       { path: 'flows/list', slug: 'Manage', long: undefined },
+      { path: 'sessions/list', slug: 'Manage', long: undefined },
     ],
     'the first Server visit reads only the short version and flows for its own grant',
   );
-  const refresh = page.waitForResponse((response) =>
+  const refresh = wire.waitForResponse((response) =>
     response.url().endsWith('/management/version/show'),
   );
   await managerPanel.getByRole('button', { name: 'Refresh server version', exact: true }).click();
@@ -251,6 +268,21 @@ export async function exerciseConnections(page, login) {
     'local-review-selection',
     'switching tabs must retain this access-owned artifact workflow',
   );
+  const restoredRecordings = managerPanel.getByRole('grid', {
+    name: 'Recordings · default',
+    exact: true,
+  });
+  const restoredStarted = restoredRecordings.getByRole('columnheader', { name: /^Started/u });
+  await restoredStarted.waitFor();
+  await page.waitForFunction(
+    (node) => node.getBoundingClientRect().width >= 190,
+    await restoredStarted.elementHandle(),
+  );
+  const restoredBounds = await restoredStarted.boundingBox();
+  assert(
+    restoredBounds && restoredBounds.width >= 190,
+    'restoring an owned hidden grid must restore its actual metadata column geometry',
+  );
   await captureLayout(page, 'connections-management');
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   await chooseLoginMethod(page, 'Password login');
@@ -305,6 +337,7 @@ export async function exerciseConnections(page, login) {
   assert.equal(new URL(page.url()).origin, documentOrigin);
   assert.equal(documentReloads, 0);
   assert.equal(sockets, 5);
+  assert.equal(managementSockets, 1);
   assert.deepEqual(
     requests.filter((r) => r.user === 'bob' && r.method === 'interactive'),
     [{ slug: 'Work', user: 'bob', method: 'interactive' }],

@@ -11,7 +11,7 @@ import (
 )
 
 func managementReadRequest(path string, values map[string]string) (protocol.ReadRequest, error) {
-	request := protocol.ReadRequest{After: values["after"], Flow: values["flow"], User: values["user"], State: values["state"], ID: values["id"], Auditlog: values["auditlog"]}
+	request := protocol.ReadRequest{After: values["after"], Flow: values["flow"], User: values["user"], State: values["state"], ID: values["id"], Auditlog: values["auditlog"], Query: values["query"], Sort: values["sort"]}
 	switch path {
 	case webAPI + "management/version/show":
 		request.Operation = protocol.ShowVersion
@@ -73,7 +73,7 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 		webError(w, http.StatusBadRequest, "invalid structured management request")
 		return
 	}
-	access, err := this.lookup(scope, webBearer(r), false)
+	access, err := this.managementAccess(r, scope)
 	if err != nil {
 		webError(w, http.StatusUnauthorized, "web access denied")
 		return

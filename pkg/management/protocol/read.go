@@ -46,13 +46,14 @@ type ReadRequest struct {
 	StartedUntil  string        `json:"startedUntil,omitempty"`
 	Status        string        `json:"status,omitempty"`
 	Sort          string        `json:"sort,omitempty"`
+	Query         string        `json:"query,omitempty"`
 }
 
 func text(value string, maximum int) bool {
 	return len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsFunc(value, unicode.IsControl)
 }
 func (this ReadRequest) Normalize() (ReadRequest, error) {
-	if !text(this.Flow, 255) || !text(this.User, 256) || len(this.After) > MaximumCursorBytes {
+	if !text(this.Flow, 255) || !text(this.User, 256) || !text(this.Query, 256) || len(this.After) > MaximumCursorBytes {
 		return this, ErrRequest
 	}
 	if this.Auditlog != "" && this.Operation != ListRecordings {
@@ -61,12 +62,12 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 	if this.VersionDetail != "" && this.Operation != ShowVersion {
 		return this, ErrRequest
 	}
-	if this.Operation != ListRecordings && (this.Target != "" || this.StartedFrom != "" || this.StartedUntil != "" || this.Status != "" || this.Sort != "") {
+	if this.Operation != ListRecordings && (this.Target != "" || this.StartedFrom != "" || this.StartedUntil != "" || this.Status != "") {
 		return this, ErrRequest
 	}
 	switch this.Operation {
 	case ShowVersion:
-		if this.Limit != 0 || this.After != "" || this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" {
+		if this.Limit != 0 || this.After != "" || this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" || this.Query != "" || this.Sort != "" {
 			return this, ErrRequest
 		}
 		if this.VersionDetail == "" {
@@ -78,6 +79,12 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 		return this, nil
 	case ListFlows, ListAuditlogs:
 		if this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" {
+			return this, ErrRequest
+		}
+		if this.Sort == "name-asc" {
+			this.Sort = ""
+		}
+		if this.Sort != "" && this.Sort != "name-desc" {
 			return this, ErrRequest
 		}
 	case ListRecordings:
@@ -93,7 +100,7 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 		if this.Sort == "" {
 			this.Sort = "started-desc"
 		}
-		if this.Sort != "started-desc" {
+		if this.Sort != "started-desc" && this.Sort != "started-asc" {
 			return this, ErrRequest
 		}
 		for _, value := range []*string{&this.StartedFrom, &this.StartedUntil} {
@@ -113,6 +120,12 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 			}
 		}
 	case ListSessions:
+		if this.Sort == "flow-asc" {
+			this.Sort = ""
+		}
+		if this.Sort != "" && this.Sort != "flow-desc" {
+			return this, ErrRequest
+		}
 		if this.ID != "" {
 			return this, ErrRequest
 		}
@@ -125,7 +138,7 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 			return this, ErrRequest
 		}
 	case ShowSession:
-		if this.Limit != 0 || this.After != "" || this.User != "" || this.State != "" || this.Flow == "" || !ValidID(this.ID) {
+		if this.Limit != 0 || this.After != "" || this.User != "" || this.State != "" || this.Flow == "" || !ValidID(this.ID) || this.Query != "" || this.Sort != "" {
 			return this, ErrRequest
 		}
 		return this, nil
@@ -175,6 +188,10 @@ func (this ReadRequest) Next(flow, id string) string {
 func (this ReadRequest) filter() [32]byte {
 	if this.Operation == ListRecordings {
 		raw, _ := json.Marshal(struct{ Auditlog string }{this.Auditlog})
+		return sha256.Sum256(raw)
+	}
+	if this.Sort != "" || this.Query != "" {
+		raw, _ := json.Marshal(struct{ Flow, User, State, Sort, Query string }{this.Flow, this.User, this.State, this.Sort, this.Query})
 		return sha256.Sum256(raw)
 	}
 	raw, _ := json.Marshal(struct{ Flow, User, State string }{this.Flow, this.User, this.State})

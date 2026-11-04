@@ -2,8 +2,10 @@ import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
+import { AdminDataGrid } from '../ui/AdminDataGrid';
+import { useAdminDetail } from '../ui/admin-navigation';
 import { reportUiError } from '../ui/error-report';
-import { Alert, Button, Modal, Paper, Select, Table, TextInput, Title } from '../ui/material';
+import { Alert, Button, Modal, Paper, Select, TextInput, Title } from '../ui/material';
 import { t } from '../ui/messages';
 import type { ActionPreview, SessionAction, SessionActionConfirmation } from './action';
 import { m, sessionStateLabel } from './messages';
@@ -37,7 +39,13 @@ export function ManagementPanel({
     'sessions' | 'flows' | 'version' | 'build' | 'details' | null
   >(null);
   const [sessionPage, setSessionPage] = useState(1);
+  const [sessionQuery, setSessionQuery] = useState('');
+  const [sessionSort, setSessionSort] = useState<'asc' | 'desc'>('asc');
+  const sessionCursors = useRef<string[]>(['']);
   const [flowPage, setFlowPage] = useState(1);
+  const [flowQuery, setFlowQuery] = useState('');
+  const [flowSort, setFlowSort] = useState<'asc' | 'desc'>('asc');
+  const flowCursors = useRef<string[]>(['']);
   const [versionFailed, setVersionFailed] = useState(false);
   const [flowsFailed, setFlowsFailed] = useState(false);
   const attempted = useRef({ sessions: false, version: false, flows: false });
@@ -76,7 +84,13 @@ export function ManagementPanel({
     setError(null);
     setLoading(null);
     setSessionPage(1);
+    setSessionQuery('');
+    setSessionSort('asc');
+    sessionCursors.current = [''];
     setFlowPage(1);
+    setFlowQuery('');
+    setFlowSort('asc');
+    flowCursors.current = [''];
     setVersionFailed(false);
     setFlowsFailed(false);
     attempted.current = { sessions: false, version: false, flows: false };
@@ -233,14 +247,23 @@ export function ManagementPanel({
       }
     }
   }
-  async function loadFlows(after = '') {
+  async function loadFlows(after = '', index = 0, query = flowQuery, direction = flowSort) {
     attempted.current.flows = true;
     await run(async (signal, current) => {
-      const result = await access.managementFlows({ after }, signal);
+      const result = await access.managementFlows(
+        { after, query, ...(direction === 'desc' ? { sort: 'name-desc' } : {}) },
+        signal,
+      );
       if (current === generation.current) {
         setFlows(result);
         setFlowsFailed(false);
-        setFlowPage((page) => (after === '' ? 1 : page + 1));
+        setFlowPage(index + 1);
+        setFlowQuery(query);
+        setFlowSort(direction);
+        if (index === 0) {
+          flowCursors.current = [''];
+        }
+        flowCursors.current[index + 1] = result.next;
       }
     }, 'flows');
   }
@@ -265,25 +288,40 @@ export function ManagementPanel({
   }
   async function refreshSessions() {
     await loadSessions(false, {
+      ...lastFilter.current,
+      after: '',
       flow: lastFilter.current.flow ?? '',
       user: lastFilter.current.user ?? '',
       state: lastFilter.current.state ?? 'active',
     });
   }
-  async function loadSessions(next = false, initial?: SessionOptions) {
+  async function loadSessions(next = false, initial?: SessionOptions, index?: number) {
     attempted.current.sessions = true;
     const filters: SessionOptions =
       initial ??
       (next
         ? { ...lastFilter.current, after: sessions?.next ?? '' }
-        : { flow, user, state: state as NonNullable<SessionOptions['state']> });
+        : {
+            flow,
+            user,
+            state: state as NonNullable<SessionOptions['state']>,
+            query: sessionQuery,
+            sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
+          });
+    const pageIndex = index ?? (next ? sessionPage : 0);
     await run(async (signal, current) => {
       const result = await access.managementSessions(filters, signal);
       if (current === generation.current) {
         lastFilter.current = filters;
         setSessions(result);
         setSelected(null);
-        setSessionPage((page) => (next ? page + 1 : 1));
+        setSessionPage(pageIndex + 1);
+        if (pageIndex === 0) {
+          sessionCursors.current = [''];
+        }
+        sessionCursors.current[pageIndex + 1] = result.next;
+        setSessionQuery(filters.query ?? '');
+        setSessionSort(filters.sort === 'flow-desc' ? 'desc' : 'asc');
       }
     }, 'sessions');
   }
@@ -386,14 +424,23 @@ export function ManagementPanel({
   const field = (item: SessionItem, value: string) =>
     value || m(item.policyLimited ? 'withheld' : 'notReported');
   const isSelected = (item: SessionItem) => selected?.flow === item.flow && selected.id === item.id;
+  const integratedNavigation = useAdminDetail('sessions', selected?.id ?? null, returnToSessions);
   return (
     <Paper withBorder p="lg" className="stack" aria-label={t('managementTitle')}>
-      {selected !== null && view === 'sessions' && (
+      {!integratedNavigation && (
         <AdminBreadcrumbs
-          items={[
-            { label: t('workspaceSessions'), onClick: returnToSessions, disabled: locked },
-            { label: `${field(selected, selected.user)} · ${selected.flow}` },
-          ]}
+          items={
+            view === 'server'
+              ? [{ label: t('workspaceBifroest') }]
+              : [
+                  { label: t('workspaceBifroest') },
+                  {
+                    label: t('workspaceSessions'),
+                    ...(selected ? { onClick: returnToSessions, disabled: locked } : {}),
+                  },
+                  ...(selected ? [{ label: selected.id }] : []),
+                ]
+          }
         />
       )}
       <div className="section-heading">
@@ -499,43 +546,46 @@ export function ManagementPanel({
                 {t('managementPartial')} ({flows.skipped})
               </Alert>
             )}
-            <div className="table-scroll">
-              <Table captionSide="top">
-                <caption>{t('managementFlowsCaption')}</caption>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>{t('managementFlow')}</Table.Th>
-                    <Table.Th>{t('managementAuthorization')}</Table.Th>
-                    <Table.Th>{t('managementEnvironment')}</Table.Th>
-                    <Table.Th>{t('managementAuditlog')}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {flows.items.map((item) => (
-                    <Table.Tr key={item.name}>
-                      <Table.Td>{item.name}</Table.Td>
-                      <Table.Td>{item.authorization}</Table.Td>
-                      <Table.Td>{item.environment}</Table.Td>
-                      <Table.Td>{item.auditlog}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </div>
-            {flows.items.length === 0 && <p className="empty-state">{m('flowsEmpty')}</p>}
-            {flows.next !== '' && (
-              <div className="stack">
-                <p className="caption subtle">{m('moreFlows')}</p>
-                <Button
-                  disabled={locked}
-                  onClick={() => {
-                    void loadFlows(flows.next);
-                  }}
-                >
-                  {t('managementNextFlows')}
-                </Button>
-              </div>
-            )}
+            <AdminDataGrid<FlowSummary>
+              label={t('managementFlowsCaption')}
+              rows={flows.items}
+              getRowId={(item) => item.name}
+              columns={[
+                { field: 'name', headerName: t('managementFlow'), minWidth: 170, flex: 1 },
+                {
+                  field: 'authorization',
+                  headerName: t('managementAuthorization'),
+                  minWidth: 170,
+                  flex: 1,
+                },
+                {
+                  field: 'environment',
+                  headerName: t('managementEnvironment'),
+                  minWidth: 170,
+                  flex: 1,
+                },
+                { field: 'auditlog', headerName: t('managementAuditlog'), minWidth: 170, flex: 1 },
+              ]}
+              busy={busy}
+              disabled={disabled || notice?.kind === 'unknown'}
+              page={flowPage - 1}
+              hasNext={flows.next !== ''}
+              query={flowQuery}
+              sortField="name"
+              sortDirection={flowSort}
+              onPage={(index) => {
+                const cursor = flowCursors.current[index];
+                if (cursor !== undefined && index <= flowPage) {
+                  void loadFlows(cursor, index);
+                }
+              }}
+              onQuery={(query) => {
+                void loadFlows('', 0, query, flowSort);
+              }}
+              onSort={(direction) => {
+                void loadFlows('', 0, flowQuery, direction);
+              }}
+            />
           </>
         )}
       </div>
@@ -623,100 +673,86 @@ export function ManagementPanel({
               {sessions.items.some((item) => item.policyLimited) && (
                 <Alert color="yellow">{t('managementLimited')}</Alert>
               )}
-              <div className="table-scroll desktop-sessions">
-                <Table captionSide="top" className="session-table">
-                  <caption>{t('managementSessionsCaption')}</caption>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>{m('user')}</Table.Th>
-                      <Table.Th>{t('managementFlow')}</Table.Th>
-                      <Table.Th>{m('status')}</Table.Th>
-                      <Table.Th>{m('started')}</Table.Th>
-                      <Table.Th>{m('origin')}</Table.Th>
-                      <Table.Th>{t('managementDetails')}</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {sessions.items.map((item) => (
-                      <Table.Tr
-                        key={`${item.flow}/${item.id}`}
-                        className={isSelected(item) ? 'selected-row' : undefined}
-                        aria-selected={isSelected(item)}
+              <AdminDataGrid<SessionItem>
+                actionField="details"
+                label={t('managementSessionsCaption')}
+                rows={sessions.items}
+                getRowId={(item) => `${item.flow}/${item.id}`}
+                columns={[
+                  {
+                    field: 'user',
+                    headerName: m('user'),
+                    minWidth: 170,
+                    flex: 1,
+                    valueGetter: (_value, item) => field(item, item.user),
+                  },
+                  { field: 'flow', headerName: t('managementFlow'), minWidth: 150 },
+                  {
+                    field: 'state',
+                    headerName: m('status'),
+                    minWidth: 130,
+                    valueFormatter: (value) => sessionStateLabel(value as string),
+                  },
+                  {
+                    field: 'createdAt',
+                    headerName: m('started'),
+                    minWidth: 190,
+                    valueFormatter: (value) => when(value as string),
+                  },
+                  {
+                    field: 'remote',
+                    headerName: m('origin'),
+                    minWidth: 180,
+                    flex: 1,
+                    valueGetter: (_value, item) => field(item, item.remote),
+                  },
+                  {
+                    field: 'details',
+                    headerName: t('managementDetails'),
+                    minWidth: 150,
+                    renderCell: (params) => (
+                      <Button
+                        disabled={locked}
+                        aria-label={`${t('managementDetails')} ${params.row.id}`}
+                        aria-controls={detailID}
+                        aria-expanded={isSelected(params.row)}
+                        onClick={() => {
+                          void show(params.row);
+                        }}
                       >
-                        <Table.Td>{field(item, item.user)}</Table.Td>
-                        <Table.Td>{item.flow}</Table.Td>
-                        <Table.Td>{sessionStateLabel(item.state)}</Table.Td>
-                        <Table.Td>{when(item.createdAt)}</Table.Td>
-                        <Table.Td>{field(item, item.remote)}</Table.Td>
-                        <Table.Td>
-                          <Button
-                            disabled={locked}
-                            onClick={() => {
-                              void show(item);
-                            }}
-                            aria-label={`${t('managementDetails')} ${item.id}`}
-                            aria-controls={detailID}
-                            aria-expanded={isSelected(item)}
-                          >
-                            {t('managementDetails')}
-                          </Button>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </div>
-              <section
-                className="stack mobile-sessions"
-                aria-label={t('managementSessionsCaption')}
-              >
-                {sessions.items.map((item) => (
-                  <article
-                    key={`${item.flow}/${item.id}`}
-                    className={`session-card record-card stack${isSelected(item) ? ' selected-row' : ''}`}
-                    aria-label={`${field(item, item.user)} · ${item.flow}`}
-                  >
-                    <div className="section-heading">
-                      <strong>{field(item, item.user)}</strong>
-                      <span>{sessionStateLabel(item.state)}</span>
-                    </div>
-                    <dl className="metadata-grid">
-                      <dt>{t('managementFlow')}</dt>
-                      <dd>{item.flow}</dd>
-                      <dt>{m('started')}</dt>
-                      <dd>{when(item.createdAt)}</dd>
-                      <dt>{m('origin')}</dt>
-                      <dd>{field(item, item.remote)}</dd>
-                    </dl>
-                    <Button
-                      variant="light"
-                      disabled={locked}
-                      onClick={() => {
-                        void show(item);
-                      }}
-                      aria-label={`${t('managementDetails')} ${item.id}`}
-                      aria-controls={detailID}
-                      aria-expanded={isSelected(item)}
-                    >
-                      {t('managementDetails')}
-                    </Button>
-                  </article>
-                ))}
-              </section>
-              {sessions.items.length === 0 && <p className="empty-state">{m('noSessions')}</p>}
-              {sessions.next !== '' && (
-                <div className="stack">
-                  <p className="caption subtle">{m('moreSessions')}</p>
-                  <Button
-                    disabled={locked}
-                    onClick={() => {
-                      void loadSessions(true);
-                    }}
-                  >
-                    {t('managementNextSessions')}
-                  </Button>
-                </div>
-              )}
+                        {t('managementDetails')}
+                      </Button>
+                    ),
+                  },
+                ]}
+                busy={busy}
+                disabled={disabled || notice?.kind === 'unknown'}
+                page={sessionPage - 1}
+                hasNext={sessions.next !== ''}
+                query={sessionQuery}
+                sortField="flow"
+                sortDirection={sessionSort}
+                onPage={(index) => {
+                  const cursor = sessionCursors.current[index];
+                  if (cursor !== undefined && index <= sessionPage) {
+                    void loadSessions(false, { ...lastFilter.current, after: cursor }, index);
+                  }
+                }}
+                onQuery={(query) => {
+                  void loadSessions(false, { ...lastFilter.current, after: '', query }, 0);
+                }}
+                onSort={(direction) => {
+                  void loadSessions(
+                    false,
+                    {
+                      ...lastFilter.current,
+                      after: '',
+                      sort: direction === 'asc' ? 'flow-asc' : 'flow-desc',
+                    },
+                    0,
+                  );
+                }}
+              />
             </>
           )}
         </div>

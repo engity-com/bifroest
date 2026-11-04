@@ -38,10 +38,21 @@ type terminalConnection struct {
 	done          chan struct{}
 	release       func()
 	stopShutdown  func() bool
+	// Serialized management operations borrow the admitted channel's lease.
+	// They cannot outlive, renew independently, or close that parent lease.
+	parent *terminalConnection
 }
 
 func (this *terminalConnection) Lifetime() context.Context { return this.ctx }
-func (this *terminalConnection) IsClosed() bool            { return this.closed.Load() }
+func (this *terminalConnection) Selection() bconn.Selection {
+	if provider, ok := this.terminalTransport.(bconn.SelectionProvider); ok {
+		return provider.Selection()
+	}
+	return bconn.Selection{Transport: bconn.TransportSsh}
+}
+func (this *terminalConnection) IsClosed() bool {
+	return this.closed.Load() || this.parent != nil && (this.parent.IsClosed() || this.ctx.Err() != nil)
+}
 
 func (this *service) registerTerminalConnection(transport terminalTransport, auth authorization.Authorization) (*terminalConnection, error) {
 	if isNilDependency(transport) || isNilDependency(transport.Lifetime()) || auth == nil || !auth.IsAuthorized() || auth.FindSession() == nil || auth.Flow() != auth.FindSession().Flow() {
@@ -144,6 +155,12 @@ func (this *service) validateTerminalAuthorization(base *environmentContext) err
 }
 
 func (this *terminalConnection) check(activity bool) error {
+	if this.parent != nil {
+		if this.IsClosed() {
+			return context.Canceled
+		}
+		return this.parent.check(activity)
+	}
 	this.activityMutex.Lock()
 	defer this.activityMutex.Unlock()
 	if this.IsClosed() {
@@ -167,6 +184,12 @@ func (this *terminalConnection) check(activity bool) error {
 }
 
 func (this *terminalConnection) activity() error {
+	if this.parent != nil {
+		if this.IsClosed() {
+			return context.Canceled
+		}
+		return this.parent.activity()
+	}
 	if err := this.check(true); err != nil {
 		_ = this.Close()
 		return err
@@ -207,6 +230,12 @@ func (this *terminalConnection) watch() {
 func (this *terminalConnection) Close() error {
 	if !this.closed.CompareAndSwap(false, true) {
 		return nil
+	}
+	if this.parent != nil {
+		this.cancel()
+		err := this.terminalTransport.Close()
+		close(this.done)
+		return err
 	}
 	defer this.release()
 	this.cancel()
