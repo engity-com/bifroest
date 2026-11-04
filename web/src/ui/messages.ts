@@ -244,6 +244,16 @@ export const messages = {
   playbackResetting: 'Draining the local renderer before reset…',
   playbackSeconds: 'seconds',
   playbackViewport: 'Read-only recording viewport',
+  playbackVideo: 'Recording player',
+  playbackControls: 'Playback controls',
+  playbackSeek: 'Recording position',
+  playbackSeeking: 'Seeking…',
+  playbackFullscreen: 'Enter fullscreen',
+  playbackExitFullscreen: 'Exit fullscreen',
+  playbackFullscreenFailed:
+    'Fullscreen could not be opened. This browser or window may not allow it.',
+  playbackKeyboardHelp:
+    'Player shortcuts: Space or K play/pause; Left/Right 5 seconds; J/L 10 seconds; Home/End start/end; 0–9 seek by percentage; < and > change speed; F fullscreen; Escape exits fullscreen. Media keys depend on browser support.',
   playbackLimit:
     'This valid recording may exceed the local playback limits: 64 MiB plan/input, 100,000 events, 512 columns / 256 rows and 32,768 cells. Nothing was truncated or played; use native tools for larger recordings.',
   playbackVerificationFailed:

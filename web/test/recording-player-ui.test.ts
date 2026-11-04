@@ -40,7 +40,7 @@ const expected: PlaybackOptions = {
   allowUntrusted: false,
 };
 const images: PlaybackImage[] = [];
-function image(options = expected) {
+function image(options = expected, durationUs = 0) {
   const value = new PlaybackImage(
     options,
     {
@@ -52,7 +52,7 @@ function image(options = expected) {
       rows: 24,
       pty: false,
       frames: 0,
-      durationUs: 0,
+      durationUs,
       status: 'completed',
       exitStatus: 0,
     },
@@ -114,7 +114,7 @@ async function mount(strict = false) {
 }
 function button(name: string) {
   const element = [...document.querySelectorAll('button')].find(
-    (node) => node.textContent === name,
+    (node) => node.textContent === name || node.getAttribute('aria-label') === name,
   );
   if (!element) {
     throw new Error(`Missing button ${name}`);
@@ -129,6 +129,257 @@ async function ready() {
 }
 
 describe('preparing a player as part of the explicit open-recording task', () => {
+  it('uses a fixed 16:9 stage with bottom controls rather than external playback buttons', async () => {
+    await mount();
+    await ready();
+    const stage = document.querySelector<HTMLElement>('.recording-video');
+    if (!stage) {
+      throw new Error('Missing video stage');
+    }
+    expect(getComputedStyle(stage).aspectRatio).toBe('16 / 9');
+    expect(stage.contains(button(t('playbackPlay')))).toBe(true);
+    expect(stage.contains(document.querySelector('input[type="range"]'))).toBe(true);
+    expect(document.querySelector('.recording-controls')?.tagName).toBe('FIELDSET');
+    expect(
+      getComputedStyle(document.querySelector('.recording-controls') as HTMLElement).bottom,
+    ).toBe('0px');
+  });
+
+  it('handles focused keyboard shortcuts locally and does not hijack a speed selector', async () => {
+    vi.mocked(prepareRecordingPlayback).mockImplementation(async (_source, options) =>
+      image(options, 60_000_000),
+    );
+    const seeking = vi.spyOn(RecordingPlayback.prototype, 'seek');
+    await mount();
+    await ready();
+    const stage = document.querySelector<HTMLElement>('.recording-video');
+    if (!stage) {
+      throw new Error('Missing video stage');
+    }
+    await act(async () =>
+      stage.dispatchEvent(
+        new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(RecordingPlayback.prototype.play).toHaveBeenCalledOnce();
+    await act(async () =>
+      stage.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', bubbles: true, cancelable: true }),
+      ),
+    );
+    await act(async () =>
+      stage.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(seeking).toHaveBeenCalledWith(expect.any(Number));
+    expect(seeking.mock.calls.at(-1)?.[0]).toBeGreaterThanOrEqual(5_000_000);
+    const selector = document.querySelector<HTMLSelectElement>('.recording-speed');
+    if (!selector) {
+      throw new Error('Missing speed control');
+    }
+    const before = seeking.mock.calls.length;
+    await act(async () =>
+      selector.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(seeking).toHaveBeenCalledTimes(before);
+    expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+  });
+
+  it('hides controls after playback inactivity and reveals them on pointer movement', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    vi.mocked(prepareRecordingPlayback).mockImplementation(async (_source, options) =>
+      image(options, 60_000_000),
+    );
+    try {
+      await mount();
+      await ready();
+      await click(button(t('playbackPlay')));
+      const stage = document.querySelector<HTMLElement>('.recording-video');
+      if (!stage) {
+        throw new Error('Missing video stage');
+      }
+      await act(async () => vi.advanceTimersByTimeAsync(3001));
+      expect(stage.dataset.controlsVisible).toBe('false');
+      await act(async () =>
+        stage.dispatchEvent(new PointerEvent('pointermove', { bubbles: true })),
+      );
+      expect(stage.dataset.controlsVisible).toBe('true');
+      await click(button(t('playbackPause')));
+      await act(async () => vi.advanceTimersByTimeAsync(4000));
+      expect(stage.dataset.controlsVisible).toBe('true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses native fullscreen state and cleans it up when the player is retired', async () => {
+    let full: Element | null = null;
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => full });
+    const request = vi.spyOn(Element.prototype, 'requestFullscreen').mockImplementation(function (
+      this: Element,
+    ) {
+      full = this;
+      document.dispatchEvent(new Event('fullscreenchange'));
+      return Promise.resolve();
+    });
+    const exit = vi.spyOn(document, 'exitFullscreen').mockImplementation(() => {
+      full = null;
+      document.dispatchEvent(new Event('fullscreenchange'));
+      return Promise.resolve();
+    });
+    try {
+      await mount();
+      await ready();
+      await click(button(t('playbackFullscreen')));
+      expect(request).toHaveBeenCalledOnce();
+      expect(full).toBe(document.querySelector('.recording-video'));
+      expect(button(t('playbackExitFullscreen'))).toBeDefined();
+      await click(button(t('playbackDiscard')));
+      expect(exit).toHaveBeenCalledOnce();
+      expect(full).toBeNull();
+    } finally {
+      Reflect.deleteProperty(document, 'fullscreenElement');
+    }
+  });
+
+  it('keeps keyboard-focused controls and active scrubbing visible, and clears a cancelled preview', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    vi.mocked(prepareRecordingPlayback).mockImplementation(async (_source, options) =>
+      image(options, 60_000_000),
+    );
+    vi.spyOn(Element.prototype, 'setPointerCapture').mockImplementation(() => {});
+    try {
+      await mount();
+      await ready();
+      await click(button(t('playbackPlay')));
+      const stage = document.querySelector<HTMLElement>('.recording-video');
+      const timeline = document.querySelector<HTMLInputElement>('.recording-timeline');
+      if (!stage || !timeline) {
+        throw new Error('Missing video controls');
+      }
+      await act(async () => {
+        stage.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+        timeline.focus();
+      });
+      await act(async () =>
+        stage.dispatchEvent(new PointerEvent('pointermove', { bubbles: true })),
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(3001));
+      expect(stage.dataset.controlsVisible).toBe('true');
+      await act(async () =>
+        timeline.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })),
+      );
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      await act(async () => {
+        setter?.call(timeline, '42000000');
+        timeline.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(timeline.value).toBe('42000000');
+      await act(async () => vi.advanceTimersByTimeAsync(3001));
+      expect(stage.dataset.controlsVisible).toBe('true');
+      await act(async () =>
+        timeline.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true })),
+      );
+      expect(Number(timeline.value)).toBeLessThan(7_000_000);
+      await act(async () => vi.advanceTimersByTimeAsync(3001));
+      expect(stage.dataset.controlsVisible).toBe('false');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports denied fullscreen instead of pretending to be in fullscreen', async () => {
+    vi.spyOn(Element.prototype, 'requestFullscreen').mockRejectedValue(new Error('denied'));
+    await mount();
+    await ready();
+    await click(button(t('playbackFullscreen')));
+    expect(document.body.textContent).toContain(t('playbackFullscreenFailed'));
+    expect(button(t('playbackFullscreen'))).toBeDefined();
+    expect(document.fullscreenElement).toBeNull();
+  });
+
+  it('exits a fullscreen request that completes after its player has been closed', async () => {
+    let full: Element | null = null;
+    let resolve!: () => void;
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => full });
+    vi.spyOn(Element.prototype, 'requestFullscreen').mockImplementation(function (this: Element) {
+      return new Promise<void>((done) => {
+        resolve = () => {
+          full = this;
+          done();
+        };
+      });
+    });
+    const exit = vi.spyOn(document, 'exitFullscreen').mockImplementation(() => {
+      full = null;
+      return Promise.resolve();
+    });
+    try {
+      await mount();
+      await ready();
+      await click(button(t('playbackFullscreen')));
+      await click(button(t('playbackDiscard')));
+      await act(async () => resolve());
+      expect(full).toBeNull();
+      expect(exit).toHaveBeenCalledOnce();
+      expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+    } finally {
+      Reflect.deleteProperty(document, 'fullscreenElement');
+    }
+  });
+
+  it('binds media keys to explicit active-player ownership and releases them on tab deactivation', async () => {
+    const handlers = new Map<MediaSessionAction, MediaSessionActionHandler | null>();
+    const session = {
+      metadata: null,
+      playbackState: 'none',
+      setPositionState: vi.fn(),
+      setActionHandler: (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+        handlers.set(action, handler);
+      },
+    };
+    Object.defineProperty(navigator, 'mediaSession', { configurable: true, value: session });
+    try {
+      const first = await mount();
+      await ready();
+      expect(handlers.size).toBe(0);
+      const firstStage = document.querySelector<HTMLElement>('.recording-video');
+      if (!firstStage) {
+        throw new Error('Missing first video');
+      }
+      await act(async () =>
+        firstStage.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })),
+      );
+      const previous = handlers.get('play');
+      await mount();
+      const secondStage = document.querySelectorAll<HTMLElement>('.recording-video')[1];
+      if (!secondStage) {
+        throw new Error('Missing second video');
+      }
+      await act(async () =>
+        secondStage.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })),
+      );
+      await act(async () => previous?.({ action: 'play' }));
+      expect(RecordingPlayback.prototype.play).not.toHaveBeenCalled();
+      await act(async () =>
+        firstStage.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })),
+      );
+      await act(async () => handlers.get('play')?.({ action: 'play' }));
+      expect(RecordingPlayback.prototype.play).toHaveBeenCalledOnce();
+      const owned = handlers.get('play');
+      await first.render({ active: false });
+      expect(handlers.get('play')).toBeNull();
+      await act(async () => owned?.({ action: 'play' }));
+      expect(RecordingPlayback.prototype.play).toHaveBeenCalledOnce();
+      expect(prepareRecordingPlayback).toHaveBeenCalledTimes(2);
+    } finally {
+      Reflect.deleteProperty(navigator, 'mediaSession');
+    }
+  });
+
   it('prepares once and never autoplays under StrictMode effect replay', async () => {
     await mount(true);
     await ready();

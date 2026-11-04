@@ -93,6 +93,12 @@ Verification, decryption, export preparation and playback run locally. Private
 decryption keys and decrypted content are not uploaded or persisted by the app.
 Explicitly saved files remain on the user's machine after logout.
 
+Seeking replays the verified local output prefix, including recorded resizes;
+display scaling and fullscreen do not resize a live terminal or alter recorded
+dimensions. Player shortcuts are focus-scoped. Optional OS media controls bind
+only after interaction with an active player and release on deactivation or
+close. They expose a generic player title, not recording or account metadata.
+
 Obtain expected producer IDs and recipient fingerprints independently. A server's
 own metadata is not a trust anchor. Valid signatures do not prove that newer
 records were not withheld. The application code also comes from that server:

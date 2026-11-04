@@ -96,6 +96,21 @@ a management flow and `allowArtifactTransfer: true`:
    preparation run locally; playback does not start automatically. Saving an
    export is a separate action.
 
+The player keeps a 16:9 viewing area and scales the recorded terminal
+proportionally, without changing its recorded rows or columns. Its bottom
+controls provide play/pause, seeking, speed and native fullscreen; fullscreen
+uses the whole screen. Seeking reconstructs earlier output and resize events
+locally and preserves whether playback was running or paused. Long recordings
+may take a moment to reconstruct.
+
+Controls fade after three seconds of inactivity while playing and reappear on
+pointer movement or keyboard interaction. They stay visible while paused,
+scrubbing or using keyboard-focused controls. With player focus, **Space** or
+**K** toggles playback, **Left/Right** seeks five seconds, **J/L** ten seconds,
+and **F** toggles fullscreen. **Escape** exits fullscreen. Hardware media keys
+are best-effort browser support, without a hidden audio/video source. These
+controls neither reconnect to the server nor send terminal input.
+
 Older recordings may lack the requesting user; encrypted identity details are
 not exposed by the catalog. Missing values are not inferred from current
 accounts. See [encrypted evidence](evidence.md) for trust setup and

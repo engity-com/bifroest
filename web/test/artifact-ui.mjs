@@ -551,6 +551,46 @@ try {
       false,
       'preparation must not auto-play',
     );
+    const video = playback.getByRole('application', { name: 'Recording player', exact: true });
+    const normalBox = await video.boundingBox();
+    assert(normalBox !== null);
+    assert(
+      Math.abs(normalBox.width - (normalBox.height * 16) / 9) < 2,
+      'the recording keeps a 16:9 video box',
+    );
+    await video.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
+    await page.waitForFunction(() =>
+      document.fullscreenElement?.classList.contains('recording-video'),
+    );
+    const fullscreen = await page.evaluate(() => {
+      const element = document.fullscreenElement;
+      const box = element.getBoundingClientRect();
+      return {
+        width: box.width,
+        height: box.height,
+        viewportWidth: innerWidth,
+        viewportHeight: innerHeight,
+        controls: element.querySelector('.recording-controls') !== null,
+        timeline: element.querySelector('input[type="range"]') !== null,
+      };
+    });
+    assert(
+      Math.abs(fullscreen.width - fullscreen.viewportWidth) < 2 &&
+        Math.abs(fullscreen.height - fullscreen.viewportHeight) < 2,
+    );
+    assert.equal(
+      fullscreen.controls && fullscreen.timeline,
+      true,
+      'native fullscreen keeps the same local controls',
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.fullscreenElement === null);
+    assert.equal(
+      (await playbackPreparations()).length,
+      1,
+      'fullscreen never re-prepares or re-verifies another source',
+    );
+    assert.equal(apiRequests.length, beforePlayback, 'fullscreen is purely local');
     await playback.getByRole('button', { name: 'Play', exact: true }).click();
     await playback.locator('[data-playback-phase="ended"]').waitFor();
     assert.equal(
@@ -594,8 +634,7 @@ try {
       (await playback.locator('.xterm-accessibility-tree').textContent()).includes('PLAYBACK_ONLY'),
       false,
     );
-    await playback.getByRole('combobox', { name: 'Speed', exact: true }).click();
-    await page.getByRole('option', { name: '2', exact: true }).click();
+    await playback.getByRole('combobox', { name: 'Speed', exact: true }).selectOption('2');
     await playback.getByRole('button', { name: 'Play', exact: true }).click();
     await playback.locator('[data-playback-phase="ended"]').waitFor();
     await playback.getByRole('button', { name: 'Start over', exact: true }).click();

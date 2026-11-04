@@ -1,16 +1,21 @@
 import type { IDisposable, Terminal as Xterm } from '@xterm/xterm';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Button, Select, Title, useComputedColorScheme } from '../ui/material';
+import { type KeyboardEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Alert, Button, Title, useComputedColorScheme } from '../ui/material';
 import '@xterm/xterm/css/xterm.css';
 import { noncedDocument } from '../terminal/document';
 import { installTerminalRenderer } from '../terminal/renderer';
 import { reportUiError } from '../ui/error-report';
 import { t } from '../ui/messages';
 import { EvidenceError } from './evidence-protocol';
+import { PlaybackControls } from './PlaybackControls';
 import type { PlaybackState } from './playback';
 import { RecordingPlayback } from './playback';
+import { observePlaybackLayout } from './playback-layout';
+import { claimPlaybackMediaSession } from './playback-media-session';
 import type { PlaybackMetadata, PlaybackOptions } from './playback-protocol';
+import { playbackClock, playbackSpeeds } from './playback-view';
 import { prepareRecordingPlayback } from './prepare-playback';
+import './recording-player.css';
 
 export function RecordingPlayer({
   source,
@@ -26,6 +31,8 @@ export function RecordingPlayer({
   active?: boolean;
 }) {
   const container = useRef<HTMLElement | null>(null);
+  const video = useRef<HTMLDivElement | null>(null);
+  const toolbar = useRef<HTMLDivElement | null>(null);
   const preparing = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const emulator = useRef<Xterm | null>(null);
@@ -35,6 +42,22 @@ export function RecordingPlayer({
   const [failure, setFailure] = useState<'limit' | 'verification' | 'unavailable' | null>(null);
   const [metadata, setMetadata] = useState<PlaybackMetadata | null>(null);
   const [state, setState] = useState<PlaybackState | null>(null);
+  const stateNow = useRef<PlaybackState | null>(null);
+  const disabledNow = useRef(disabled);
+  disabledNow.current = disabled;
+  const [preview, setPreview] = useState<number | null>(null);
+  const seekingIntent = useRef(0);
+  const playbackIntent = useRef(0);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const keyboard = useRef(false);
+  const scrubbing = useRef(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenFailed, setFullscreenFailed] = useState(false);
+  const [mediaClaimed, setMediaClaimed] = useState(0);
+  const helpID = useId();
+  const fullscreenIntent = useRef(0);
+  const media = useRef<ReturnType<typeof claimPlaybackMediaSession>>(null);
   const palette = useComputedColorScheme('light');
   const currentPalette = useRef(palette);
   currentPalette.current = palette;
@@ -45,8 +68,262 @@ export function RecordingPlayer({
   automaticAllowed.current = autoPrepare && active && !disabled;
   const { id, producer, allowUntrusted } = expected;
 
+  const reveal = useCallback((byKeyboard = keyboard.current) => {
+    keyboard.current = byKeyboard;
+    setControlsVisible(true);
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => {
+      const focused = document.activeElement;
+      const focusedControl = focused !== null && toolbar.current?.contains(focused);
+      if (
+        stateNow.current?.phase === 'playing' &&
+        !scrubbing.current &&
+        !(focusedControl && (keyboard.current || focused instanceof HTMLSelectElement))
+      ) {
+        setControlsVisible(false);
+      }
+    }, 3000);
+  }, []);
+
+  const canOperate = () => activeNow.current && !disabledNow.current && player.current !== null;
+  const claimMedia = () => {
+    if (canOperate() && document.visibilityState !== 'hidden') {
+      // A fresh explicit interaction can reclaim ownership from another player.
+      setMediaClaimed((claim) => claim + 1);
+    }
+  };
+  const play = () => {
+    const selected = player.current;
+    if (!canOperate() || selected === null) {
+      return;
+    }
+    claimMedia();
+    const intent = ++playbackIntent.current;
+    if (stateNow.current?.phase === 'ended') {
+      void selected.restart().then(() => {
+        if (player.current === selected && canOperate() && intent === playbackIntent.current) {
+          selected.play();
+        }
+      });
+    } else {
+      selected.play();
+    }
+    reveal(keyboard.current);
+  };
+  const pause = () => {
+    if (canOperate()) {
+      claimMedia();
+      playbackIntent.current++;
+      player.current?.pause();
+      reveal(keyboard.current);
+    }
+  };
+  const toggle = () => {
+    if (stateNow.current?.phase === 'playing') {
+      pause();
+    } else {
+      play();
+    }
+  };
+  const seek = (positionUs: number) => {
+    const selected = player.current;
+    if (!canOperate() || selected === null || !Number.isFinite(positionUs)) {
+      return;
+    }
+    const target = Math.max(0, Math.min(metadata?.durationUs ?? 0, positionUs));
+    const intent = ++seekingIntent.current;
+    playbackIntent.current++;
+    claimMedia();
+    setPreview(target);
+    reveal(keyboard.current);
+    void selected.seek(target).then(() => {
+      if (player.current === selected && intent === seekingIntent.current) {
+        setPreview(null);
+      }
+    });
+  };
+  const changeSpeed = (value: number) => {
+    if (canOperate()) {
+      player.current?.speed(value);
+      reveal(keyboard.current);
+    }
+  };
+  const restart = () => {
+    if (canOperate()) {
+      claimMedia();
+      playbackIntent.current++;
+      reveal(keyboard.current);
+      void player.current?.restart();
+    }
+  };
+  const actions = useRef({ play, pause, seek, restart });
+  actions.current = { play, pause, seek, restart };
+
+  const toggleFullscreen = () => {
+    const box = video.current;
+    if (box === null) {
+      return;
+    }
+    setFullscreenFailed(false);
+    reveal(keyboard.current);
+    const entering = document.fullscreenElement !== box;
+    if (entering && typeof box.requestFullscreen !== 'function') {
+      setFullscreenFailed(true);
+      return;
+    }
+    const intent = ++fullscreenIntent.current;
+    const sourceGeneration = generation.current;
+    const operation = entering ? box.requestFullscreen() : document.exitFullscreen();
+    void operation
+      .then(() => {
+        if (
+          entering &&
+          document.fullscreenElement === box &&
+          (intent !== fullscreenIntent.current ||
+            sourceGeneration !== generation.current ||
+            !activeNow.current)
+        ) {
+          return document.exitFullscreen();
+        }
+      })
+      .catch(() => {
+        if (
+          intent === fullscreenIntent.current &&
+          sourceGeneration === generation.current &&
+          video.current === box
+        ) {
+          setFullscreenFailed(true);
+        }
+      });
+  };
+  useEffect(() => {
+    const changed = () => {
+      setFullscreen(video.current !== null && document.fullscreenElement === video.current);
+      reveal();
+    };
+    document.addEventListener('fullscreenchange', changed);
+    return () => document.removeEventListener('fullscreenchange', changed);
+  }, [reveal]);
+  useEffect(() => () => clearTimeout(hideTimer.current), []);
+  useEffect(() => {
+    if (state?.phase !== 'playing') {
+      setControlsVisible(true);
+    } else {
+      reveal(keyboard.current);
+    }
+  }, [state?.phase, reveal]);
+  useEffect(() => {
+    if (!active) {
+      playbackIntent.current++;
+      player.current?.pause();
+      setMediaClaimed(0);
+      fullscreenIntent.current++;
+      if (video.current !== null && document.fullscreenElement === video.current) {
+        void document.exitFullscreen().catch(() => {});
+      }
+    }
+  }, [active]);
+  useEffect(() => {
+    if (!mediaClaimed || !active || disabled || metadata === null) {
+      return;
+    }
+    const claimed = claimPlaybackMediaSession(
+      {
+        play: () => actions.current.play(),
+        pause: () => actions.current.pause(),
+        stop: () => actions.current.restart(),
+        seek: (position) => actions.current.seek(position),
+        position: () => stateNow.current?.positionUs ?? 0,
+      },
+      t('playbackTitle'),
+    );
+    media.current = claimed;
+    if (stateNow.current) {
+      claimed?.update(stateNow.current, metadata.durationUs);
+    }
+    return () => {
+      claimed?.dispose();
+      if (media.current === claimed) {
+        media.current = null;
+      }
+    };
+  }, [mediaClaimed, active, disabled, metadata]);
+  useEffect(() => {
+    if (state && metadata) {
+      media.current?.update(state, metadata.durationUs);
+    }
+  }, [state, metadata]);
+
+  const handleKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    // Real browser chrome normally consumes Escape. Some embedded/headless
+    // hosts deliver it to the page instead; exit the same native fullscreen.
+    if (
+      event.key === 'Escape' &&
+      video.current !== null &&
+      document.fullscreenElement === video.current
+    ) {
+      event.preventDefault();
+      toggleFullscreen();
+      return;
+    }
+    if (!canOperate()) {
+      return;
+    }
+    reveal(true);
+    claimMedia();
+    const target = event.target as HTMLElement;
+    const key = event.key.toLowerCase();
+    if (
+      target.closest('input,select,textarea,[contenteditable="true"]') &&
+      !target.closest('.playback-surface') &&
+      key !== 'mediaplaypause'
+    ) {
+      return;
+    }
+    if (target.closest('button') && (key === ' ' || key === 'enter')) {
+      return;
+    }
+    const at = preview ?? stateNow.current?.positionUs ?? 0;
+    if (key === ' ' || key === 'k' || key === 'mediaplaypause') {
+      event.preventDefault();
+      if (!event.repeat) {
+        toggle();
+      }
+    } else if (key === 'arrowleft' || key === 'j') {
+      event.preventDefault();
+      seek(at - (key === 'j' ? 10 : 5) * 1_000_000);
+    } else if (key === 'arrowright' || key === 'l') {
+      event.preventDefault();
+      seek(at + (key === 'l' ? 10 : 5) * 1_000_000);
+    } else if (key === 'home' || key === '0') {
+      event.preventDefault();
+      seek(0);
+    } else if (key === 'end') {
+      event.preventDefault();
+      seek(metadata?.durationUs ?? 0);
+    } else if (/^[1-9]$/u.test(key)) {
+      event.preventDefault();
+      seek(((metadata?.durationUs ?? 0) * Number(key)) / 10);
+    } else if (key === 'f') {
+      event.preventDefault();
+      toggleFullscreen();
+    } else if (key === '<' || key === '>') {
+      event.preventDefault();
+      const speed = stateNow.current?.speed ?? 1;
+      const options = key === '>' ? playbackSpeeds : [...playbackSpeeds].reverse();
+      const next = options.find((value) => (key === '>' ? value > speed : value < speed));
+      if (next !== undefined) {
+        changeSpeed(next);
+      }
+    }
+  };
+
   function retire() {
     generation.current++;
+    playbackIntent.current++;
     preparing.current?.abort();
     preparing.current = null;
     player.current?.dispose();
@@ -61,6 +338,17 @@ export function RecordingPlayer({
     setMetadata(null);
     setState(null);
     setFailure(null);
+    stateNow.current = null;
+    seekingIntent.current++;
+    fullscreenIntent.current++;
+    setPreview(null);
+    setMediaClaimed(0);
+    setControlsVisible(true);
+    scrubbing.current = false;
+    clearTimeout(hideTimer.current);
+    if (video.current !== null && document.fullscreenElement === video.current) {
+      void document.exitFullscreen().catch(() => {});
+    }
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: Any immutable source/expectation or availability change must retire local renderer data and worker ownership.
   useEffect(() => {
@@ -77,6 +365,9 @@ export function RecordingPlayer({
       subscriptions.current = [];
       emulator.current?.dispose();
       emulator.current = null;
+      if (video.current !== null && document.fullscreenElement === video.current) {
+        void document.exitFullscreen().catch(() => {});
+      }
     };
   }, [source, expected.id, expected.producer, expected.allowUntrusted, disabled]);
   // A verified immutable image represents one explicit open intent. Returning
@@ -145,6 +436,9 @@ export function RecordingPlayer({
       terminal.textarea?.setAttribute('aria-label', t('playbackViewport'));
       subscriptions.current.push(installTerminalRenderer(terminal, container.current));
       subscriptions.current.push(terminal.parser.registerOscHandler(52, () => true));
+      if (video.current) {
+        subscriptions.current.push(observePlaybackLayout(video.current, container.current));
+      }
       const info = image.metadata;
       const recording = new RecordingPlayback(
         image,
@@ -161,6 +455,7 @@ export function RecordingPlayer({
             if (next.phase === 'failed') {
               reportUiError('playback', undefined, 'render-failed');
             }
+            stateNow.current = next;
             setState(next);
           }
         },
@@ -227,107 +522,148 @@ export function RecordingPlayer({
           )}
         </Alert>
       )}
-      <div className="actions">
-        {metadata === null && (!autoPrepare || !busy) && (
-          <Button
-            disabled={disabled || busy}
-            onClick={() => {
-              automaticAttempt.current = true;
-              void prepare();
-            }}
-          >
-            {t('playbackPrepare')}
-          </Button>
-        )}
-        {(busy || metadata !== null) && (
-          <Button variant="default" onClick={retire}>
-            {t('playbackDiscard')}
-          </Button>
-        )}
-      </div>
-      {busy && <p role="status">{t('playbackPreparing')}</p>}
-      {metadata !== null && (
-        <>
-          <p>
-            {t(
-              metadata.trust === 'pinned' ? 'recordingIdentityPinned' : 'recordingIdentityUnknown',
+      <div
+        ref={video}
+        className={`recording-video${palette === 'dark' ? ' recording-video--dark' : ''}`}
+        role="application"
+        aria-label={t('playbackVideo')}
+        aria-describedby={helpID}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: Focus enables media shortcuts; native controls remain separately keyboard accessible.
+        tabIndex={0}
+        data-controls-visible={controlsVisible}
+        data-seeking={state?.phase === 'seeking' || state?.phase === 'resetting'}
+        onPointerMove={() => reveal()}
+        onPointerEnter={() => reveal()}
+        onPointerDown={(event) => {
+          reveal(false);
+          claimMedia();
+          if (!(event.target as HTMLElement).closest('.recording-controls')) {
+            video.current?.focus({ preventScroll: true });
+          }
+        }}
+        onKeyDownCapture={handleKey}
+        onKeyDown={(event) => {
+          if (event.defaultPrevented) {
+            event.stopPropagation();
+          }
+        }}
+        onFocusCapture={(event) => {
+          reveal(keyboard.current || (event.target as Element).matches(':focus-visible'));
+          claimMedia();
+        }}
+        onBlurCapture={() => reveal(keyboard.current)}
+        onClick={(event) => {
+          if (
+            !(event.target as HTMLElement).closest('.recording-controls,button') &&
+            !window.getSelection()?.toString()
+          ) {
+            toggle();
+          }
+        }}
+      >
+        <section ref={container} className="playback-surface" aria-label={t('playbackViewport')} />
+        {metadata === null && (
+          <div className="recording-overlay">
+            {busy ? (
+              <p role="status">{t('playbackPreparing')}</p>
+            ) : (
+              <Button
+                disabled={disabled}
+                onClick={() => {
+                  automaticAttempt.current = true;
+                  void prepare();
+                }}
+              >
+                {t('playbackPrepare')}
+              </Button>
             )}
-          </p>
-          <p>
-            {t('playbackRecordedStatus')}:{' '}
-            {t(
-              metadata.status === 'completed'
-                ? 'artifactCatalogCompleted'
-                : metadata.status === 'failed'
-                  ? 'artifactCatalogFailedStatus'
-                  : 'artifactCatalogIncomplete',
-            )}
-            {metadata.exitStatus === null ? '' : ` / ${metadata.exitStatus}`}
-          </p>
-          <div className="actions">
-            <Button
-              disabled={disabled || !['paused', 'ended'].includes(state?.phase ?? '')}
-              onClick={() => {
-                const selected = player.current;
-                if (state?.phase === 'ended' && selected) {
-                  void selected.restart().then(() => selected.play());
-                } else {
-                  selected?.play();
-                }
-              }}
-            >
-              {t(state?.phase === 'ended' ? 'playbackReplay' : 'playbackPlay')}
-            </Button>
-            <Button
-              disabled={disabled || state?.phase !== 'playing'}
-              onClick={() => player.current?.pause()}
-            >
-              {t('playbackPause')}
-            </Button>
-            <Button
-              disabled={disabled || state?.phase === 'resetting' || state?.phase === 'failed'}
-              onClick={() => {
-                void player.current?.restart();
-              }}
-            >
-              {t('playbackRestart')}
-            </Button>
-            <Select
-              label={t('playbackSpeed')}
-              data={['0.25', '0.5', '1', '2', '4', '8']}
-              value={String(state?.speed ?? 1)}
-              disabled={disabled || state?.phase === 'resetting' || state?.phase === 'failed'}
-              onChange={(value) => player.current?.speed(Number(value))}
-            />
           </div>
-          <p role="status" data-playback-phase={state?.phase ?? 'paused'}>
-            {t(
-              state?.phase === 'playing'
-                ? 'playbackPlaying'
-                : state?.phase === 'ended'
-                  ? 'playbackEnded'
-                  : state?.phase === 'failed'
-                    ? 'playbackRenderFailed'
-                    : state?.phase === 'resetting'
-                      ? 'playbackResetting'
-                      : 'playbackPaused',
-            )}{' '}
-            (
-            {new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(
-              (state?.positionUs ?? 0) / 1_000_000,
-            )}{' '}
-            /{' '}
-            {new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(
-              metadata.durationUs / 1_000_000,
-            )}{' '}
-            {t('playbackSeconds')})
-          </p>
-        </>
+        )}
+        {(state?.phase === 'seeking' || state?.phase === 'resetting') && (
+          <div className="recording-overlay" role="status">
+            {t('playbackSeeking')}
+          </div>
+        )}
+        {state?.phase === 'failed' && (
+          <div className="recording-overlay" role="alert">
+            {t('playbackRenderFailed')}
+          </div>
+        )}
+        <div ref={toolbar}>
+          {(busy || metadata !== null) && (
+            <PlaybackControls
+              state={state}
+              durationUs={metadata?.durationUs ?? 0}
+              preview={preview}
+              disabled={disabled || busy || metadata === null || state?.phase === 'failed'}
+              fullscreen={fullscreen}
+              canFullscreen={typeof document.documentElement.requestFullscreen === 'function'}
+              onToggle={toggle}
+              onRestart={restart}
+              onSeek={seek}
+              onPreview={setPreview}
+              onScrub={(value) => {
+                scrubbing.current = value;
+                reveal();
+              }}
+              onSpeed={changeSpeed}
+              onFullscreen={toggleFullscreen}
+              onClose={retire}
+            />
+          )}
+        </div>
+      </div>
+      {fullscreenFailed && (
+        <Alert role="status" color="yellow">
+          {t('playbackFullscreenFailed')}
+        </Alert>
       )}
-      <section ref={container} className="playback-surface" aria-label={t('playbackViewport')} />
+      {metadata && (
+        <p
+          className="recording-player-status"
+          role="status"
+          data-playback-phase={state?.phase ?? 'paused'}
+        >
+          {t(
+            state?.phase === 'playing'
+              ? 'playbackPlaying'
+              : state?.phase === 'ended'
+                ? 'playbackEnded'
+                : state?.phase === 'failed'
+                  ? 'playbackRenderFailed'
+                  : state?.phase === 'seeking' || state?.phase === 'resetting'
+                    ? 'playbackSeeking'
+                    : 'playbackPaused',
+          )}{' '}
+          ({playbackClock(state?.positionUs ?? 0)} / {playbackClock(metadata.durationUs)})
+        </p>
+      )}
       <details className="context-help">
         <summary>{t('playbackDetails')}</summary>
         <p>{t('playbackLocalOnly')}</p>
+        <p id={helpID}>{t('playbackKeyboardHelp')}</p>
+        {metadata && (
+          <>
+            <p>
+              {t(
+                metadata.trust === 'pinned'
+                  ? 'recordingIdentityPinned'
+                  : 'recordingIdentityUnknown',
+              )}
+            </p>
+            <p>
+              {t('playbackRecordedStatus')}:{' '}
+              {t(
+                metadata.status === 'completed'
+                  ? 'artifactCatalogCompleted'
+                  : metadata.status === 'failed'
+                    ? 'artifactCatalogFailedStatus'
+                    : 'artifactCatalogIncomplete',
+              )}
+              {metadata.exitStatus === null ? '' : ` / ${metadata.exitStatus}`}
+            </p>
+          </>
+        )}
       </details>
     </section>
   );
