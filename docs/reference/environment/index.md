@@ -28,6 +28,13 @@ They share session quotas, authorization restrictions, audit logging and recordi
 with SSH. Each new terminal starts a fresh execution, not a reattachment.
 Agent forwarding, SFTP and other named subsystems remain SSH-only.
 
+Configured environment banners are shell text: with a PTY, bare LF line breaks
+are sent as CRLF so SSH and browser terminals both start the next line at column
+zero. Existing CRLF, standalone carriage returns and other bytes are preserved.
+Without a PTY the banner stays byte-exact. This does not enable a global terminal
+conversion: backend process output, exec/subsystem streams and existing
+recordings are not rewritten.
+
 Management uses a separate structured browser view, not a host shell or CLI
 subprocess. See [Browser access](../../guides/browser-access.md) for operation
 and the [security limits](../connection/http/security.md) for restrictions.

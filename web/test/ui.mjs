@@ -309,6 +309,33 @@ try {
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'dummy-banner') {
+      await login(page, false);
+      const expected = ['DUMMY_BANNER_ONE', 'DUMMY_BANNER_TWO', 'DUMMY_BANNER_THREE'];
+      await page.waitForFunction((expected) => {
+        const text =
+          document.querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
+            ?.textContent ?? '';
+        return expected.every((value) => text.includes(value));
+      }, expected);
+      const lines = await page
+        .locator('[data-terminal-active="true"] .xterm-accessibility-tree > div')
+        .evaluateAll((nodes) =>
+          nodes
+            .map((node) => (node.textContent ?? '').replaceAll('\u00a0', ' ').trimEnd())
+            .filter((line) => line.trim().length),
+        );
+      assert.deepEqual(
+        lines,
+        expected,
+        'each real dummy banner line starts at column zero; output is not globally converted by xterm',
+      );
+      assert.equal(await page.locator('[data-terminal-phase="exited"]').count(), 1);
+      assert.deepEqual(errors, []);
+      assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
+      await assertUiPreferences(page);
+      return;
+    }
     if (process.argv[3] === 'stopped-auth-route') {
       await exerciseStoppedAuthRoute(page);
       assert.deepEqual(errors, []);

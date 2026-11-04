@@ -242,6 +242,9 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		})
 		protocolHandler = svc.web
 	}
+	if mode == "dummy-banner" {
+		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
+	}
 	if mode == "management" || mode == "management-actions" || workspaceActionMode || forcedReadMode || forcedActionMode || mode == "workspace" {
 		if mode != "workspace" {
 			svc.environments = svc.environments.(*executionTestRepository).CloseableRepository

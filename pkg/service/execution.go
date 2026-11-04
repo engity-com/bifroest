@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	goerrors "errors"
-	"io"
 	"math"
 	"time"
 
@@ -120,7 +119,7 @@ func (this *service) execute(request *executionRequest) (exitCode int, rErr erro
 		}
 		if banner != nil {
 			defer common.IgnoreCloseError(banner)
-			if _, err := io.Copy(request.source.Terminal(), banner); err != nil {
+			if _, err := copyShellBanner(request.source.Terminal(), banner, request.pty.hasPty); err != nil {
 				return fail(errors.System.Newf("cannot print banner: %w", err))
 			}
 		}
