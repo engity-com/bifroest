@@ -18,6 +18,9 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 	if err != nil {
 		return nil, err
 	}
+	if this.conf == nil {
+		return nil, ErrSessionResumeUnavailable
+	}
 	// Ordinary lookup/diagnostic restoration cannot substitute for fresh native
 	// policy. PAM account-only resumption additionally requires explicit opt-in.
 	if key == nil {
@@ -45,6 +48,10 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 		return nil, err
 	}
 	auth := stored.(*local)
+	remoteName, err := this.resumeRemoteName(req, sess, auth.user)
+	if err != nil {
+		return nil, err
+	}
 	raw, err := sess.AuthorizationToken(req.Context())
 	if err != nil {
 		return nil, err
@@ -55,7 +62,7 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 	}
 	auth.remote = req.Connection().Remote()
 	setAuthorizationContext(req, auth)
-	policy, accepted, _, err := this.authorizedKeyPolicy(resumePublicKeyRequest{req, key}, auth.user)
+	policy, accepted, _, err := this.authorizedKeyPolicy(resumePublicKeyRequest{req, key}, auth.user, remoteName)
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +79,31 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 
 type passwordResumeCheck func(string, user.Id, user.PasswordAccountPolicy) (*user.User, sys.EnvVars, error)
 
+func (this *LocalAuthorizer) resumeRemoteName(req Request, sess session.Session, expected *user.User) (string, error) {
+	name, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return "", err
+	}
+	custom := hasRemoteNameMapping(this.conf.RemoteName)
+	if !custom && (name == "" || name == expected.Name) {
+		return name, nil
+	}
+	if err := checkMappedResumeRemote(req, sess, this.conf.RemoteName); err != nil {
+		return "", err
+	}
+	current, err := this.userRepository.LookupByName(req.Context(), name)
+	if errors.Is(err, user.ErrNoSuchUser) {
+		return "", ErrSessionResumeDenied
+	}
+	if err != nil {
+		return "", err
+	}
+	if current == nil || current.Name != expected.Name || current.Uid != expected.Uid {
+		return "", ErrSessionResumeDenied
+	}
+	return name, nil
+}
+
 func (this *LocalAuthorizer) resumePasswordAccount(req SessionResumeRequest, sess session.Session, nativeCheck passwordResumeCheck) (Authorization, error) {
 	raw, err := sess.AuthorizationToken(req.Context())
 	if err != nil {
@@ -84,6 +116,9 @@ func (this *LocalAuthorizer) resumePasswordAccount(req SessionResumeRequest, ses
 	}
 	if json.Unmarshal(raw, &token) != nil || token.User.Name == "" || token.User.Uid == nil {
 		return nil, ErrSessionResumeDenied
+	}
+	if _, err := this.resumeRemoteName(req, sess, &user.User{Name: token.User.Name, Uid: *token.User.Uid}); err != nil {
+		return nil, err
 	}
 	check := func(allowEmpty bool) (*user.User, sys.EnvVars, error) {
 		current, env, err := nativeCheck(token.User.Name, *token.User.Uid, user.PasswordAccountPolicy{AllowEmpty: allowEmpty})

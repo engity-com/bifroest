@@ -12,6 +12,12 @@ Authorizes a user request via credentials stored in [htpasswd format](#format).
 <<property("type", "Authorization Type", default="htpasswd", required=True)>>
 Has to be set to `htpasswd` to enable the htpasswd authorization.
 
+<<property("remoteName", "string", template_context="../context/authorization-request.md", default="{{.remote.user}}")>>
+Resolve the account name before checking the htpasswd file or inline entries.
+Htpasswd matching remains case-sensitive. The original requesting name is not
+changed. See [login-name mapping](login-name-mapping.md) for examples and scope
+boundaries. This does not add SSH-certificate authentication to htpasswd.
+
 <<property("file", "File Path", "../data-type.md#file-path", default="<os specific>")>>
 A file where each line contains an entry in [htpasswd format](#format).
 

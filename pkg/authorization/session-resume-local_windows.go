@@ -24,6 +24,9 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 	if err != nil {
 		return nil, err
 	}
+	if this.conf == nil {
+		return nil, ErrSessionResumeUnavailable
+	}
 	if key == nil {
 		if this.conf == nil {
 			return nil, ErrSessionResumeUnavailable
@@ -37,9 +40,13 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 		return nil, err
 	}
 	auth := stored.(*local)
+	remoteName, err := this.resumeRemoteName(req, sess, auth.user)
+	if err != nil {
+		return nil, err
+	}
 	auth.remote = req.Connection().Remote()
 	setAuthorizationContext(req, auth)
-	policy, accepted, err := evaluatePublicKeyCredential(key, req.Connection().Remote().User(), req.Connection().Remote().Host(), this.trustedUserCAs, func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
+	policy, accepted, err := evaluatePublicKeyCredential(key, remoteName, req.Connection().Remote().Host(), this.trustedUserCAs, func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
 		files, err := common.MapSliceErr(this.conf.AuthorizedKeys, func(tmpl template.String) (string, error) {
 			return tmpl.Render(&localUserRequest{Request: req, user: auth.user})
 		})
@@ -64,6 +71,28 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 
 type windowsPasswordAccountCheck func(context.Context, windowslocal.Account, windowslocal.PasswordAccountPolicy) (windowslocal.PasswordAccountView, error)
 
+func (this *LocalAuthorizer) resumeRemoteName(req Request, sess session.Session, expected windowslocal.Account) (string, error) {
+	name, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return "", err
+	}
+	custom := hasRemoteNameMapping(this.conf.RemoteName)
+	if !custom && (name == "" || strings.EqualFold(name, expected.Name)) {
+		return name, nil
+	}
+	if err := checkMappedResumeRemote(req, sess, this.conf.RemoteName); err != nil {
+		return "", err
+	}
+	current, found, err := this.lookupActive(name)
+	if err != nil {
+		return "", err
+	}
+	if !found || current.SID != expected.SID || !strings.EqualFold(current.Name, expected.Name) {
+		return "", ErrSessionResumeDenied
+	}
+	return name, nil
+}
+
 func (this *LocalAuthorizer) resumeWindowsPasswordAccount(req SessionResumeRequest, sess session.Session, nativeCheck windowsPasswordAccountCheck) (Authorization, error) {
 	if this.conf == nil || nativeCheck == nil {
 		return nil, ErrSessionResumeUnavailable
@@ -84,6 +113,9 @@ func (this *LocalAuthorizer) resumeWindowsPasswordAccount(req SessionResumeReque
 		return nil, ErrSessionResumeDenied
 	}
 	selected := windowslocal.Account{Name: selector.User.Name, SID: selector.User.SID}
+	if _, err := this.resumeRemoteName(req, sess, selected); err != nil {
+		return nil, err
+	}
 	check := func(allowEmpty bool) (windowslocal.PasswordAccountView, error) {
 		current, err := nativeCheck(req.Context(), selected, windowslocal.PasswordAccountPolicy{AllowEmpty: allowEmpty})
 		if contextErr := req.Context().Err(); contextErr != nil {

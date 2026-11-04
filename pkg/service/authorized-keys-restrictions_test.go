@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	gonet "net"
@@ -119,10 +120,14 @@ func TestPublicKeyAuthenticationSkipsIncompatibleSession(t *testing.T) {
 	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{})
 	ctx := context.Background()
 	remote := authorizedKeysTestRemote{user: server.username}
+	// A remembered key belongs to a real authenticated subject, not to an
+	// uninitialized/cleared authorization token.
+	token, err := json.Marshal(map[string]any{"user": map[string]string{"name": server.username}})
+	require.NoError(t, err)
 	sessions := make([]session.Session, 2)
 	for i := range sessions {
 		var err error
-		sessions[i], err = server.service.sessions.Create(ctx, "restricted-key", remote, nil)
+		sessions[i], err = server.service.sessions.Create(ctx, "restricted-key", remote, token)
 		require.NoError(t, err)
 		require.NoError(t, sessions[i].AddPublicKey(ctx, server.signer.PublicKey()))
 		_, err = sessions[i].NotifyLastAccess(ctx, remote, session.StateAuthorized)

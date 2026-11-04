@@ -15,8 +15,14 @@ Authorizes a user request via the local user database of the host on which Bifr√
 <<property("type", "Authorization Type", default="local", required=True)>>
 Has to be set to `local` to enable the local authorization.
 
+<<property("remoteName", "string", template_context="../context/authorization-request.md", default="{{.remote.user}}")>>
+Resolve the account name before native lookup, password/PAM authentication or
+authorized-key evaluation. The original requesting name is not changed. Native
+account, password, PAM and Windows policies still apply; mapping grants no OS
+rights and creates no account. See [login-name mapping](login-name-mapping.md).
+
 <<property("trustedUserCAs", "Public Keys", "../data-type.md#public-keys")>>
-OpenSSH public keys of certificate authorities that may sign user certificates for existing local users. The requesting name must be included in the certificate's principals.
+OpenSSH public keys of certificate authorities that may sign user certificates for existing local users. The resolved `remoteName` must be included in the certificate's principals; by default this is the requesting name.
 
 <<property("trustedUserCAsFile", ref("File Path", "../data-type.md#file-path", ref("Public Keys", "../data-type.md#public-keys")))>>
 Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist, contain at least one valid public key, and be no larger than 4 MiB.
@@ -26,7 +32,7 @@ Contains files with the format of classic [authorized keys](../data-type.md#auth
 
 An entry with the `cert-authority` option treats its key as a user certificate authority for that local user. The optional `principals="..."` option restricts it further. An empty `authorizedKeys` list does not disable certificate authentication through `trustedUserCAs` or `trustedUserCAsFile`.
 
-User certificates must be current, signed by the selected CA, have the requesting name as a principal, and contain no critical options. Missing `permit-pty`, `permit-port-forwarding`, or `permit-agent-forwarding` certificate extensions disable the corresponding capability. Authorized-key options can only restrict these capabilities further.
+User certificates must be current, signed by the selected CA, have the resolved `remoteName` as a principal, and contain no critical options. Missing `permit-pty`, `permit-port-forwarding`, or `permit-agent-forwarding` certificate extensions disable the corresponding capability. Authorized-key options can only restrict these capabilities further.
 
 <<property("password", "Password", "#password")>>
 See [below](#password).

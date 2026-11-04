@@ -63,14 +63,18 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 		return fail(fmt.Errorf(message, args...))
 	}
 
-	entry, auth, accepted, err := this.lookupEntry(req)
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return fail(err)
+	}
+	entry, auth, accepted, err := this.lookupEntryByName(req, remoteName)
 	if err != nil {
 		return fail(err)
 	}
 	if !accepted {
 		return Forbidden(req.Connection().Remote()), nil
 	}
-	policy, accepted, isCertificate, configured, err := this.authorizedKeyPolicy(req, entry)
+	policy, accepted, isCertificate, configured, err := this.authorizedKeyPolicy(req, entry, remoteName)
 	if err != nil {
 		return fail(err)
 	}
@@ -95,6 +99,7 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 		session.IsFlow(this.flow),
 		session.IsStillValid,
 		session.IsRemoteName(req.Connection().Remote().User()),
+		sessionUserNameIs(entry.Name),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
 		if !accepted {
@@ -117,8 +122,16 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 }
 
 func (this *SimpleAuthorizer) lookupEntry(req Request) (entry *configuration.AuthorizationSimpleEntry, auth *simple, accepted bool, err error) {
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return this.lookupEntryByName(req, remoteName)
+}
+
+func (this *SimpleAuthorizer) lookupEntryByName(req Request, remoteName string) (entry *configuration.AuthorizationSimpleEntry, auth *simple, accepted bool, err error) {
 	for _, candidate := range this.conf.Entries {
-		if !strings.EqualFold(candidate.Name, req.Connection().Remote().User()) {
+		if !strings.EqualFold(candidate.Name, remoteName) {
 			continue
 		}
 		entry = &candidate
@@ -147,7 +160,7 @@ func (this *SimpleAuthorizer) lookupEntry(req Request) (entry *configuration.Aut
 	return entry, auth, accepted, nil
 }
 
-func (this *SimpleAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, entry *configuration.AuthorizationSimpleEntry) (*AuthorizedKeyPolicy, bool, bool, bool, error) {
+func (this *SimpleAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, entry *configuration.AuthorizationSimpleEntry, remoteName string) (*AuthorizedKeyPolicy, bool, bool, bool, error) {
 	fail := func(err error) (*AuthorizedKeyPolicy, bool, bool, bool, error) {
 		return nil, false, false, false, err
 	}
@@ -157,7 +170,7 @@ func (this *SimpleAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, entry *c
 
 	configured := false
 	policy, accepted, err := evaluatePublicKeyCredential(
-		req.RemotePublicKey(), req.Connection().Remote().User(), req.Connection().Remote().Host(), this.trustedUserCAs,
+		req.RemotePublicKey(), remoteName, req.Connection().Remote().Host(), this.trustedUserCAs,
 		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
 			check := func(key ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, error) {
 				if publicKeysEqual(req.RemotePublicKey(), key) {

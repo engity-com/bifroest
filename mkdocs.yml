@@ -156,6 +156,7 @@ nav:
       - reference/flow.md
       - Authorizations:
           - reference/authorization/index.md
+          - Login-name mapping: reference/authorization/login-name-mapping.md
           - Local: reference/authorization/local.md
           - OIDC: reference/authorization/oidc.md
           - Simple: reference/authorization/simple.md

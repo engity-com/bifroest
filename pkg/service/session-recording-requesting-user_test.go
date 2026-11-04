@@ -23,11 +23,12 @@ import (
 	"github.com/engity-com/bifroest/pkg/environment"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/recording"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestNewRecordingCatalogUsesOriginalRequestingUserNotMappedSubject(t *testing.T) {
 	const subject = "recording-requesting-user-private-context"
-	const requested = "RECORDING-REQUESTING-USER-PRIVATE-CONTEXT"
+	const requested = "RECORDING-REQUESTING-USER-PRIVATE-CONTEXT@node-a"
 	for _, encrypted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "clear", true: "encrypted"}[encrypted], func(t *testing.T) {
 			public, private, err := ed25519.GenerateKey(nil)
@@ -40,6 +41,7 @@ func TestNewRecordingCatalogUsesOriginalRequestingUserNotMappedSubject(t *testin
 			require.NoError(t, err)
 			svc, handler, _, managerToken := managementWebFixture(t, func(conf *configuration.Configuration) {
 				auth := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
+				auth.RemoteName = template.MustNewString(`{{regexReplaceAll "@[^@]+$" .remote.user ""}}`)
 				auth.Entries = append(auth.Entries, configuration.AuthorizationSimpleEntry{Name: subject, Password: bfcrypto.Password("plain:correct")})
 				if encrypted {
 					conf.Auditlogs[0].EncryptionPublicKey = bfcrypto.PublicKeys(string(ssh.MarshalAuthorizedKey(publicKey)))
@@ -131,10 +133,10 @@ func TestNewRecordingCatalogUsesOriginalRequestingUserNotMappedSubject(t *testin
 				require.NotContains(t, body, requested)
 				require.NotContains(t, body, `"user"`)
 			}
-			// All live repository/API assertions are complete. Close drains its
-			// operations and releases the Windows lock; fixture cleanup is safe
-			// because repository Close returns the same result on repeated calls.
-			require.NoError(t, repository.Close())
+			// Close the complete service repository, including its delivery-receipt
+			// store. Closing only native leaves .delivery's Windows lock held.
+			// Both closes remain idempotent for the fixture's normal cleanup.
+			require.NoError(t, svc.recordingRepositories[svc.Configuration.Auditlogs[0].Name].Close())
 			if encrypted {
 				require.NoError(t, filepath.WalkDir(svc.Configuration.Auditlogs[0].Recording.Directory, func(path string, entry fs.DirEntry, walkErr error) error {
 					if walkErr != nil || entry.IsDir() {

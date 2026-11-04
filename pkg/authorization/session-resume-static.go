@@ -12,18 +12,25 @@ func (this *SimpleAuthorizer) ResumeSession(req SessionResumeRequest) (Authoriza
 	if err != nil {
 		return nil, err
 	}
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkMappedResumeRemote(req, sess, this.conf.RemoteName); err != nil {
+		return nil, err
+	}
 	stored, err := this.RestoreFromSession(req.Context(), sess, nil)
 	if err != nil {
 		return nil, err
 	}
 	auth := stored.(*simple)
-	if !strings.EqualFold(req.Connection().Remote().User(), auth.entry.Name) {
+	if !strings.EqualFold(remoteName, auth.entry.Name) {
 		return nil, ErrSessionResumeDenied
 	}
 	auth.remote = req.Connection().Remote()
 	auth.envVars = nil
 	if key != nil {
-		policy, accepted, certificate, configured, err := this.authorizedKeyPolicy(resumePublicKeyRequest{req, key}, auth.entry)
+		policy, accepted, certificate, configured, err := this.authorizedKeyPolicy(resumePublicKeyRequest{req, key}, auth.entry, remoteName)
 		if err != nil {
 			return nil, err
 		}
@@ -58,12 +65,19 @@ func (this *HtpasswdAuthorizer) ResumeSession(req SessionResumeRequest) (Authori
 	if err != nil {
 		return nil, err
 	}
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkMappedResumeRemote(req, sess, this.conf.RemoteName); err != nil {
+		return nil, err
+	}
 	stored, err := this.RestoreFromSession(req.Context(), sess, nil)
 	if err != nil {
 		return nil, err
 	}
 	auth := stored.(*htpasswd)
-	if auth.principal == "" || req.Connection().Remote().User() != auth.principal {
+	if auth.principal == "" || remoteName != auth.principal {
 		return nil, ErrSessionResumeDenied
 	}
 	found, err := this.conf.File.Contains(auth.principal)

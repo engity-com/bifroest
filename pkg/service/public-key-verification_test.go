@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -133,7 +134,9 @@ func TestRememberedPublicKeyProbeDoesNotTrackAndRechecksDisposal(t *testing.T) {
 	})
 	ctx := t.Context()
 	remote := authorizedKeysTestRemote{user: server.username}
-	sess, err := server.service.sessions.Create(ctx, server.service.Configuration.Flows[0].Name, remote, nil)
+	token, err := json.Marshal(map[string]any{"user": map[string]string{"name": server.username}})
+	require.NoError(t, err)
+	sess, err := server.service.sessions.Create(ctx, server.service.Configuration.Flows[0].Name, remote, token)
 	require.NoError(t, err)
 	require.NoError(t, sess.AddPublicKey(ctx, server.signer.PublicKey()))
 	_, err = sess.NotifyLastAccess(ctx, remote, session.StateAuthorized)

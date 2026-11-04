@@ -70,7 +70,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	if len(this.conf.AuthorizedKeys) == 0 && len(this.trustedUserCAs) == 0 {
 		return Forbidden(remote), nil
 	}
-	u, found, err := this.lookupActive(remote.User())
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return nil, err
+	}
+	u, found, err := this.lookupActive(remoteName)
 	if err != nil {
 		return nil, fmt.Errorf("cannot lookup local user: %w", err)
 	}
@@ -83,7 +87,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	} else if !ok {
 		return Forbidden(remote), nil
 	}
-	policy, accepted, err := evaluatePublicKeyCredential(req.RemotePublicKey(), remote.User(), remote.Host(), this.trustedUserCAs,
+	policy, accepted, err := evaluatePublicKeyCredential(req.RemotePublicKey(), remoteName, remote.Host(), this.trustedUserCAs,
 		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
 			files, err := common.MapSliceErr(this.conf.AuthorizedKeys, func(tmpl template.String) (string, error) {
 				return tmpl.Render(&localUserRequest{Request: req, user: u})
@@ -201,7 +205,11 @@ func (this *LocalAuthorizer) authorizePassword(req Request, value string, allowe
 			return Forbidden(remote), nil
 		}
 	}
-	u, found, err := this.lookupActive(remote.User())
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return nil, err
+	}
+	u, found, err := this.lookupActive(remoteName)
 	if err != nil {
 		return nil, fmt.Errorf("cannot lookup local user: %w", err)
 	}

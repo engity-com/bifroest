@@ -50,6 +50,14 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
 	}
+	remoteName := req.Connection().Remote().User()
+	if this.conf != nil {
+		resolved, err := resolveRemoteName(req, this.conf.RemoteName)
+		if err != nil {
+			return fail(err)
+		}
+		remoteName = resolved
+	}
 	auth := &htpasswd{
 		remote: req.Connection().Remote(),
 		flow:   this.flow,
@@ -62,7 +70,7 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 			return false, err
 		}
 		var token htpasswdToken
-		if err := json.Unmarshal(stored, &token); err != nil || token.User.Name == "" || token.User.Name != req.Connection().Remote().User() {
+		if err := json.Unmarshal(stored, &token); err != nil || token.User.Name == "" || token.User.Name != remoteName {
 			return false, nil
 		}
 		// Populate the verified session identity before the service evaluates
@@ -98,15 +106,19 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 }
 
 func (this *HtpasswdAuthorizer) lookupEntry(req Request, password string) (auth *htpasswd, accepted bool, err error) {
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return nil, false, err
+	}
 	match := false
 	if f := this.conf.File; !f.IsZero() {
-		if f.Match(req.Connection().Remote().User(), password) {
+		if f.Match(remoteName, password) {
 			match = true
 		}
 	}
 
 	if f := this.conf.Entries; !match && !f.IsZero() {
-		if f.Match(req.Connection().Remote().User(), password) {
+		if f.Match(remoteName, password) {
 			match = true
 		}
 	}
@@ -121,7 +133,7 @@ func (this *HtpasswdAuthorizer) lookupEntry(req Request, password string) (auth 
 		this.flow,
 		nil,
 		nil,
-		req.Connection().Remote().User(),
+		remoteName,
 	}
 
 	accepted, err = req.Validate(auth)
@@ -142,7 +154,7 @@ func (this *HtpasswdAuthorizer) ensureSessionFor(req Request, auth *htpasswd) (s
 
 	buf := htpasswdToken{
 		User: htpasswdTokenUser{
-			Name: req.Connection().Remote().User(),
+			Name: auth.principal,
 		},
 		EnvVars: nil,
 	}
