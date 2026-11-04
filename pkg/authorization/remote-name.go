@@ -8,6 +8,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/template"
@@ -81,7 +82,8 @@ func (r remoteNameRequest) GetField(name string) (any, bool, error) {
 	case "remote":
 		return remoteNameRemote{r.Connection().Remote()}, true, nil
 	case "connection":
-		return r.Connection(), true, nil
+		view, err := connection.TemplateViewOf(r.Request)
+		return view, true, err
 	default:
 		if fields, ok := r.Request.(interface {
 			GetField(string) (any, bool, error)

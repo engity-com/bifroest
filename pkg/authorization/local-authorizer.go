@@ -203,12 +203,12 @@ type userEnabledRequest struct {
 	user *user.User
 }
 
-func (this *userEnabledRequest) GetField(name string) (any, bool) {
+func (this *userEnabledRequest) GetField(name string) (any, bool, error) {
 	switch name {
 	case "user":
-		return this.user, true
+		return this.user, true, nil
 	default:
-		return nil, false
+		return (remoteNameRequest{this.Request}).GetField(name)
 	}
 }
 

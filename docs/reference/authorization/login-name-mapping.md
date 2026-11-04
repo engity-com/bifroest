@@ -11,8 +11,10 @@ per authorization attempt, before credential lookup. Its default is
 pre-authenticated identity. Use request fields available to the selected login
 method; do not derive account names from passwords or other secrets.
 
-For example, the SSH login name `alice@host-a` can select a flow while checking
-the existing credential entry or native account `alice`:
+## SSH suffix and HTTP slug
+
+The SSH login name `foo@bar` can select a flow while checking account `foo`.
+For HTTP, leave the login name unchanged and choose the same flow with `/docker`:
 
 ```yaml
 environments:
@@ -20,23 +22,33 @@ environments:
 authorizations:
   shared:
     type: simple
-    remoteName: '{{regexReplaceAll "@[^@]+$" .remote.user ""}}'
+    remoteName: '{{if eq .connection.transport "ssh"}}{{regexReplaceAll "@[^@]+$" .remote.user ""}}{{else}}{{.remote.user}}{{end}}'
     entries:
-      - name: alice
-        passwordFile: /etc/engity/bifroest/passwords/alice
+      - name: foo
+        passwordFile: /etc/engity/bifroest/passwords/foo
 flows:
-  - name: host-a
-    requirement: {includedRequestingName: '@host-a$'}
-    authorization: shared
-  - name: host-b
-    requirement: {includedRequestingName: '@host-b$'}
+  - name: docker
+    discoverAsSlug: docker
+    requirement:
+      ssh:
+        includedRequestingName: '@bar$'
+      http:
+        includedSlug: '^docker$'
     authorization: shared
 ```
 
 This example demonstrates credential selection only; replace the dummy
 environment with reviewed target environments. To avoid ambiguity in an SSH
-client's destination parser, use `ssh -l 'alice@host-a' bifroest.example.org`.
-HTTP login uses the same name mapping after its normal host/slug/flow selection.
+client's destination parser, use `ssh -l 'foo@bar' bifroest.example.org`. In the
+browser, open `/docker` and sign in as `foo`. The HTTP name `foo@bar` is **not**
+silently shortened by this conditional template.
+
+The general `requirement.includedRequestingName: '^docker$'` would match the
+literal original username `docker` for both transports, not the suffix `@bar`,
+the flow name, the mapped account `foo`, or the HTTP slug. Keep SSH name and HTTP
+slug restrictions in their respective transport sections when combining them.
+See [flow requirements](../flow.md#requirement) and the current incoming
+[connection metadata](../context/connection.md).
 
 ## Regex functions
 
@@ -59,7 +71,8 @@ substitute for flow authorization.
 ## Boundaries
 
 - `remote.user`, requesting-name requirements, audit/recording context and the
-  transport name stored with a session retain `alice@host-a`.
+  transport name stored with a session retain the original name (`foo@bar` for
+  SSH in the combined example).
 - Credentials are checked for the resolved name. Simple lookup remains
   case-insensitive, htpasswd remains case-sensitive and native lookup follows
   its existing platform rules. Mapping does not trim or case-normalize output.
@@ -67,8 +80,8 @@ substitute for flow authorization.
   and contain no control characters. Missing context, invalid regexes or invalid
   output reject authorization; there is no retry with the original name.
 - For `simple`/`local` user certificates, the resolved name is also the required
-  certificate principal. A certificate for `alice` can therefore serve both
-  example flows **only if their original-name/host/slug requirements and current
+  certificate principal. A certificate for `foo` can therefore serve configured
+  suffix-selected flows **only if their original-name/host/slug requirements and current
   credential/account policies allow it**. CA, validity, signature, critical
   option and capability restrictions remain unchanged.
 - Sessions remain flow- and original-name-bound. A remembered key or browser
@@ -78,6 +91,8 @@ substitute for flow authorization.
   cannot be tied to the same native account rejects resumption; it does not
   replay a password or fall back to another flow. The default native nameless
   resume behavior is unchanged.
+  In particular, SSH `foo@bar` and HTTP `foo` can use the same credentials without
+  automatically merging their sessions or changing their stored original names.
 - `authorization.principal` is a separate, **post-authentication** display/target
   principal mapping. It does not select credentials and is not replaced by this
   property. Sharing an authorization definition is not cross-flow SSO or an

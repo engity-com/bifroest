@@ -11,7 +11,36 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/template"
+	"github.com/engity-com/bifroest/pkg/user"
 )
+
+func TestLocalRemoteNameConditionalTransportKeepsHttpAccountNamesIntact(t *testing.T) {
+	for _, transport := range []connection.Transport{connection.TransportSsh, connection.TransportHttp} {
+		t.Run(string(transport), func(t *testing.T) {
+			auth, repo := mappedUnixAuthorizer(t)
+			auth.conf.RemoteName = template.MustNewString(sshOnlyRemoteName)
+			repo.users["alice@bar"] = &user.User{Name: "alice@bar", Uid: 3003}
+			base := newFacadeSelectionRequest(t, "alice@bar")
+			base.password = "correct"
+			r := &mappingTestRequest{facadeSelectionRequest: base, selection: connection.Selection{Transport: transport}}
+			want := "alice"
+			if transport == connection.TransportHttp {
+				r.selection.Host = "app.example.org"
+				r.selection.Slug = "docker"
+				want = "alice@bar"
+			}
+			result, err := auth.AuthorizePassword(r)
+			require.NoError(t, err)
+			require.True(t, result.IsAuthorized())
+			require.Equal(t, []string{want}, repo.passwordNames)
+			require.Equal(t, []string{want}, repo.lookups)
+			identity, err := AuthenticationOf(result)
+			require.NoError(t, err)
+			require.Equal(t, want, identity.Principal)
+			require.Equal(t, "alice@bar", result.Remote().User())
+		})
+	}
+}
 
 func TestLocalRemoteNamePasswordAndInteractiveUseMappedNativeLookup(t *testing.T) {
 	for _, method := range []string{"password", "keyboard-interactive"} {

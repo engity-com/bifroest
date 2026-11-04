@@ -247,6 +247,7 @@ nav:
           - Authorization: reference/context/authorization.md
           - Authorization Request: reference/context/authorization-request.md
           - Connection: reference/context/connection.md
+          - Environment: reference/context/environment.md
           - Container: reference/context/container.md
           - Core: reference/context/core.md
           - Local Environment: reference/context/local-environment.md

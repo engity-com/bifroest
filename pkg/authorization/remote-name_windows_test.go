@@ -12,9 +12,21 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/windowslocal"
 )
+
+func TestWindowsAuthorizedKeysTemplateInheritsIncomingConnectionMetadata(t *testing.T) {
+	base := newFacadeSelectionRequest(t, "alice@bar")
+	req := &mappingTestRequest{facadeSelectionRequest: base, selection: connection.Selection{Transport: connection.TransportHttp, Host: "app.example.org", Slug: "docker"}}
+	for _, request := range []Request{req, resumePublicKeyRequest{Request: req, key: base.key}} {
+		ctx := &localUserRequest{Request: request, user: windowslocal.Account{Name: "alice", SID: "S-1-5-21-1-2-3-1001"}}
+		actual, err := template.MustNewString(`{{.connection.transport}}|{{.connection.http.slug}}|{{.remote.user}}|{{.user.name}}`).Render(ctx)
+		require.NoError(t, err)
+		require.Equal(t, "http|docker|alice@bar|alice", actual)
+	}
+}
 
 func TestWindowsLocalRemoteNameUsesCurrentAccountAndMappedCertificatePrincipal(t *testing.T) {
 	current, err := user.Current()

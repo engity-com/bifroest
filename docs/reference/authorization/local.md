@@ -21,14 +21,31 @@ authorized-key evaluation. The original requesting name is not changed. Native
 account, password, PAM and Windows policies still apply; mapping grants no OS
 rights and creates no account. See [login-name mapping](login-name-mapping.md).
 
+For example, SSH `foo@bar` selects native account `foo`, while HTTP keeps the
+entered name unchanged and can select the flow through its slug:
+
+```yaml
+remoteName: '{{if eq .connection.transport "ssh"}}{{regexReplaceAll "@[^@]+$" .remote.user ""}}{{else}}{{.remote.user}}{{end}}'
+```
+
+[Flow requirements](../flow.md#requirement) still check the original login name.
+`requirement.includedRequestingName: '^docker$'` matches only `docker`, not
+`foo@bar`. Use `requirement.ssh.includedRequestingName: '@bar$'` for SSH and
+`requirement.http.includedSlug: '^docker$'` for HTTP; see the
+[combined flow example](login-name-mapping.md#ssh-suffix-and-http-slug).
+
 <<property("trustedUserCAs", "Public Keys", "../data-type.md#public-keys")>>
 OpenSSH public keys of certificate authorities that may sign user certificates for existing local users. The resolved `remoteName` must be included in the certificate's principals; by default this is the requesting name.
 
 <<property("trustedUserCAsFile", ref("File Path", "../data-type.md#file-path", ref("Public Keys", "../data-type.md#public-keys")))>>
 Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist, contain at least one valid public key, and be no larger than 4 MiB.
 
-<<property("authorizedKeys", array_ref("File Path", "../data-type.md#file-path", ref("Authorized Keys", "../data-type.md#authorized-keys")), template_context="../context/core.md", default=["{{.user.homeDir}}/.ssh/authorized_keys"])>>
+<<property("authorizedKeys", array_ref("File Path", "../data-type.md#file-path", ref("Authorized Keys", "../data-type.md#authorized-keys")), template_context="../context/authorization-request.md", default=["{{.user.homeDir}}/.ssh/authorized_keys"])>>
 Contains files with the format of classic [authorized keys](../data-type.md#authorized-keys), in which Bifröst will look for [SSH Public Keys](../data-type.md#ssh-public-key).
+
+The request's `.connection` is available together with the selected native
+[`.user`](../context/local-user.md) candidate. `.remote.user` still contains the
+original requesting name, not the mapped account name.
 
 An entry with the `cert-authority` option treats its key as a user certificate authority for that local user. The optional `principals="..."` option restricts it further. An empty `authorizedKeys` list does not disable certificate authentication through `trustedUserCAs` or `trustedUserCAsFile`.
 

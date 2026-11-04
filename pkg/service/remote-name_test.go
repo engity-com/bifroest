@@ -8,6 +8,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
@@ -54,5 +55,35 @@ func TestWebRemoteNameSharesCredentialsWithoutChangingFlowScopeOrSessionOwner(t 
 		response := webTestPassword(handler, attempt.name, attempt.password, attempt.slug)
 		require.Equal(t, http.StatusUnauthorized, response.Code)
 		require.NotContains(t, response.Body.String(), "accessToken")
+	}
+}
+
+func TestWebRemoteNameConditionalMappingUsesSlugNotSshNameFilter(t *testing.T) {
+	for _, generalFilter := range []bool{false, true} {
+		t.Run(map[bool]string{false: "transport-specific", true: "general-name-filter-is-not-a-slug"}[generalFilter], func(t *testing.T) {
+			svc, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
+				flow := &conf.Flows[0]
+				flow.DiscoverAsSlug = "docker"
+				flow.Requirement.Ssh.IncludedRequestingName = common.MustNewRegexp("@bar$")
+				flow.Requirement.Http.IncludedSlug = common.MustNewRegexp("^docker$")
+				if generalFilter {
+					flow.Requirement.IncludedRequestingName = common.MustNewRegexp("^docker$")
+				}
+				auth := flow.Authorization.V.(*configuration.AuthorizationSimple)
+				auth.RemoteName = template.MustNewString(`{{if eq .connection.transport "ssh"}}{{regexReplaceAll "@[^@]+$" .remote.user ""}}{{else}}{{.remote.user}}{{end}}`)
+				auth.Entries = configuration.AuthorizationSimpleEntries{{Name: "foo@bar", Password: crypto.Password("plain:http-secret")}, {Name: "foo", Password: crypto.Password("plain:ssh-secret")}}
+			})
+			response := webTestPassword(handler, "foo@bar", "http-secret", "docker")
+			if generalFilter {
+				require.Equal(t, http.StatusUnauthorized, response.Code)
+				return
+			}
+			token := webTestToken(t, response)
+			access := webTestAccess(t, svc, token, "docker")
+			require.Equal(t, "foo@bar", access.identity.Subject)
+			require.Equal(t, "foo@bar", access.auth.Remote().User())
+			require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "foo@bar", "ssh-secret", "docker").Code)
+			require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "foo@bar", "http-secret", "bar").Code)
+		})
 	}
 }

@@ -12,7 +12,7 @@ import (
 )
 
 func (this *service) handleBanner(ctx essh.Context, _ gossh.ConnMetadata) (string, error) {
-	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{ctx}); err != nil {
+	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{Context: ctx, connection: this.connection(ctx)}); err != nil {
 		return "", errors.Newf(errors.System, "cannot retrieve SSH banner: %w", err)
 	} else {
 		return b, nil

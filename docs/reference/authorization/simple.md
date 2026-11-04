@@ -17,6 +17,19 @@ Resolve the account name before checking credentials. The default preserves the
 client-supplied name. See [login-name mapping](login-name-mapping.md) for shared
 credentials across suffix-selected flows, regex examples and session boundaries.
 
+For example, strip the routing suffix from SSH `foo@bar` to check entry `foo`,
+but leave the HTTP login name unchanged:
+
+```yaml
+remoteName: '{{if eq .connection.transport "ssh"}}{{regexReplaceAll "@[^@]+$" .remote.user ""}}{{else}}{{.remote.user}}{{end}}'
+```
+
+[Flow requirements](../flow.md#requirement) still inspect the original name:
+`requirement.includedRequestingName: '^docker$'` matches only the literal login
+`docker`, **not** `foo@bar`. Use `requirement.ssh.includedRequestingName: '@bar$'`
+for that SSH suffix and `requirement.http.includedSlug: '^docker$'` for the HTTP
+slug. See the [combined flow example](login-name-mapping.md#ssh-suffix-and-http-slug).
+
 <<property("trustedUserCAs", "Public Keys", "../data-type.md#public-keys")>>
 OpenSSH public keys of certificate authorities that may sign user certificates for every entry in this authorization. The resolved `remoteName` must be included in the certificate's principals; without a custom mapping this is the requested SSH username.
 

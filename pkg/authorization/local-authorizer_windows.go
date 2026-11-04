@@ -149,11 +149,11 @@ type localUserRequest struct {
 	user windowslocal.Account
 }
 
-func (this *localUserRequest) GetField(name string) (any, bool) {
+func (this *localUserRequest) GetField(name string) (any, bool, error) {
 	if name == "user" {
-		return this.user, true
+		return this.user, true, nil
 	}
-	return nil, false
+	return (remoteNameRequest{this.Request}).GetField(name)
 }
 
 func localSessionMatches(ctx context.Context, sess session.Session, u windowslocal.Account) (bool, error) {

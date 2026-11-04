@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -191,6 +192,10 @@ func (this *associationTargetAuthorization) GetField(name string, ctx authorizat
 type associationBaseContext interface{ environment.Context }
 
 func associationBaseField(base environment.Context, name string) (any, bool, error) {
+	if name == "connection" {
+		view, err := bconn.TemplateViewOf(base)
+		return view, true, err
+	}
 	if provider, ok := base.(interface {
 		GetField(string) (any, bool, error)
 	}); ok {
@@ -199,8 +204,6 @@ func associationBaseField(base environment.Context, name string) (any, bool, err
 	switch name {
 	case "remote":
 		return base.Connection().Remote(), true, nil
-	case "connection":
-		return base.Connection(), true, nil
 	default:
 		return nil, false, fmt.Errorf("session target template context field unavailable")
 	}

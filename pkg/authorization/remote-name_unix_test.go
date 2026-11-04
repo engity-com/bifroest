@@ -93,6 +93,17 @@ func TestLocalRemoteNameCertificateSelectsMappedAccountAndRetainsPolicies(t *tes
 	}
 }
 
+func TestNativeAuthorizedKeysTemplateInheritsIncomingConnectionMetadata(t *testing.T) {
+	base := newFacadeSelectionRequest(t, "alice@bar")
+	req := &mappingTestRequest{facadeSelectionRequest: base, selection: connection.Selection{Transport: connection.TransportHttp, Host: "app.example.org", Slug: "docker"}}
+	for _, request := range []Request{req, resumePublicKeyRequest{Request: req, key: base.key}} {
+		ctx := &userEnabledRequest{Request: request, user: &user.User{Name: "alice", Uid: 1001}}
+		actual, err := template.MustNewString(`{{.connection.transport}}|{{.connection.http.slug}}|{{.remote.user}}|{{.user.name}}`).Render(ctx)
+		require.NoError(t, err)
+		require.Equal(t, "http|docker|alice@bar|alice", actual)
+	}
+}
+
 func TestLocalRemoteNameResumeAndRememberedKeyCannotFollowMappingOrUidChanges(t *testing.T) {
 	auth, repo := mappedUnixAuthorizer(t)
 	base := newFacadeSelectionRequest(t, "alice@node-a")

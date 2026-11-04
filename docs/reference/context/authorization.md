@@ -6,6 +6,11 @@ description: How to access context information about an authorized user with Bif
 
 Represents a fully authorized connection of a user.
 
+In connection-bound configuration rendering, this object is normally available
+as `.authorization` within the [Environment context](environment.md). The
+read-only incoming [`.connection`](connection.md) is a sibling field, not an
+authorization credential or a live connection reconstructed from a stored token.
+
 There are more specialized variants of the authorization available, based on which authorization type was used:
 
 | Variant                        | Authorization                                     |

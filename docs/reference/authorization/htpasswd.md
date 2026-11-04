@@ -18,6 +18,20 @@ Htpasswd matching remains case-sensitive. The original requesting name is not
 changed. See [login-name mapping](login-name-mapping.md) for examples and scope
 boundaries. This does not add SSH-certificate authentication to htpasswd.
 
+For example, SSH `foo@bar` checks htpasswd entry `foo`, while HTTP keeps the name
+exactly as entered:
+
+```yaml
+remoteName: '{{if eq .connection.transport "ssh"}}{{regexReplaceAll "@[^@]+$" .remote.user ""}}{{else}}{{.remote.user}}{{end}}'
+```
+
+[Flow requirements](../flow.md#requirement) inspect the original name before
+mapping. `requirement.includedRequestingName: '^docker$'` accepts only login
+`docker`, not `foo@bar`. For a shared flow, use
+`requirement.ssh.includedRequestingName: '@bar$'` and independently
+`requirement.http.includedSlug: '^docker$'`; see the
+[combined example](login-name-mapping.md#ssh-suffix-and-http-slug).
+
 <<property("file", "File Path", "../data-type.md#file-path", default="<os specific>")>>
 A file where each line contains an entry in [htpasswd format](#format).
 

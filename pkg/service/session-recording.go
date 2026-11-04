@@ -117,6 +117,7 @@ type sessionRecordingCoordinator struct {
 
 type sessionRecordingLifecycle struct {
 	service     *service
+	connection  bconn.Connection
 	auditlog    configuration.AuditlogName
 	repository  *sessionRecordingRepository
 	ctx         context.Context
@@ -149,7 +150,8 @@ func (this *bestEffortSessionRecordingSink) WriteResize(elapsed time.Duration, c
 }
 
 type sessionRecordingNoticeContext struct {
-	recording sessionRecordingNotice
+	recording  sessionRecordingNotice
+	connection bconn.Connection
 }
 
 type sessionRecordingNotice struct {
@@ -161,6 +163,13 @@ func (this sessionRecordingNoticeContext) GetField(name string) (any, bool, erro
 	switch name {
 	case "recording":
 		return this.recording, true, nil
+	case "connection":
+		selection := bconn.Selection{Transport: bconn.TransportSsh}
+		if selected, ok := this.connection.(bconn.SelectionProvider); ok {
+			selection = selected.Selection()
+		}
+		view, err := bconn.NewTemplateView(this.connection, selection)
+		return view, true, err
 	default:
 		return nil, false, fmt.Errorf("unknown field %q", name)
 	}
@@ -1057,6 +1066,7 @@ func (this *service) beginRecording(source *recordingExecution, pty terminalReco
 	}
 	lifecycle = &sessionRecordingLifecycle{
 		service:     this,
+		connection:  connection,
 		auditlog:    auditlog,
 		ctx:         source.Context(),
 		capture:     capture,
@@ -1123,7 +1133,7 @@ func (this *sessionRecordingLifecycle) showNotice(output io.Writer, interactive 
 	if this == nil || !interactive || !this.metadata.Pty || this.metadata.Task != audit.SessionTaskShell || this.notice.IsZero() {
 		return nil
 	}
-	notice, err := this.notice.Render(sessionRecordingNoticeContext{recording: sessionRecordingNotice{
+	notice, err := this.notice.Render(sessionRecordingNoticeContext{connection: this.connection, recording: sessionRecordingNotice{
 		id:        this.metadata.RecordingId,
 		startedAt: this.metadata.StartedAt,
 	}})

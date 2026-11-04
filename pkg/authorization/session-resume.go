@@ -153,6 +153,13 @@ type resumePublicKeyRequest struct {
 
 func (this resumePublicKeyRequest) RemotePublicKey() ssh.PublicKey { return this.key }
 
+func (this resumePublicKeyRequest) Selection() connection.Selection {
+	if selected, ok := this.Request.(connection.SelectionProvider); ok {
+		return selected.Selection()
+	}
+	return connection.Selection{Transport: connection.TransportSsh}
+}
+
 // Deliberately no PublicKeyVerified assertion: the browser proved its OWN key,
 // not a new signature with the original primary credential. Only eligibility
 // helpers may consume this request; never invoke a primary login with it.

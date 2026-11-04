@@ -59,7 +59,8 @@ func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 		identity, err := (&environmentContext{service: this.service, connection: this.connection, authorization: this.authorization}).Authentication()
 		return identity, true, err
 	case "connection":
-		return this.connection, true, nil
+		view, err := bconn.TemplateViewOf(this)
+		return view, true, err
 	case "remote":
 		return this.connection.Remote(), true, nil
 	default:
@@ -217,7 +218,8 @@ func (this *environmentContext) GetField(name string) (any, bool, error) {
 	case "context":
 		return this.Context(), true, nil
 	case "connection":
-		return this.connection, true, nil
+		view, err := bconn.TemplateViewOf(this)
+		return view, true, err
 	case "remote":
 		return this.connection.Remote(), true, nil
 	case "authorization":
@@ -238,6 +240,13 @@ func (this *environmentContext) Context() context.Context {
 
 func (this *environmentContext) Connection() bconn.Connection {
 	return this.connection
+}
+
+func (this *environmentContext) Selection() bconn.Selection {
+	if selected, ok := this.connection.(bconn.SelectionProvider); ok {
+		return selected.Selection()
+	}
+	return bconn.Selection{Transport: bconn.TransportSsh}
 }
 
 func (this *environmentContext) Authorization() authorization.Authorization {
@@ -429,6 +438,10 @@ func (this *rememberMeNotificationContext) GetField(name string, ctx contextEnab
 		return identity, true, err
 	case "authorization":
 		return this.authorization, true, nil
+	case "connection":
+		conn, _ := this.context.Value(connectionCtxKey).(bconn.Connection)
+		view, err := bconn.NewTemplateView(conn, bconn.Selection{Transport: bconn.TransportSsh})
+		return view, true, err
 	case "key":
 		return this.key, true, nil
 	case "session":
@@ -461,13 +474,17 @@ func (this *sessionContext) GetField(name string) (any, bool, error) {
 }
 
 type connectionContext struct {
-	Context essh.Context
+	Context    essh.Context
+	connection bconn.Connection
 }
 
 func (this *connectionContext) GetField(name string) (any, bool, error) {
 	switch name {
 	case "remote":
-		return remote{this.Context}, true, nil
+		return &remote{this.Context}, true, nil
+	case "connection":
+		view, err := bconn.NewTemplateView(this.connection, bconn.Selection{Transport: bconn.TransportSsh})
+		return view, true, err
 	default:
 		return nil, false, fmt.Errorf("unknown field %q", name)
 	}
