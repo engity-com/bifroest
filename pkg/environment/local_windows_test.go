@@ -128,7 +128,16 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		fmt.Printf("%s\r\nnative-console=%dx%d\r\n", user.User.Sid.String(), cols, rows)
+		output := fmt.Sprintf("%s\r\nnative-console=%dx%d\r\n", user.User.Sid.String(), cols, rows)
+		written, writeErr := fmt.Fprint(os.Stdout, output)
+		complete := writeErr == nil && written == len(output)
+		// This acknowledges OS writes only, not delivery through ConPTY. Keep
+		// the diagnostic bounded and omit raw write errors and identity data.
+		diagnostic := fmt.Sprintf("native-console-child write-success=%t bytes=%d expected=%d\r\n", complete, written, len(output))
+		diagnosticWritten, diagnosticErr := fmt.Fprint(os.Stderr, diagnostic)
+		if !complete || diagnosticErr != nil || diagnosticWritten != len(diagnostic) {
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 	if len(os.Args) == 2 && os.Args[1] == "local-windows-identity-child" {

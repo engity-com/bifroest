@@ -1,3 +1,39 @@
+// Register before the triggering action and read as soon as headers arrive,
+// not after unrelated UI awaits. Header/body/completion share Playwright's
+// existing default 30-second budget; this observes, never retries a request.
+export function captureJsonResponse(page, pathname) {
+  let timer;
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ error: 'response-capture-timeout' }), 30_000);
+  });
+  const captured = (async () => {
+    try {
+      const response = await page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === pathname && response.request().method() === 'POST',
+        { timeout: 30_000 },
+      );
+      const [body, finished] = await Promise.allSettled([
+        Promise.resolve().then(() => response.json()),
+        Promise.resolve().then(() => response.finished()),
+      ]);
+      if (
+        body.status !== 'fulfilled' ||
+        finished.status !== 'fulfilled' ||
+        finished.value !== null
+      ) {
+        return { error: 'response-capture-incomplete' };
+      }
+      return { status: response.status(), body: body.value };
+    } catch {
+      // Always settle to an explicit failure, even before the caller awaits.
+      // Never retain a transport exception, cause or partial/private body.
+      return { error: 'response-capture-failed' };
+    }
+  })();
+  return Promise.race([captured, deadline]).finally(() => clearTimeout(timer));
+}
+
 // Test-only init script: install BEFORE BrowserClient binds its transport.
 // Keep Chrome's actual fetch/DNS/TLS/Origin/abort policy, not a Node HTTP proxy.
 // Do not close over module state: Playwright serializes this function.
@@ -44,4 +80,13 @@ export function installPreparationObserver() {
     }
     return response; // Original response; no new request, retry or modified body.
   };
+}
+
+import assert from 'node:assert/strict';
+
+export function assertCatalogRequestPrivacy(request) {
+  // Keep actual/expected and nested error causes boolean-only. A failed
+  // privacy assertion must not become a second disclosure in CI diagnostics.
+  assert.equal(new URL(request.url()).search === '', true);
+  assert.equal(request.headers().cookie === undefined, true);
 }

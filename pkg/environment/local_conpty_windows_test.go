@@ -105,8 +105,11 @@ func TestLocalConPTYRelayExitStatusFailsClosed(t *testing.T) {
 func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	if os.Getenv("BIFROEST_CONPTY_RELAY_TEST_CHILD") == "1" {
 		code, err := RunLocalConPTYRelay(80, 25, []string{os.Args[0], "local-windows-console-child"})
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		// This is observed only after the production relay has returned; it
+		// does not claim any earlier native flush/shutdown event was observed.
+		diagnostic := fmt.Sprintf("conpty-test relay-returned exit=%d error=%t\n", code, err != nil)
+		written, diagnosticErr := fmt.Fprint(os.Stderr, diagnostic)
+		if err != nil || diagnosticErr != nil || written != len(diagnostic) {
 			os.Exit(1)
 		}
 		os.Exit(code)
@@ -128,6 +131,11 @@ func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	go func() { result <- cmd.Wait() }()
 	select {
 	case err := <-result:
+		t.Logf("ConPTY test parent wait completed: error=%t relayReturnSuccessMarker=%t childWriteSuccessMarker=%t stdoutBytes=%d stderrBytes=%d",
+			err != nil,
+			stderr.String() == "conpty-test relay-returned exit=0 error=false\n",
+			strings.Contains(stdout.String(), "native-console-child write-success=true "),
+			stdout.Len(), stderr.Len())
 		require.NoError(t, err, "%s", stderr.String())
 	case <-time.After(20 * time.Second):
 		_ = cmd.Process.Kill()

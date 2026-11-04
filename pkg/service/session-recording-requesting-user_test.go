@@ -122,9 +122,20 @@ func TestNewRecordingCatalogUsesOriginalRequestingUserNotMappedSubject(t *testin
 			for _, forbidden := range []string{"plain:correct", `"subject"`, `"principal"`, `"password"`, token, managerToken} {
 				require.NotContains(t, body, forbidden)
 			}
+			suffix := ".bcast"
+			if encrypted {
+				suffix = ".becast"
+			}
+			require.Equal(t, ids[0].String()+suffix, fileName, "artifact storage naming remains UUID-only")
 			if encrypted {
 				require.NotContains(t, body, requested)
 				require.NotContains(t, body, `"user"`)
+			}
+			// All live repository/API assertions are complete. Close drains its
+			// operations and releases the Windows lock; fixture cleanup is safe
+			// because repository Close returns the same result on repeated calls.
+			require.NoError(t, repository.Close())
+			if encrypted {
 				require.NoError(t, filepath.WalkDir(svc.Configuration.Auditlogs[0].Recording.Directory, func(path string, entry fs.DirEntry, walkErr error) error {
 					if walkErr != nil || entry.IsDir() {
 						return walkErr
@@ -135,11 +146,6 @@ func TestNewRecordingCatalogUsesOriginalRequestingUserNotMappedSubject(t *testin
 					return nil
 				}))
 			}
-			suffix := ".bcast"
-			if encrypted {
-				suffix = ".becast"
-			}
-			require.Equal(t, ids[0].String()+suffix, fileName, "artifact storage naming remains UUID-only")
 		})
 	}
 }

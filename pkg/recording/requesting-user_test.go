@@ -132,12 +132,21 @@ func TestRecordingRequestingUserRemainsPrivateInEncryptedNativeArtifacts(t *test
 			cast, err := VerifyCast(bytes.NewReader(exported.Bytes()), CastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
 			require.NoError(t, err)
 			require.Equal(t, metadata.User, cast.Metadata.User)
+			// Drain repository operations and release its mandatory Windows file
+			// lock before reading every persisted file. Cleanup may close it again.
+			require.NoError(t, repository.Close())
 			require.NoError(t, filepath.WalkDir(root, func(current string, entry fs.DirEntry, walkErr error) error {
-				if walkErr != nil || entry.IsDir() || current == path {
+				if walkErr != nil || entry.IsDir() {
 					return walkErr
 				}
 				auxiliary, err := os.ReadFile(current)
 				require.NoError(t, err)
+				if current == path {
+					require.True(t, bytes.Equal(content, auxiliary), "closing must not alter the verified artifact")
+					if !encrypted {
+						return nil // This verified clear artifact intentionally contains its requesting user.
+					}
+				}
 				require.NotContains(t, string(auxiliary), metadata.User, "private context must not spill into unsigned heads or summary sidecars: %s", current)
 				return nil
 			}))

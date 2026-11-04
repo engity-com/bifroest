@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { assertCatalogRequestPrivacy, captureJsonResponse } from './response-capture.mjs';
 import {
   activeAccess,
   assertUiPreferences,
@@ -105,8 +106,7 @@ try {
           ].includes(key),
         ),
       );
-      assert.equal(new URL(request.url()).search, '');
-      assert.equal(request.headers().cookie, undefined);
+      assertCatalogRequestPrivacy(request);
       requests.push({ path: new URL(request.url()).pathname, body });
     }
   });
@@ -125,8 +125,9 @@ try {
     ['sessions/list'],
     'the active Sessions view reads once; sign-in cannot discover artifacts or download',
   );
-  const firstSourcesReply = page.waitForResponse((response) =>
-    response.url().endsWith('/management/auditlogs/list'),
+  const firstSourcesReply = captureJsonResponse(
+    page,
+    '/_bifroest/api/v1/management/auditlogs/list',
   );
   await workspace(page, 'Recordings & audit');
   const catalog = page.getByRole('region', {
@@ -157,14 +158,19 @@ try {
       true,
     );
   });
-  async function readPage(response, kind) {
-    assert.equal(response.status(), 200);
-    const body = await response.json();
-    assert.equal(body.version, 1);
-    assert.equal(body.operation, `${kind}.list`);
+  function readPage(captured, kind) {
+    assert.equal(captured.error, undefined, 'catalog response capture must complete');
+    assert.equal(captured.status, 200);
+    const body = captured.body;
+    assert(
+      body !== null && typeof body === 'object' && !Array.isArray(body),
+      'catalog receipt must be an object',
+    );
+    assert(body.version === 1, 'catalog receipt version must be 1');
+    assert(body.operation === `${kind}.list`, 'catalog receipt operation must match');
     return body[kind];
   }
-  const firstSources = await readPage(await firstSourcesReply, 'auditlogs');
+  const firstSources = readPage(await firstSourcesReply, 'auditlogs');
   assert.equal(firstSources.items.length, 20);
   assert.deepEqual(
     firstSources.items.map((row) => row.name),
@@ -183,11 +189,9 @@ try {
   });
   await logs.getByText('catalog00', { exact: true }).waitFor();
   assert.equal(await logs.locator('tbody tr').count(), 20);
-  const nextSourcesReply = page.waitForResponse((response) =>
-    response.url().endsWith('/management/auditlogs/list'),
-  );
+  const nextSourcesReply = captureJsonResponse(page, '/_bifroest/api/v1/management/auditlogs/list');
   await catalog.getByRole('button', { name: 'More recording sources', exact: true }).click();
-  const nextSources = await readPage(await nextSourcesReply, 'auditlogs');
+  const nextSources = readPage(await nextSourcesReply, 'auditlogs');
   assert.deepEqual(
     nextSources.items.map((row) => row.name),
     ['catalog20', 'default'],
@@ -250,12 +254,13 @@ try {
     beforeBack,
     'Back retains the catalog without rereading or replaying its open action',
   );
-  const firstRecordingsReply = page.waitForResponse((response) =>
-    response.url().endsWith('/management/recordings/list'),
+  const firstRecordingsReply = captureJsonResponse(
+    page,
+    '/_bifroest/api/v1/management/recordings/list',
   );
   await catalog.getByRole('combobox', { name: 'Recording source', exact: true }).click();
   await page.getByRole('option', { name: 'catalog00', exact: true }).click();
-  const firstRecordings = await readPage(await firstRecordingsReply, 'recordings');
+  const firstRecordings = readPage(await firstRecordingsReply, 'recordings');
   const recordings = catalog.getByRole('table', {
     name: 'Recordings · catalog00',
     exact: true,
@@ -277,11 +282,12 @@ try {
     .getByText('Details reported by the server; not independent verification.', { exact: true })
     .waitFor();
   assert.match(firstRecordings.next, /^bmp1\./u);
-  const nextRecordingsReply = page.waitForResponse((response) =>
-    response.url().endsWith('/management/recordings/list'),
+  const nextRecordingsReply = captureJsonResponse(
+    page,
+    '/_bifroest/api/v1/management/recordings/list',
   );
   await catalog.getByRole('button', { name: 'More recordings', exact: true }).click();
-  const nextRecordings = await readPage(await nextRecordingsReply, 'recordings');
+  const nextRecordings = readPage(await nextRecordingsReply, 'recordings');
   assert.equal(nextRecordings.items.length, 1);
   assert.equal(nextRecordings.next, '');
   const allRecordings = [...firstRecordings.items, ...nextRecordings.items];

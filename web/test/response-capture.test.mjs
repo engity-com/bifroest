@@ -3,7 +3,37 @@ import { test } from 'node:test';
 import { inspect } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { observeSingleRootDirectory } from './login-options-ui.mjs';
-import { installPreparationObserver } from './response-capture.mjs';
+import {
+  assertCatalogRequestPrivacy,
+  captureJsonResponse,
+  installPreparationObserver,
+} from './response-capture.mjs';
+
+test('catalog request privacy assertions never retain query or cookie secrets through error causes', () => {
+  const secret = 'PRIVATE-CATALOG-REQUEST-SENTINEL';
+  assert.doesNotThrow(() =>
+    assertCatalogRequestPrivacy({
+      url: () => 'https://app.example.org/_bifroest/api/v1/management/auditlogs/list',
+      headers: () => ({ authorization: secret }),
+    }),
+  );
+  for (const field of ['query', 'cookie']) {
+    let failure;
+    try {
+      assertCatalogRequestPrivacy({
+        url: () =>
+          `https://app.example.org/_bifroest/api/v1/management/auditlogs/list${field === 'query' ? `?credential=${secret}` : ''}`,
+        headers: () => (field === 'cookie' ? { cookie: secret } : {}),
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert(failure instanceof assert.AssertionError, 'privacy violations must still fail');
+    const outer = new Error('bounded catalog diagnostics', { cause: failure });
+    assert.equal(inspect(outer, { depth: 8 }).includes(secret), false);
+    assert.equal(JSON.stringify(failure).includes(secret), false);
+  }
+});
 
 test('single-link discovery assertion failures never expose credential or query values', () => {
   const secret = 'PRIVATE-DISCOVERY-SENTINEL';
@@ -144,4 +174,135 @@ test('only the first accepted same-origin preparation is observed; denial and fo
   await f.globals.fetch(f.response.url);
   assert.equal(f.requests.length, 2);
   assert.equal(f.events.filter((event) => event === 'clone').length, 1);
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+test('JSON capture registers before the action, reads immediately and joins request completion', async () => {
+  const headers = deferred();
+  const reading = deferred();
+  const finished = deferred();
+  const events = [];
+  const pathname = '/_bifroest/api/v1/management/auditlogs/list';
+  const body = { version: 1, operation: 'auditlogs.list', auditlogs: { items: [], next: '' } };
+  let matches;
+  const captured = captureJsonResponse(
+    {
+      waitForResponse(predicate, options) {
+        events.push('registered');
+        matches = predicate;
+        assert.equal(options.timeout, 30_000);
+        return headers.promise;
+      },
+    },
+    pathname,
+  );
+  assert.deepEqual(events, ['registered']);
+  const response = {
+    url: () => `https://app.example.org${pathname}`,
+    request: () => ({ method: () => 'POST' }),
+    status: () => 200,
+    async json() {
+      events.push('body');
+      reading.resolve();
+      return body;
+    },
+    finished() {
+      events.push('finished');
+      return finished.promise;
+    },
+  };
+  assert.equal(matches(response), true);
+  assert.equal(matches({ ...response, request: () => ({ method: () => 'GET' }) }), false);
+  assert.equal(matches({ ...response, url: () => 'https://app.example.org/other' }), false);
+  events.push('action');
+  headers.resolve(response);
+  await reading.promise;
+  assert.deepEqual(events, ['registered', 'action', 'body', 'finished']);
+  let settled = false;
+  void captured.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  assert.equal(settled, false, 'reading JSON alone cannot complete the capture');
+  finished.resolve(null);
+  const receipt = await captured;
+  assert.equal(receipt.status, 200);
+  assert(receipt.body === body, 'the observed body is retained without another request');
+});
+
+test('early JSON capture failures settle safely without raw exceptions, causes or partial bodies', async () => {
+  const secret = 'PRIVATE-CATALOG-FIXTURE-SENTINEL';
+  for (const failure of ['headers', 'body', 'finished', 'finished-value']) {
+    let observations = 0;
+    const captured = captureJsonResponse(
+      {
+        async waitForResponse() {
+          observations++;
+          if (failure === 'headers') {
+            throw new Error(secret, { cause: secret });
+          }
+          return {
+            status: () => 200,
+            async json() {
+              if (failure === 'body') {
+                throw new Error(secret, { cause: secret });
+              }
+              return { private: secret };
+            },
+            async finished() {
+              if (failure === 'finished') {
+                throw new Error(secret, { cause: secret });
+              }
+              return failure === 'finished-value' ? new Error(secret) : null;
+            },
+          };
+        },
+      },
+      '/_bifroest/api/v1/management/auditlogs/list',
+    );
+    // The consumer may still be awaiting UI work when capture fails.
+    await Promise.resolve();
+    await Promise.resolve();
+    const receipt = await captured;
+    assert.deepEqual(receipt, {
+      error: failure === 'headers' ? 'response-capture-failed' : 'response-capture-incomplete',
+    });
+    assert.equal(observations, 1);
+    assert.equal(inspect(receipt, { depth: 8 }).includes(secret), false);
+    assert.equal(JSON.stringify(receipt).includes(secret), false);
+  }
+});
+
+test('JSON header/body/completion observation shares the existing 30-second deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const headers = deferred();
+  const reading = deferred();
+  const body = deferred();
+  const finished = deferred();
+  const captured = captureJsonResponse(
+    { waitForResponse: () => headers.promise },
+    '/_bifroest/api/v1/management/auditlogs/list',
+  );
+  t.mock.timers.tick(29_999);
+  headers.resolve({
+    status: () => 200,
+    json() {
+      reading.resolve();
+      return body.promise;
+    },
+    finished: () => finished.promise,
+  });
+  await reading.promise;
+  t.mock.timers.tick(1);
+  assert.deepEqual(await captured, { error: 'response-capture-timeout' });
+  body.resolve({ private: 'PRIVATE-LATE-CATALOG-FIXTURE' });
+  finished.resolve(null);
+  assert.deepEqual(await captured, { error: 'response-capture-timeout' });
 });
