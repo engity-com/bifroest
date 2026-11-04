@@ -268,7 +268,10 @@ try {
     // scoped logout no longer closes another actor/flow's tabs as a side effect.
     for (let remaining = 8; remaining > 0; remaining--) {
       if (
-        !(await page.getByRole('tablist').getByRole('tab').count()) &&
+        !(await page
+          .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+          .getByRole('tab')
+          .count()) &&
         !(
           (await notification.isVisible()) &&
           (await notification.getByRole('button', { name: 'Log out', exact: true }).count())
@@ -276,7 +279,10 @@ try {
       ) {
         break;
       }
-      const before = await page.getByRole('tab').count();
+      const before = await page
+        .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+        .getByRole('tab')
+        .count();
       const recovery = page.getByRole('dialog', { name: 'Notification details', exact: true });
       const recovering = await recovery
         .getByRole('button', { name: 'Log out', exact: true })
@@ -291,8 +297,8 @@ try {
       } else {
         await page.waitForFunction(
           (before) =>
-            document.querySelectorAll('[role="tab"]').length < before ||
-            !document.querySelector('[data-connection-active="true"]'),
+            document.querySelectorAll('[aria-label="Connections and terminals"] [role="tab"]')
+              .length < before || !document.querySelector('[data-connection-active="true"]'),
           before,
         );
       }

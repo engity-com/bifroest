@@ -191,7 +191,7 @@ async function mountWorkspace(initial: WebAccess) {
   await render();
   await vi.waitFor(async () => {
     await act(async () => {});
-    expect(container.querySelector('.workspace-nav')).not.toBeNull();
+    expect(container.querySelector('.workspace-tabs [role="tablist"]')).not.toBeNull();
     expect(button('Fixture local recording', container)).toBeDefined();
   });
   return { container, render, onSignIn, onViewsChange, onActionLock };

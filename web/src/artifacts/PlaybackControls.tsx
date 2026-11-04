@@ -6,7 +6,7 @@ import { playbackClock, playbackSpeeds } from './playback-view';
 function Icon({
   kind,
 }: {
-  kind: 'play' | 'pause' | 'restart' | 'fullscreen' | 'exit-fullscreen' | 'close';
+  kind: 'play' | 'pause' | 'restart' | 'fullscreen' | 'exit-fullscreen' | 'close' | 'help';
 }) {
   const paths = {
     play: 'M8 5v14l11-7z',
@@ -15,6 +15,7 @@ function Icon({
     fullscreen: 'M5 5h5V3H3v7h2zm9-2v2h5v5h2V3zM5 14H3v7h7v-2H5zm14 5h-5v2h7v-7h-2z',
     'exit-fullscreen': 'M3 8v2h7V3H8v5zm11-5v7h7V8h-5V3zM8 21h2v-7H3v2h5zm6-7v7h2v-5h5v-2z',
     close: 'm6 4 6 6 6-6 2 2-6 6 6 6-2 2-6-6-6 6-2-2 6-6-6-6z',
+    help: 'M11 18h2v-2h-2zm1-16a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm0-14a4 4 0 0 0-4 4h2a2 2 0 1 1 3.4 1.4c-1 .8-2.4 1.6-2.4 3.6h2c0-1.3 1-1.8 1.8-2.6A4 4 0 0 0 12 6z',
   };
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -37,6 +38,7 @@ export function PlaybackControls({
   onScrub,
   onSpeed,
   onFullscreen,
+  onHelp,
   onClose,
 }: {
   state: PlaybackState | null;
@@ -52,6 +54,7 @@ export function PlaybackControls({
   onScrub(value: boolean): void;
   onSpeed(value: number): void;
   onFullscreen(): void;
+  onHelp(): void;
   onClose(): void;
 }) {
   const pointer = useRef(false);
@@ -166,6 +169,16 @@ export function PlaybackControls({
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          className="recording-control"
+          aria-label={t('playbackHelp')}
+          title={t('playbackHelp')}
+          disabled={state === null}
+          onClick={onHelp}
+        >
+          <Icon kind="help" />
+        </button>
         <button
           type="button"
           className="recording-control"

@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useState } from 'react';
+import { Tab, Tabs } from '@mui/material';
+import { lazy, Suspense, useCallback, useId, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { accessMessages } from './access-messages';
 import { Alert, Button } from './material';
@@ -32,6 +33,7 @@ export function ManagementWorkspace({
   reauthenticationBlocked?: boolean;
 }) {
   const [view, setView] = useState<'sessions' | 'artifacts' | 'server'>('sessions');
+  const navigationID = useId();
   const [locked, setLocked] = useState(false);
   const status = useAccessStatus(access);
   const remoteDisabled = status !== 'active';
@@ -67,27 +69,44 @@ export function ManagementWorkspace({
           {status === 'expired' ? accessMessages.expiredNotice : accessMessages.closedNotice}
         </Alert>
       )}
-      <nav className="workspace-nav" aria-label={t('workspaceNavigation')}>
-        {(['sessions', 'artifacts', 'server'] as const).map((item) => (
-          <Button
-            key={item}
-            variant={view === item ? 'light' : 'subtle'}
-            aria-current={view === item ? 'page' : undefined}
-            disabled={disabled || locked}
-            onClick={() => setView(item)}
-          >
-            {t(
-              item === 'sessions'
-                ? 'workspaceSessions'
-                : item === 'artifacts'
-                  ? 'workspaceArtifacts'
-                  : 'workspaceServer',
-            )}
-          </Button>
-        ))}
+      <nav className="workspace-tabs" aria-label={t('workspaceNavigation')}>
+        <Tabs
+          value={view}
+          variant="scrollable"
+          scrollButtons="auto"
+          allowScrollButtonsMobile
+          aria-label={t('workspaceNavigation')}
+          onChange={(_event, next) => {
+            if (!disabled && !locked && ['sessions', 'artifacts', 'server'].includes(next)) {
+              setView(next);
+            }
+          }}
+        >
+          {(['sessions', 'artifacts', 'server'] as const).map((item) => (
+            <Tab
+              key={item}
+              value={item}
+              id={`${navigationID}-${item}`}
+              aria-controls={`${navigationID}-${item === 'artifacts' ? 'artifacts' : 'management'}-panel`}
+              disabled={disabled || locked}
+              label={t(
+                item === 'sessions'
+                  ? 'workspaceSessions'
+                  : item === 'artifacts'
+                    ? 'workspaceArtifacts'
+                    : 'workspaceServer',
+              )}
+            />
+          ))}
+        </Tabs>
       </nav>
       <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}>
-        <div hidden={view === 'artifacts'}>
+        <div
+          hidden={view === 'artifacts'}
+          role="tabpanel"
+          id={`${navigationID}-management-panel`}
+          aria-labelledby={`${navigationID}-${view === 'server' ? 'server' : 'sessions'}`}
+        >
           <ManagementPanel
             access={access}
             active={active && view !== 'artifacts'}
@@ -96,7 +115,12 @@ export function ManagementWorkspace({
             view={view === 'server' ? 'server' : 'sessions'}
           />
         </div>
-        <div hidden={view !== 'artifacts'}>
+        <div
+          hidden={view !== 'artifacts'}
+          role="tabpanel"
+          id={`${navigationID}-artifacts-panel`}
+          aria-labelledby={`${navigationID}-artifacts`}
+        >
           <ArtifactPanel
             access={access}
             disabled={disabled || locked}

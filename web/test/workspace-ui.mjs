@@ -94,13 +94,13 @@ export async function assertAccessActionsBlocked(page) {
     false,
   );
   for (const tab of await page
-    .getByRole('tablist', { includeHidden: true })
+    .getByRole('tablist', { name: 'Connections and terminals', exact: true, includeHidden: true })
     .getByRole('tab', { includeHidden: true })
     .all()) {
     assert.equal(await tab.isEnabled(), false);
   }
   await page
-    .getByRole('tablist', { includeHidden: true })
+    .getByRole('tablist', { name: 'Connections and terminals', exact: true, includeHidden: true })
     .getByRole('tab', { selected: true, includeHidden: true })
     .dispatchEvent('contextmenu');
   assert.equal(await page.getByRole('menuitem', { name: 'Log out', exact: true }).count(), 0);
@@ -365,16 +365,19 @@ export async function sessionLayout(page, id) {
 export async function workspace(page, name) {
   const button = page
     .getByRole('navigation', { name: 'Workspace', exact: true })
-    .getByRole('button', { name, exact: true });
+    .getByRole('tab', { name, exact: true });
   await button.click();
-  assert.equal(await button.getAttribute('aria-current'), 'page');
+  assert.equal(await button.getAttribute('aria-selected'), 'true');
 }
 
 export async function exactArtifactSelection(page) {
   await workspace(page, 'Recordings & audit');
-  const selection = page.locator('[role="tabpanel"]:not([hidden]) .artifact-selection');
+  const selection = page.locator('[data-connection-active="true"] .artifact-selection');
   if (!(await selection.isVisible())) {
-    await page.getByRole('button', { name: 'Back to recordings', exact: true }).click();
+    await page
+      .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+      .getByRole('button', { name: 'Recordings & audit', exact: true })
+      .click();
   }
   await selection.waitFor({ state: 'visible' });
   const summary = selection.getByText('Advanced: open by ID', { exact: true });

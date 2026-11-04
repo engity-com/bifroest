@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { RecordingSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
+import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { reportUiError } from '../ui/error-report';
 import {
   Alert,
@@ -17,6 +18,7 @@ import {
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import { ArtifactCatalog } from './ArtifactCatalog';
+import { ArtifactSourceDetails } from './ArtifactSourceDetails';
 import type { EvidenceOptions, VerifiedArtifact } from './evidence-protocol';
 import { EvidenceError, evidenceOptions } from './evidence-protocol';
 import { LocalArtifactDownload } from './local-download';
@@ -92,6 +94,25 @@ export function ArtifactPanel({
   const operation = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const downloads = useRef(new LocalArtifactDownload());
+  const returningToCatalog = useRef(false);
+
+  function closeRecording() {
+    returningToCatalog.current = true;
+    setReceived(null);
+    setOpened(null);
+    setSelection(null);
+    setSelectionOpen(true);
+    invalidateResult();
+  }
+  useEffect(() => {
+    if (selectionOpen && returningToCatalog.current) {
+      returningToCatalog.current = false;
+      if (wasActive.current) {
+        heading.current?.focus();
+        heading.current?.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }, [selectionOpen]);
 
   function clearKey() {
     for (const selector of ['[name="evidence-private"]', '[name="evidence-passphrase"]']) {
@@ -316,6 +337,19 @@ export function ArtifactPanel({
       component="section"
       aria-label={t('artifactTitle')}
     >
+      {opened !== null && !selectionOpen && (
+        <AdminBreadcrumbs
+          items={[
+            { label: t('artifactTitle'), onClick: closeRecording, disabled: locked },
+            {
+              label:
+                opened.kind === 'recording'
+                  ? selection?.user || selection?.flow || t('recordingSelected')
+                  : t('recordingAuditExports'),
+            },
+          ]}
+        />
+      )}
       <div className="section-heading">
         <h2 ref={heading} tabIndex={-1} className="recording-heading">
           {t(
@@ -326,21 +360,6 @@ export function ArtifactPanel({
                 : 'recordingAuditExports',
           )}
         </h2>
-        {opened !== null && !selectionOpen && (
-          <Button
-            variant="default"
-            disabled={locked}
-            onClick={() => {
-              setOpened(null);
-              setSelection(null);
-              setReceived(null);
-              setSelectionOpen(true);
-              invalidateResult();
-            }}
-          >
-            {t('recordingBack')}
-          </Button>
-        )}
       </div>
       {opened !== null && !selectionOpen && (
         <div className="recording-summary">
@@ -470,73 +489,6 @@ export function ArtifactPanel({
       {received !== null && (
         <>
           {verified === null && <p className="caption subtle">{t('recordingTrustIntroduction')}</p>}
-          <details className="context-help">
-            <summary>{t('artifactHints')}</summary>
-            <section aria-label={t('artifactHints')}>
-              <p>{t('artifactTransportWarning')}</p>
-              <dl>
-                <dt>{t('artifactSelected')}</dt>
-                <dd>
-                  {received.request.auditlog}
-                  {received.request.kind === 'recording' ? ` / ${received.request.id}` : ''}
-                </dd>
-                <dt>{t('artifactProducerHint')}</dt>
-                <dd>
-                  {'ProducerID' in received.metadata
-                    ? received.metadata.ProducerID
-                    : received.metadata.Producer}
-                </dd>
-                {'Recipient' in received.metadata && (
-                  <>
-                    <dt>{t('artifactRecipientHint')}</dt>
-                    <dd>{received.metadata.Recipient || t('artifactHintNone')}</dd>
-                  </>
-                )}
-              </dl>
-              <ul>
-                {received.files.slice(filePage * 20, (filePage + 1) * 20).map((file) => (
-                  <li key={file.name}>
-                    {file.name} ({new Intl.NumberFormat('en-US').format(file.data.size)}{' '}
-                    {t('artifactBytes')}){' '}
-                    <Button
-                      variant="subtle"
-                      disabled={locked}
-                      onClick={() =>
-                        save(
-                          file.data,
-                          file.name === 'recording' && received.request.kind === 'recording'
-                            ? `recording-${received.request.id}.bin`
-                            : file.name,
-                        )
-                      }
-                    >
-                      {t('artifactSaveOriginal')} {file.name}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-              <div className="actions">
-                {filePage > 0 && (
-                  <Button
-                    variant="default"
-                    disabled={locked}
-                    onClick={() => setFilePage((value) => value - 1)}
-                  >
-                    {t('artifactPreviousFiles')}
-                  </Button>
-                )}
-                {(filePage + 1) * 20 < received.files.length && (
-                  <Button
-                    variant="default"
-                    disabled={locked}
-                    onClick={() => setFilePage((value) => value + 1)}
-                  >
-                    {t('artifactNextFiles')}
-                  </Button>
-                )}
-              </div>
-            </section>
-          </details>
           {verified === null && (
             <form
               ref={form}
@@ -722,10 +674,26 @@ export function ArtifactPanel({
                   {t(keyReady ? 'recordingRequiredOptions' : 'recordingRequiredKey')}
                 </p>
               )}
-              <Button type="submit" disabled={locked || !verificationReady}>
-                {t('artifactVerify')}
-              </Button>
+              <div className="artifact-actions">
+                <Button type="submit" disabled={locked || !verificationReady}>
+                  {t('artifactVerify')}
+                </Button>
+                <Button variant="default" disabled={locked} onClick={closeRecording}>
+                  {t('artifactClearTab')}
+                </Button>
+              </div>
             </form>
+          )}
+          {verified === null && (
+            <div className="stack recording-evidence">
+              <ArtifactSourceDetails
+                received={received}
+                disabled={locked}
+                page={filePage}
+                onPage={setFilePage}
+                onSave={save}
+              />
+            </div>
           )}
         </>
       )}
@@ -754,9 +722,37 @@ export function ArtifactPanel({
                 active={active}
               />
             )}
-          <details>
-            <summary>{t('recordingVerificationDetails')}</summary>
-            <Title order={3}>{t('artifactResult')}</Title>
+          <div className="artifact-actions">
+            {verified.output !== null && (
+              <Button
+                variant="default"
+                disabled={locked}
+                onClick={() => {
+                  if (verified.output !== null) {
+                    save(
+                      verified.output,
+                      verified.request.kind === 'recording'
+                        ? `recording-${verified.request.id}.cast`
+                        : `audit-${verified.request.auditlog}.jsonl`,
+                    );
+                  }
+                }}
+              >
+                {t('artifactSaveExport')}
+              </Button>
+            )}
+            <Button variant="subtle" disabled={locked} onClick={invalidateResult}>
+              {t('recordingChangeVerification')}
+            </Button>
+            <Button variant="default" disabled={locked} onClick={closeRecording}>
+              {t('artifactClearTab')}
+            </Button>
+          </div>
+          <section
+            className="stack recording-evidence"
+            aria-label={t('recordingVerificationDetails')}
+          >
+            <Title order={3}>{t('recordingVerificationDetails')}</Title>
             <dl className="metadata-grid">
               <dt>{t('artifactTrust')}</dt>
               <dd>
@@ -811,44 +807,20 @@ export function ArtifactPanel({
                 </>
               )}
             </dl>
-          </details>
-          {verified.output !== null && (
-            <Button
-              variant="default"
-              disabled={locked}
-              onClick={() => {
-                if (verified.output !== null) {
-                  save(
-                    verified.output,
-                    verified.request.kind === 'recording'
-                      ? `recording-${verified.request.id}.cast`
-                      : `audit-${verified.request.auditlog}.jsonl`,
-                  );
-                }
-              }}
-            >
-              {t('artifactSaveExport')}
-            </Button>
-          )}
-          <Button variant="subtle" disabled={locked} onClick={invalidateResult}>
-            {t('recordingChangeVerification')}
-          </Button>
+            {received !== null && (
+              <>
+                <hr />
+                <ArtifactSourceDetails
+                  received={received}
+                  disabled={locked}
+                  page={filePage}
+                  onPage={setFilePage}
+                  onSave={save}
+                />
+              </>
+            )}
+          </section>
         </section>
-      )}
-      {received !== null && (
-        <Button
-          variant="default"
-          disabled={locked}
-          onClick={() => {
-            setReceived(null);
-            setOpened(null);
-            setSelection(null);
-            setSelectionOpen(true);
-            invalidateResult();
-          }}
-        >
-          {t('artifactClearTab')}
-        </Button>
       )}
     </Paper>
   );

@@ -292,10 +292,9 @@ try {
         cause,
       });
     }
-    const summary = result.getByText('Signature, source and export details', { exact: true });
-    if (!(await summary.locator('..').evaluate((node) => node.open))) {
-      await summary.click();
-    }
+    await result
+      .getByRole('heading', { name: 'Signature, source and export details', exact: true })
+      .waitFor();
   };
   const editVerification = async () => {
     await result.getByRole('button', { name: 'Change verification settings', exact: true }).click();
@@ -610,11 +609,20 @@ try {
       titleBefore,
       'recorded OSC title cannot rename the application',
     );
+    await playback.locator('.recording-video').scrollIntoViewIfNeeded();
     const link = await playback
       .locator('.xterm-accessibility-tree')
       .getByText('blocked-playback-link', { exact: true })
       .boundingBox();
     assert(link !== null);
+    assert.equal(
+      await page.evaluate(
+        ({ x, y }) => Boolean(document.elementFromPoint(x, y)?.closest('.playback-surface')),
+        { x: link.x + link.width / 2, y: link.y + link.height / 2 },
+      ),
+      true,
+      'the recorded link click must hit the console, never a player control or clipped/offscreen coordinate',
+    );
     await page.mouse.click(link.x + link.width / 2, link.y + link.height / 2);
     assert.equal(context.pages().length, pagesBefore, 'recorded links cannot open windows');
     assert.equal(
@@ -1024,7 +1032,13 @@ try {
       true,
       'Bob logout must not remount or retire Alice’s evidence owner',
     );
-    assert.equal(await page.getByRole('tab').count(), 1);
+    assert.equal(
+      await page
+        .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+        .getByRole('tab')
+        .count(),
+      1,
+    );
     assert.equal(logoutGrants.length, 1, 'Bob logout must not silently log out Alice as well');
     await result
       .getByText('Signing producer matches the independent expected ID', { exact: true })

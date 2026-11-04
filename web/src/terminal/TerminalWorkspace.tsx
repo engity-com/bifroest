@@ -654,6 +654,7 @@ export function TerminalWorkspace({
               authentication === null && tab.kind === 'terminal' && active === tab.id
             }
             data-connection-active={authentication === null && active === tab.id}
+            data-playback-bounds={tab.kind === 'management' ? true : undefined}
             data-connection-principal={tab.access.snapshot().principal}
             data-connection-scope={tab.access.snapshot().scope.slug}
             key={tab.id}

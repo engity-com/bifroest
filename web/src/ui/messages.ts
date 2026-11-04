@@ -245,6 +245,8 @@ export const messages = {
   playbackSeconds: 'seconds',
   playbackViewport: 'Read-only recording viewport',
   playbackVideo: 'Recording player',
+  playbackHelp: 'Playback help',
+  adminBreadcrumbs: 'Breadcrumb',
   playbackControls: 'Playback controls',
   playbackSeek: 'Recording position',
   playbackSeeking: 'Seeking…',

@@ -55,7 +55,7 @@ export async function exerciseConnections(page, login) {
     );
   const auditlogInput = () =>
     page
-      .locator('[role="tabpanel"]:not([hidden])')
+      .locator('[data-connection-active="true"]')
       .getByRole('textbox', { name: /^Artifact auditlog/u });
   const select = async (id, user, kind) => {
     await tab(id, user, kind).click();
@@ -134,7 +134,13 @@ export async function exerciseConnections(page, login) {
   const manager = tab(6, 'alice', 'Management');
   const managerPanel = page.getByRole('tabpanel', { name: 'Management 6 alice', exact: true });
   await manager.waitFor();
-  assert.equal(await page.getByRole('tab').count(), 6);
+  assert.equal(
+    await page
+      .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+      .getByRole('tab')
+      .count(),
+    6,
+  );
   assert.equal(
     sockets,
     5,
@@ -222,7 +228,9 @@ export async function exerciseConnections(page, login) {
   await page.setViewportSize({ width: 390, height: 844 });
   await captureLayout(page, 'connections-tooltip-exit-mobile');
   await page.waitForFunction(() => {
-    const tab = document.querySelector('[role="tab"][aria-selected="true"]');
+    const tab = document.querySelector(
+      '[aria-label="Connections and terminals"] [role="tab"][aria-selected="true"]',
+    );
     const list = document.querySelector('.terminal-tab-list');
     if (!tab || !list) {
       return false;
@@ -259,21 +267,33 @@ export async function exerciseConnections(page, login) {
   await logoutAccess(page);
   await manager.waitFor({ state: 'detached' });
   assert.equal(
-    await page.getByRole('tab').count(),
+    await page
+      .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+      .getByRole('tab')
+      .count(),
     5,
     'management logout must leave all unrelated terminal grants and tabs intact',
   );
   await logoutAccess(page);
   await tab(5, 'bob').waitFor({ state: 'detached' });
   assert.equal(
-    await page.getByRole('tab').count(),
+    await page
+      .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+      .getByRole('tab')
+      .count(),
     3,
     'logout removes both Other views sharing that access, not Work/bob or Work/alice',
   );
   await select(2, 'bob');
   await logoutAccess(page);
   await tab(2, 'bob').waitFor({ state: 'detached' });
-  assert.equal(await page.getByRole('tab').count(), 2);
+  assert.equal(
+    await page
+      .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+      .getByRole('tab')
+      .count(),
+    2,
+  );
   await select(1, 'alice');
   await page.locator('[data-terminal-active="true"] .xterm-helper-textarea').focus();
   await page.keyboard.type('alive-after-unrelated-logouts');

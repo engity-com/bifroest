@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
+import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { reportUiError } from '../ui/error-report';
 import { Alert, Button, Modal, Paper, Select, Table, TextInput, Title } from '../ui/material';
 import { t } from '../ui/messages';
@@ -41,6 +42,8 @@ export function ManagementPanel({
   const [flowsFailed, setFlowsFailed] = useState(false);
   const attempted = useRef({ sessions: false, version: false, flows: false });
   const detailElement = useRef<HTMLElement | null>(null);
+  const listHeading = useRef<HTMLHeadingElement | null>(null);
+  const returningToList = useRef(false);
   const detailID = useId();
   const request = useRef<AbortController | null>(null);
   const generation = useRef(0);
@@ -158,8 +161,18 @@ export function ManagementPanel({
   useEffect(() => {
     if (selected !== null) {
       focusDetails();
+    } else if (returningToList.current) {
+      returningToList.current = false;
+      if (isActive.current) {
+        listHeading.current?.focus();
+        listHeading.current?.scrollIntoView({ block: 'nearest' });
+      }
     }
   }, [selected]);
+  function returnToSessions() {
+    returningToList.current = true;
+    setSelected(null);
+  }
   function cancel() {
     if (sending.current && preview !== null) {
       reportUiError(
@@ -375,10 +388,18 @@ export function ManagementPanel({
   const isSelected = (item: SessionItem) => selected?.flow === item.flow && selected.id === item.id;
   return (
     <Paper withBorder p="lg" className="stack" aria-label={t('managementTitle')}>
+      {selected !== null && view === 'sessions' && (
+        <AdminBreadcrumbs
+          items={[
+            { label: t('workspaceSessions'), onClick: returnToSessions, disabled: locked },
+            { label: `${field(selected, selected.user)} · ${selected.flow}` },
+          ]}
+        />
+      )}
       <div className="section-heading">
-        <Title order={2}>
+        <h2 ref={listHeading} tabIndex={-1} className="recording-heading">
           {t(view === 'server' ? 'workspaceServer' : 'managementSessionsTitle')}
-        </Title>
+        </h2>
         <details className="context-help">
           <summary>{t('managementPolicyHelp')}</summary>
           <p>{t('managementReadOnly')}</p>
@@ -524,175 +545,181 @@ export function ManagementPanel({
         </Button>
       )}
       <section hidden={view !== 'sessions'} className="stack">
-        <form
-          method="dialog"
-          className="stack session-search"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void loadSessions();
-          }}
-        >
-          <div className="admin-toolbar actions">
-            <TextInput
-              label={m('searchUser')}
-              helperText={m('searchHint')}
-              value={user}
-              onChange={(event) => setUser(event.currentTarget.value)}
-              disabled={locked}
-              maxLength={256}
-            />
-            <Button type="submit" disabled={locked}>
-              {m('search')}
-            </Button>
-            <Button
-              type="button"
-              variant="default"
-              disabled={locked}
-              onClick={() => void refreshSessions()}
-            >
-              {m('refreshSessions')}
-            </Button>
-          </div>
-          <details className="session-filter-details">
-            <summary>{m('filters')}</summary>
-            <div className="session-filters">
+        <div hidden={selected !== null} className="stack">
+          <form
+            method="dialog"
+            className="stack session-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void loadSessions();
+            }}
+          >
+            <div className="admin-toolbar actions">
               <TextInput
-                label={t('managementFlowFilter')}
-                value={flow}
-                onChange={(event) => setFlow(event.currentTarget.value)}
+                label={m('searchUser')}
+                helperText={m('searchHint')}
+                value={user}
+                onChange={(event) => setUser(event.currentTarget.value)}
                 disabled={locked}
-                maxLength={255}
+                maxLength={256}
               />
-              <Select
-                label={t('managementStateFilter')}
-                value={state}
-                onChange={(value) => setState(value ?? 'active')}
-                data={['active', 'all', 'new', 'authorized', 'disposed'].map((value) => ({
-                  value,
-                  label: sessionStateLabel(value),
-                }))}
+              <Button type="submit" disabled={locked}>
+                {m('search')}
+              </Button>
+              <Button
+                type="button"
+                variant="default"
                 disabled={locked}
-              />
+                onClick={() => void refreshSessions()}
+              >
+                {m('refreshSessions')}
+              </Button>
             </div>
-            <p className="caption subtle">{m('filterHint')}</p>
-          </details>
-        </form>
-        {loading === 'sessions' && <p role="status">{m('sessionsLoading')}</p>}
-        {loading === 'details' && <p role="status">{m('detailsLoading')}</p>}
-        {sessions === null && loading !== 'sessions' && (
-          <p className="empty-state">
-            {m(attempted.current.sessions ? 'sessionsCleared' : 'sessionPending')}
-          </p>
-        )}
-        {sessions !== null && (
-          <>
-            <p className="caption subtle">
-              {m('appliedFilters')}: {lastFilter.current.user || m('anyUser')} ·{' '}
-              {lastFilter.current.flow || m('anyFlow')} ·{' '}
-              {sessionStateLabel(lastFilter.current.state ?? 'active')}. {m('page')} {sessionPage}.
+            <details className="session-filter-details">
+              <summary>{m('filters')}</summary>
+              <div className="session-filters">
+                <TextInput
+                  label={t('managementFlowFilter')}
+                  value={flow}
+                  onChange={(event) => setFlow(event.currentTarget.value)}
+                  disabled={locked}
+                  maxLength={255}
+                />
+                <Select
+                  label={t('managementStateFilter')}
+                  value={state}
+                  onChange={(value) => setState(value ?? 'active')}
+                  data={['active', 'all', 'new', 'authorized', 'disposed'].map((value) => ({
+                    value,
+                    label: sessionStateLabel(value),
+                  }))}
+                  disabled={locked}
+                />
+              </div>
+              <p className="caption subtle">{m('filterHint')}</p>
+            </details>
+          </form>
+          {loading === 'sessions' && <p role="status">{m('sessionsLoading')}</p>}
+          {loading === 'details' && <p role="status">{m('detailsLoading')}</p>}
+          {sessions === null && loading !== 'sessions' && (
+            <p className="empty-state">
+              {m(attempted.current.sessions ? 'sessionsCleared' : 'sessionPending')}
             </p>
-            <p className="caption subtle">{m('snapshot')}</p>
-            {sessions.skipped > 0 && (
-              <Alert color="yellow">
-                {t('managementPartial')} ({sessions.skipped})
-              </Alert>
-            )}
-            {sessions.items.some((item) => item.policyLimited) && (
-              <Alert color="yellow">{t('managementLimited')}</Alert>
-            )}
-            <div className="table-scroll desktop-sessions">
-              <Table captionSide="top" className="session-table">
-                <caption>{t('managementSessionsCaption')}</caption>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>{m('user')}</Table.Th>
-                    <Table.Th>{t('managementFlow')}</Table.Th>
-                    <Table.Th>{m('status')}</Table.Th>
-                    <Table.Th>{m('started')}</Table.Th>
-                    <Table.Th>{m('origin')}</Table.Th>
-                    <Table.Th>{t('managementDetails')}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {sessions.items.map((item) => (
-                    <Table.Tr
-                      key={`${item.flow}/${item.id}`}
-                      className={isSelected(item) ? 'selected-row' : undefined}
-                      aria-selected={isSelected(item)}
-                    >
-                      <Table.Td>{field(item, item.user)}</Table.Td>
-                      <Table.Td>{item.flow}</Table.Td>
-                      <Table.Td>{sessionStateLabel(item.state)}</Table.Td>
-                      <Table.Td>{when(item.createdAt)}</Table.Td>
-                      <Table.Td>{field(item, item.remote)}</Table.Td>
-                      <Table.Td>
-                        <Button
-                          disabled={locked}
-                          onClick={() => {
-                            void show(item);
-                          }}
-                          aria-label={`${t('managementDetails')} ${item.id}`}
-                          aria-controls={detailID}
-                          aria-expanded={isSelected(item)}
-                        >
-                          {t('managementDetails')}
-                        </Button>
-                      </Table.Td>
+          )}
+          {sessions !== null && (
+            <>
+              <p className="caption subtle">
+                {m('appliedFilters')}: {lastFilter.current.user || m('anyUser')} ·{' '}
+                {lastFilter.current.flow || m('anyFlow')} ·{' '}
+                {sessionStateLabel(lastFilter.current.state ?? 'active')}. {m('page')} {sessionPage}
+                .
+              </p>
+              <p className="caption subtle">{m('snapshot')}</p>
+              {sessions.skipped > 0 && (
+                <Alert color="yellow">
+                  {t('managementPartial')} ({sessions.skipped})
+                </Alert>
+              )}
+              {sessions.items.some((item) => item.policyLimited) && (
+                <Alert color="yellow">{t('managementLimited')}</Alert>
+              )}
+              <div className="table-scroll desktop-sessions">
+                <Table captionSide="top" className="session-table">
+                  <caption>{t('managementSessionsCaption')}</caption>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>{m('user')}</Table.Th>
+                      <Table.Th>{t('managementFlow')}</Table.Th>
+                      <Table.Th>{m('status')}</Table.Th>
+                      <Table.Th>{m('started')}</Table.Th>
+                      <Table.Th>{m('origin')}</Table.Th>
+                      <Table.Th>{t('managementDetails')}</Table.Th>
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </div>
-            <section className="stack mobile-sessions" aria-label={t('managementSessionsCaption')}>
-              {sessions.items.map((item) => (
-                <article
-                  key={`${item.flow}/${item.id}`}
-                  className={`session-card record-card stack${isSelected(item) ? ' selected-row' : ''}`}
-                  aria-label={`${field(item, item.user)} · ${item.flow}`}
-                >
-                  <div className="section-heading">
-                    <strong>{field(item, item.user)}</strong>
-                    <span>{sessionStateLabel(item.state)}</span>
-                  </div>
-                  <dl className="metadata-grid">
-                    <dt>{t('managementFlow')}</dt>
-                    <dd>{item.flow}</dd>
-                    <dt>{m('started')}</dt>
-                    <dd>{when(item.createdAt)}</dd>
-                    <dt>{m('origin')}</dt>
-                    <dd>{field(item, item.remote)}</dd>
-                  </dl>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {sessions.items.map((item) => (
+                      <Table.Tr
+                        key={`${item.flow}/${item.id}`}
+                        className={isSelected(item) ? 'selected-row' : undefined}
+                        aria-selected={isSelected(item)}
+                      >
+                        <Table.Td>{field(item, item.user)}</Table.Td>
+                        <Table.Td>{item.flow}</Table.Td>
+                        <Table.Td>{sessionStateLabel(item.state)}</Table.Td>
+                        <Table.Td>{when(item.createdAt)}</Table.Td>
+                        <Table.Td>{field(item, item.remote)}</Table.Td>
+                        <Table.Td>
+                          <Button
+                            disabled={locked}
+                            onClick={() => {
+                              void show(item);
+                            }}
+                            aria-label={`${t('managementDetails')} ${item.id}`}
+                            aria-controls={detailID}
+                            aria-expanded={isSelected(item)}
+                          >
+                            {t('managementDetails')}
+                          </Button>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </div>
+              <section
+                className="stack mobile-sessions"
+                aria-label={t('managementSessionsCaption')}
+              >
+                {sessions.items.map((item) => (
+                  <article
+                    key={`${item.flow}/${item.id}`}
+                    className={`session-card record-card stack${isSelected(item) ? ' selected-row' : ''}`}
+                    aria-label={`${field(item, item.user)} · ${item.flow}`}
+                  >
+                    <div className="section-heading">
+                      <strong>{field(item, item.user)}</strong>
+                      <span>{sessionStateLabel(item.state)}</span>
+                    </div>
+                    <dl className="metadata-grid">
+                      <dt>{t('managementFlow')}</dt>
+                      <dd>{item.flow}</dd>
+                      <dt>{m('started')}</dt>
+                      <dd>{when(item.createdAt)}</dd>
+                      <dt>{m('origin')}</dt>
+                      <dd>{field(item, item.remote)}</dd>
+                    </dl>
+                    <Button
+                      variant="light"
+                      disabled={locked}
+                      onClick={() => {
+                        void show(item);
+                      }}
+                      aria-label={`${t('managementDetails')} ${item.id}`}
+                      aria-controls={detailID}
+                      aria-expanded={isSelected(item)}
+                    >
+                      {t('managementDetails')}
+                    </Button>
+                  </article>
+                ))}
+              </section>
+              {sessions.items.length === 0 && <p className="empty-state">{m('noSessions')}</p>}
+              {sessions.next !== '' && (
+                <div className="stack">
+                  <p className="caption subtle">{m('moreSessions')}</p>
                   <Button
-                    variant="light"
                     disabled={locked}
                     onClick={() => {
-                      void show(item);
+                      void loadSessions(true);
                     }}
-                    aria-label={`${t('managementDetails')} ${item.id}`}
-                    aria-controls={detailID}
-                    aria-expanded={isSelected(item)}
                   >
-                    {t('managementDetails')}
+                    {t('managementNextSessions')}
                   </Button>
-                </article>
-              ))}
-            </section>
-            {sessions.items.length === 0 && <p className="empty-state">{m('noSessions')}</p>}
-            {sessions.next !== '' && (
-              <div className="stack">
-                <p className="caption subtle">{m('moreSessions')}</p>
-                <Button
-                  disabled={locked}
-                  onClick={() => {
-                    void loadSessions(true);
-                  }}
-                >
-                  {t('managementNextSessions')}
-                </Button>
-              </div>
-            )}
-          </>
-        )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
         {selected !== null && (
           <section
             ref={detailElement}
@@ -705,7 +732,7 @@ export function ManagementPanel({
               <Title order={3}>
                 {field(selected, selected.user)} · {selected.flow}
               </Title>
-              <Button variant="subtle" onClick={() => setSelected(null)}>
+              <Button variant="subtle" disabled={locked} onClick={returnToSessions}>
                 {t('close')}
               </Button>
             </div>

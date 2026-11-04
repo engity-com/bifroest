@@ -111,6 +111,13 @@ and **F** toggles fullscreen. **Escape** exits fullscreen. Hardware media keys
 are best-effort browser support, without a hidden audio/video source. These
 controls neither reconnect to the server nor send terminal input.
 
+The viewing area is also capped by the current pane's height, reducing its width
+proportionally when necessary. The question-mark button beside fullscreen opens
+playback help as a modal dialog, including in fullscreen. Opening help pauses
+playback; closing it does not resume automatically. Signature, source and export
+information remains visible in a separate card below the player; unverified
+server hints stay clearly distinguished from verified evidence.
+
 Older recordings may lack the requesting user; encrypted identity details are
 not exposed by the catalog. Missing values are not inferred from current
 accounts. See [encrypted evidence](evidence.md) for trust setup and

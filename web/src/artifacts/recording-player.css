@@ -15,7 +15,7 @@
 .recording-video:fullscreen {
   width: 100vw;
   height: 100dvh;
-  max-width: none;
+  max-width: none !important;
   aspect-ratio: auto;
   border: 0;
   border-radius: 0;
@@ -72,7 +72,7 @@
 .recording-control:hover, .recording-control:focus-visible { background: rgb(255 255 255 / .18); }
 .recording-control:focus-visible, .recording-timeline:focus-visible, .recording-speed:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .recording-control:disabled { opacity: .4; cursor: default; }
-.recording-time { margin-left: 4px; font: 12px ui-monospace, monospace; white-space: nowrap; }
+.recording-time { margin-left: 4px; font: 12px ui-monospace, monospace; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .recording-speed { margin-left: auto; height: 32px; padding: 2px 5px; color: #fff; background: #222; border: 1px solid #666; border-radius: 4px; font: inherit; font-size: 12px; }
 .recording-timeline { display: block; width: 100%; min-width: 0; height: 16px; margin: 0; cursor: pointer; accent-color: #64b5f6; }
 .recording-overlay { position: absolute; z-index: 1; inset: 0; display: flex; align-items: center; justify-content: center; padding: 1rem; color: var(--app-text, #ddd); background: var(--recording-background); text-align: center; }

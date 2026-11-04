@@ -8,6 +8,7 @@ import { verifyArtifact } from '../src/artifacts/verify';
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
 import { t } from '../src/ui/messages';
+import '../src/ui/app.css';
 
 const recording = {
   kind: 'recording',
@@ -189,6 +190,37 @@ async function chooseProtection() {
 }
 
 describe('opening an existing recording as a user task', () => {
+  it('keeps actions content-sized on one left-aligned row and exposes evidence in a persistent card', async () => {
+    const app = await mount();
+    app.container.style.width = '800px';
+    await click(button('Open fixture recording'));
+    const check = button(t('artifactVerify'));
+    const close = button(t('artifactClearTab'));
+    expect(check.parentElement).toBe(close.parentElement);
+    expect(getComputedStyle(check.parentElement as HTMLElement).flexWrap).toBe('nowrap');
+    expect(check.getBoundingClientRect().top).toBe(close.getBoundingClientRect().top);
+    expect(check.getBoundingClientRect().width).toBeLessThan(300);
+    await chooseProtection();
+    await click(check);
+    const actions = [
+      button(t('artifactSaveExport')),
+      button(t('recordingChangeVerification')),
+      button(t('artifactClearTab')),
+    ];
+    for (const action of actions) {
+      expect(action.parentElement).toBe(actions[0]?.parentElement);
+      expect(action.getBoundingClientRect().top).toBe(actions[0]?.getBoundingClientRect().top);
+      expect(action.getBoundingClientRect().width).toBeLessThan(300);
+    }
+    const card = document.querySelector('.recording-evidence');
+    expect(card?.closest('details')).toBeNull();
+    expect(card?.textContent).toContain(t('recordingVerificationDetails'));
+    expect(card?.textContent).toContain(t('artifactHints'));
+    expect(card?.querySelector('dl')).not.toBeNull();
+    expect(
+      document.querySelector(`nav[aria-label="${t('adminBreadcrumbs')}"] [aria-current="page"]`),
+    ).not.toBeNull();
+  });
   it('opens only on an explicit row action, never copies server hints into independent expectations, and prepares playback after full verification', async () => {
     await mount();
     expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
@@ -239,7 +271,7 @@ describe('opening an existing recording as a user task', () => {
     ).toBe('false');
     expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
     expect(verifyArtifact).toHaveBeenCalledTimes(1);
-    await click(button(t('recordingBack')));
+    await click(button(t('artifactTitle')));
     expect(button('Open fixture recording').disabled).toBe(true);
     expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
   });

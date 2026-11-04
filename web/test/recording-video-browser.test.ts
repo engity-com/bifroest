@@ -4,11 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { PlaybackImage, type PlaybackOptions } from '../src/artifacts/playback-protocol';
 import { fitPlaybackViewport } from '../src/artifacts/playback-view';
+import { prepareRecordingPlayback } from '../src/artifacts/prepare-playback';
 import { RecordingPlayer } from '../src/artifacts/RecordingPlayer';
 import { t } from '../src/ui/messages';
 
 vi.mock('../src/artifacts/prepare-playback', () => ({
-  prepareRecordingPlayback: async (_source: Blob, expected: PlaybackOptions) => fixture(expected),
+  prepareRecordingPlayback: vi.fn(async (_source: Blob, expected: PlaybackOptions) =>
+    fixture(expected),
+  ),
 }));
 const cleanups: (() => void)[] = [];
 function fixture(expected: PlaybackOptions) {
@@ -50,6 +53,7 @@ function fixture(expected: PlaybackOptions) {
   );
 }
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   const nonce = document.createElement('meta');
   nonce.name = 'bifroest-nonce';
@@ -65,10 +69,15 @@ afterEach(async () => {
   });
   vi.unstubAllGlobals();
 });
-async function mount() {
+async function mount(paneHeight?: number) {
   const container = document.createElement('div');
   container.style.width = '900px';
   container.style.maxWidth = '100%';
+  if (paneHeight !== undefined) {
+    container.dataset.playbackBounds = 'true';
+    container.style.height = `${paneHeight}px`;
+    container.style.overflow = 'auto';
+  }
   document.body.append(container);
   const root = createRoot(container);
   cleanups.push(() => {
@@ -133,6 +142,61 @@ function verifyFit() {
   return { stage, surface, screen };
 }
 describe('real console inside the recording video', () => {
+  it('pauses running playback for help and closes without resuming or preparing another player', async () => {
+    await page.viewport(1000, 800);
+    await mount();
+    const terminal = document.querySelector('.xterm-screen');
+    const helpButton = page.getByRole('button', { name: t('playbackHelp'), exact: true });
+    expect(helpButton.element().nextElementSibling).toBe(
+      page.getByRole('button', { name: t('playbackFullscreen'), exact: true }).element(),
+    );
+    expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+    await act(async () =>
+      userEvent.click(page.getByRole('button', { name: t('playbackPlay'), exact: true })),
+    );
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('[data-playback-phase]')?.getAttribute('data-playback-phase'),
+      ).toBe('playing'),
+    );
+    await act(async () => userEvent.click(helpButton));
+    const dialog = page.getByRole('dialog', { name: t('playbackHelp'), exact: true });
+    await vi.waitFor(() => expect(dialog.element()).toBeDefined());
+    expect(
+      document.querySelector('[data-playback-phase]')?.getAttribute('data-playback-phase'),
+    ).toBe('paused');
+    expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+    await act(async () =>
+      userEvent.click(dialog.getByRole('button', { name: t('close'), exact: true })),
+    );
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    expect(
+      document.querySelector('[data-playback-phase]')?.getAttribute('data-playback-phase'),
+    ).toBe('paused');
+    expect(
+      page
+        .getByRole('button', { name: t('playbackPlay'), exact: true })
+        .element()
+        .hasAttribute('disabled'),
+    ).toBe(false);
+    expect(document.querySelector('.xterm-screen')).toBe(terminal);
+    expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+  });
+  it('reduces both dimensions to fit a short viewing pane without stretching 16:9', async () => {
+    await page.viewport(1400, 900);
+    await mount(280);
+    await vi.waitFor(() => {
+      const { stage } = verifyFit();
+      const bounds = stage.closest<HTMLElement>('[data-playback-bounds]');
+      if (!bounds) {
+        throw new Error('Missing viewing pane');
+      }
+      const box = stage.getBoundingClientRect();
+      expect(box.height).toBeLessThan(280);
+      expect(box.width).toBeLessThan(900);
+      expect(box.bottom).toBeLessThanOrEqual(bounds.getBoundingClientRect().bottom + 1);
+    });
+  });
   it('enters native fullscreen with controls in the fullscreen element and restores 16:9 on exit', async () => {
     await page.viewport(1000, 800);
     await mount();
@@ -156,6 +220,15 @@ describe('real console inside the recording video', () => {
     expect(
       stage.contains(page.getByRole('slider', { name: t('playbackSeek'), exact: true }).element()),
     ).toBe(true);
+    await act(async () =>
+      userEvent.click(page.getByRole('button', { name: t('playbackHelp'), exact: true })),
+    );
+    const help = page.getByRole('dialog', { name: t('playbackHelp'), exact: true });
+    await vi.waitFor(() => expect(stage.contains(help.element())).toBe(true));
+    expect(document.fullscreenElement).toBe(stage);
+    await act(async () => userEvent.keyboard('{Escape}'));
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    expect(document.fullscreenElement).toBe(stage);
     await act(async () => userEvent.keyboard('{Escape}'));
     await vi.waitFor(() => expect(document.fullscreenElement).toBeNull());
     await vi.waitFor(() => verifyFit());

@@ -6,11 +6,21 @@ import {
   workspace,
 } from './workspace-ui.mjs';
 
-async function sessionLayout(page, id) {
+async function sessionLayout(page, id, requestCount) {
   const viewport = page.viewportSize();
   await captureLayout(page, 'sessions-desktop');
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
+    const beforeReturn = requestCount();
+    await page
+      .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+      .getByRole('button', { name: 'Sessions', exact: true })
+      .click();
+    assert.equal(
+      requestCount(),
+      beforeReturn,
+      'returning through the breadcrumb uses retained metadata, never another read',
+    );
     const cards = page.getByRole('region', { name: 'Live session metadata', exact: true });
     await cards.getByRole('button', { name: `Session details ${id}`, exact: true }).click();
     await page.getByRole('region', { name: 'Session details', exact: true }).waitFor();
@@ -160,6 +170,18 @@ export async function exerciseManagementActions(page, login, logout) {
   await connection();
   const table = page.getByRole('table', { name: 'Live session metadata', exact: true });
   async function target() {
+    const back = page
+      .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+      .getByRole('button', { name: 'Sessions', exact: true });
+    if (await back.count()) {
+      const beforeReturn = managementCalls;
+      await back.click();
+      assert.equal(
+        managementCalls,
+        beforeReturn,
+        'local detail navigation must not refresh or prepare anything',
+      );
+    }
     await page.getByRole('button', { name: 'Refresh sessions', exact: true }).click();
     const row = table.locator('tbody tr').filter({ has: page.getByText('bob', { exact: true }) });
     await row.waitFor();
@@ -217,7 +239,7 @@ export async function exerciseManagementActions(page, login, logout) {
     return `worker/${id}`;
   }
   const id = await target();
-  await sessionLayout(page, id.split('/')[1]);
+  await sessionLayout(page, id.split('/')[1], () => managementCalls);
   await page.getByRole('button', { name: 'End session', exact: true }).click();
   let dialog = page.getByRole('dialog');
   await dialog.getByText(id, { exact: true }).waitFor();
@@ -270,11 +292,11 @@ export async function exerciseManagementActions(page, login, logout) {
   await page.getByText('The session action result is unknown.', { exact: false }).waitFor();
   const navigation = page.getByRole('navigation', { name: 'Workspace', exact: true });
   assert.equal(
-    await navigation.getByRole('button', { name: 'Recordings & audit', exact: true }).isEnabled(),
+    await navigation.getByRole('tab', { name: 'Recordings & audit', exact: true }).isEnabled(),
     false,
   );
   assert.equal(
-    await navigation.getByRole('button', { name: 'Server', exact: true }).isEnabled(),
+    await navigation.getByRole('tab', { name: 'Server', exact: true }).isEnabled(),
     false,
     'view changes cannot dismiss the unknown outcome or its action lock',
   );
@@ -284,7 +306,10 @@ export async function exerciseManagementActions(page, login, logout) {
     false,
     'another flow cannot dismiss an unknown action outcome',
   );
-  for (const tab of await page.getByRole('tab').all()) {
+  for (const tab of await page
+    .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+    .getByRole('tab')
+    .all()) {
     assert.equal(await tab.isEnabled(), false);
   }
   await page.waitForFunction(() =>

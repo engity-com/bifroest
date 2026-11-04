@@ -228,7 +228,6 @@ try {
   const beforeAuditOpen = requests.length;
   await logs.getByRole('button', { name: 'Open audit log default', exact: true }).click();
   await waitDownload('audit-open');
-  await panel.getByText('Unverified server hints and original files', { exact: true }).click();
   await panel
     .getByRole('region', { name: 'Unverified server hints and original files', exact: true })
     .getByText('default', { exact: true })
@@ -246,7 +245,10 @@ try {
     'opening an audit row is one explicit transfer of its exact target, not a separate selection plus download',
   );
   const beforeBack = requests.length;
-  await panel.getByRole('button', { name: 'Back to recordings', exact: true }).click();
+  await panel
+    .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+    .getByRole('button', { name: 'Recordings & audit', exact: true })
+    .click();
   await logs.getByText('catalog20', { exact: true }).waitFor();
   assert.equal(await logs.locator('tbody tr').count(), 22);
   assert.equal(
@@ -381,7 +383,6 @@ try {
     }
   }
   await waitDownload('first-download');
-  await panel.getByText('Unverified server hints and original files', { exact: true }).click();
   await panel
     .getByRole('region', { name: 'Unverified server hints and original files', exact: true })
     .getByText(`catalog00 / ${id}`, { exact: true })
@@ -417,7 +418,10 @@ try {
     'private verification also requires the local decryption key',
   );
   const beforeReturn = requests.length;
-  await panel.getByRole('button', { name: 'Back to recordings', exact: true }).click();
+  await panel
+    .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+    .getByRole('button', { name: 'Recordings & audit', exact: true })
+    .click();
   await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).waitFor();
   assert.equal(await recordings.locator('tbody tr').count(), 1);
   assert.equal(

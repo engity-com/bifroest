@@ -1,3 +1,4 @@
+import { Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
 import type { IDisposable, Terminal as Xterm } from '@xterm/xterm';
 import { type KeyboardEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Alert, Button, Title, useComputedColorScheme } from '../ui/material';
@@ -13,6 +14,7 @@ import { RecordingPlayback } from './playback';
 import { observePlaybackLayout } from './playback-layout';
 import { claimPlaybackMediaSession } from './playback-media-session';
 import type { PlaybackMetadata, PlaybackOptions } from './playback-protocol';
+import { observePlaybackStage } from './playback-stage';
 import { playbackClock, playbackSpeeds } from './playback-view';
 import { prepareRecordingPlayback } from './prepare-playback';
 import './recording-player.css';
@@ -31,6 +33,7 @@ export function RecordingPlayer({
   active?: boolean;
 }) {
   const container = useRef<HTMLElement | null>(null);
+  const playerSection = useRef<HTMLElement | null>(null);
   const video = useRef<HTMLDivElement | null>(null);
   const toolbar = useRef<HTMLDivElement | null>(null);
   const preparing = useRef<AbortController | null>(null);
@@ -54,6 +57,7 @@ export function RecordingPlayer({
   const scrubbing = useRef(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenFailed, setFullscreenFailed] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [mediaClaimed, setMediaClaimed] = useState(0);
   const helpID = useId();
   const fullscreenIntent = useRef(0);
@@ -206,6 +210,12 @@ export function RecordingPlayer({
   }, [reveal]);
   useEffect(() => () => clearTimeout(hideTimer.current), []);
   useEffect(() => {
+    if (playerSection.current && video.current) {
+      const stage = observePlaybackStage(playerSection.current, video.current);
+      return () => stage.dispose();
+    }
+  }, []);
+  useEffect(() => {
     if (state?.phase !== 'playing') {
       setControlsVisible(true);
     } else {
@@ -214,6 +224,7 @@ export function RecordingPlayer({
   }, [state?.phase, reveal]);
   useEffect(() => {
     if (!active) {
+      setHelpOpen(false);
       playbackIntent.current++;
       player.current?.pause();
       setMediaClaimed(0);
@@ -255,6 +266,9 @@ export function RecordingPlayer({
   }, [state, metadata]);
 
   const handleKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (helpOpen) {
+      return;
+    }
     if (event.ctrlKey || event.metaKey || event.altKey) {
       return;
     }
@@ -338,6 +352,7 @@ export function RecordingPlayer({
     setMetadata(null);
     setState(null);
     setFailure(null);
+    setHelpOpen(false);
     stateNow.current = null;
     seekingIntent.current++;
     fullscreenIntent.current++;
@@ -464,7 +479,7 @@ export function RecordingPlayer({
       player.current = recording;
       setMetadata(info);
       if (activeNow.current) {
-        container.current.scrollIntoView({ block: 'nearest' });
+        video.current?.scrollIntoView({ block: 'nearest' });
       }
     } catch (error) {
       image?.dispose();
@@ -508,9 +523,12 @@ export function RecordingPlayer({
   }, [autoPrepare, active, disabled, prepare]);
 
   return (
-    <section className="stack" aria-label={t('playbackTitle')}>
+    <section ref={playerSection} className="stack" aria-label={t('playbackTitle')}>
       <Title order={4}>{t('playbackTitle')}</Title>
       <p className="caption subtle">{t('playbackReadOnly')}</p>
+      <p id={helpID} className="recording-player-status">
+        {t('playbackKeyboardHelp')}
+      </p>
       {failure !== null && (
         <Alert role="status" color="red">
           {t(
@@ -535,6 +553,9 @@ export function RecordingPlayer({
         onPointerMove={() => reveal()}
         onPointerEnter={() => reveal()}
         onPointerDown={(event) => {
+          if (helpOpen) {
+            return;
+          }
           reveal(false);
           claimMedia();
           if (!(event.target as HTMLElement).closest('.recording-controls')) {
@@ -553,6 +574,9 @@ export function RecordingPlayer({
         }}
         onBlurCapture={() => reveal(keyboard.current)}
         onClick={(event) => {
+          if (helpOpen) {
+            return;
+          }
           if (
             !(event.target as HTMLElement).closest('.recording-controls,button') &&
             !window.getSelection()?.toString()
@@ -608,10 +632,55 @@ export function RecordingPlayer({
               }}
               onSpeed={changeSpeed}
               onFullscreen={toggleFullscreen}
+              onHelp={() => {
+                pause();
+                setHelpOpen(true);
+              }}
               onClose={retire}
             />
           )}
         </div>
+        <Dialog
+          open={helpOpen}
+          onClose={() => setHelpOpen(false)}
+          fullWidth
+          maxWidth="sm"
+          container={fullscreen ? video.current : undefined}
+          aria-labelledby={`${helpID}-title`}
+        >
+          <DialogTitle id={`${helpID}-title`}>{t('playbackHelp')}</DialogTitle>
+          <DialogContent className="stack">
+            <p>{t('playbackLocalOnly')}</p>
+            <p>{t('playbackKeyboardHelp')}</p>
+            {metadata && (
+              <>
+                <p>
+                  {t(
+                    metadata.trust === 'pinned'
+                      ? 'recordingIdentityPinned'
+                      : 'recordingIdentityUnknown',
+                  )}
+                </p>
+                <p>
+                  {t('playbackRecordedStatus')}:{' '}
+                  {t(
+                    metadata.status === 'completed'
+                      ? 'artifactCatalogCompleted'
+                      : metadata.status === 'failed'
+                        ? 'artifactCatalogFailedStatus'
+                        : 'artifactCatalogIncomplete',
+                  )}
+                  {metadata.exitStatus === null ? '' : ` / ${metadata.exitStatus}`}
+                </p>
+              </>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button variant="subtle" onClick={() => setHelpOpen(false)}>
+              {t('close')}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </div>
       {fullscreenFailed && (
         <Alert role="status" color="yellow">
@@ -638,33 +707,6 @@ export function RecordingPlayer({
           ({playbackClock(state?.positionUs ?? 0)} / {playbackClock(metadata.durationUs)})
         </p>
       )}
-      <details className="context-help">
-        <summary>{t('playbackDetails')}</summary>
-        <p>{t('playbackLocalOnly')}</p>
-        <p id={helpID}>{t('playbackKeyboardHelp')}</p>
-        {metadata && (
-          <>
-            <p>
-              {t(
-                metadata.trust === 'pinned'
-                  ? 'recordingIdentityPinned'
-                  : 'recordingIdentityUnknown',
-              )}
-            </p>
-            <p>
-              {t('playbackRecordedStatus')}:{' '}
-              {t(
-                metadata.status === 'completed'
-                  ? 'artifactCatalogCompleted'
-                  : metadata.status === 'failed'
-                    ? 'artifactCatalogFailedStatus'
-                    : 'artifactCatalogIncomplete',
-              )}
-              {metadata.exitStatus === null ? '' : ` / ${metadata.exitStatus}`}
-            </p>
-          </>
-        )}
-      </details>
     </section>
   );
 }

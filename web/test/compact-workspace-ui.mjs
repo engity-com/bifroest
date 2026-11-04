@@ -72,7 +72,9 @@ export async function exerciseCompactWorkspace(page) {
   await page.setViewportSize(viewport);
   await password();
   await output('EXECUTION_START:1');
-  const materialTab = page.getByRole('tab', { selected: true });
+  const materialTab = page
+    .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+    .getByRole('tab', { selected: true });
   assert.equal(
     (await materialTab.textContent()).trim(),
     'alice',
@@ -140,7 +142,9 @@ export async function exerciseCompactWorkspace(page) {
   await page.getByRole('menuitem', { name: /^Work · alice/u }).waitFor();
   await page.keyboard.press('Escape');
   await page.getByRole('menu', { includeHidden: true }).waitFor({ state: 'hidden' });
-  const selected = page.getByRole('tab', { selected: true });
+  const selected = page
+    .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+    .getByRole('tab', { selected: true });
   await selected.focus();
   await selected.press('Shift+F10');
   await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).waitFor();
@@ -217,7 +221,13 @@ export async function exerciseCompactWorkspace(page) {
   await output('SIGNAL:INT');
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   await compact('compact-new-login');
-  assert.equal(await page.getByRole('tab', { includeHidden: true }).count(), 3);
+  assert.equal(
+    await page
+      .getByRole('tablist', { name: 'Connections and terminals', exact: true, includeHidden: true })
+      .getByRole('tab', { includeHidden: true })
+      .count(),
+    3,
+  );
   assert.equal(primaries, 1, 'plus itself must not reuse a grant or start another primary request');
   await password(true);
   await output('EXECUTION_START:4');
@@ -232,7 +242,13 @@ export async function exerciseCompactWorkspace(page) {
   await page
     .getByRole('tab', { name: 'Terminal 4 alice', exact: true })
     .waitFor({ state: 'detached' });
-  assert.equal(await page.getByRole('tab').count(), 3);
+  assert.equal(
+    await page
+      .getByRole('tablist', { name: 'Connections and terminals', exact: true })
+      .getByRole('tab')
+      .count(),
+    3,
+  );
   assert.equal(logouts, 1);
   for (const number of [3, 2, 1]) {
     const tab = page.getByRole('tab', { name: `Terminal ${number} alice`, exact: true });
