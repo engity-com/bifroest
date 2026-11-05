@@ -79,8 +79,23 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
-      - name: Install dependencies
-        run: mise run install:go
+      - &install-go-dependencies
+        name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if mise run install:go; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            delay=$((attempt * 5))
+            echo "::warning::Go module download failed (attempt ${attempt}/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
 
       - name: Lint Go
         if: inputs.lint_go
@@ -124,8 +139,7 @@ jobs:
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"
 
-      - name: Install dependencies
-        run: mise run install:go
+      - *install-go-dependencies
 
       - name: Install asciinema compatibility tool
         env:
@@ -183,8 +197,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
-      - name: Install dependencies
-        run: mise run install:go
+      - *install-go-dependencies
 
       - name: Set reproducible build time
         run: mise run ci:write-build-epoch
@@ -240,8 +253,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
-      - name: Install dependencies
-        run: mise run install:go
+      - *install-go-dependencies
 
       - name: Set reproducible build time
         run: mise run ci:write-build-epoch
@@ -308,8 +320,7 @@ jobs:
           merge-multiple: true
           path: var/dist
 
-      - name: Install dependencies
-        run: mise run install:go
+      - *install-go-dependencies
 
       - name: Set reproducible build time
         run: mise run ci:write-build-epoch

@@ -919,6 +919,8 @@ func TestRemoteArtifactDeliveryRetriesPendingAuditBeforeRepublishing(t *testing.
 }
 
 func TestRemoteArtifactDeliveryFlushCapturesVisibleNames(t *testing.T) {
+	const testTimeout = 10 * time.Second
+
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	first := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "first.bcast", []byte("first"))
 	second := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "second.bcast", []byte("second"))
@@ -929,6 +931,7 @@ func TestRemoteArtifactDeliveryFlushCapturesVisibleNames(t *testing.T) {
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})
 	secondStarted := make(chan struct{})
+	var secondFinished atomic.Bool
 	target := remoteArtifactDeliveryTestEntry("archive", fingerprint, func(ctx context.Context, artifact RemoteArtifact) error {
 		switch artifact.FileName() {
 		case first.FileName():
@@ -944,6 +947,7 @@ func TestRemoteArtifactDeliveryFlushCapturesVisibleNames(t *testing.T) {
 				return nil
 			}
 		case second.FileName():
+			defer secondFinished.Store(true)
 			select {
 			case <-secondStarted:
 			default:
@@ -955,37 +959,52 @@ func TestRemoteArtifactDeliveryFlushCapturesVisibleNames(t *testing.T) {
 			return nil
 		}
 	})
+	// Keep both publishes blocked until the test releases or cancels them,
+	// rather than letting an attempt timeout determine the test's ordering.
+	target.publishAttemptTimeout = 2 * testTimeout
 	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(target), remoteArtifactDeliveryTestOptions())
+	ctx, cancel := context.WithTimeout(t.Context(), testTimeout)
+	defer cancel()
 	require.NoError(t, delivery.Start())
 	select {
 	case <-firstStarted:
-	case <-time.After(time.Second):
+	case <-ctx.Done():
 		t.Fatal("first artifact did not start")
 	}
-	listedBeforeFlush := source.listCalls.Load()
+	// The worker is blocked publishing first, so the next list captures Flush's
+	// snapshot. Signal after copying the names, before making second visible.
+	snapshotTaken := make(chan struct{})
+	var snapshotOnce sync.Once
+	source.mutex.Lock()
+	source.afterList = func(context.Context) error {
+		snapshotOnce.Do(func() { close(snapshotTaken) })
+		return nil
+	}
+	source.mutex.Unlock()
 	flushed := make(chan error, 1)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		flushed <- delivery.Flush(ctx)
-	}()
-	require.Eventually(t, func() bool { return source.listCalls.Load() > listedBeforeFlush }, time.Second, time.Millisecond)
-	_, err := receipts.store.initialize(second, time.Now().UTC(), receiptTargets)
+	go func() { flushed <- delivery.Flush(ctx) }()
+	select {
+	case <-snapshotTaken:
+	case <-ctx.Done():
+		t.Fatal("flush did not capture the artifact names")
+	}
+	_, err := receipts.store.initializeContext(ctx, second, time.Now().UTC(), receiptTargets)
 	require.NoError(t, err)
 	source.set(first, second)
 	delivery.notifyDiscovery()
 	close(releaseFirst)
 	select {
-	case err := <-flushed:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("flush waited for an artifact added after its snapshot")
-	}
-	select {
 	case <-secondStarted:
-	case <-time.After(time.Second):
+	case <-ctx.Done():
 		t.Fatal("second artifact was not discovered")
 	}
+	select {
+	case err := <-flushed:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("flush waited for an artifact added after its snapshot")
+	}
+	require.False(t, secondFinished.Load(), "flush must complete while the later artifact is still blocked")
 	require.NoError(t, delivery.Close())
 }
 
