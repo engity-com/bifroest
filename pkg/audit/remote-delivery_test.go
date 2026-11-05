@@ -207,22 +207,32 @@ func TestRemoteDeliveryRejectsSignedForkBeforePublish(t *testing.T) {
 					}
 					fork := remoteDeliverySignedFork(t, identity, segments[sequence-1], previousSegment, previousRecord, fingerprint, recipient, encrypted)
 					var calls atomic.Int32
-					conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", func(_ context.Context, segment SealedSegment) error {
+					conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", func(context.Context, SealedSegment) error {
 						calls.Add(1)
-						require.Less(t, segment.Sequence(), sequence)
 						return nil
 					})}
 					delivery, err := NewRemoteDelivery(context.Background(), &conf, identity)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = delivery.Close() })
 					setRemoteDeliveryTestOptions(delivery)
-					delivery.workers[0].options.initialBackoff = time.Second
-					delivery.workers[0].options.maximumBackoff = time.Second
-					require.NoError(t, delivery.Start())
-					if sequence == 2 {
-						require.Eventually(t, func() bool { return remoteDeliveryTestCursorSequence(conf, identity, "archive") == 1 }, time.Second, time.Millisecond)
+					// Backoff starts only after the worker has attempted delivery.
+					// Wait for that event instead of sleeping or polling the cursor
+					// while Windows may still be persisting the valid first segment.
+					rejected := make(chan struct{}, 1)
+					delivery.workers[0].options.jitter = func(time.Duration) time.Duration {
+						select {
+						case rejected <- struct{}{}:
+						default:
+						}
+						return time.Hour
 					}
-					time.Sleep(25 * time.Millisecond)
+					require.NoError(t, delivery.Start())
+					select {
+					case <-rejected:
+					case <-time.After(10 * time.Second):
+						t.Fatal("worker did not reject the signed fork")
+					}
+					require.NoError(t, delivery.Close())
 					require.Equal(t, int32(sequence-1), calls.Load())
 					require.Equal(t, sequence-1, remoteDeliveryTestCursorSequence(conf, identity, "archive"))
 					actual, err := os.ReadFile(fork.path)

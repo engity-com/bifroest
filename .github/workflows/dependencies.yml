@@ -39,7 +39,21 @@ jobs:
           sha256: 32f644d8c291bb182f702c6d2b0dda9f8b01441e940d74d328aad5f08446b2fd
 
       - name: Install Go dependencies
-        run: mise run install:go
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if mise run install:go; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            delay=$((attempt * 5))
+            echo "::warning::Go module download failed (attempt ${attempt}/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
 
       - name: Create GitHub App token
         id: app-token

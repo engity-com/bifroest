@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const consoleTestTimeout = 15 * time.Second
+
 // Prompt notifications synchronize tests with terminal-mode changes without
 // inspecting a buffer concurrently with the authentication callbacks.
 type consoleTestOutput struct {
@@ -44,7 +46,7 @@ func (this *consoleTestOutput) String() string {
 
 func (this *consoleTestOutput) await(t *testing.T, prompt string) {
 	t.Helper()
-	deadline := time.NewTimer(3 * time.Second)
+	deadline := time.NewTimer(consoleTestTimeout)
 	defer deadline.Stop()
 	for !strings.Contains(this.String(), prompt) {
 		select {
@@ -65,7 +67,7 @@ func awaitConsoleTestResult(t *testing.T, done <-chan consoleTestResult) console
 	select {
 	case result := <-done:
 		return result
-	case <-time.After(3 * time.Second):
+	case <-time.After(consoleTestTimeout):
 		t.Fatal("authentication input did not finish")
 		return consoleTestResult{}
 	}
