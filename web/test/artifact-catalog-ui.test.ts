@@ -155,15 +155,28 @@ describe('finding and opening recordings without API choreography', () => {
     expect(WebAccess.prototype.managementAuditlogs).toHaveBeenCalledTimes(1);
     expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledTimes(1);
   });
-  it('opens the exact row as one explicit intent and marks its selected identity', async () => {
+  it('opens the exact row through its final Actions icon or its row, never downloading on selection alone', async () => {
     const app = await mount();
     await click(button(`${t('recordingOpen')} ${row.id}`));
     expect(app.selected).toHaveBeenCalledExactlyOnceWith(
       { kind: 'recording', auditlog: row.auditlog, id: row.id },
       row,
     );
-    await app.render({ selected: { kind: 'recording', auditlog: row.auditlog, id: row.id } });
-    expect(button(`${t('recordingOpen')} ${row.id}`).getAttribute('aria-current')).toBe('true');
+    expect([...app.element.querySelectorAll('[role="columnheader"]')].at(-1)?.textContent).toBe(
+      'Actions',
+    );
+    const cell = app.element.querySelector<HTMLElement>(
+      '[role="gridcell"][data-field="startedAt"]',
+    );
+    if (!cell) {
+      throw new Error('Missing Recording row');
+    }
+    await click(cell);
+    expect(app.selected).toHaveBeenCalledTimes(2);
+    expect(app.selected).toHaveBeenLastCalledWith(
+      { kind: 'recording', auditlog: row.auditlog, id: row.id },
+      row,
+    );
     expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
   });
 
@@ -256,7 +269,7 @@ describe('finding and opening recordings without API choreography', () => {
     expect(button(`${t('recordingOpen')} ${row.id}`)).toBeDefined();
     expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
   });
-  it('keeps a failed/cancelled page failed without an automatic retry or partial rows', async () => {
+  it('retains one skeleton grid through an interrupted read without a cancel control, partial rows or automatic retry', async () => {
     let release!: (page: Page<RecordingSummary>) => void;
     vi.mocked(WebAccess.prototype.managementRecordings).mockImplementationOnce(
       () =>
@@ -265,21 +278,25 @@ describe('finding and opening recordings without API choreography', () => {
         }),
     );
     const app = await mount();
-    expect(
-      document.querySelector(`[role="grid"][aria-label="${t('recordingList')} · default"]`),
-    ).toBeNull();
-    await click(button(t('artifactCatalogCancel')));
+    const grid = document.querySelector(
+      `[role="grid"][aria-label="${t('recordingList')} · default"]`,
+    );
+    expect(grid).not.toBeNull();
+    expect(document.querySelector(`[aria-label="${t('artifactCatalogCancel')}"]`)).toBeNull();
+    expect(button(t('recordingRefresh')).disabled).toBe(true);
+    await app.render({ disabled: true });
     expect(vi.mocked(WebAccess.prototype.managementRecordings).mock.calls[0]?.[2]?.aborted).toBe(
       true,
     );
     await act(async () => release({ items: [row], next: '', skipped: 0 }));
+    await app.render({ disabled: false });
     await app.render({ active: false });
     await app.render({ active: true });
     expect(
       document.querySelector(`[role="grid"][aria-label="${t('recordingList')} · default"]`),
-    ).toBeNull();
+    ).toBe(grid);
+    expect(document.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
     expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledTimes(1);
-    expect(document.body.textContent).toContain(t('artifactCatalogCancelled'));
   });
   it('does not publish a late source page under a different actor', async () => {
     let release!: (page: Page<AuditlogSummary>) => void;

@@ -75,6 +75,7 @@ export function TerminalPanel({
   focusOnActivate,
   onState,
   onActions,
+  onTitle,
 }: {
   id: number;
   access: WebAccess;
@@ -84,6 +85,7 @@ export function TerminalPanel({
   focusOnActivate: boolean;
   onState: (id: number, state: TerminalState) => void;
   onActions: (id: number, actions: TerminalActions | null) => void;
+  onTitle?: (id: number, title: string) => void;
 }) {
   const container = useRef<HTMLElement | null>(null);
   const emulator = useRef<Xterm | null>(null);
@@ -93,6 +95,8 @@ export function TerminalPanel({
   const interaction = useRef({ active, inputAllowed, focusOnActivate });
   interaction.current = { active, inputAllowed, focusOnActivate };
   const palette = useComputedColorScheme('light');
+  const titleCallback = useRef(onTitle);
+  titleCallback.current = onTitle;
   const currentPalette = useRef(palette);
   currentPalette.current = palette;
 
@@ -150,6 +154,13 @@ export function TerminalPanel({
         terminal.open(container.current);
         subscriptions.push(installTerminalRenderer(terminal, container.current));
         subscriptions.push(terminal.parser.registerOscHandler(52, () => true));
+        subscriptions.push(
+          terminal.onTitleChange((value) => {
+            if (!disposed && !signal.aborted) {
+              titleCallback.current?.(id, value);
+            }
+          }),
+        );
         const mayInput = () =>
           !disposed &&
           interaction.current.active &&

@@ -15,6 +15,7 @@ body { margin: 0; }
 .artifact-panel .stack > button, .artifact-panel > button { align-self: flex-start; }
 .admin-breadcrumbs { min-width: 0; }
 .admin-breadcrumbs button { font: inherit; text-align: start; }
+.admin-breadcrumbs li { min-width:0; max-width:100%; overflow-wrap:anywhere; }
 .recording-evidence { padding: 1.25rem; background: var(--app-hover); border-radius: 8px; }
 .recording-evidence h3, .recording-evidence h4 { margin: 0; }
 .recording-evidence .metadata-grid dd { min-width: 0; }
@@ -64,6 +65,9 @@ details > summary + * { margin-top: .75rem; }
 .verification-purpose { margin-top: .75rem; }
 .workflow-steps [aria-current="step"] { color: var(--app-primary); font-weight: 600; }
 .artifact-selection { min-width: 0; }
+.artifact-selection { display:grid; grid-template-columns:minmax(10rem, 1fr) auto; gap:.75rem; align-items:center; }
+.artifact-selection[data-kind="recordings"] { grid-template-columns:minmax(10rem, 1fr) minmax(14rem, 1.6fr) auto; }
+.artifact-selection .MuiFormControl-root { min-width:0; }
 .artifact-selection > summary { overflow-wrap: anywhere; }
 .artifact-selection-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .artifact-verification { max-width: 50rem; }
@@ -90,6 +94,7 @@ h3.recording-heading { font-size: 1.125rem; }
 .application-bar { padding: 0 .25rem; border-bottom: 1px solid var(--app-border); background: var(--app-paper); min-width: 0; }
 .application-tabs { display: flex; align-items: center; gap: .125rem; min-width: 0; }
 .terminal-tab-list { flex: 0 1 auto; min-width: 0; }
+.terminal-tab-list .MuiTab-root { max-width:var(--connection-tab-width, 20rem); min-width:min(90px, var(--connection-tab-width, 90px)); }
 .connection-add { flex-shrink: 0; }
 .workspace-utilities { display: flex; align-items: center; flex-shrink: 0; margin-left: auto; }
 .workspace-body { position: relative; min-height: 0; min-width: 0; overflow: hidden; }
@@ -100,10 +105,17 @@ h3.recording-heading { font-size: 1.125rem; }
 .management-workspace { height: 100%; overflow: hidden; padding: 0; }
 .admin-shell { height: 100%; min-height: 0; min-width: 0; display: flex; position: relative; overflow: hidden; isolation: isolate; }
 .admin-main { min-width: 0; min-height: 0; flex: 1; display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.admin-page-heading { display: flex; align-items: center; gap: .5rem; padding: .5rem 1rem; border-bottom: 1px solid var(--app-border); min-width: 0; }
+.admin-page-heading { display: flex; align-items: center; gap: .5rem; padding: .5rem 1rem; border-bottom: 1px solid var(--app-border); min-width: 0; min-height:56px; box-sizing:border-box; position:relative; z-index:4; }
 .admin-content { min-height: 0; min-width: 0; overflow: auto; padding: 1rem; }
 .admin-drawer-heading { display: flex; align-items: center; justify-content: space-between; padding: .5rem 1rem; min-height: 56px; }
 .admin-shell .MuiListItemButton-root { width: 100%; text-align: left; }
+.admin-shell .MuiListItemButton-root { border-radius:6px; margin-block:4px; padding-block:10px; }
+.admin-shell nav { padding:8px; }
+.admin-shell .MuiListItemButton-root.Mui-selected::before { content:""; position:absolute; left:4px; top:30%; height:40%; width:3px; border-radius:2px; background:currentColor; }
+.admin-quick-filter-hidden { display:none !important; }
+.admin-quick-filter { max-width:15rem; }
+.metadata-pair { display:contents; }
+.session-details > .section-heading, .artifact-panel > .section-heading, .audit-event-details > .section-heading { justify-content:flex-end; }
 .admin-data-grid { height: clamp(22rem, 62dvh, 42rem); min-height: 0; width: 100%; min-width: 0; border: 1px solid var(--app-border); border-radius: 6px; overflow: hidden; }
 .management-workspace > .workspace-nav { margin-bottom: 1rem; }
 .workspace-tabs { border-bottom: 1px solid var(--app-border); margin-bottom: 1rem; }
@@ -121,6 +133,8 @@ h3.recording-heading { font-size: 1.125rem; }
   .tab-scope { max-width: 6rem; }
   .tab-owner { max-width: 5rem; }
   .admin-content { padding: .5rem; }
+  .artifact-selection[data-kind="recordings"] { grid-template-columns:minmax(0,1fr) auto; }
+  .artifact-selection[data-kind="recordings"] > :first-child { grid-column:1 / -1; }
 }
 @media (max-width: 60rem) {
   .account-identity { flex-direction: column; align-items: start; }

@@ -291,10 +291,11 @@ try {
     fetch('/_bifroest/test/artifact-arm', { method: 'POST', credentials: 'omit' }),
   );
   const beforeBob = requests.length;
+  const bobSourcesReply = capture('auditlogs');
   await workspace(page, 'Recordings');
   await page.evaluate(() => fetch('/_bifroest/test/artifact-entered', { credentials: 'omit' }));
   assert.equal(
-    await catalog().getByRole('grid', { includeHidden: true }).count(),
+    await catalog().getByRole('grid').locator('[role="row"][data-id]').count(),
     0,
     'new or provisional metadata cannot inherit the other actor rows',
   );
@@ -302,19 +303,37 @@ try {
     requests.slice(beforeBob).map((request) => request.path.split('/management/')[1]),
     ['auditlogs/list'],
   );
-  await catalog().getByRole('button', { name: 'Cancel catalog request', exact: true }).click();
+  const loadingGrid = await catalog().getByRole('grid').elementHandle();
+  assert.equal(
+    await catalog().getByRole('button', { name: 'Refresh recordings', exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(
+    await catalog().getByRole('button', { name: 'Cancel catalog request', exact: true }).count(),
+    0,
+  );
   await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-release', { method: 'POST', credentials: 'omit' }),
   );
-  await catalog().getByText('Catalog request cancelled.', { exact: false }).waitFor();
-  const cancelled = requests.length;
+  assert.equal(read(await bobSourcesReply, 'auditlogs').items.length, 20);
+  await catalog().getByRole('button', { name: 'Refresh recordings', exact: true }).waitFor();
+  assert.equal(
+    await loadingGrid.evaluate((node) => node.isConnected),
+    true,
+    'the same grid survives discovery completion',
+  );
+  const completed = requests.length;
   await workspace(page, 'Bifröst');
   await workspace(page, 'Recordings');
   await page.evaluate(
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   );
-  assert.equal(requests.length, cancelled, 'activation does not retry a cancelled read');
-  assert.equal(await catalog().getByRole('grid', { includeHidden: true }).count(), 0);
+  assert.equal(
+    requests.length,
+    completed,
+    'activation does not repeat the completed bounded metadata read',
+  );
+  assert.equal(await catalog().getByRole('grid').locator('[role="row"][data-id]').count(), 0);
   const refreshedReply = capture('auditlogs');
   await catalog().getByRole('button', { name: 'Refresh recordings', exact: true }).click();
   assert.equal(read(await refreshedReply, 'auditlogs').items.length, 20);

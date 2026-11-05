@@ -128,6 +128,20 @@ The view keeps a bounded offset/time index and materializes only a page of rows,
 not one retained JavaScript object for every event. Column predicates use the
 native grid operators. Viewing, filtering and paging those events do not issue
 additional server requests.
+Selecting an event opens a detail page inside its owning management tab. Closing
+it retains the local grid and does not fetch or replay the audit transfer.
+
+The detail-visibility eye is an origin-scoped presentation preference, not an
+authorization or encryption switch. Compact mode hides supplemental columns and
+metadata; full mode displays only information already available under the same
+actor and policy. A toggle refreshes the affected active list (locally for audit
+events) but never upgrades credentials, uploads keys or enables sensitive audit
+exports. Unavailable detail controls remain disabled.
+
+Live shell titles are bounded, control-/bidi-formatting-free text attached only
+to the owning connection tab. They are not trusted identities or navigation
+targets. The browser document title, playback titles and unrelated tabs are not
+controlled by recorded or live shell output.
 
 Seeking replays the verified local output prefix, including recorded resizes;
 display scaling and fullscreen do not resize a live terminal or alter recorded

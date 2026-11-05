@@ -91,7 +91,9 @@ async function mount(
 }
 function button(name: string, parent: ParentNode = document) {
   const found = [...parent.querySelectorAll('button')].find(
-    (node) => node.textContent === name || node.getAttribute('aria-label') === name,
+    (node) =>
+      !node.closest('[hidden]') &&
+      (node.textContent === name || node.getAttribute('aria-label') === name),
   );
   if (!found) {
     throw new Error(`Missing button: ${name}`);
@@ -115,13 +117,13 @@ async function fill(label: string, value: string, parent: ParentNode = document)
 }
 
 describe('management view read intent and retained ownership', () => {
-  it.each(['sessions', 'server'] as const)(
+  it.each(['sessions', 'server', 'version'] as const)(
     'does not duplicate the first %s read during StrictMode effect replay',
     async (view) => {
       const { api, access } = fixture();
       await mount(access, { view }, true);
       expect(api.managementSessions).toHaveBeenCalledTimes(view === 'sessions' ? 1 : 0);
-      expect(api.managementVersion).toHaveBeenCalledTimes(view === 'server' ? 1 : 0);
+      expect(api.managementVersion).toHaveBeenCalledTimes(view === 'version' ? 2 : 0);
       expect(api.managementFlows).toHaveBeenCalledTimes(view === 'server' ? 1 : 0);
       expect(api.prepareSessionAction).not.toHaveBeenCalled();
     },
@@ -148,28 +150,28 @@ describe('management view read intent and retained ownership', () => {
     expect(api.managementSessions).toHaveBeenCalledTimes(2);
   });
 
-  it('serializes short version then flows on first active server view; build detail is explicit', async () => {
+  it('automatically serializes short and full version only in its own Version page, never in Overview', async () => {
     const { api, access } = fixture();
     const version = Promise.withResolvers<{ detail: 'short'; text: string }>();
     api.managementVersion.mockReturnValueOnce(version.promise);
-    const { render, container } = await mount(access, { view: 'server', active: false });
+    const { render, container } = await mount(access, { view: 'version', active: false });
     expect(api.managementVersion).not.toHaveBeenCalled();
     await render({ active: true });
     expect(api.managementSessions).not.toHaveBeenCalled();
     expect(api.managementVersion).toHaveBeenCalledExactlyOnceWith(false, expect.any(AbortSignal));
     expect(api.managementFlows).not.toHaveBeenCalled();
     await act(async () => version.resolve({ detail: 'short', text: 'Bifröst test' }));
-    expect(api.managementFlows).toHaveBeenCalledTimes(1);
-    expect(container.textContent).toContain('Bifröst test');
-    expect(container.textContent).not.toContain('Go: test');
-    await render({ view: 'sessions' });
-    await render({ view: 'server' });
-    expect(api.managementVersion).toHaveBeenCalledTimes(1);
-    expect(api.managementFlows).toHaveBeenCalledTimes(1);
-    await click(button('Load detailed build information'));
+    expect(api.managementFlows).not.toHaveBeenCalled();
     expect(api.managementVersion).toHaveBeenLastCalledWith(true, expect.any(AbortSignal));
     expect(container.textContent).toContain('Go: test');
-    expect(container.textContent).toContain('Bifröst test');
+    expect(container.querySelector('.build-details')).toBeNull();
+    await render({ view: 'sessions' });
+    await render({ view: 'server' });
+    expect(api.managementVersion).toHaveBeenCalledTimes(2);
+    expect(api.managementFlows).toHaveBeenCalledTimes(1);
+    await render({ view: 'version' });
+    expect(api.managementVersion).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('Go: test');
   });
 
   it('does not retry a denied first read on activation, navigation or unrelated renders', async () => {
@@ -189,42 +191,46 @@ describe('management view read intent and retained ownership', () => {
     expect(api.managementSessions).toHaveBeenCalledTimes(2);
   });
 
-  it('does not continue the initial server read sequence while the view is inactive', async () => {
+  it('does not continue the initial version read sequence while the page is inactive', async () => {
     const { api, access } = fixture();
     const version = Promise.withResolvers<{ detail: 'short'; text: string }>();
     api.managementVersion.mockReturnValueOnce(version.promise);
-    const { render } = await mount(access, { view: 'server' });
+    const { render } = await mount(access, { view: 'version' });
     await render({ active: false });
     await act(async () => version.resolve({ detail: 'short', text: 'Bifröst test' }));
     expect(api.managementFlows).not.toHaveBeenCalled();
-    await render({ active: true });
     expect(api.managementVersion).toHaveBeenCalledTimes(1);
-    expect(api.managementFlows).toHaveBeenCalledTimes(1);
+    await render({ active: true });
+    expect(api.managementVersion).toHaveBeenCalledTimes(2);
+    expect(api.managementFlows).not.toHaveBeenCalled();
   });
 
-  it('attempts the flow read once after version denial, without parallel requests or retry', async () => {
+  it('does not retry denied version reads or conflate them with the independently selected Overview page', async () => {
     const { api, access } = fixture();
     api.managementVersion.mockRejectedValue(new RememberMeError('denied'));
-    const { render } = await mount(access, { view: 'server' });
-    expect(api.managementVersion).toHaveBeenCalledTimes(1);
-    expect(api.managementFlows).toHaveBeenCalledTimes(1);
+    const { render } = await mount(access, { view: 'version' });
+    expect(api.managementVersion).toHaveBeenCalledTimes(2);
+    expect(api.managementFlows).not.toHaveBeenCalled();
     await render({ active: false });
     await render({ active: true });
-    expect(api.managementVersion).toHaveBeenCalledTimes(1);
+    expect(api.managementVersion).toHaveBeenCalledTimes(2);
+    await render({ view: 'server' });
     expect(api.managementFlows).toHaveBeenCalledTimes(1);
   });
 
   it('retains selected details, version and target fields through view changes; resets for a new actor', async () => {
     const { api, access } = fixture();
     const { container, render } = await mount(access);
+    await fill('Target flow', 'retained-flow', container);
+    await fill('Target session ID', item.id, container);
     await click(button(`Session details ${item.id}`, container));
     const details = container.querySelector('.session-details');
     expect(document.activeElement).toBe(details);
-    expect(button(`Session details ${item.id}`, container).getAttribute('aria-expanded')).toBe(
-      'true',
+    expect(container.querySelector('.session-details h3')).toBeNull();
+    expect(container.querySelector('.session-actions')).toBeNull();
+    expect(container.querySelector('.session-details .metadata-grid')?.textContent).toContain(
+      'Disconnect connections',
     );
-    await fill('Target flow', 'retained-flow', container);
-    await fill('Target session ID', item.id, container);
     await render({ active: false });
     await render({ active: true, view: 'server' });
     await render({ view: 'sessions' });
@@ -268,7 +274,8 @@ describe('management view read intent and retained ownership', () => {
     expect(signal?.aborted).toBe(true);
     expect(next.api.managementSessions).not.toHaveBeenCalled();
     await act(async () => pending.resolve(page));
-    expect(container.querySelector('[role="grid"]')).toBeNull();
+    expect(container.querySelector('[role="grid"]')).not.toBeNull();
+    expect(container.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
     expect(container.textContent).not.toContain('alice');
     await render({ disabled: false });
     expect(next.api.managementSessions).toHaveBeenCalledTimes(1);
@@ -278,6 +285,7 @@ describe('management view read intent and retained ownership', () => {
     const { api, access } = fixture();
     api.managementSessions.mockResolvedValueOnce({ ...page, next: 'bmp1.REAL' });
     const { container } = await mount(access);
+    await vi.waitFor(() => expect(button('Refresh sessions', container).disabled).toBe(false));
     expect(button('Go to next page', container).disabled).toBe(false);
     api.managementSessions.mockResolvedValueOnce({ ...page, next: 'bmp1.FILTERED' });
     await nativeColumnFilter(container, 'Requesting user', 'alice');

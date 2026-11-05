@@ -64,7 +64,7 @@ export async function exerciseConnections(page, login) {
     );
   const auditlogInput = () =>
     page
-      .locator('[data-connection-active="true"]')
+      .getByRole('dialog', { name: 'Advanced: open by ID', exact: true })
       .getByRole('textbox', { name: /^Artifact auditlog/u });
   const select = async (id, user, kind) => {
     await tab(id, user, kind).click();
@@ -161,7 +161,6 @@ export async function exerciseConnections(page, login) {
     5,
     'management login does not open a terminal or reconnect existing shells',
   );
-  assert.equal((await initialVersion).status(), 200);
   assert.equal((await initialFlows).status(), 200);
   assert.equal(
     managementSockets,
@@ -173,32 +172,42 @@ export async function exerciseConnections(page, login) {
     .waitFor();
   await workspace(page, 'Sessions');
   await managerPanel.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
-  await workspace(page, 'Server');
+  const fullVersion = wire.waitForResponse(
+    (response) =>
+      response.url().endsWith('/management/version/show') &&
+      JSON.parse(response.request().postData()).long === 'true',
+  );
+  await workspace(page, 'Version');
+  assert.equal((await initialVersion).status(), 200);
+  assert.equal((await fullVersion).status(), 200);
   const version = managerPanel.getByRole('region', { name: 'Server version', exact: true });
   await version.waitFor();
-  await managerPanel
-    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
-    .waitFor();
+  assert(
+    (await manager.textContent()).includes('Version'),
+    'management labels follow the selected primary page',
+  );
+  await version.getByRole('region', { name: 'Build information', exact: true }).waitFor();
   assert.deepEqual(
     managementReads,
     [
-      { path: 'version/show', slug: 'Manage', long: 'false' },
       { path: 'flows/list', slug: 'Manage', long: undefined },
       { path: 'sessions/list', slug: 'Manage', long: undefined },
+      { path: 'version/show', slug: 'Manage', long: 'false' },
+      { path: 'version/show', slug: 'Manage', long: 'true' },
     ],
-    'the first Server visit reads only the short version and flows for its own grant',
+    'Overview and Version read only their own metadata on the admitted grant',
   );
   const refresh = wire.waitForResponse((response) =>
     response.url().endsWith('/management/version/show'),
   );
   await managerPanel.getByRole('button', { name: 'Refresh server version', exact: true }).click();
   assert.equal((await refresh).status(), 200);
-  await version.locator('.server-version').waitFor();
-  assert.equal(managementReads.length, 4);
+  await version.getByRole('region', { name: 'Build information', exact: true }).waitFor();
+  assert.equal(managementReads.length, 5);
   assert.deepEqual(
-    managementReads[3],
-    { path: 'version/show', slug: 'Manage', long: 'false' },
-    'only the explicit refresh rereads the short version',
+    managementReads[4],
+    { path: 'version/show', slug: 'Manage', long: 'true' },
+    'only the explicit refresh rereads the structured build version',
   );
   const retainedVersion = await version.elementHandle();
   await select(1, 'alice');
@@ -206,6 +215,16 @@ export async function exerciseConnections(page, login) {
   await page.keyboard.type('still-owned-by-alice');
   await page.keyboard.press('Enter');
   await active('STDIN:still-owned-by-alice');
+  const applicationTitle = await page.title();
+  await page.keyboard.type('title-live');
+  await page.keyboard.press('Enter');
+  await active('TITLE_REPORTED');
+  await tab(1, 'alice').getByText('mc [alice@fixture]', { exact: true }).waitFor();
+  assert.equal(
+    await page.title(),
+    applicationTitle,
+    'a live shell title changes only its own connection tab',
+  );
   await select(6, 'alice', 'Management');
   assert.equal(
     await version.count(),
@@ -220,7 +239,7 @@ export async function exerciseConnections(page, login) {
   );
   assert.equal(
     managementReads.length,
-    4,
+    5,
     'returning to an initialized management view must not reread',
   );
   await exactArtifactSelection(page);
@@ -263,6 +282,7 @@ export async function exerciseConnections(page, login) {
   await captureLayout(page, 'connections-mobile');
   await page.setViewportSize({ width: 1280, height: 800 });
   await select(6, 'alice', 'Management');
+  await exactArtifactSelection(page);
   assert.equal(
     await auditlogInput().inputValue(),
     'local-review-selection',
@@ -291,6 +311,7 @@ export async function exerciseConnections(page, login) {
   await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
   await dialog.getByText('Access was denied.', { exact: false }).waitFor();
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await exactArtifactSelection(page);
   assert.equal(
     await auditlogInput().inputValue(),
     'local-review-selection',

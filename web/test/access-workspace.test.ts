@@ -278,8 +278,15 @@ describe('standalone management grant expiry without an admitted channel', () =>
     const activeColor = getComputedStyle(
       required(tab.querySelector('[data-testid="CircleIcon"]')),
     ).color;
-    await click(button(t('workspaceServer')));
+    await click(button(t('workspaceVersion')));
     await vi.waitFor(() => expect(workspace.container.textContent).toContain('Owned version'));
+    await vi.waitFor(() =>
+      expect(
+        owner.transport.mock.calls.filter(([path]) =>
+          String(path).endsWith('/management/version/show'),
+        ),
+      ).toHaveLength(2),
+    );
     const reads = owner.transport.mock.calls.length;
     await click(button(t('workspaceRecordings')));
     await click(button('Fixture local recording'));

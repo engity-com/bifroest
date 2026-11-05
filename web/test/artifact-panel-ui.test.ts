@@ -324,7 +324,9 @@ describe('usable local evidence without manual protection guesses', () => {
     );
     expect(document.querySelector<HTMLInputElement>('input[maxlength="64"]')?.value).toBe(signer);
     expect(document.querySelector<HTMLInputElement>('input[maxlength="64"]')?.disabled).toBe(true);
-    expect(document.querySelector('[aria-label="Fixture player"]')).not.toBeNull();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label="Fixture player"]')).not.toBeNull(),
+    );
     expect(players.expected.at(-1)).toEqual({
       id: recording.id,
       producer: '',
@@ -354,11 +356,13 @@ describe('usable local evidence without manual protection guesses', () => {
     expect(document.body.textContent).toContain(t('artifactVerificationFailed'));
     await fill(pin, signer);
     await click(button(t('artifactCheckAgain')));
-    expect(players.expected.at(-1)).toEqual({
-      id: recording.id,
-      producer: signer,
-      allowUntrusted: false,
-    });
+    await vi.waitFor(() =>
+      expect(players.expected.at(-1)).toEqual({
+        id: recording.id,
+        producer: signer,
+        allowUntrusted: false,
+      }),
+    );
   });
   it('keeps the outer page frameless, actions text-sized, and recording metadata structured below the content', async () => {
     const app = await mount();
@@ -370,7 +374,7 @@ describe('usable local evidence without manual protection guesses', () => {
     expect(status.getBoundingClientRect().width).toBeLessThan(350);
     const panel = app.container.querySelector('.artifact-panel');
     expect(panel?.classList.contains('MuiPaper-root')).toBe(false);
-    expect(panel?.querySelectorAll('h2')).toHaveLength(1);
+    expect(panel?.querySelectorAll('h2')).toHaveLength(0);
     const details = panel?.querySelector('.recording-evidence');
     expect(details?.querySelector('dl')).not.toBeNull();
     expect(details?.closest('details')).toBeNull();
@@ -386,6 +390,9 @@ describe('usable local evidence without manual protection guesses', () => {
   it('retains local verified output through hiding and remote expiry without another download or verification', async () => {
     const app = await mount();
     await click(button('Open fixture recording'));
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label="Fixture player"]')).not.toBeNull(),
+    );
     const calls = vi.mocked(verifyArtifact).mock.calls.length;
     await app.render({ active: false });
     await app.render({ active: true, remoteDisabled: true });

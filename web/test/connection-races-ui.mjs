@@ -212,7 +212,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
   await page.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
   assert.deepEqual(
     reads,
-    ['version/show', 'flows/list', 'sessions/list', 'version/show', 'flows/list', 'sessions/list'],
+    ['flows/list', 'sessions/list', 'flows/list', 'sessions/list'],
     'each actor reads only its own entry metadata and explicit Sessions page',
   );
   const alice = page.getByRole('tab', { name: 'Management 1 alice', exact: true });
@@ -337,7 +337,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
   );
   assert.deepEqual(
     reads,
-    ['version/show', 'flows/list', 'sessions/list', 'version/show', 'flows/list', 'sessions/list'],
+    ['flows/list', 'sessions/list', 'flows/list', 'sessions/list'],
     'view activation and mutation outcomes cannot repeat metadata reads',
   );
   assert.equal(await page.locator('#terminal-tab-1').getAttribute('aria-selected'), 'true');

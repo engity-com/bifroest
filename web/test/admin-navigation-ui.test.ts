@@ -23,7 +23,12 @@ vi.mock('../src/management/channel', () => ({
 vi.mock('../src/management/ManagementPanel', () => ({
   ManagementPanel: ({ view }: { view: string }) => {
     const [selected, setSelected] = useState(false);
-    useAdminDetail('sessions', selected ? 'fixture-session-id' : null, () => setSelected(false));
+    useAdminDetail(
+      'sessions',
+      selected ? 'fixture-session-id' : null,
+      () => setSelected(false),
+      selected ? ['fixture-flow'] : [],
+    );
     return createElement(
       'div',
       null,
@@ -115,12 +120,18 @@ it('starts at Bifröst with a persistent tab-local drawer and keeps the entire b
   );
   expect(container.querySelector('[role="tablist"]')).toBeNull();
   const breadcrumb = () => container.querySelector(`nav[aria-label="${t('adminBreadcrumbs')}"]`);
-  await vi.waitFor(() => expect(breadcrumb()?.textContent).toBe('Bifröst'));
+  await vi.waitFor(() => expect(breadcrumb()?.textContent).toBe('Bifröst/Overview'));
+  expect(
+    [...(breadcrumb()?.querySelectorAll('button') ?? [])].some(
+      (node) => node.textContent === 'Bifröst',
+    ),
+  ).toBe(false);
   await click(button(container, t('workspaceSessions')));
   await vi.waitFor(() => expect(breadcrumb()?.textContent).toContain('Sessions'));
   await vi.waitFor(() => expect(button(container, 'Open fixture session')).toBeDefined());
   await click(button(container, 'Open fixture session'));
   await vi.waitFor(() => expect(breadcrumb()?.textContent).toContain('fixture-session-id'));
+  expect(breadcrumb()?.textContent).toBe('Bifröst/Sessions/fixture-flow/fixture-session-id');
   expect(breadcrumb()?.textContent).toContain('Bifröst');
   const back = [...(breadcrumb()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
     (node) => node.textContent === 'Sessions',
@@ -130,7 +141,7 @@ it('starts at Bifröst with a persistent tab-local drawer and keeps the entire b
   }
   await click(back);
   await vi.waitFor(() => expect(breadcrumb()?.textContent).not.toContain('fixture-session-id'));
-  await click(button(container, t('adminNavigationCollapse')));
+  await click(button(container, t('adminNavigationOpen')));
   expect(button(container, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('false');
   await click(button(container, t('adminNavigationOpen')));
   expect(button(container, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('true');
@@ -140,9 +151,9 @@ it('contains a temporary drawer and backdrop inside only its own management pane
   const first = await mount(600);
   const second = await mount(600);
   await click(button(first, t('adminNavigationOpen')));
-  await vi.waitFor(() => expect(first.querySelector('.MuiModal-root')).not.toBeNull());
+  await vi.waitFor(() => expect(first.querySelector('.admin-drawer-backdrop')).not.toBeNull());
   const pane = first.querySelector('.admin-shell')?.getBoundingClientRect();
-  const backdrop = first.querySelector('.MuiBackdrop-root')?.getBoundingClientRect();
+  const backdrop = first.querySelector('.admin-drawer-backdrop')?.getBoundingClientRect();
   if (!pane || !backdrop) {
     throw new Error('Missing pane-local modal bounds');
   }
@@ -152,4 +163,6 @@ it('contains a temporary drawer and backdrop inside only its own management pane
   expect(backdrop.bottom).toBeLessThanOrEqual(pane.bottom + 1);
   expect(button(second, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('false');
   expect(second.getAttribute('aria-hidden')).not.toBe('true');
+  await click(button(first, t('adminNavigationOpen')));
+  expect(button(first, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('false');
 });

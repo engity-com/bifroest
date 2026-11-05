@@ -32,7 +32,7 @@ export async function exerciseManagementForcedAction(page, file, logout) {
   );
   assert.deepEqual(
     calls.map((path) => path.split('/management/')[1]),
-    ['version/show', 'flows/list', 'sessions/list'],
+    ['flows/list', 'sessions/list'],
     'only the entry-view reads and intentional Sessions read, never automatic preparation',
   );
   async function connect() {
@@ -169,7 +169,7 @@ export async function exerciseManagementForcedAction(page, file, logout) {
     calls
       .filter((path) => path.endsWith('/show') || path.endsWith('/list'))
       .map((path) => path.split('/management/')[1]),
-    ['version/show', 'flows/list', 'sessions/list'],
+    ['flows/list', 'sessions/list'],
     'the initial denied view read is not a prerequisite for acting; no target inspection or additional list read',
   );
   if (action === 'disconnect') {

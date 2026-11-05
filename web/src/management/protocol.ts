@@ -27,11 +27,31 @@ export interface FlowSummary {
 export interface VersionInfo {
   readonly detail: 'long' | 'short';
   readonly text: string;
+  readonly build?: VersionBuild;
+}
+export interface VersionBuild {
+  readonly title: string;
+  readonly version: string;
+  readonly revision: string;
+  readonly edition: string;
+  readonly buildAt: string;
+  readonly vendor: string;
+  readonly go: string;
+  readonly platform: string;
+  readonly features: readonly { readonly name: string; readonly entries: readonly string[] }[];
 }
 
 export function versionInfo(value: unknown, long: boolean): VersionInfo {
   const envelope = object(value, ['version', 'operation', 'versionInfo']);
-  const result = object(envelope.versionInfo, ['detail', 'text']);
+  const result = object(envelope.versionInfo, [
+    'detail',
+    'text',
+    ...(envelope.versionInfo !== null &&
+    typeof envelope.versionInfo === 'object' &&
+    Object.hasOwn(envelope.versionInfo, 'build')
+      ? ['build']
+      : []),
+  ]);
   if (
     envelope.version !== 1 ||
     envelope.operation !== 'version.show' ||
@@ -44,7 +64,67 @@ export function versionInfo(value: unknown, long: boolean): VersionInfo {
   ) {
     throw new RememberMeError('unavailable');
   }
-  return Object.freeze({ detail: result.detail as VersionInfo['detail'], text: result.text });
+  let build: VersionBuild | undefined;
+  if (result.build !== undefined) {
+    if (new TextEncoder().encode(JSON.stringify(result.build)).byteLength > 64 << 10) {
+      throw new RememberMeError('unavailable');
+    }
+    if (!long) {
+      throw new RememberMeError('unavailable');
+    }
+    const fields = object(result.build, [
+      'title',
+      'version',
+      'revision',
+      'edition',
+      'buildAt',
+      'vendor',
+      'go',
+      'platform',
+      'features',
+    ]);
+    const text = (value: unknown): string => {
+      if (
+        typeof value !== 'string' ||
+        !value.isWellFormed() ||
+        new TextEncoder().encode(value).byteLength > 2048 ||
+        /[\p{Cc}]/u.test(value)
+      ) {
+        throw new RememberMeError('unavailable');
+      }
+      return value;
+    };
+    if (!Array.isArray(fields.features) || fields.features.length > 64) {
+      throw new RememberMeError('unavailable');
+    }
+    build = Object.freeze({
+      title: text(fields.title),
+      version: text(fields.version),
+      revision: text(fields.revision),
+      edition: text(fields.edition),
+      buildAt: text(fields.buildAt),
+      vendor: text(fields.vendor),
+      go: text(fields.go),
+      platform: text(fields.platform),
+      features: Object.freeze(
+        fields.features.map((value) => {
+          const group = object(value, ['name', 'entries']);
+          if (!Array.isArray(group.entries) || group.entries.length > 128) {
+            throw new RememberMeError('unavailable');
+          }
+          return Object.freeze({
+            name: text(group.name),
+            entries: Object.freeze(group.entries.map(text)),
+          });
+        }),
+      ),
+    });
+  }
+  return Object.freeze({
+    detail: result.detail as VersionInfo['detail'],
+    text: result.text,
+    ...(build ? { build } : {}),
+  });
 }
 // Server metadata only, never independent browser evidence or trust pins.
 export interface AuditlogSummary {

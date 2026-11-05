@@ -16,6 +16,11 @@ export async function assertUiPreferences(page, usernames = ['alice', 'bob', 'e2
   for (const [key, value] of Object.entries(state.values)) {
     if (key === 'bifroest-ui-v1:theme') {
       assert(['auto', 'light', 'dark'].includes(value));
+    } else if (key === 'bifroest-ui-v1:details') {
+      assert(
+        ['full', 'compact'].includes(value),
+        'only the explicit display preference, never metadata or credentials, may be stored',
+      );
     } else if (key.startsWith('bifroest-ui-v1:keepalive:')) {
       assert(
         ['1s', '10s', '15s', '20s', '1m0s'].includes(value),
@@ -370,13 +375,18 @@ export async function workspace(page, name) {
     const shell = document.querySelector('[data-connection-active="true"] .admin-shell');
     return (
       shell?.getAttribute('data-admin-drawer') ===
-      (shell?.clientWidth >= 900 ? 'persistent' : 'temporary')
+      (shell?.clientWidth > 1136 ? 'persistent' : 'temporary')
     );
   });
   const button = pane
     .getByRole('navigation', { name: 'Workspace', exact: true })
     .getByRole('button', {
-      name: name === 'Server' ? 'Bifröst' : name === 'Recordings & audit' ? 'Recordings' : name,
+      name:
+        name === 'Server' || name === 'Bifröst'
+          ? 'Overview'
+          : name === 'Recordings & audit'
+            ? 'Recordings'
+            : name,
       exact: true,
     });
   if (
@@ -395,18 +405,15 @@ export async function exactArtifactSelection(page, view = 'Recordings') {
   const panel = page
     .locator('[data-connection-active="true"]')
     .getByRole('region', { name: view, exact: true });
-  const selection = panel.locator('.artifact-selection');
-  if (!(await selection.isVisible())) {
+  const pin = panel.getByRole('button', { name: 'Advanced: open by ID', exact: true });
+  if (!(await pin.isVisible())) {
     await page
       .getByRole('navigation', { name: 'Breadcrumb', exact: true })
       .getByRole('button', { name: view, exact: true })
       .click();
   }
-  await selection.waitFor({ state: 'visible' });
-  const summary = selection.getByText('Advanced: open by ID', { exact: true });
-  if (!(await summary.locator('..').evaluate((node) => node.open))) {
-    await summary.click();
-  }
+  await pin.click();
+  await page.getByRole('dialog', { name: 'Advanced: open by ID', exact: true }).waitFor();
 }
 
 export async function gridColumnFilter(page, grid, column, operator, value) {

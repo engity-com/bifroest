@@ -25,6 +25,7 @@ import type { ConnectionActions } from './connection-actions';
 import type { TerminalState } from './socket';
 import type { TerminalActions } from './TerminalPanel';
 import { TerminalPanel, terminalStatus } from './TerminalPanel';
+import { tabTitle } from './tab-title';
 
 export interface ConnectionView {
   readonly id: number;
@@ -37,6 +38,7 @@ interface ShellTab extends ConnectionView {
   readonly cancellation: AbortController;
   readonly state: TerminalState;
   readonly inputClosed: boolean;
+  readonly title?: string;
 }
 export const maximumTabs = 8;
 
@@ -164,6 +166,16 @@ export function TerminalWorkspace({
       connectionControls.current.delete(id);
     }
   }, []);
+  const onTitle = useCallback(
+    (id: number, value: string) => {
+      const title = tabTitle(value);
+      if (current.current.find((tab) => tab.id === id)?.title === title) {
+        return;
+      }
+      updateTabs(current.current.map((tab) => (tab.id === id ? { ...tab, title } : tab)));
+    },
+    [updateTabs],
+  );
   const onConnectionActions = useCallback((id: number, actions: ConnectionActions | null) => {
     if (actions) {
       connectionControls.current.set(id, actions);
@@ -260,9 +272,32 @@ export function TerminalWorkspace({
   );
 
   const closingTab = tabs.find((tab) => tab.id === closing);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const showActive = () => {
-      if (active === null) {
+      const list = tabList.current;
+      const header = list?.closest<HTMLElement>('.application-tabs');
+      if (list && header) {
+        const siblings = [...header.children].filter((node) => !node.contains(list));
+        const reserved = siblings.reduce(
+          (width, node) => width + node.getBoundingClientRect().width,
+          0,
+        );
+        const gaps =
+          (Number.parseFloat(getComputedStyle(header).columnGap) || 0) *
+          Math.max(0, header.children.length - 1);
+        const arrows = [...list.querySelectorAll('.MuiTabs-scrollButtons')].reduce(
+          (width, node) => width + node.getBoundingClientRect().width,
+          0,
+        );
+        // Use the space AVAILABLE to Tabs, not its current intrinsic width.
+        // Otherwise a short first label can permanently constrain later titles.
+        const available = header.clientWidth - reserved - gaps - arrows;
+        tabList.current?.style.setProperty(
+          '--connection-tab-width',
+          `${Math.max(48, Math.min(320, available))}px`,
+        );
+      }
+      if (active === null || !tabs.some((tab) => tab.id === active)) {
         return;
       }
       document
@@ -273,9 +308,17 @@ export function TerminalWorkspace({
     const observer = new ResizeObserver(showActive);
     if (tabList.current) {
       observer.observe(tabList.current);
+      const scroller = tabList.current.querySelector('.MuiTabs-scroller');
+      if (scroller) {
+        observer.observe(scroller);
+      }
+      const header = tabList.current.closest('.application-tabs');
+      if (header) {
+        observer.observe(header);
+      }
     }
     return () => observer.disconnect();
-  }, [active]);
+  }, [active, tabs]);
   const remove = (id: number) => {
     if (!canCloseView(blocked, focusBlocked, actionOwners.current)) {
       return;
@@ -417,6 +460,7 @@ export function TerminalWorkspace({
                   access={tab.access}
                   scope={tab.scope.slug}
                   principal={tab.access.snapshot().principal}
+                  {...(tab.title === undefined ? {} : { title: tab.title })}
                   state={tab.state}
                   active={authentication === null && active === tab.id}
                   disabled={blocked || focusBlocked || settingsTab !== null}
@@ -690,6 +734,7 @@ export function TerminalWorkspace({
                 focusOnActivate={focusTerminal}
                 onState={onState}
                 onActions={onActions}
+                onTitle={onTitle}
               />
             ) : (
               <ManagementWorkspace
@@ -698,6 +743,7 @@ export function TerminalWorkspace({
                 signal={tab.cancellation.signal}
                 onState={onState}
                 onConnectionActions={onConnectionActions}
+                onTitle={onTitle}
                 active={
                   authentication === null &&
                   active === tab.id &&

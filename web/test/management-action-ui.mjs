@@ -74,9 +74,15 @@ export async function exerciseManagementActions(page, login, logout) {
     .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
     .waitFor();
   await workspace(page, 'Sessions');
-  await page.getByRole('heading', { name: 'Sessions', exact: true }).waitFor();
-  const heading = await page.getByRole('heading', { name: 'Sessions', exact: true }).boundingBox();
-  assert(heading && heading.y < 350, 'sessions must be in the initial desktop viewport');
+  const list = page.getByRole('grid', { name: 'Live session metadata', exact: true });
+  await list.waitFor();
+  const bounds = await list.boundingBox();
+  assert(bounds && bounds.y < 350, 'the Sessions grid must start in the initial desktop viewport');
+  assert.equal(
+    await page.getByRole('heading', { name: 'Sessions', exact: true }).count(),
+    0,
+    'breadcrumbs replace the redundant page heading',
+  );
   assert.equal(
     await page.getByRole('button', { name: 'Prepare session action', exact: true }).count(),
     0,
@@ -101,14 +107,14 @@ export async function exerciseManagementActions(page, login, logout) {
     .waitFor();
   assert.deepEqual(
     managementPaths,
-    ['version/show', 'flows/list', 'sessions/list'],
+    ['flows/list', 'sessions/list'],
     'only the exact authorized first-view reads, never preparation or download',
   );
   await workspace(page, 'Recordings & audit');
   await page.getByRole('grid', { name: 'Recordings · default', exact: true }).waitFor();
   assert.deepEqual(
     managementPaths,
-    ['version/show', 'flows/list', 'sessions/list', 'auditlogs/list', 'recordings/list'],
+    ['flows/list', 'sessions/list', 'auditlogs/list', 'recordings/list'],
     'the first Artifacts visit reads only its sources and sole recording source; never transfers or prepares',
   );
   const afterFirstViews = managementCalls;
@@ -129,7 +135,7 @@ export async function exerciseManagementActions(page, login, logout) {
     afterFirstViews,
     'returning to initialized views must not repeat any reads, downloads or preparations',
   );
-  assert.equal(afterFirstViews, 5);
+  assert.equal(afterFirstViews, 4);
   assert.equal(await direct.getByLabel('Target flow', { exact: false }).inputValue(), 'work');
   assert.equal(
     await direct.getByLabel('Target session ID', { exact: false }).inputValue(),
@@ -316,7 +322,7 @@ export async function exerciseManagementActions(page, login, logout) {
   );
   assert.equal(
     await navigation
-      .getByRole('button', { name: 'Bifröst', exact: true, includeHidden: true })
+      .getByRole('button', { name: 'Overview', exact: true, includeHidden: true })
       .isEnabled(),
     false,
     'view changes cannot dismiss the unknown outcome or its action lock',

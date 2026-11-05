@@ -88,6 +88,16 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 			format = sys.VersionFormatShort
 		}
 		result.VersionInfo = &protocol.VersionInfo{Detail: request.VersionDetail, Text: sys.FormatVersion(this.Version, format) + "\n"}
+		if format == sys.VersionFormatLong {
+			v := this.Version
+			build := &protocol.VersionBuild{Title: v.Title(), Version: v.Version(), Revision: v.Revision(), Edition: v.Edition().String(), BuildAt: v.BuildAt().Format(time.RFC3339), Vendor: v.Vendor(), Go: v.GoVersion(), Platform: v.Os().String() + "/" + v.Arch().String(), Features: make([]protocol.VersionFeatureGroup, 0)}
+			v.Features().ForEach(func(category sys.VersionFeatureCategory) {
+				group := protocol.VersionFeatureGroup{Name: category.Name(), Entries: make([]string, 0)}
+				category.ForEach(func(feature sys.VersionFeature) { group.Entries = append(group.Entries, feature.Name()) })
+				build.Features = append(build.Features, group)
+			})
+			result.VersionInfo.Build = build
+		}
 	case protocol.ListFlows:
 		page, err := this.managementFlowPage(ctx, request)
 		if err != nil {

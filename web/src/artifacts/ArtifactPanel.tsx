@@ -1,19 +1,24 @@
 import CancelIcon from '@mui/icons-material/Cancel';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CloseIcon from '@mui/icons-material/Close';
+import { IconButton } from '@mui/material';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { RecordingSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { useAdminDetail } from '../ui/admin-navigation';
+import { useDetailedView } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
 import { Alert, Button, Checkbox, Modal, PasswordInput, Select, TextInput } from '../ui/material';
 import { type Message, t } from '../ui/messages';
 import { readLocalBytes } from '../wasm/local-file';
 import { ArtifactCatalog } from './ArtifactCatalog';
+import { ArtifactOpenByID } from './ArtifactOpenByID';
 import { ArtifactSourceDetails } from './ArtifactSourceDetails';
 import { AuditCatalog } from './AuditCatalog';
 import { AuditEvents } from './AuditEvents';
+import type { AuditEventRow } from './audit-events';
 import {
   EvidenceError,
   type EvidenceMetadata,
@@ -24,6 +29,7 @@ import { LocalArtifactDownload } from './local-download';
 import { inspectProtection } from './protection';
 import { type ArtifactRequest, artifactFields, type ReceivedArtifact } from './protocol';
 import { RecordingPlayer } from './RecordingPlayer';
+import { verifiedRecordingFlow } from './recording-flow';
 import { useArtifactSecrets } from './session-secrets';
 import { type EvidenceKey, verifyArtifact } from './verify';
 
@@ -66,6 +72,9 @@ export function ArtifactPanel({
   view?: 'recordings' | 'auditlogs';
 }) {
   const secrets = useArtifactSecrets(access);
+  const detailed = useDetailedView();
+  const [recordingFlow, setRecordingFlow] = useState('');
+  const [auditEvent, setAuditEvent] = useState<AuditEventRow | null>(null);
   const inputID = useId();
   const passwordID = useId();
   const [opened, setOpened] = useState<ArtifactRequest | null>(null);
@@ -91,7 +100,7 @@ export function ArtifactPanel({
   const [scope, setScope] = useState<'complete' | 'captured-prefix'>('complete');
   const [auditlog, setAuditlog] = useState('');
   const [id, setID] = useState('');
-  const heading = useRef<HTMLHeadingElement | null>(null);
+  const heading = useRef<HTMLDivElement | null>(null);
   const keyInput = useRef<HTMLInputElement | null>(null);
   const form = useRef<HTMLFormElement | null>(null);
   const operation = useRef<AbortController | null>(null);
@@ -117,6 +126,8 @@ export function ArtifactPanel({
     downloads.current.clear();
     setOpened(null);
     setSelection(null);
+    setRecordingFlow('');
+    setAuditEvent(null);
     setReceived(null);
     setProtection(null);
     setVerified(null);
@@ -191,6 +202,7 @@ export function ArtifactPanel({
     }
   }
   function resetResult() {
+    setAuditEvent(null);
     downloads.current.clear();
     setVerified(null);
     setUsed(null);
@@ -230,6 +242,11 @@ export function ArtifactPanel({
     if (!current(token, signal)) {
       return;
     }
+    const flow = await verifiedRecordingFlow(result);
+    if (!current(token, signal)) {
+      return;
+    }
+    setRecordingFlow(flow);
     if (key !== null) {
       secrets.remember(key, result);
       setCacheRevision((value) => value + 1);
@@ -252,6 +269,7 @@ export function ArtifactPanel({
     setProtection(null);
     setOpened(request);
     setSelection(summary ?? null);
+    setRecordingFlow(summary?.flow ?? '');
     setFilePage(0);
     setSensitive(false);
     const expected = identity();
@@ -279,7 +297,7 @@ export function ArtifactPanel({
         stage('verifying');
         await check(image, header, key, expected, signal, token, false);
       }
-      heading.current?.focus();
+      heading.current?.focus({ preventScroll: true });
     });
   }
   async function recheck() {
@@ -345,8 +363,21 @@ export function ArtifactPanel({
   }
   const integrated = useAdminDetail(
     view,
-    opened ? (opened.kind === 'recording' ? opened.id : opened.auditlog) : null,
+    auditEvent
+      ? typeof auditEvent.record.id === 'string'
+        ? auditEvent.record.id
+        : auditEvent.id
+      : opened
+        ? opened.kind === 'recording'
+          ? opened.id
+          : opened.auditlog
+        : null,
     close,
+    auditEvent && opened?.kind === 'audit'
+      ? [opened.auditlog, ...(auditEvent.flow ? [auditEvent.flow] : [])]
+      : opened?.kind === 'recording' && (recordingFlow || selection?.flow)
+        ? [recordingFlow || selection?.flow || '']
+        : [],
   );
   const title = t(view === 'recordings' ? 'workspaceRecordings' : 'workspaceAuditlogs');
   const locked = disabled || phase !== null;
@@ -361,6 +392,21 @@ export function ArtifactPanel({
   const metadata = verified?.metadata;
   const success = verified !== null;
   const keyNeeded = level === 'private' && encrypted && !cached && !candidate;
+  const openByID = (
+    <ArtifactOpenByID
+      view={view}
+      auditlog={auditlog}
+      id={id}
+      disabled={disabled || remoteDisabled}
+      onAuditlog={setAuditlog}
+      onID={setID}
+      onGo={() => {
+        void open(
+          view === 'recordings' ? { kind: 'recording', auditlog, id } : { kind: 'audit', auditlog },
+        );
+      }}
+    />
+  );
   return (
     <section
       className="stack artifact-panel"
@@ -372,54 +418,57 @@ export function ArtifactPanel({
           items={[
             { label: t('workspaceBifroest') },
             { label: title, ...(opened ? { onClick: close } : {}) },
+            ...(opened?.kind === 'recording' && (recordingFlow || selection?.flow)
+              ? [{ label: recordingFlow || selection?.flow || '' }]
+              : []),
             ...(opened
               ? [{ label: opened.kind === 'recording' ? opened.id : opened.auditlog }]
               : []),
           ]}
         />
       )}
-      <div className="section-heading">
-        <h2 ref={heading} tabIndex={-1}>
-          {title}
-        </h2>
-        {opened && (
-          <div className="actions">
-            <Button variant="default" disabled={locked} onClick={close}>
-              {t('artifactBackToList')}
-            </Button>
-            <Button
-              variant="subtle"
-              onClick={() => setDetails(true)}
-              aria-label={t('recordingVerificationDetails')}
-            >
-              {success ? (
-                <CheckCircleIcon color="success" />
-              ) : notice ? (
-                <CancelIcon color="error" />
-              ) : null}
-              {t(
-                success
-                  ? metadata?.validation === 'outer'
-                    ? 'artifactOuterVerified'
-                    : used?.enabled && used.source === 'user'
-                      ? 'artifactVerificationOK'
-                      : 'artifactVerificationUnpinned'
-                  : notice
-                    ? 'artifactVerificationError'
-                    : keyNeeded
-                      ? 'artifactKeyNeeded'
-                      : 'recordingVerificationDetails',
-              )}
-            </Button>
-          </div>
-        )}
-      </div>
+      {opened && !auditEvent && (
+        <div className="section-heading" ref={heading} tabIndex={-1}>
+          {opened && (
+            <div className="actions">
+              <Button
+                variant="subtle"
+                onClick={() => setDetails(true)}
+                aria-label={t('recordingVerificationDetails')}
+              >
+                {success ? (
+                  <CheckCircleIcon color="success" />
+                ) : notice ? (
+                  <CancelIcon color="error" />
+                ) : null}
+                {t(
+                  success
+                    ? metadata?.validation === 'outer'
+                      ? 'artifactOuterVerified'
+                      : used?.enabled && used.source === 'user'
+                        ? 'artifactVerificationOK'
+                        : 'artifactVerificationUnpinned'
+                    : notice
+                      ? 'artifactVerificationError'
+                      : keyNeeded
+                        ? 'artifactKeyNeeded'
+                        : 'recordingVerificationDetails',
+                )}
+              </Button>
+              <IconButton aria-label={t('artifactBackToList')} disabled={locked} onClick={close}>
+                <CloseIcon />
+              </IconButton>
+            </div>
+          )}
+        </div>
+      )}
       <div hidden={opened !== null}>
         {view === 'recordings' ? (
           <ArtifactCatalog
             access={access}
             disabled={disabled || remoteDisabled}
             active={active && opened === null}
+            openByID={openByID}
             onSelect={(request, summary) => {
               void open(request, summary);
             }}
@@ -429,46 +478,12 @@ export function ArtifactPanel({
             access={access}
             disabled={disabled || remoteDisabled}
             active={active && opened === null}
+            openByID={openByID}
             onSelect={(request) => {
               void open(request);
             }}
           />
         )}
-        <details className="artifact-selection">
-          <summary>{t('recordingManual')}</summary>
-          <form
-            method="dialog"
-            className="actions"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void open(
-                view === 'recordings'
-                  ? { kind: 'recording', auditlog, id }
-                  : { kind: 'audit', auditlog },
-              );
-            }}
-          >
-            <TextInput
-              label={t('artifactAuditlog')}
-              value={auditlog}
-              onChange={(event) => setAuditlog(event.currentTarget.value)}
-              required
-              maxLength={128}
-            />
-            {view === 'recordings' && (
-              <TextInput
-                label={t('artifactRecordingID')}
-                value={id}
-                onChange={(event) => setID(event.currentTarget.value)}
-                required
-                maxLength={36}
-              />
-            )}
-            <Button type="submit" disabled={disabled || remoteDisabled}>
-              {t(view === 'recordings' ? 'recordingOpen' : 'recordingOpenAudit')}
-            </Button>
-          </form>
-        </details>
       </div>
       {opened !== null && (
         <>
@@ -584,9 +599,14 @@ export function ArtifactPanel({
               {verified?.output &&
                 metadata?.kind === 'audit' &&
                 metadata.outputFormat === 'jsonl' && (
-                  <AuditEvents source={verified.output} active={active} />
+                  <AuditEvents
+                    source={verified.output}
+                    active={active}
+                    selected={auditEvent}
+                    onSelect={setAuditEvent}
+                  />
                 )}
-              <details className="artifact-verification">
+              <details className="artifact-verification" hidden={auditEvent !== null}>
                 <summary>{t('artifactVerificationOptions')}</summary>
                 <div className="stack">
                   <Select
@@ -711,7 +731,7 @@ export function ArtifactPanel({
           )}
         </>
       )}
-      {received && opened?.kind === 'recording' && (
+      {detailed && received && opened?.kind === 'recording' && (
         <section className="recording-evidence">
           <ArtifactSourceDetails
             received={received}

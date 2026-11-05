@@ -303,6 +303,25 @@ type ReadResult struct {
 // VersionInfo is the exact native formatter output, not an independent build or
 // source attestation. Detail is the normalized selector used for this response.
 type VersionInfo struct {
-	Detail string `json:"detail"`
-	Text   string `json:"text"`
+	Detail string        `json:"detail"`
+	Text   string        `json:"text"`
+	Build  *VersionBuild `json:"build,omitempty"`
+}
+
+// Structured long-version metadata. Short-version forced credentials never
+// receive this object; the same native ceiling governs both representations.
+type VersionBuild struct {
+	Title    string                `json:"title"`
+	Version  string                `json:"version"`
+	Revision string                `json:"revision"`
+	Edition  string                `json:"edition"`
+	BuildAt  string                `json:"buildAt"`
+	Vendor   string                `json:"vendor"`
+	Go       string                `json:"go"`
+	Platform string                `json:"platform"`
+	Features []VersionFeatureGroup `json:"features"`
+}
+type VersionFeatureGroup struct {
+	Name    string   `json:"name"`
+	Entries []string `json:"entries"`
 }

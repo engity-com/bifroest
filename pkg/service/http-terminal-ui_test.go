@@ -94,6 +94,11 @@ func installTerminalUiBackend(svc *service) *terminalUiCounters {
 				line = line[:0]
 				continue
 			}
+			if string(line) == "title-live" {
+				_, _ = io.WriteString(stream, "\x1b]2;mc [alice@fixture]\x07TITLE_REPORTED\r\n")
+				line = line[:0]
+				continue
+			}
 			if count := strings.Count(string(line), "\x1b[<2;"); count > 0 {
 				counters.rightButtons.Add(int32(count))
 				_, _ = fmt.Fprintf(stream, "\x1b[?1000l\x1b[?1006lRIGHT_BUTTON_EVENTS:%d\r\n", count)

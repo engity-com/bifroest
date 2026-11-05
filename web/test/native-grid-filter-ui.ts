@@ -6,7 +6,7 @@ export async function nativeColumnFilter(
   value: string,
 ): Promise<void> {
   const trigger = [...parent.querySelectorAll<HTMLButtonElement>('button')].find(
-    (node) => node.getAttribute('aria-label') === 'Filters',
+    (node) => !node.closest('[hidden]') && node.getAttribute('aria-label') === 'Filters',
   );
   if (!trigger) {
     throw new Error('Missing native Filters control');
@@ -40,7 +40,7 @@ export async function nativeColumnFilter(
 
 export async function closeNativeFilter(parent: ParentNode): Promise<void> {
   const trigger = [...parent.querySelectorAll<HTMLButtonElement>('button')].find(
-    (node) => node.getAttribute('aria-label') === 'Filters',
+    (node) => !node.closest('[hidden]') && node.getAttribute('aria-label') === 'Filters',
   );
   if (!trigger) {
     throw new Error('Missing native Filters control');

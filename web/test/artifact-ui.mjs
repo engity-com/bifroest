@@ -481,15 +481,36 @@ try {
     await events
       .locator('[role="row"][data-id]')
       .first()
-      .getByRole('button', { name: 'Details', exact: true })
+      .getByRole('button', { name: /^Audit event details /u })
       .click();
-    await page.getByRole('dialog', { name: 'Audit event details', exact: true }).waitFor();
-    await page
-      .getByRole('dialog', { name: 'Audit event details', exact: true })
-      .getByRole('button', { name: 'Close', exact: true })
-      .click();
+    const eventDetails = page.getByRole('region', { name: 'Audit event details', exact: true });
+    await eventDetails.waitFor();
+    await captureLayout(page, `artifact-${mode}-event-detail`);
+    assert.equal(
+      await page.getByRole('dialog', { name: 'Audit event details', exact: true }).count(),
+      0,
+    );
+    await eventDetails.getByRole('button', { name: 'Close', exact: true }).click();
+    await events.waitFor();
     const beforeLocal = apiRequests.length;
     const controls = events.locator('xpath=ancestor::div[@class="admin-data-grid"][1]');
+    const eye = controls.getByRole('button', { name: 'Show all available details', exact: true });
+    assert.equal(await eye.getAttribute('aria-pressed'), 'true');
+    const gridNode = await events.elementHandle();
+    await eye.click();
+    await page.waitForFunction(() => localStorage.getItem('bifroest-ui-v1:details') === 'compact');
+    await controls
+      .getByRole('button', { name: 'Refresh audit events', exact: true })
+      .waitFor({ state: 'visible' });
+    assert.equal(await events.locator('[role="columnheader"][data-field="reason"]').count(), 0);
+    assert.equal(await gridNode.evaluate((node) => node.isConnected), true);
+    assert.equal(
+      apiRequests.length,
+      beforeLocal,
+      'the eye rebuilds verified local audit rows without refetching content',
+    );
+    await eye.click();
+    await page.waitForFunction(() => localStorage.getItem('bifroest-ui-v1:details') === 'full');
     await controls.getByRole('button', { name: 'Search', exact: true }).click();
     await controls.getByPlaceholder('Search…', { exact: true }).fill('session');
     await page.waitForFunction(() => {

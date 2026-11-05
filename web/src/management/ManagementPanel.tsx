@@ -1,9 +1,12 @@
+import CloseIcon from '@mui/icons-material/Close';
+import { IconButton } from '@mui/material';
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useAdminDetail } from '../ui/admin-navigation';
+import { useDetailRefresh } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
 import { Alert, Button, Modal, Select, TextInput, Title } from '../ui/material';
 import { t } from '../ui/messages';
@@ -17,6 +20,7 @@ import type {
   SessionOptions,
   VersionInfo,
 } from './protocol';
+import { VersionDetails } from './VersionDetails';
 
 export function ManagementPanel({
   access,
@@ -29,7 +33,7 @@ export function ManagementPanel({
   active: boolean;
   disabled: boolean;
   onActionLock: (locked: boolean) => void;
-  view: 'sessions' | 'server';
+  view: 'sessions' | 'server' | 'version';
 }) {
   const [flows, setFlows] = useState<Page<FlowSummary> | null>(null);
   const [version, setVersion] = useState<VersionInfo | null>(null);
@@ -53,10 +57,9 @@ export function ManagementPanel({
   const [flowSort, setFlowSort] = useState<'asc' | 'desc'>('asc');
   const flowCursors = useRef<string[]>(['']);
   const [versionFailed, setVersionFailed] = useState(false);
-  const [flowsFailed, setFlowsFailed] = useState(false);
-  const attempted = useRef({ sessions: false, version: false, flows: false });
+  const attempted = useRef({ sessions: false, version: false, flows: false, build: false });
   const detailElement = useRef<HTMLElement | null>(null);
-  const listHeading = useRef<HTMLHeadingElement | null>(null);
+  const listElement = useRef<HTMLDivElement | null>(null);
   const returningToList = useRef(false);
   const detailID = useId();
   const request = useRef<AbortController | null>(null);
@@ -98,8 +101,7 @@ export function ManagementPanel({
     setFlowSort('asc');
     flowCursors.current = [''];
     setVersionFailed(false);
-    setFlowsFailed(false);
-    attempted.current = { sessions: false, version: false, flows: false };
+    attempted.current = { sessions: false, version: false, flows: false, build: false };
     lastFilter.current = {};
     setSessionFilter(null);
     setFlowFilter(null);
@@ -150,9 +152,12 @@ export function ManagementPanel({
     if (view === 'sessions' && !attempted.current.sessions) {
       attempted.current.sessions = true;
       void loadSessions(false, { state: 'all' });
-    } else if (view === 'server' && !attempted.current.version) {
+    } else if (view === 'version' && !attempted.current.version) {
       attempted.current.version = true;
       void loadVersion();
+    } else if (view === 'version' && !attempted.current.build) {
+      attempted.current.build = true;
+      void loadVersion(true);
     } else if (view === 'server' && !attempted.current.flows) {
       attempted.current.flows = true;
       void loadFlows();
@@ -174,7 +179,6 @@ export function ManagementPanel({
   const focusDetails = useEffectEvent(() => {
     if (active && view === 'sessions') {
       detailElement.current?.focus({ preventScroll: true });
-      detailElement.current?.scrollIntoView({ block: 'nearest' });
     }
   });
   useEffect(() => {
@@ -183,8 +187,10 @@ export function ManagementPanel({
     } else if (returningToList.current) {
       returningToList.current = false;
       if (isActive.current) {
-        listHeading.current?.focus();
-        listHeading.current?.scrollIntoView({ block: 'nearest' });
+        const target =
+          listElement.current?.querySelector<HTMLElement>('[role="gridcell"][tabindex="0"]') ??
+          listElement.current?.querySelector<HTMLElement>('button:not([disabled])');
+        target?.focus({ preventScroll: true });
       }
     }
   }, [selected]);
@@ -239,9 +245,6 @@ export function ManagementPanel({
         if (resource === 'version') {
           setVersionFailed(true);
         }
-        if (resource === 'flows') {
-          setFlowsFailed(true);
-        }
       }
     } finally {
       if (current === generation.current) {
@@ -267,7 +270,6 @@ export function ManagementPanel({
       );
       if (current === generation.current) {
         setFlows(result);
-        setFlowsFailed(false);
         setFlowPage(index + 1);
         setFlowQuery(query);
         setFlowSort(direction);
@@ -425,6 +427,18 @@ export function ManagementPanel({
     }
   }
   const locked = disabled || busy;
+  const detailed = useDetailRefresh(
+    active && view !== 'version' && selected === null,
+    disabled,
+    busy,
+    () => {
+      if (view === 'sessions') {
+        void loadSessions(false, { ...lastFilter.current, filter: null, after: '' }, 0);
+      } else if (view === 'server') {
+        void loadFlows('', 0, flowQuery, flowSort, null);
+      }
+    },
+  );
   const when = (value: string) =>
     new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(
       new Date(value),
@@ -435,8 +449,12 @@ export function ManagementPanel({
       : `${item.owner.issuer} / ${item.owner.subject}`;
   const field = (item: SessionItem, value: string) =>
     value || m(item.policyLimited ? 'withheld' : 'notReported');
-  const isSelected = (item: SessionItem) => selected?.flow === item.flow && selected.id === item.id;
-  const integratedNavigation = useAdminDetail('sessions', selected?.id ?? null, returnToSessions);
+  const integratedNavigation = useAdminDetail(
+    'sessions',
+    selected?.id ?? null,
+    returnToSessions,
+    selected ? [selected.flow] : [],
+  );
   return (
     <section className="stack" aria-label={t('managementTitle')}>
       {!integratedNavigation && (
@@ -450,28 +468,19 @@ export function ManagementPanel({
                     label: t('workspaceSessions'),
                     ...(selected ? { onClick: returnToSessions, disabled: locked } : {}),
                   },
-                  ...(selected ? [{ label: selected.id }] : []),
+                  ...(selected ? [{ label: selected.flow }, { label: selected.id }] : []),
                 ]
           }
         />
       )}
-      <div className="section-heading">
-        <h2 ref={listHeading} tabIndex={-1} className="recording-heading">
-          {t(view === 'server' ? 'workspaceServer' : 'managementSessionsTitle')}
-        </h2>
-        <details className="context-help">
-          <summary>{t('managementPolicyHelp')}</summary>
-          <p>{t('managementReadOnly')}</p>
-        </details>
-      </div>
-      <section hidden={view !== 'server'} className="stack">
+      <section hidden={view !== 'version'} className="stack">
         <div className="section-heading admin-toolbar">
           <Title order={3}>{t('managementVersionTitle')}</Title>
           <Button
             variant="default"
             disabled={locked}
             onClick={() => {
-              void loadVersion();
+              void loadVersion(buildVersion !== null);
             }}
           >
             {m('versionRefresh')}
@@ -483,23 +492,11 @@ export function ManagementPanel({
             {m(versionFailed ? 'versionUnavailable' : 'versionPending')}
           </p>
         )}
-        {version !== null && (
+        {(buildVersion ?? version) !== null && (
           <section aria-label={t('managementVersionTitle')}>
-            <p className="server-version">{version.text}</p>
-            <p className="caption subtle">{m('reported')}</p>
+            <VersionDetails info={(buildVersion ?? version) as VersionInfo} />
           </section>
         )}
-        <details className="build-details">
-          <summary>{m('build')}</summary>
-          <div className="stack">
-            <p>{m('buildHint')}</p>
-            <Button disabled={locked} onClick={() => void loadVersion(true)}>
-              {m('buildLoad')}
-            </Button>
-            {loading === 'build' && <p role="status">{m('buildLoading')}</p>}
-            {buildVersion !== null && <pre>{buildVersion.text}</pre>}
-          </div>
-        </details>
       </section>
       {notice !== null && (
         <Alert role="status" color={notice.kind === 'confirmed' ? 'green' : 'yellow'}>
@@ -532,217 +529,166 @@ export function ManagementPanel({
         </Alert>
       )}
       <div hidden={view !== 'server'} className="stack">
-        <div className="section-heading admin-toolbar">
-          <Title order={3}>{t('managementFlowListTitle')}</Title>
-          <Button
-            variant="default"
-            disabled={locked}
-            onClick={() => {
-              void loadFlows();
-            }}
-          >
-            {m('flowsRefresh')}
-          </Button>
-        </div>
-        {loading === 'flows' && <p role="status">{m('flowsLoading')}</p>}
-        {flows === null && loading !== 'flows' && (
-          <p className="empty-state">{m(flowsFailed ? 'flowsUnavailable' : 'flowsPending')}</p>
+        {(flows?.skipped ?? 0) > 0 && (
+          <Alert color="yellow">
+            {t('managementPartial')} ({flows?.skipped})
+          </Alert>
         )}
-        {flows !== null && (
-          <>
-            <p className="caption subtle">
-              {m('page')} {flowPage}. {m('snapshot')}
-            </p>
-            {flows.skipped > 0 && (
-              <Alert color="yellow">
-                {t('managementPartial')} ({flows.skipped})
-              </Alert>
-            )}
-            <AdminDataGrid<FlowSummary>
-              active={active && view === 'server'}
-              label={t('managementFlowsCaption')}
-              rows={flows.items}
-              getRowId={(item) => item.name}
-              columns={[
-                { field: 'name', headerName: t('managementFlow'), minWidth: 170, flex: 1 },
-                {
-                  field: 'authorization',
-                  headerName: t('managementAuthorization'),
-                  minWidth: 170,
-                  flex: 1,
-                },
-                {
-                  field: 'environment',
-                  headerName: t('managementEnvironment'),
-                  minWidth: 170,
-                  flex: 1,
-                },
-                { field: 'auditlog', headerName: t('managementAuditlog'), minWidth: 170, flex: 1 },
-              ]}
-              busy={busy}
-              disabled={disabled || notice?.kind === 'unknown'}
-              page={flowPage - 1}
-              hasNext={flows.next !== ''}
-              query={flowQuery}
-              columnFilter={flowFilter}
-              onSearch={(query, filter) => {
-                void loadFlows('', 0, query, flowSort, filter);
-              }}
-              sortField="name"
-              sortDirection={flowSort}
-              onPage={(index) => {
-                const cursor = flowCursors.current[index];
-                if (cursor !== undefined && index <= flowPage) {
-                  void loadFlows(cursor, index);
-                }
-              }}
-              onQuery={(query) => {
-                void loadFlows('', 0, query, flowSort);
-              }}
-              onSort={(direction) => {
-                void loadFlows('', 0, flowQuery, direction);
-              }}
-            />
-          </>
-        )}
+        <AdminDataGrid<FlowSummary>
+          active={active && view === 'server'}
+          label={t('managementFlowsCaption')}
+          rows={flows?.items ?? []}
+          onRefresh={() => {
+            void loadFlows();
+          }}
+          refreshLabel={m('flowsRefresh')}
+          getRowId={(item) => item.name}
+          columns={[
+            { field: 'name', headerName: t('managementFlow'), minWidth: 170, flex: 1 },
+            {
+              field: 'authorization',
+              headerName: t('managementAuthorization'),
+              minWidth: 170,
+              flex: 1,
+            },
+            {
+              field: 'environment',
+              headerName: t('managementEnvironment'),
+              minWidth: 170,
+              flex: 1,
+            },
+            { field: 'auditlog', headerName: t('managementAuditlog'), minWidth: 170, flex: 1 },
+          ]}
+          busy={busy || !attempted.current.flows}
+          disabled={disabled || notice?.kind === 'unknown'}
+          page={flowPage - 1}
+          hasNext={(flows?.next ?? '') !== ''}
+          query={flowQuery}
+          columnFilter={flowFilter}
+          onSearch={(query, filter) => {
+            void loadFlows('', 0, query, flowSort, filter);
+          }}
+          sortField="name"
+          sortDirection={flowSort}
+          onPage={(index) => {
+            const cursor = flowCursors.current[index];
+            if (cursor !== undefined && index <= flowPage) {
+              void loadFlows(cursor, index);
+            }
+          }}
+          onQuery={(query) => {
+            void loadFlows('', 0, query, flowSort);
+          }}
+          onSort={(direction) => {
+            void loadFlows('', 0, flowQuery, direction);
+          }}
+        />
       </div>
-      {busy && (
+      {busy && sending.current && (
         <Button variant="default" onClick={cancel}>
           {t(sending.current ? 'managementStopWaiting' : 'managementCancel')}
         </Button>
       )}
       <section hidden={view !== 'sessions'} className="stack">
-        <div hidden={selected !== null} className="stack">
-          <div className="actions">
-            <Button
-              type="button"
-              variant="default"
-              disabled={locked}
-              onClick={() => void refreshSessions()}
-            >
-              {m('refreshSessions')}
-            </Button>
-          </div>
-          {loading === 'sessions' && <p role="status">{m('sessionsLoading')}</p>}
-          {loading === 'details' && <p role="status">{m('detailsLoading')}</p>}
-          {sessions === null && loading !== 'sessions' && (
-            <p className="empty-state">
-              {m(attempted.current.sessions ? 'sessionsCleared' : 'sessionPending')}
-            </p>
+        <div hidden={selected !== null} className="stack" ref={listElement}>
+          {(sessions?.skipped ?? 0) > 0 && (
+            <Alert color="yellow">
+              {t('managementPartial')} ({sessions?.skipped})
+            </Alert>
           )}
-          {sessions !== null && (
-            <>
-              <p className="caption subtle">{m('snapshot')}</p>
-              {sessions.skipped > 0 && (
-                <Alert color="yellow">
-                  {t('managementPartial')} ({sessions.skipped})
-                </Alert>
-              )}
-              {sessions.items.some((item) => item.policyLimited) && (
-                <Alert color="yellow">{t('managementLimited')}</Alert>
-              )}
-              <AdminDataGrid<SessionItem>
-                active={active && view === 'sessions' && selected === null}
-                actionField="details"
-                label={t('managementSessionsCaption')}
-                rows={sessions.items}
-                getRowId={(item) => `${item.flow}/${item.id}`}
-                columns={[
-                  {
-                    field: 'user',
-                    headerName: m('user'),
-                    minWidth: 170,
-                    flex: 1,
-                    valueGetter: (_value, item) => field(item, item.user),
-                  },
-                  { field: 'flow', headerName: t('managementFlow'), minWidth: 150 },
-                  {
-                    field: 'state',
-                    headerName: m('status'),
-                    minWidth: 130,
-                    type: 'singleSelect',
-                    valueOptions: ['new', 'authorized', 'disposed'].map((value) => ({
-                      value,
-                      label: sessionStateLabel(value),
-                    })),
-                  },
-                  {
-                    field: 'createdAt',
-                    headerName: m('started'),
-                    minWidth: 190,
-                    type: 'dateTime',
-                    valueGetter: (_value, item) => new Date(item.createdAt),
-                    valueFormatter: (value) => when((value as Date).toISOString()),
-                  },
-                  {
-                    field: 'remote',
-                    headerName: m('origin'),
-                    minWidth: 180,
-                    flex: 1,
-                    valueGetter: (_value, item) => field(item, item.remote),
-                  },
-                  {
-                    field: 'details',
-                    headerName: t('managementDetails'),
-                    minWidth: 150,
-                    renderCell: (params) => (
-                      <Button
-                        disabled={locked}
-                        aria-label={`${t('managementDetails')} ${params.row.id}`}
-                        aria-controls={detailID}
-                        aria-expanded={isSelected(params.row)}
-                        onClick={() => {
-                          void show(params.row);
-                        }}
-                      >
-                        {t('managementDetails')}
-                      </Button>
-                    ),
-                  },
-                ]}
-                busy={busy}
-                disabled={disabled || notice?.kind === 'unknown'}
-                page={sessionPage - 1}
-                hasNext={sessions.next !== ''}
-                query={sessionQuery}
-                columnFilter={sessionFilter}
-                onSearch={(query, filter) => {
-                  void loadSessions(
-                    false,
-                    {
-                      state: 'all',
-                      query,
-                      filter,
-                      sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
-                    },
-                    0,
-                  );
-                }}
-                sortField="flow"
-                sortDirection={sessionSort}
-                onPage={(index) => {
-                  const cursor = sessionCursors.current[index];
-                  if (cursor !== undefined && index <= sessionPage) {
-                    void loadSessions(false, { ...lastFilter.current, after: cursor }, index);
-                  }
-                }}
-                onQuery={(query) => {
-                  void loadSessions(false, { ...lastFilter.current, after: '', query }, 0);
-                }}
-                onSort={(direction) => {
-                  void loadSessions(
-                    false,
-                    {
-                      ...lastFilter.current,
-                      after: '',
-                      sort: direction === 'asc' ? 'flow-asc' : 'flow-desc',
-                    },
-                    0,
-                  );
-                }}
-              />
-            </>
-          )}
+          <AdminDataGrid<SessionItem>
+            active={active && view === 'sessions' && selected === null}
+            actionField="details"
+            label={t('managementSessionsCaption')}
+            rows={sessions?.items ?? []}
+            onRefresh={() => {
+              void refreshSessions();
+            }}
+            refreshLabel={m('refreshSessions')}
+            detailsAvailable
+            detailed={detailed}
+            detailFields={['user', 'remote']}
+            onOpen={(item) => {
+              void show(item);
+            }}
+            openLabel={(item) => `${t('managementDetails')} ${item.id}`}
+            getRowId={(item) => `${item.flow}/${item.id}`}
+            columns={[
+              {
+                field: 'user',
+                headerName: m('user'),
+                minWidth: 170,
+                flex: 1,
+                valueGetter: (_value, item) => field(item, item.user),
+              },
+              { field: 'flow', headerName: t('managementFlow'), minWidth: 150 },
+              {
+                field: 'state',
+                headerName: m('status'),
+                minWidth: 130,
+                type: 'singleSelect',
+                valueOptions: ['new', 'authorized', 'disposed'].map((value) => ({
+                  value,
+                  label: sessionStateLabel(value),
+                })),
+              },
+              {
+                field: 'createdAt',
+                headerName: m('started'),
+                minWidth: 190,
+                type: 'dateTime',
+                valueGetter: (_value, item) => new Date(item.createdAt),
+                valueFormatter: (value) => when((value as Date).toISOString()),
+              },
+              {
+                field: 'remote',
+                headerName: m('origin'),
+                minWidth: 180,
+                flex: 1,
+                valueGetter: (_value, item) => field(item, item.remote),
+              },
+            ]}
+            busy={busy || !attempted.current.sessions}
+            disabled={disabled || notice?.kind === 'unknown'}
+            page={sessionPage - 1}
+            hasNext={(sessions?.next ?? '') !== ''}
+            query={sessionQuery}
+            columnFilter={sessionFilter}
+            onSearch={(query, filter) => {
+              void loadSessions(
+                false,
+                {
+                  state: 'all',
+                  query,
+                  filter,
+                  sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
+                },
+                0,
+              );
+            }}
+            sortField="flow"
+            sortDirection={sessionSort}
+            onPage={(index) => {
+              const cursor = sessionCursors.current[index];
+              if (cursor !== undefined && index <= sessionPage) {
+                void loadSessions(false, { ...lastFilter.current, after: cursor }, index);
+              }
+            }}
+            onQuery={(query) => {
+              void loadSessions(false, { ...lastFilter.current, after: '', query }, 0);
+            }}
+            onSort={(direction) => {
+              void loadSessions(
+                false,
+                {
+                  ...lastFilter.current,
+                  after: '',
+                  sort: direction === 'asc' ? 'flow-asc' : 'flow-desc',
+                },
+                0,
+              );
+            }}
+          />
         </div>
         {selected !== null && (
           <section
@@ -753,41 +699,46 @@ export function ManagementPanel({
             className="stack session-details record-card"
           >
             <div className="section-heading">
-              <Title order={3}>
-                {field(selected, selected.user)} · {selected.flow}
-              </Title>
-              <Button variant="subtle" disabled={locked} onClick={returnToSessions}>
-                {t('close')}
-              </Button>
+              <IconButton aria-label={t('close')} disabled={locked} onClick={returnToSessions}>
+                <CloseIcon />
+              </IconButton>
             </div>
-            {selected.policyLimited && <Alert color="yellow">{t('managementLimited')}</Alert>}
             <dl className="metadata-grid">
-              <dt>{m('user')}</dt>
-              <dd>{field(selected, selected.user)}</dd>
+              {detailed && (
+                <>
+                  <dt>{m('user')}</dt>
+                  <dd>{field(selected, selected.user)}</dd>
+                </>
+              )}
               <dt>{t('managementFlow')}</dt>
               <dd>{selected.flow}</dd>
               <dt>{m('status')}</dt>
               <dd>{sessionStateLabel(selected.state)}</dd>
               <dt>{m('started')}</dt>
               <dd>{when(selected.createdAt)}</dd>
-              <dt>{m('origin')}</dt>
-              <dd>{field(selected, selected.remote)}</dd>
-              <dt>{t('managementSessionId')}</dt>
-              <dd className="identifier">{selected.id}</dd>
-              {selected.owner === null ? (
+              {detailed && (
                 <>
-                  <dt>{t('managementOwner')}</dt>
-                  <dd>{ownerLabel(selected)}</dd>
-                </>
-              ) : (
-                <>
-                  <dt>{m('issuer')}</dt>
-                  <dd>{selected.owner.issuer}</dd>
-                  <dt>{m('subject')}</dt>
-                  <dd>{selected.owner.subject}</dd>
+                  <dt>{m('origin')}</dt>
+                  <dd>{field(selected, selected.remote)}</dd>
                 </>
               )}
-              {selected.lastAccessed !== undefined && (
+              <dt>{t('managementSessionId')}</dt>
+              <dd className="identifier">{selected.id}</dd>
+              {detailed &&
+                (selected.owner === null ? (
+                  <>
+                    <dt>{t('managementOwner')}</dt>
+                    <dd>{ownerLabel(selected)}</dd>
+                  </>
+                ) : (
+                  <>
+                    <dt>{m('issuer')}</dt>
+                    <dd>{selected.owner.issuer}</dd>
+                    <dt>{m('subject')}</dt>
+                    <dd>{selected.owner.subject}</dd>
+                  </>
+                ))}
+              {detailed && selected.lastAccessed !== undefined && (
                 <>
                   <dt>{m('lastAccessed')}</dt>
                   <dd>{when(selected.lastAccessed)}</dd>
@@ -799,10 +750,8 @@ export function ManagementPanel({
                   ? t(selected.policyLimited ? 'managementWithheldOwner' : 'managementNoLimit')
                   : when(selected.validUntil)}
               </dd>
-            </dl>
-            <div className="session-actions stack">
-              <div className="record-card stack">
-                <p>{m('disconnectHint')}</p>
+              <dt>{t('adminGridActions')}</dt>
+              <dd className="actions">
                 <Button
                   disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
                   color="orange"
@@ -812,9 +761,6 @@ export function ManagementPanel({
                 >
                   {m('disconnect')}
                 </Button>
-              </div>
-              <div className="record-card stack">
-                <p>{m('endHint')}</p>
                 <Button
                   disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
                   color="red"
@@ -824,11 +770,11 @@ export function ManagementPanel({
                 >
                   {m('end')}
                 </Button>
-              </div>
-            </div>
+              </dd>
+            </dl>
           </section>
         )}
-        <details className="advanced-action">
+        <details className="advanced-action" hidden={selected !== null}>
           <summary>{m('direct')}</summary>
           <section aria-label={m('direct')} className="stack">
             <p className="caption subtle">{t('managementDirectActionHint')}</p>

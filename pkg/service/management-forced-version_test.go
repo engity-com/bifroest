@@ -59,6 +59,17 @@ func TestForcedManagementVersionReferenceSSHAndHTTPKeepExactNativeOutput(t *test
 				detail = "long"
 			}
 			require.Equal(t, detail, result.VersionInfo.Detail)
+			if test.long {
+				require.NotNil(t, result.VersionInfo.Build)
+				require.Equal(t, svc.Version.Version(), result.VersionInfo.Build.Version)
+				require.Equal(t, svc.Version.Revision(), result.VersionInfo.Build.Revision)
+				require.Equal(t, svc.Version.Title(), result.VersionInfo.Build.Title)
+				require.Equal(t, svc.Version.Os().String()+"/"+svc.Version.Arch().String(), result.VersionInfo.Build.Platform)
+			} else {
+				require.Nil(t, result.VersionInfo.Build)
+				require.NotContains(t, body, `"features"`)
+				require.NotContains(t, body, `"vendor"`)
+			}
 			code, _, _ = managementWebRead(t, handler, token, "version/show", map[string]string{"long": strconv.FormatBool(!test.long)})
 			require.Equal(t, 403, code, "a fixed short version cannot disclose long metadata, or replace the forced output mode")
 			for route, fields := range map[string]map[string]string{

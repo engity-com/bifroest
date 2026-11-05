@@ -1,10 +1,12 @@
+import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { ColumnFilter } from '../management/protocol';
 import type { AuditlogSummary, Page, WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
+import { useDetailRefresh } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
-import { Alert, Button } from '../ui/material';
+import { Alert } from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import type { ArtifactRequest } from './protocol';
@@ -16,11 +18,13 @@ export function AuditCatalog({
   active,
   disabled,
   onSelect,
+  openByID,
 }: {
   access: WebAccess;
   active: boolean;
   disabled: boolean;
   onSelect(request: ArtifactRequest): void;
+  openByID?: ReactNode;
 }) {
   const [rows, setRows] = useState<Page<AuditlogSummary> | null>(null);
   const [page, setPage] = useState(0);
@@ -116,99 +120,76 @@ export function AuditCatalog({
       });
     }
   });
+  const detailed = useDetailRefresh(active, disabled, busy, () => {
+    void load(0, query, sort, null);
+  });
   return (
     <section className="stack" aria-label={t('artifactAuditlogCaption')}>
-      <div className="actions">
-        <Button
-          variant="default"
-          disabled={disabled || busy}
-          onClick={() => {
-            void load();
-          }}
-        >
-          {t('recordingRefresh')}
-        </Button>
-        {busy && (
-          <Button
-            onClick={() => {
-              request.current?.abort();
-              setFailed('artifactCatalogCancelled');
-            }}
-          >
-            {t('artifactCatalogCancel')}
-          </Button>
-        )}
-      </div>
       {failed && (
         <Alert role="status" color="yellow">
           {t(failed)}
         </Alert>
       )}
       {(rows?.skipped ?? 0) > 0 && <Alert color="yellow">{t('managementPartial')}</Alert>}
-      {rows && (
-        <AdminDataGrid<AuditlogSummary>
-          active={active}
-          label={t('artifactAuditlogCaption')}
-          rows={rows.items}
-          getRowId={(row) => row.name}
-          actionField="open"
-          columns={[
-            { field: 'name', headerName: t('artifactAuditlog'), minWidth: 190, flex: 1 },
-            {
-              field: 'recordingEnabled',
-              headerName: t('artifactCatalogConfiguration'),
-              type: 'boolean',
-              minWidth: 200,
-              valueFormatter: (value) =>
-                t(value ? 'artifactCatalogRecordingOn' : 'artifactCatalogRecordingOff'),
-            },
-            {
-              field: 'encrypted',
-              headerName: t('artifactDetectedEncryption'),
-              type: 'boolean',
-              minWidth: 200,
-              valueFormatter: (value) =>
-                t(value ? 'artifactCatalogEncrypted' : 'artifactCatalogClear'),
-            },
-            {
-              field: 'open',
-              headerName: t('recordingOpenAudit'),
-              minWidth: 170,
-              renderCell: (params) => (
-                <Button
-                  disabled={disabled || busy || !params.row.enabled}
-                  aria-label={`${t('recordingOpenAudit')} ${params.row.name}`}
-                  onClick={() => onSelect({ kind: 'audit', auditlog: params.row.name })}
-                >
-                  {t('recordingOpenAudit')}
-                </Button>
-              ),
-            },
-          ]}
-          busy={busy}
-          disabled={disabled}
-          page={page}
-          hasNext={rows.next !== ''}
-          query={query}
-          columnFilter={filter}
-          onSearch={(query, filter) => {
-            void load(0, query, sort, filter);
-          }}
-          sortField="name"
-          sortDirection={sort}
-          onPage={(index) => {
-            if (index <= page + 1 && cursors.current[index] !== undefined) {
-              void load(index);
-            }
-          }}
-          onQuery={(value) => {
-            void load(0, value);
-          }}
-          onSort={(value) => {
-            void load(0, query, value);
-          }}
-        />
-      )}
+      <AdminDataGrid<AuditlogSummary>
+        active={active}
+        label={t('artifactAuditlogCaption')}
+        rows={rows?.items ?? []}
+        onRefresh={() => {
+          void load();
+        }}
+        refreshLabel={t('auditRefresh')}
+        openByID={openByID}
+        detailsAvailable
+        detailed={detailed}
+        detailFields={['recordingEnabled']}
+        canOpen={(row) => row.enabled}
+        onOpen={(row) => onSelect({ kind: 'audit', auditlog: row.name })}
+        openLabel={(row) => `${t('recordingOpenAudit')} ${row.name}`}
+        getRowId={(row) => row.name}
+        actionField="open"
+        columns={[
+          { field: 'name', headerName: t('artifactAuditlog'), minWidth: 190, flex: 1 },
+          {
+            field: 'recordingEnabled',
+            headerName: t('artifactCatalogConfiguration'),
+            type: 'boolean',
+            minWidth: 200,
+            valueFormatter: (value) =>
+              t(value ? 'artifactCatalogRecordingOn' : 'artifactCatalogRecordingOff'),
+          },
+          {
+            field: 'encrypted',
+            headerName: t('artifactDetectedEncryption'),
+            type: 'boolean',
+            minWidth: 200,
+            valueFormatter: (value) =>
+              t(value ? 'artifactCatalogEncrypted' : 'artifactCatalogClear'),
+          },
+        ]}
+        busy={busy || !attempted.current}
+        disabled={disabled}
+        page={page}
+        hasNext={(rows?.next ?? '') !== ''}
+        query={query}
+        columnFilter={filter}
+        onSearch={(query, filter) => {
+          void load(0, query, sort, filter);
+        }}
+        sortField="name"
+        sortDirection={sort}
+        onPage={(index) => {
+          if (index <= page + 1 && cursors.current[index] !== undefined) {
+            void load(index);
+          }
+        }}
+        onQuery={(value) => {
+          void load(0, value);
+        }}
+        onSort={(value) => {
+          void load(0, query, value);
+        }}
+      />
     </section>
   );
 }

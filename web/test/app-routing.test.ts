@@ -390,7 +390,7 @@ describe('owned workspace view routing with the real router and workspace', () =
         app.requests
           .filter((request) => request.path.includes('/management/'))
           .map((request) => request.path.split('/management/')[1]),
-      ).toEqual(['version/show', 'flows/list']);
+      ).toEqual(['flows/list']);
     });
     await click(button('Sessions'));
     // The first active view now reads its metadata once. Join those exact
@@ -401,9 +401,14 @@ describe('owned workspace view routing with the real router and workspace', () =
         app.requests
           .filter((request) => request.path.includes('/management/'))
           .map((request) => request.path.split('/management/')[1]),
-      ).toEqual(['version/show', 'flows/list', 'sessions/list']);
+      ).toEqual(['flows/list', 'sessions/list']);
     });
-    await click(button('Bifröst'));
+    await click(button('Version'));
+    await vi.waitFor(() =>
+      expect(
+        app.requests.filter((request) => request.path.endsWith('/management/version/show')),
+      ).toHaveLength(2),
+    );
     const owned = document.getElementById('terminal-pane-1');
     expect(owned?.querySelector('[aria-label="Server version"]')?.textContent).toContain(
       'Retained owner version',
@@ -412,6 +417,11 @@ describe('owned workspace view routing with the real router and workspace', () =
     await chooseSlug('Work');
     await signIn();
     expect(selectedID()).toBe('terminal-pane-2');
+    const secondPane = document.getElementById('terminal-pane-2');
+    if (!secondPane) {
+      throw new Error('Missing second management owner');
+    }
+    await click(button('Version', secondPane));
     await vi.waitFor(() =>
       expect(
         document.getElementById('terminal-pane-2')?.querySelector('[aria-label="Server version"]')
@@ -428,7 +438,7 @@ describe('owned workspace view routing with the real router and workspace', () =
     );
     expect(
       new Headers(versionReads[0]?.options?.headers).get('Authorization') !==
-        new Headers(versionReads[1]?.options?.headers).get('Authorization'),
+        new Headers(versionReads[2]?.options?.headers).get('Authorization'),
     ).toBe(true);
     const requests = app.requests.length;
     const reads = vi.mocked(BrowserBinding.load).mock.calls.length;
@@ -442,7 +452,7 @@ describe('owned workspace view routing with the real router and workspace', () =
     expect(BrowserBinding.load).toHaveBeenCalledTimes(reads);
     expect(
       app.requests.filter((request) => request.path.endsWith('/management/version/show')),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
   });
 
   it('closing a background tab does not select it through its close control focus', async () => {

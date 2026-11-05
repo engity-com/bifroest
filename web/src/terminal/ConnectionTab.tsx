@@ -14,6 +14,7 @@ type Props = Omit<TabProps, 'id' | 'onSelect'> & {
   id: number;
   value: number;
   principal: string;
+  title?: string;
   scope: string;
   kind: 'terminal' | 'management';
   access: WebAccess;
@@ -27,7 +28,7 @@ type Props = Omit<TabProps, 'id' | 'onSelect'> & {
 // A genuine Material Tab, forwarded through MUI Tabs' selection/focus contract.
 // The default visible label is the verified principal only, not URL punctuation.
 export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function ConnectionTab(
-  { id, principal, scope, kind, access, state, active, onSelect, onMenu, onClose, ...props },
+  { id, principal, title, scope, kind, access, state, active, onSelect, onMenu, onClose, ...props },
   ref,
 ) {
   const status = useAccessStatus(access, kind === 'management');
@@ -66,6 +67,7 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
         label={
           <Tooltip
             title={[
+              title,
               principal,
               scope || undefined,
               `${t(kind === 'terminal' ? 'terminalTitle' : 'workspaceManagement')} ${id}`,
@@ -77,11 +79,19 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
           >
             <Box
               component="span"
-              sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, minWidth: 0 }}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 1,
+                minWidth: 0,
+                maxWidth: '100%',
+                width: '100%',
+              }}
             >
               <CircleIcon
                 sx={{
                   fontSize: 9,
+                  flexShrink: 0,
                   color:
                     phase === 'connected'
                       ? 'success.main'
@@ -96,12 +106,14 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
                 component="span"
                 sx={{
                   maxWidth: 160,
+                  minWidth: 0,
+                  flex: '1 1 auto',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                 }}
               >
-                {principal}
+                {title || principal}
               </Box>
               {accessLabel && (
                 <Box component="span" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
@@ -116,6 +128,7 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
                 tabIndex={-1}
                 aria-label={`${t(kind === 'terminal' ? 'terminalCloseTab' : 'managementCloseTab')} ${id}`}
                 disabled={props.disabled}
+                sx={{ flexShrink: 0 }}
                 onFocus={(event) => event.stopPropagation()}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={(event) => {

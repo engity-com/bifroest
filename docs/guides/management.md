@@ -150,11 +150,14 @@ Disposal can remove containers, Pods or managed accounts and home directories, d
 
 Add the HTTPS settings from [Browser access](browser-access.md) and publish this administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`. Keep its existing requesting-name requirement. Open `/Admin`, choose **SSH key**, and sign in as `management` using its local private-key file. The browser provides metadata views and confirmed disconnect/dispose actions, not a configuration editor or a separate admin role. This example keeps artifact downloads disabled; [encrypted evidence](evidence.md) enables them separately.
 
-The management tab starts at **Bifröst**. Its own side navigation is expanded
+The management tab starts at **Overview**. Its own side navigation is expanded
 when the tab has enough space; on narrow tabs it opens over that tab's content.
 The menu button expands or collapses it. Breadcrumbs remain visible, including
 the selected session or Recording ID. Other connection tabs have independent
-navigation and access.
+navigation and access. A single header control switches between a menu icon and
+a back arrow. On narrow tabs the drawer overlays the content below the header;
+the control remains accessible. Breadcrumbs always start with the non-clickable
+**Bifröst** root. Session and Recording details include the flow and entry ID.
 A second management tab requires a separate explicit sign-in; **Duplicate**
 opens sign-in rather than sharing another tab's admitted channel.
 
@@ -163,20 +166,40 @@ button or a column menu to choose a field, operator and value. The quick search,
 sorting and pagination also use the grid's native controls. Filters apply on the
 server before pagination, not just to the visible page. The Community grid
 supports one column filter at a time, in addition to quick search. Then open a
-session's details. **Disconnect connections**
+session's details by clicking a row or the magnifier in its last **Actions**
+column. **Disconnect connections**
 keeps the session reusable; **End session** revokes it and runs cleanup. Both
 require confirmation of the exact target. A denied list does not grant or remove
 other permissions; action-only access can use **Advanced: target by ID**.
 
-**Bifröst** loads the short version and configured flows. Detailed build
-information is optional. Returning to a loaded view does not repeat its reads;
-use the refresh controls for current data.
+**Overview** shows configured flows. **Version** automatically loads the allowed
+server version/build information and displays it as structured fields and feature
+groups. Known features link to the documentation for that exact release; builds
+without a release version use the unversioned public documentation. Unknown
+features remain text. A short-version-only grant still cannot obtain long build
+metadata.
+
+The grids have native refresh controls, disabled during a read, and retain the
+same grid while a skeleton is displayed. The eye switches between core fields
+and all available details in both lists and detail pages. The preference is
+saved for the origin; changing it refreshes the affected list when it is active.
+It does not grant access to withheld fields, credentials or decrypted content.
+Returning to an otherwise unchanged loaded view does not repeat its reads.
 
 **Recordings** and **Audit logs** are separate navigation entries and keep their
 own selections and results. Opening a Recording prepares local playback after
 verification; opening an audit log shows verified events, not an inventory of
 raw files. Both use the same tab-local decryption-key cache described in
 [HTTP security and limits](../reference/connection/http/security.md#management-and-evidence).
+The grid's pin opens a popover for an exact ID; it does not replace filters or
+issue a transfer until **Go** is selected. Audit-event details open as an owned
+page, not a modal. Close icons return to the retained list.
+
+Management tab labels follow their selected main page. Live shell tab labels
+follow the shell's terminal title when one is supplied, with the login identity
+still available in the tooltip. These titles are untrusted display text and do
+not alter the browser page title or another tab. Recorded terminal titles do not
+rename tabs.
 
 Like a terminal, each management tab owns one admitted connection. Its
 **Connection settings** use the flow's keepalive policy and saved preference;

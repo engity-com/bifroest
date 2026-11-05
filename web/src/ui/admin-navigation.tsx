@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef } from 'react
 export interface AdminDetail {
   readonly label: string;
   readonly back: () => void;
+  readonly parents: readonly string[];
 }
 export type AdminSection = 'sessions' | 'recordings' | 'auditlogs';
 export const AdminDetailContext = createContext<
@@ -15,13 +16,18 @@ export function useAdminDetail(
   section: AdminSection,
   label: string | null,
   onBack: () => void,
+  parents: readonly string[] = [],
 ): boolean {
   const publish = useContext(AdminDetailContext);
   const current = useRef(onBack);
   current.current = onBack;
   const back = useCallback(() => current.current(), []);
+  const parentKey = JSON.stringify(parents);
   useEffect(() => {
-    publish?.(section, label === null ? null : { label, back });
-  }, [publish, section, label, back]);
+    publish?.(
+      section,
+      label === null ? null : { label, back, parents: JSON.parse(parentKey) as string[] },
+    );
+  }, [publish, section, label, back, parentKey]);
   return publish !== null;
 }

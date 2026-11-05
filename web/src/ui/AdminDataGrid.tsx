@@ -1,3 +1,5 @@
+import SearchIcon from '@mui/icons-material/Search';
+import { IconButton, Tooltip } from '@mui/material';
 import {
   DataGrid,
   type GridColDef,
@@ -6,8 +8,10 @@ import {
   type GridValidRowModel,
   useGridApiRef,
 } from '@mui/x-data-grid';
+import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ColumnFilter } from '../management/protocol';
+import { AdminGridControlsContext, AdminGridToolbar } from './AdminGridToolbar';
 import { type GridSearch, gridModel, gridSearch } from './grid-filter';
 import { t } from './messages';
 
@@ -32,6 +36,15 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   columnFilter = null,
   onSearch,
   active = true,
+  onRefresh,
+  refreshLabel,
+  onOpen,
+  canOpen,
+  openLabel,
+  openByID,
+  detailFields = [],
+  detailed = true,
+  detailsAvailable = false,
 }: {
   label: string;
   rows: readonly R[];
@@ -51,6 +64,15 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   columnFilter?: ColumnFilter | null;
   onSearch?: (query: string, filter: ColumnFilter | null) => void;
   active?: boolean;
+  onRefresh?: () => void;
+  refreshLabel?: string;
+  onOpen?: (row: R) => void;
+  canOpen?: (row: R) => boolean;
+  openLabel?: (row: R) => string;
+  openByID?: ReactNode;
+  detailFields?: readonly string[];
+  detailed?: boolean;
+  detailsAvailable?: boolean;
 }) {
   const apiRef = useGridApiRef();
   useLayoutEffect(() => {
@@ -97,105 +119,184 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   );
   const paginationModel = useMemo(() => ({ page, pageSize: 20 }), [page]);
   return (
-    <div className="admin-data-grid">
-      <DataGrid<R>
-        apiRef={apiRef}
-        nonce={
-          document.querySelector<HTMLMetaElement>('meta[name="bifroest-nonce"]')?.content ?? ''
-        }
-        label={label}
-        rows={rows}
-        columns={columns
-          .toSorted((a, b) => Number(b.field === actionField) - Number(a.field === actionField))
-          .map((column) => ({
+    <AdminGridControlsContext.Provider
+      value={{
+        active,
+        disabled,
+        busy,
+        filterable: !!onSearch,
+        onRefresh,
+        refreshLabel,
+        detailsAvailable,
+        openByID,
+      }}
+    >
+      <div className="admin-data-grid">
+        <DataGrid<R>
+          apiRef={apiRef}
+          nonce={
+            document.querySelector<HTMLMetaElement>('meta[name="bifroest-nonce"]')?.content ?? ''
+          }
+          aria-label={label}
+          aria-busy={busy}
+          rows={rows}
+          columns={[
+            ...columns.filter(
+              (column) =>
+                column.field !== actionField && (detailed || !detailFields.includes(column.field)),
+            ),
+            ...(onOpen
+              ? [
+                  {
+                    field: 'actions',
+                    type: 'actions' as const,
+                    headerName: t('adminGridActions'),
+                    width: 90,
+                    hideable: false,
+                    disableColumnMenu: true,
+                    filterable: false,
+                    sortable: false,
+                    renderCell: (params: { row: R }) => (
+                      <Tooltip title={openLabel?.(params.row) ?? t('adminGridOpen')}>
+                        <span>
+                          <IconButton
+                            size="small"
+                            aria-label={openLabel?.(params.row) ?? t('adminGridOpen')}
+                            disabled={
+                              disabled || busy || !active || canOpen?.(params.row) === false
+                            }
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpen(params.row);
+                            }}
+                          >
+                            <SearchIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    ),
+                  },
+                ]
+              : []),
+          ].map((column) => ({
             ...column,
-            filterable: !!onSearch && column.field !== actionField && column.filterable !== false,
+            filterable: !!onSearch && column.field !== 'actions' && column.filterable !== false,
             sortable: column.field === sortField,
           }))}
-        {...(getRowId ? { getRowId } : {})}
-        loading={busy}
-        disableRowSelectionOnClick
-        disableColumnSelector
-        disableDensitySelector
-        showToolbar
-        slotProps={{
-          filterPanel: {
-            filterFormProps: {
-              valueInputProps: {
-                InputComponentProps: {
-                  error: filterInvalid,
-                  helperText: filterInvalid ? t('adminFilterLimit') : '',
+          {...(getRowId ? { getRowId } : {})}
+          loading={busy}
+          onRowClick={(params, event) => {
+            if (
+              !disabled &&
+              !busy &&
+              active &&
+              canOpen?.(params.row) !== false &&
+              !(event.target as Element).closest('button,a,input,[role="button"]')
+            ) {
+              onOpen?.(params.row);
+            }
+          }}
+          onCellKeyDown={(params, event) => {
+            if (
+              (event.key === 'Enter' || event.key === ' ') &&
+              params.field !== 'actions' &&
+              onOpen &&
+              !disabled &&
+              !busy &&
+              active &&
+              canOpen?.(params.row) !== false
+            ) {
+              event.preventDefault();
+              onOpen(params.row);
+            }
+          }}
+          disableRowSelectionOnClick
+          disableColumnSelector
+          disableDensitySelector
+          showToolbar
+          slots={{ toolbar: AdminGridToolbar }}
+          slotProps={{
+            main: { 'aria-busy': busy },
+            loadingOverlay: { variant: 'skeleton', noRowsVariant: 'skeleton' },
+            filterPanel: {
+              filterFormProps: {
+                valueInputProps: {
+                  InputComponentProps: {
+                    error: filterInvalid,
+                    helperText: filterInvalid ? t('adminFilterLimit') : '',
+                  },
                 },
               },
             },
-          },
-          toolbar: {
-            csvOptions: { disableToolbarButton: true },
-            printOptions: { disableToolbarButton: true },
-          },
-        }}
-        pagination
-        paginationMode="server"
-        sortingMode="server"
-        filterMode="server"
-        filterDebounceMs={350}
-        paginationModel={paginationModel}
-        // Supply an exact count only once the server cursor ends. Combining a
-        // newly closed cursor with paginationMeta lets x-data-grid infer the
-        // count from the PREVIOUS controlled page before applying the new one.
-        rowCount={hasNext ? -1 : page * 20 + rows.length}
-        pageSizeOptions={[20]}
-        onPaginationModelChange={(model) => {
-          if (active && !disabled && !busy && model.page !== page) {
-            onPage(model.page);
-          }
-        }}
-        filterModel={model}
-        onFilterModelChange={(nextModel) => {
-          if (disabled || !active) {
-            return;
-          }
-          setModel(nextModel);
-          let next: GridSearch;
-          try {
-            next = gridSearch(nextModel, columns);
-            setFilterInvalid(false);
-          } catch {
-            setFilterInvalid(true);
-            return;
-          }
-          const key = JSON.stringify(next);
-          if (key !== sent.current) {
-            sent.current = key;
-            if (busy) {
-              pending.current = next;
-            } else {
-              send.current(next);
+            toolbar: {
+              csvOptions: { disableToolbarButton: true },
+              printOptions: { disableToolbarButton: true },
+            },
+          }}
+          pagination
+          paginationMode="server"
+          sortingMode="server"
+          filterMode="server"
+          filterDebounceMs={350}
+          paginationModel={paginationModel}
+          // Supply an exact count only once the server cursor ends. Combining a
+          // newly closed cursor with paginationMeta lets x-data-grid infer the
+          // count from the PREVIOUS controlled page before applying the new one.
+          rowCount={hasNext || busy ? -1 : page * 20 + rows.length}
+          pageSizeOptions={[20]}
+          onPaginationModelChange={(model) => {
+            if (active && !disabled && !busy && model.page !== page) {
+              onPage(model.page);
             }
-          }
-        }}
-        sortModel={order}
-        sortingOrder={['asc', 'desc']}
-        onSortModelChange={(model) => {
-          const next = model[0]?.sort;
-          if (
-            active &&
-            !disabled &&
-            !busy &&
-            (next === 'asc' || next === 'desc') &&
-            next !== sortDirection
-          ) {
-            onSort(next);
-          }
-        }}
-        disableColumnFilter={!onSearch}
-        hideFooterSelectedRowCount
-        sx={{
-          border: 0,
-          '& .MuiDataGrid-cell': { alignItems: 'center', display: 'flex' },
-          '& .MuiDataGrid-toolbar': { gap: 1 },
-        }}
-      />
-    </div>
+          }}
+          filterModel={model}
+          onFilterModelChange={(nextModel) => {
+            if (disabled || !active) {
+              return;
+            }
+            setModel(nextModel);
+            let next: GridSearch;
+            try {
+              next = gridSearch(nextModel, columns);
+              setFilterInvalid(false);
+            } catch {
+              setFilterInvalid(true);
+              return;
+            }
+            const key = JSON.stringify(next);
+            if (key !== sent.current) {
+              sent.current = key;
+              if (busy) {
+                pending.current = next;
+              } else {
+                send.current(next);
+              }
+            }
+          }}
+          sortModel={order}
+          sortingOrder={['asc', 'desc']}
+          onSortModelChange={(model) => {
+            const next = model[0]?.sort;
+            if (
+              active &&
+              !disabled &&
+              !busy &&
+              (next === 'asc' || next === 'desc') &&
+              next !== sortDirection
+            ) {
+              onSort(next);
+            }
+          }}
+          disableColumnFilter={!onSearch}
+          hideFooterSelectedRowCount
+          sx={{
+            border: 0,
+            '& .MuiDataGrid-cell': { alignItems: 'center', display: 'flex' },
+            '& .MuiDataGrid-toolbar': { gap: 1 },
+            '& .MuiDataGrid-row': { cursor: onOpen ? 'pointer' : undefined },
+          }}
+        />
+      </div>
+    </AdminGridControlsContext.Provider>
   );
 }

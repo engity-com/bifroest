@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { managementWire } from './management-wire.mjs';
-import { assertUiPreferences, reauthenticate, workspace } from './workspace-ui.mjs';
+import { assertUiPreferences, captureLayout, reauthenticate, workspace } from './workspace-ui.mjs';
 
 export async function exerciseManagement(page, login, logout) {
   const wire = managementWire(page);
@@ -23,20 +23,13 @@ export async function exerciseManagement(page, login, logout) {
   assert.equal(firstData.flows.items.length, 20);
   const alicePaneID = await page.locator('[data-connection-active="true"]').getAttribute('id');
   const alicePane = page.locator(`#${alicePaneID}`);
-  const version = alicePane.getByRole('region', { name: 'Server version', exact: true });
-  await version
-    .getByText('Reported by this server; not an independent verification.', { exact: true })
-    .waitFor();
-  assert((await version.locator('.server-version').textContent()).includes('test'));
-  assert.equal(await version.locator('pre').count(), 0);
   assert.equal(await page.getByRole('heading', { name: 'Terminal', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: /dispose|disconnect|delete/iu }).count(), 0);
   assert.deepEqual(
     requests.map((request) => request.path),
-    ['version/show', 'flows/list'],
-    'the Bifröst landing view performs just its two serial metadata reads',
+    ['flows/list'],
+    'Overview reads only its own flow metadata',
   );
-  assert.equal(requests[0].body.long, 'false');
   const aliceChannel = requests[0].channel;
   assert.match(aliceChannel, /^[0-9a-f-]{36}$/u);
   const flows = alicePane.getByRole('grid', {
@@ -44,10 +37,22 @@ export async function exerciseManagement(page, login, logout) {
     exact: true,
   });
   await flows.getByText('manager00', { exact: true }).waitFor();
-  await page.locator('.build-details > summary').click();
-  await page.getByRole('button', { name: 'Load detailed build information', exact: true }).click();
-  await page.locator('.build-details pre').waitFor();
-  assert((await page.locator('.build-details pre').textContent()).includes('Version:  test'));
+  const versionReply = wire.waitForResponse(
+    (response) =>
+      response.url().endsWith('/management/version/show') &&
+      JSON.parse(response.request().postData()).long === 'true',
+  );
+  await workspace(page, 'Version');
+  const versionResponse = await versionReply;
+  assert.equal(versionResponse.status(), 200);
+  const build = (await versionResponse.json()).versionInfo.build;
+  assert.equal(build.version, 'test');
+  const version = alicePane.getByRole('region', { name: 'Server version', exact: true });
+  await version.getByRole('region', { name: 'Build information', exact: true }).waitFor();
+  assert.equal(await version.locator('pre').count(), 0);
+  assert.equal(await version.locator('details').count(), 0);
+  await captureLayout(page, 'admin-version-structured');
+  await workspace(page, 'Overview');
   const secondReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/flows/list'),
   );
@@ -84,20 +89,14 @@ export async function exerciseManagement(page, login, logout) {
   assert(!(await page.locator('body').textContent()).includes('plain:correct'));
   await reauthenticate(page);
   const beforeBob = requests.length;
-  const bobVersionReply = wire.waitForResponse((response) =>
-    response.url().endsWith('/management/version/show'),
-  );
   const bobFlowsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/flows/list'),
   );
   await login(page, false, 'bob');
-  const bobVersion = await bobVersionReply;
   const bobFlows = await bobFlowsReply;
-  assert.equal(bobVersion.status(), 200);
   assert.equal(bobFlows.status(), 200);
-  assert.equal((await bobVersion.json()).versionInfo.detail, 'short');
   assert.equal((await bobFlows.json()).flows.items.length, 20);
-  const bobChannel = bobVersion.request().channel();
+  const bobChannel = bobFlows.request().channel();
   assert.equal(bobChannel !== aliceChannel, true, 'the new owner has a distinct admitted channel');
   assert.equal(bobFlows.request().channel(), bobChannel);
   const bobPaneID = await page.locator('[data-connection-active="true"]').getAttribute('id');
@@ -110,7 +109,10 @@ export async function exerciseManagement(page, login, logout) {
     exact: true,
   });
   await freshFlows.getByText('manager00', { exact: true }).waitFor();
-  assert.equal(await bobPane.locator('.build-details pre').count(), 0);
+  assert.equal(
+    await bobPane.getByRole('region', { name: 'Build information', exact: true }).count(),
+    0,
+  );
   assert.equal(await bobPane.locator('.session-details').count(), 0);
   const bobSessionsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/sessions/list'),
@@ -139,10 +141,15 @@ export async function exerciseManagement(page, login, logout) {
     'visible rows belong to this actor’s successful response',
   );
   assert.equal(await alicePane.locator('.session-details').count(), 1);
-  assert.equal(await alicePane.locator('.build-details pre').count(), 1);
+  assert.equal(
+    await alicePane
+      .getByRole('region', { name: 'Build information', exact: true, includeHidden: true })
+      .count(),
+    1,
+  );
   assert.deepEqual(
     requests.slice(beforeBob).map((request) => request.path),
-    ['version/show', 'flows/list', 'sessions/list'],
+    ['flows/list', 'sessions/list'],
   );
   const beforeSwitch = requests.length;
   await workspace(page, 'Bifröst');

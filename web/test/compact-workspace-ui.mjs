@@ -77,8 +77,13 @@ export async function exerciseCompactWorkspace(page) {
     .getByRole('tab', { selected: true });
   assert.equal(
     (await materialTab.textContent()).trim(),
-    'alice',
-    'visible tab title is only the verified principal, without slash/dot/flow prefixes',
+    'untrusted-backend-title',
+    'the live shell controls its own plain-text tab label',
+  );
+  assert.equal(
+    await materialTab.getAttribute('aria-label'),
+    'Terminal 1 alice',
+    'the verified login identity remains separate from the untrusted title',
   );
   assert(await materialTab.evaluate((node) => node.classList.contains('MuiTab-root')));
   assert.equal(

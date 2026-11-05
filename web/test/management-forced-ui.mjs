@@ -41,19 +41,23 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
     response.url().endsWith('/management/flows/list'),
   );
   await forcedKeyLogin(page, file);
-  assert.equal((await initialRead).status(), 200);
   assert.equal((await flowsReply).status(), 403);
   assert.deepEqual(
     calls.map((call) => call.path.split('/management/')[1]),
-    ['version/show', 'flows/list'],
-    'the Bifröst entry view attempts only its short version and flow metadata',
+    ['flows/list'],
+    'Overview attempts only flow metadata, without revealing version details',
   );
   const sessionsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/sessions/list'),
   );
   await workspace(page, 'Sessions');
   assert.equal((await sessionsReply).status(), 403);
-  await workspace(page, 'Server');
+  const denied = wire.waitForResponse(
+    (response) => response.url().endsWith('/management/version/show') && response.status() === 403,
+  );
+  await workspace(page, 'Version');
+  assert.equal((await initialRead).status(), 200);
+  await denied;
   const version = page.getByRole('region', { name: 'Server version', exact: true });
   await version.locator('.server-version').waitFor();
   const text = await version.locator('.server-version').textContent();
@@ -61,13 +65,10 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
   assert(!text.includes('Go:') && !text.includes('Features:'));
   assert.equal(await version.locator('b, script, pre').count(), 0);
   assert.equal(await page.evaluate(() => window.versionInjected), undefined);
-  await page.locator('.build-details > summary').click();
-  const denied = wire.waitForResponse(
-    (response) => response.url().endsWith('/management/version/show') && response.status() === 403,
+  assert.equal(
+    await version.getByRole('region', { name: 'Build information', exact: true }).count(),
+    0,
   );
-  await page.getByRole('button', { name: 'Load detailed build information', exact: true }).click();
-  await denied;
-  assert.equal(await page.locator('.build-details pre').count(), 0);
   assert.equal(
     await version.locator('.server-version').textContent(),
     text,
@@ -76,9 +77,9 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
   assert.deepEqual(
     calls.map((call) => [call.path.split('/management/')[1], call.body.long]),
     [
-      ['version/show', 'false'],
       ['flows/list', undefined],
       ['sessions/list', undefined],
+      ['version/show', 'false'],
       ['version/show', 'true'],
     ],
   );
@@ -119,11 +120,6 @@ export async function exerciseManagementForced(page, file, logout) {
   const table = page.getByRole('grid', { name: 'Live session metadata', exact: true });
   await table.getByText('alice', { exact: true }).waitFor();
   assert.equal(await table.locator('[role="row"][data-id]').count(), 1);
-  await page
-    .getByText('Some fields are withheld under the configured forced-command policy.', {
-      exact: false,
-    })
-    .waitFor();
   await table.getByText('Not returned under this forced-command policy', { exact: true }).waitFor();
   assert.equal(
     await table.getByText('No verified association available', { exact: true }).count(),
@@ -154,13 +150,14 @@ export async function exerciseManagementForced(page, file, logout) {
   await catalog
     .getByText('This sign-in cannot list recordings from this source.', { exact: false })
     .waitFor();
-  assert.equal(await catalog.getByRole('grid').count(), 0);
+  assert.equal(await catalog.getByRole('grid').locator('[role="row"][data-id]').count(), 0);
   await exactArtifactSelection(page);
-  await artifacts.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
-  await artifacts
+  const selector = page.getByRole('dialog', { name: 'Advanced: open by ID', exact: true });
+  await selector.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
+  await selector
     .getByRole('textbox', { name: 'Recording ID', exact: true })
     .fill('34e34ab8-7457-4d88-a5e4-c57791775c3a');
-  await artifacts.getByRole('button', { name: 'Open recording', exact: true }).click();
+  await selector.getByRole('button', { name: 'Go', exact: true }).click();
   await artifacts
     .getByText('This sign-in is not permitted to open this recording or audit log.', {
       exact: false,
@@ -224,7 +221,7 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
   const catalog = artifacts;
   assert.deepEqual(
     calls.map((path) => path.split('/management/')[1]),
-    ['version/show', 'flows/list', 'sessions/list', 'auditlogs/list'],
+    ['flows/list', 'sessions/list', 'auditlogs/list'],
     'each first visible view attempts only its authorized metadata read; no artifact download',
   );
   const table = catalog.getByRole('grid', {
@@ -318,11 +315,15 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
       exact: false,
     })
     .waitFor();
+  const deniedGrid = page.getByRole('grid', {
+    name: 'Configured flows (not public discovery links)',
+    exact: true,
+  });
+  assert.equal(await deniedGrid.count(), 1, 'the denied view retains the same native grid');
   assert.equal(
-    await page
-      .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
-      .count(),
+    await deniedGrid.locator('[role="row"][data-id]').count(),
     0,
+    'denial cannot publish any flow rows',
   );
   await logout(page);
   assert.equal(await page.getByRole('region', { name: 'Audit logs', exact: true }).count(), 0);

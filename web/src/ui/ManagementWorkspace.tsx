@@ -1,6 +1,7 @@
-import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DescriptionIcon from '@mui/icons-material/Description';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import MenuIcon from '@mui/icons-material/Menu';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutlineOutlined';
 import {
@@ -56,6 +57,7 @@ export function ManagementWorkspace({
   signal,
   onState,
   onConnectionActions,
+  onTitle,
 }: {
   access: WebAccess;
   owner: number;
@@ -67,8 +69,23 @@ export function ManagementWorkspace({
   signal: AbortSignal;
   onState?: (id: number, state: TerminalState) => void;
   onConnectionActions?: (id: number, actions: ConnectionActions | null) => void;
+  onTitle?: (id: number, title: string) => void;
 }) {
-  const [view, setView] = useState<AdminSection | 'server'>('server');
+  const [view, setView] = useState<AdminSection | 'server' | 'version'>('server');
+  const sectionTitle = t(
+    view === 'server'
+      ? 'workspaceOverview'
+      : view === 'version'
+        ? 'workspaceVersion'
+        : view === 'sessions'
+          ? 'workspaceSessions'
+          : view === 'recordings'
+            ? 'workspaceRecordings'
+            : 'workspaceAuditlogs',
+  );
+  useEffect(() => {
+    onTitle?.(owner, sectionTitle);
+  }, [onTitle, owner, sectionTitle]);
   const secrets = useTabArtifactSecrets(access, signal);
   useLayoutEffect(() => {
     if (signal.aborted) {
@@ -95,6 +112,7 @@ export function ManagementWorkspace({
   }, [access, owner, signal, onState, onConnectionActions]);
   const navigationID = useId();
   const pane = useRef<HTMLElement | null>(null);
+  const header = useRef<HTMLElement | null>(null);
   const [wide, setWide] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [temporaryOpen, setTemporaryOpen] = useState(false);
@@ -102,7 +120,9 @@ export function ManagementWorkspace({
   const publishDetail = useCallback(
     (section: AdminSection, detail: AdminDetail | null) =>
       setDetails((current) =>
-        current[section]?.label === detail?.label && current[section]?.back === detail?.back
+        current[section]?.label === detail?.label &&
+        current[section]?.back === detail?.back &&
+        JSON.stringify(current[section]?.parents) === JSON.stringify(detail?.parents)
           ? current
           : { ...current, [section]: detail },
       ),
@@ -112,11 +132,27 @@ export function ManagementWorkspace({
     if (!pane.current) {
       return;
     }
+    let previous: boolean | undefined;
     const update = () => {
-      setWide((pane.current?.clientWidth ?? 0) >= 900);
+      if (header.current) {
+        pane.current?.style.setProperty(
+          '--admin-header-height',
+          `${header.current.offsetHeight}px`,
+        );
+      }
+      const next = (pane.current?.clientWidth ?? 0) > 1136;
+      if (previous !== next) {
+        previous = next;
+        setWide(next);
+        setCollapsed(false);
+        setTemporaryOpen(false);
+      }
     };
     const observer = new ResizeObserver(update);
     observer.observe(pane.current);
+    if (header.current) {
+      observer.observe(header.current);
+    }
     update();
     return () => observer.disconnect();
   }, []);
@@ -139,37 +175,32 @@ export function ManagementWorkspace({
       setTemporaryOpen(false);
     }
   };
-  const detail = view === 'server' ? null : details[view];
+  useEffect(() => {
+    if (!active) {
+      setTemporaryOpen(false);
+    }
+  }, [active]);
+  const detail = view === 'server' || view === 'version' ? null : details[view];
   const crumbs = [
     {
       label: t('workspaceBifroest'),
-      ...(view !== 'server'
-        ? { onClick: () => navigate('server'), disabled: disabled || locked }
-        : {}),
     },
-    ...(view !== 'server'
-      ? [
-          {
-            label: t(
-              view === 'sessions'
-                ? 'workspaceSessions'
-                : view === 'recordings'
-                  ? 'workspaceRecordings'
-                  : 'workspaceAuditlogs',
-            ),
-            ...(detail
-              ? {
-                  onClick: () => {
-                    if (!disabled && !locked) {
-                      detail.back();
-                    }
-                  },
-                  disabled: disabled || locked,
+    ...[
+      {
+        label: sectionTitle,
+        ...(detail
+          ? {
+              onClick: () => {
+                if (!disabled && !locked) {
+                  detail.back();
                 }
-              : {}),
-          },
-        ]
-      : []),
+              },
+              disabled: disabled || locked,
+            }
+          : {}),
+      },
+    ],
+    ...(detail?.parents.map((label) => ({ label })) ?? []),
     ...(detail ? [{ label: detail.label }] : []),
   ];
   const drawerOpen = wide ? !collapsed : active && temporaryOpen;
@@ -182,9 +213,14 @@ export function ManagementWorkspace({
           className="admin-shell"
           aria-label={t('workspaceManagement')}
           data-admin-drawer={wide ? 'persistent' : 'temporary'}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !wide && temporaryOpen) {
+              setTemporaryOpen(false);
+            }
+          }}
         >
           <Drawer
-            variant={wide ? 'persistent' : 'temporary'}
+            variant="persistent"
             open={drawerOpen}
             onClose={() => setTemporaryOpen(false)}
             ModalProps={{
@@ -210,11 +246,17 @@ export function ManagementWorkspace({
                 : {
                     position: 'absolute',
                     inset: 0,
+                    top: 'var(--admin-header-height, 56px)',
+                    zIndex: 3,
+                    pointerEvents: drawerOpen ? 'auto' : 'none',
                     '& .MuiBackdrop-root': { position: 'absolute' },
                     '& .MuiDrawer-paper': {
                       position: 'absolute',
                       width: 232,
                       height: '100%',
+                      backgroundColor:
+                        'color-mix(in srgb, var(--app-background, #202020) 88%, transparent)',
+                      backdropFilter: 'saturate(1.8) blur(5px)',
                       boxSizing: 'border-box',
                     },
                   }
@@ -222,52 +264,69 @@ export function ManagementWorkspace({
           >
             <Box className="admin-drawer-heading">
               <Typography sx={{ fontWeight: 600 }}>{t('workspaceBifroest')}</Typography>
-              <IconButton
-                aria-label={t('adminNavigationCollapse')}
-                onClick={() => (wide ? setCollapsed(true) : setTemporaryOpen(false))}
-              >
-                <ChevronLeftIcon />
-              </IconButton>
             </Box>
             <nav id={`${navigationID}-navigation`} aria-label={t('workspaceNavigation')}>
               <List>
-                {(['server', 'sessions', 'recordings', 'auditlogs'] as const).map((section) => (
-                  <ListItemButton
-                    key={section}
-                    component="button"
-                    type="button"
-                    selected={view === section}
-                    disabled={disabled || locked}
-                    aria-current={view === section ? 'page' : undefined}
-                    onClick={() => navigate(section)}
-                  >
-                    <ListItemIcon>
-                      {section === 'server' ? (
-                        <HomeOutlinedIcon />
-                      ) : section === 'sessions' ? (
-                        <PeopleOutlineIcon />
-                      ) : (
-                        <DescriptionIcon />
-                      )}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={t(
-                        section === 'server'
-                          ? 'workspaceBifroest'
-                          : section === 'sessions'
-                            ? 'workspaceSessions'
-                            : section === 'recordings'
-                              ? 'workspaceRecordings'
-                              : 'workspaceAuditlogs',
-                      )}
-                    />
-                  </ListItemButton>
-                ))}
+                {(['server', 'sessions', 'recordings', 'auditlogs', 'version'] as const).map(
+                  (section) => (
+                    <ListItemButton
+                      key={section}
+                      component="button"
+                      type="button"
+                      selected={view === section}
+                      disabled={disabled || locked}
+                      aria-current={view === section ? 'page' : undefined}
+                      onClick={() => navigate(section)}
+                    >
+                      <ListItemIcon>
+                        {section === 'server' ? (
+                          <HomeOutlinedIcon />
+                        ) : section === 'version' ? (
+                          <InfoOutlinedIcon />
+                        ) : section === 'sessions' ? (
+                          <PeopleOutlineIcon />
+                        ) : (
+                          <DescriptionIcon />
+                        )}
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={t(
+                          section === 'server'
+                            ? 'workspaceOverview'
+                            : section === 'version'
+                              ? 'workspaceVersion'
+                              : section === 'sessions'
+                                ? 'workspaceSessions'
+                                : section === 'recordings'
+                                  ? 'workspaceRecordings'
+                                  : 'workspaceAuditlogs',
+                        )}
+                      />
+                    </ListItemButton>
+                  ),
+                )}
               </List>
             </nav>
           </Drawer>
+          {!wide && drawerOpen && (
+            <Box
+              component="button"
+              className="admin-drawer-backdrop"
+              type="button"
+              aria-label={t('adminNavigationCollapse')}
+              onClick={() => setTemporaryOpen(false)}
+              sx={{
+                position: 'absolute',
+                inset: 0,
+                top: 'var(--admin-header-height, 56px)',
+                border: 0,
+                bgcolor: 'rgba(0,0,0,.25)',
+                zIndex: 2,
+              }}
+            />
+          )}
           <div className="admin-main">
-            <header className="admin-page-heading">
+            <header className="admin-page-heading" ref={header}>
               <IconButton
                 aria-label={t('adminNavigationOpen')}
                 aria-expanded={drawerOpen}
@@ -277,7 +336,7 @@ export function ManagementWorkspace({
                   wide ? setCollapsed((value) => !value) : setTemporaryOpen((value) => !value)
                 }
               >
-                <MenuIcon />
+                {drawerOpen ? <ArrowBackIcon /> : <MenuIcon />}
               </IconButton>
               <AdminBreadcrumbs items={crumbs} />
             </header>
@@ -306,15 +365,19 @@ export function ManagementWorkspace({
               )}
               <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}>
                 <div
-                  hidden={view !== 'sessions' && view !== 'server'}
+                  hidden={view !== 'sessions' && view !== 'server' && view !== 'version'}
                   id={`${navigationID}-management-panel`}
                 >
                   <ManagementPanel
                     access={access}
-                    active={active && (view === 'server' || view === 'sessions')}
+                    active={
+                      active && (view === 'server' || view === 'sessions' || view === 'version')
+                    }
                     disabled={disabled || remoteDisabled}
                     onActionLock={lock}
-                    view={view === 'server' ? 'server' : 'sessions'}
+                    view={
+                      view === 'server' ? 'server' : view === 'version' ? 'version' : 'sessions'
+                    }
                   />
                 </div>
                 <div hidden={view !== 'recordings'} id={`${navigationID}-recordings-panel`}>

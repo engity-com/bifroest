@@ -20,6 +20,16 @@ export async function exerciseArtifactPlayback({
   const cast = await save();
   assert.equal(cast.filename, `recording-${entry.id}.cast`);
   assert(cast.bytes.toString().includes('# bifroest:signature:v1 '));
+  const metadataLine = cast.bytes
+    .toString()
+    .split('\n', 3)
+    .find((line) => line.startsWith('# bifroest:metadata:v1 '));
+  assert(metadataLine);
+  const metadata = JSON.parse(metadataLine.slice('# bifroest:metadata:v1 '.length));
+  assert.equal(
+    await page.getByRole('navigation', { name: 'Breadcrumb', exact: true }).textContent(),
+    `Bifröst/Recordings/${metadata.flow}/${entry.id}`,
+  );
   const playback = panel.getByRole('region', { name: 'Recording playback', exact: true });
   await playback.locator('[data-playback-phase="paused"]').waitFor();
   const preparations = () =>

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { assertUiPreferences, terminalAction, workspace } from './workspace-ui.mjs';
+import { managementWire } from './management-wire.mjs';
+import { assertUiPreferences, captureLayout, terminalAction, workspace } from './workspace-ui.mjs';
 
 export async function exerciseAdminShell(page, login, logout) {
   const sockets = [];
@@ -25,18 +26,30 @@ export async function exerciseAdminShell(page, login, logout) {
       }
     });
   });
+  const firstReply = managementWire(page).waitForResponse((response) =>
+    response.url().endsWith('/management/flows/list'),
+  );
   await login(page, false);
+  assert.equal((await firstReply).status(), 200);
   const pane = page.locator('[data-connection-active="true"]');
   const shell = pane.locator('.admin-shell');
   const breadcrumb = pane.getByRole('navigation', { name: 'Breadcrumb', exact: true });
   await pane
     .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
     .waitFor();
-  assert.equal(await breadcrumb.textContent(), 'Bifröst');
+  assert.equal(await breadcrumb.textContent(), 'Bifröst/Overview');
+  const tabLabel = page.getByRole('tab', { selected: true }).getByText('Overview', { exact: true });
+  assert.equal(
+    await tabLabel.evaluate((node) => node.scrollWidth <= node.clientWidth),
+    true,
+    'short primary-page tab titles must not be unnecessarily truncated on desktop',
+  );
+  assert.equal(await breadcrumb.getByRole('button', { name: 'Bifröst', exact: true }).count(), 0);
   assert.equal(await shell.getAttribute('data-admin-drawer'), 'persistent');
+  await captureLayout(page, 'admin-overview-desktop');
   assert.deepEqual(
     sent.filter((value) => value.type === 'request').map((value) => value.action),
-    ['management/version/show', 'management/flows/list'],
+    ['management/flows/list'],
   );
   assert.equal(
     await pane.getByRole('tablist').count(),
@@ -53,6 +66,17 @@ export async function exerciseAdminShell(page, login, logout) {
     .fields.id;
   assert((await breadcrumb.textContent()).includes(selected));
   assert((await breadcrumb.textContent()).includes('Bifröst'));
+  const target = sent.filter((value) => value.action === 'management/sessions/show').at(-1).fields;
+  assert.equal(await breadcrumb.textContent(), `Bifröst/Sessions/${target.flow}/${selected}`);
+  assert.equal(await details.locator('h3,.session-actions').count(), 0);
+  assert.equal(
+    await details
+      .locator('.metadata-grid')
+      .getByRole('button', { name: 'Disconnect connections', exact: true })
+      .count(),
+    1,
+  );
+  await captureLayout(page, 'admin-session-detail');
   await breadcrumb.getByRole('button', { name: 'Sessions', exact: true }).click();
   await grid.waitFor();
   await grid.getByRole('columnheader', { name: /Flow/u }).click();
@@ -81,13 +105,14 @@ export async function exerciseAdminShell(page, login, logout) {
     () => document.querySelector('.admin-shell')?.getAttribute('data-admin-drawer') === 'temporary',
   );
   await pane.getByRole('button', { name: 'Open management navigation', exact: true }).click();
-  const overlay = await shell.locator('.MuiBackdrop-root').boundingBox();
+  const overlay = await shell.locator('.admin-drawer-backdrop').boundingBox();
   const bounds = await shell.boundingBox();
   assert(overlay && bounds);
   assert(
     overlay.y >= bounds.y && overlay.height <= bounds.height + 1,
     'overlay stays beneath global connection navigation',
   );
+  await captureLayout(page, 'admin-drawer-mobile-open');
   await shell.getByRole('button', { name: 'Recordings', exact: true }).click();
   await pane
     .getByRole('region', { name: 'Artifact catalog (server metadata)', exact: true })
