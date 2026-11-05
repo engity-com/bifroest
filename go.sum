@@ -263,8 +263,8 @@ github.com/rogpeppe/go-internal v1.16.0/go.mod h1:DrUVZyrJU+txYW5/1kwtXQSMFio52Z
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
 github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 h1:GHRpF1pTW19a8tTFrMLUcfWwyC0pnifVo2ClaLq+hP8=
 github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46/go.mod h1:uAQ5PCi+MFsC7HjREoAz1BU+Mq60+05gifQSsHSDG/8=
-github.com/shirou/gopsutil/v4 v4.26.9 h1:CaBo/hBFqvlJoLvAQEKdHdf5GD97/MN2ACfyv63+2Ig=
-github.com/shirou/gopsutil/v4 v4.26.9/go.mod h1:nKH+8wX2zxr/mDbsR+AAy6Qd2z4ZOQ7wfQaEp+yrYmg=
+github.com/shirou/gopsutil/v4 v4.26.10 h1:MJN6euesJx53MVEjscYeyRSRcrdIcy3sz5k9nosjldg=
+github.com/shirou/gopsutil/v4 v4.26.10/go.mod h1:XpkIrcUMQhwte/dGxu57KtnMMFsbKelI7PP23zweKBk=
 github.com/shopspring/decimal v1.5.0 h1:HxSWk31RmJv0EyY4oLiGQB9u7WPludUwPBdvQZnYFPc=
 github.com/shopspring/decimal v1.5.0/go.mod h1:gawqmDU56v4yIKSwfBSFip1HdCCXN8/+DMd9qYNcwME=
 github.com/sirupsen/logrus v1.10.2 h1:G2SED73/qrAu6YwbdxOD6peLkCBI3z7L+ykJFTXJBBo=
