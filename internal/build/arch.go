@@ -9,7 +9,7 @@ import (
 
 const (
 	fromDefaultLinux         = "scratch"
-	fromDefaultLinuxExtended = "docker.io/library/ubuntu:26.04@sha256:19fcd1bf268f02b60aca3bd30bd8a6d9a11759a430e32921833e65f16d87348a"
+	fromDefaultLinuxExtended = "docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c"
 	fromDefaultWindows       = "mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:62d28cb7771b0cf1b37db2662e468dad76e7ef15ca4ef52b2ab73c102a23da98"
 )
 

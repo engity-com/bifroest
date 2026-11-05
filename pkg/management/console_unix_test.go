@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -71,6 +72,44 @@ func startConsoleTestPassword(ctx context.Context, prompt string) <-chan console
 		done <- consoleTestResult{line, err}
 	}()
 	return done
+}
+
+// Pause before the reader starts, so cancellation tests can queue input at the
+// slave terminal before canceling. A successful master.Write alone does not
+// guarantee that the PTY has delivered its bytes to the slave's input queue.
+type consoleTestPausedPromptOutput struct {
+	*consoleTestOutput
+	prompt  string
+	release <-chan struct{}
+}
+
+func (this consoleTestPausedPromptOutput) Write(value []byte) (int, error) {
+	n, err := this.consoleTestOutput.Write(value)
+	if string(value) == this.prompt {
+		<-this.release
+	}
+	return n, err
+}
+
+func awaitConsoleTestPendingInput(t *testing.T, terminal *os.File) {
+	t.Helper()
+	raw, err := terminal.SyscallConn()
+	require.NoError(t, err)
+	var pollErr error
+	var events int16
+	require.NoError(t, raw.Control(func(fd uintptr) {
+		ready := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+		deadline := time.Now().Add(consoleTestTimeout)
+		for remaining := time.Until(deadline); remaining > 0; remaining = time.Until(deadline) {
+			_, pollErr = unix.Poll(ready, max(1, int(remaining/time.Millisecond)))
+			if !errors.Is(pollErr, unix.EINTR) {
+				break
+			}
+		}
+		events = ready[0].Revents
+	}))
+	require.NoError(t, pollErr)
+	require.NotZero(t, events&unix.POLLIN, "input must reach the terminal before cancellation")
 }
 
 func TestManagementConsolePasswordPreservesBorrowedTerminal(t *testing.T) {
@@ -129,7 +168,7 @@ func TestManagementConsolePreservesLongAnswers(t *testing.T) {
 				original, flags := consoleTestTTYState(t, terminal)
 				output := newConsoleTestOutput()
 				var stdout bytes.Buffer
-				ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, &stdout, output), 5*time.Second)
+				ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, &stdout, output), consoleTestTimeout)
 				defer cancel()
 				done := make(chan consoleTestResult, 1)
 				go func() {
@@ -213,13 +252,19 @@ func TestManagementConsoleCancellationDiscardsUnsubmittedSecret(t *testing.T) {
 	master, terminal := consoleTestTTY(t)
 	original, flags := consoleTestTTYState(t, terminal)
 	output := newConsoleTestOutput()
-	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output))
+	release := make(chan struct{})
+	releasePrompt := sync.OnceFunc(func() { close(release) })
+	defer releasePrompt()
+	paused := consoleTestPausedPromptOutput{output, "First: ", release}
+	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, paused))
 	defer cancel()
 	done := startConsoleTestPassword(ctx, "First: ")
 	output.await(t, "First: ")
 	_, err := master.Write([]byte("discard this secret"))
 	require.NoError(t, err)
+	awaitConsoleTestPendingInput(t, terminal)
 	cancel()
+	releasePrompt()
 	result := awaitConsoleTestResult(t, done)
 	require.ErrorIs(t, result.err, context.Canceled)
 	require.Nil(t, result.line)
@@ -323,7 +368,7 @@ func TestManagementConsoleDoesNotConsumeNextAnswer(t *testing.T) {
 				master, terminal := consoleTestTTY(t)
 				original, flags := consoleTestTTYState(t, terminal)
 				output := newConsoleTestOutput()
-				ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output), 5*time.Second)
+				ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output), consoleTestTimeout)
 				defer cancel()
 				first, second := "first", "second"
 				if long {
@@ -399,7 +444,11 @@ func TestManagementConsoleCancellationDiscardsEntireChallenge(t *testing.T) {
 	master, terminal := consoleTestTTY(t)
 	original, flags := consoleTestTTYState(t, terminal)
 	output := newConsoleTestOutput()
-	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output))
+	release := make(chan struct{})
+	releasePrompt := sync.OnceFunc(func() { close(release) })
+	defer releasePrompt()
+	paused := consoleTestPausedPromptOutput{output, "Second: ", release}
+	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, paused))
 	defer cancel()
 	done := make(chan consoleTestResult, 1)
 	var answers []string
@@ -414,7 +463,9 @@ func TestManagementConsoleCancellationDiscardsEntireChallenge(t *testing.T) {
 	output.await(t, "Second: ")
 	_, err = io.WriteString(master, "discard this secret")
 	require.NoError(t, err)
+	awaitConsoleTestPendingInput(t, terminal)
 	cancel()
+	releasePrompt()
 	require.ErrorIs(t, awaitConsoleTestResult(t, done).err, context.Canceled)
 	require.Nil(t, answers, "a failed challenge must not return earlier answers")
 	requireConsoleTestTTYState(t, terminal, original, flags)
@@ -547,7 +598,7 @@ func testManagementClientUnlocksEncryptedIdentity(t *testing.T, passphrase strin
 	original, flags := consoleTestTTYState(t, terminal)
 	output := newConsoleTestOutput()
 	var stdout bytes.Buffer
-	ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, &stdout, output), 5*time.Second)
+	ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, &stdout, output), consoleTestTimeout)
 	defer cancel()
 	done := make(chan consoleTestResult, 1)
 	go func() { done <- consoleTestResult{err: target.Run(ctx, "flow", "ls", "--format=json")} }()
@@ -619,7 +670,7 @@ func testManagementClientInteractiveAuthentication(t *testing.T, answer string) 
 				original, flags := consoleTestTTYState(t, terminal)
 				output := newConsoleTestOutput()
 				var stdout bytes.Buffer
-				ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, &stdout, output), 5*time.Second)
+				ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, &stdout, output), consoleTestTimeout)
 				defer cancel()
 				done := make(chan consoleTestResult, 1)
 				go func() { done <- consoleTestResult{err: target.Run(ctx, "flow", "ls", "--format=json")} }()

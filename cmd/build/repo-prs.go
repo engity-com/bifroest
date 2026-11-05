@@ -96,7 +96,13 @@ func (this *repoPrs) inspectAction(ctx context.Context, eventAction string, prNu
 }
 
 func (this *repoPrs) byId(ctx context.Context, number uint) (*repoPr, error) {
-	v, _, err := this.client().PullRequests.Get(ctx, this.owner.String(), this.name.String(), int(number))
+	var v *github.PullRequest
+	err := retryGitHubRead(ctx, func() (*github.Response, error) {
+		var response *github.Response
+		var err error
+		v, response, err = this.client().PullRequests.Get(ctx, this.owner.String(), this.name.String(), int(number))
+		return response, err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve pull request %d from %v: %w", number, this.base, err)
 	}

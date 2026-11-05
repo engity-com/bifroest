@@ -68,10 +68,25 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
-      - name: Install dependencies
-        run: mise run install:go
+      - &install-go-dependencies
+        name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if mise run install:go; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            delay=$((attempt * 5))
+            echo "::warning::Go module download failed (attempt ${attempt}/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
 
       - name: Run end-to-end suite
         run: mise run test:e2e:${{ matrix.suite }}
@@ -142,10 +157,9 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
-      - name: Install dependencies
-        run: mise run install:go
+      - *install-go-dependencies
 
       - name: Run authorization end-to-end suite
         run: mise run test:e2e:authorization
@@ -219,10 +233,9 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
-      - name: Install dependencies
-        run: mise run install:go
+      - *install-go-dependencies
 
       - name: Run Darwin end-to-end suite
         run: mise run test:e2e:darwin
@@ -259,10 +272,9 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
-      - name: Install dependencies
-        run: mise run install:go
+      - *install-go-dependencies
 
       - name: Run Kubernetes end-to-end suite
         run: mise run test:e2e:kubernetes
@@ -339,10 +351,9 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
-      - name: Install dependencies
-        run: mise run install:go
+      - *install-go-dependencies
 
       - name: Run Kubernetes end-to-end suite
         run: mise run test:e2e:kubernetes
