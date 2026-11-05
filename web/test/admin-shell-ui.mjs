@@ -88,11 +88,13 @@ export async function exerciseAdminShell(page, login, logout) {
     overlay.y >= bounds.y && overlay.height <= bounds.height + 1,
     'overlay stays beneath global connection navigation',
   );
-  await shell.getByRole('button', { name: 'Recordings & audit', exact: true }).click();
+  await shell.getByRole('button', { name: 'Recordings', exact: true }).click();
   await pane
     .getByRole('region', { name: 'Artifact catalog (server metadata)', exact: true })
     .waitFor();
-  assert((await breadcrumb.textContent()).includes('Recordings & audit'));
+  assert((await breadcrumb.textContent()).includes('Recordings'));
+  await workspace(page, 'Audit logs');
+  assert((await breadcrumb.textContent()).includes('Audit logs'));
   const expiry = await page.evaluate(async () => {
     const response = await fetch('/_bifroest/test/expire-current-access', {
       method: 'POST',

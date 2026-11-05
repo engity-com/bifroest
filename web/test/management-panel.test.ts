@@ -5,6 +5,7 @@ import { SessionActionConfirmation } from '../src/management/action';
 import { ManagementPanel } from '../src/management/ManagementPanel';
 import type { Page, SessionItem, SessionOptions } from '../src/management/protocol';
 import { RememberMeError, type WebAccess } from '../src/remember';
+import { closeNativeFilter, nativeColumnFilter } from './native-grid-filter-ui';
 import '../src/ui/app.css';
 
 const item: SessionItem = {
@@ -135,7 +136,7 @@ describe('management view read intent and retained ownership', () => {
     expect(api.managementSessions).not.toHaveBeenCalled();
     await render({ disabled: false });
     expect(api.managementSessions).toHaveBeenCalledExactlyOnceWith(
-      { flow: '', user: '', state: 'active' },
+      { state: 'all' },
       expect.any(AbortSignal),
     );
     await render({ active: false });
@@ -273,27 +274,42 @@ describe('management view read intent and retained ownership', () => {
     expect(next.api.managementSessions).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the applied server filters and real cursor when draft filters change between pages', async () => {
+  it('keeps the native column predicate bound to its server cursor across pages', async () => {
     const { api, access } = fixture();
     api.managementSessions.mockResolvedValueOnce({ ...page, next: 'bmp1.REAL' });
     const { container } = await mount(access);
     expect(button('Go to next page', container).disabled).toBe(false);
-    await fill('Search by requesting user', 'draft-only', container);
+    api.managementSessions.mockResolvedValueOnce({ ...page, next: 'bmp1.FILTERED' });
+    await nativeColumnFilter(container, 'Requesting user', 'alice');
+    await vi.waitFor(() =>
+      expect(api.managementSessions).toHaveBeenLastCalledWith(
+        {
+          state: 'all',
+          query: '',
+          filter: { field: 'user', operator: 'contains', value: 'alice' },
+          sort: 'flow-asc',
+        },
+        expect.any(AbortSignal),
+      ),
+    );
+    await closeNativeFilter(container);
     await click(button('Go to next page', container));
     expect(api.managementSessions.mock.calls.map(([filters]) => filters.after ?? '')).toEqual([
       '',
-      'bmp1.REAL',
+      '',
+      'bmp1.FILTERED',
     ]);
     expect(api.managementSessions).toHaveBeenLastCalledWith(
-      { flow: '', user: '', state: 'active', after: 'bmp1.REAL' },
+      {
+        state: 'all',
+        query: '',
+        filter: { field: 'user', operator: 'contains', value: 'alice' },
+        sort: 'flow-asc',
+        after: 'bmp1.FILTERED',
+      },
       expect.any(AbortSignal),
     );
     expect(container.textContent).toContain('alice');
-    await click(button('Search sessions', container));
-    expect(api.managementSessions).toHaveBeenLastCalledWith(
-      { flow: '', user: 'draft-only', state: 'active', query: '', sort: 'flow-asc' },
-      expect.any(AbortSignal),
-    );
   });
 
   it('shows policy withholding instead of fabricated identity or lifetime, with no row actions', async () => {

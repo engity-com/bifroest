@@ -158,10 +158,12 @@ navigation and access.
 A second management tab requires a separate explicit sign-in; **Duplicate**
 opens sign-in rather than sharing another tab's admitted channel.
 
-**Sessions** loads its first page when opened. Use the table's search, sortable
-column header and pagination, or the additional requesting-user/flow/status
-filters, then open a session's details. Search and sorting apply on the server,
-not just to the currently loaded page. **Disconnect connections**
+**Sessions** loads its first page when opened. Use the Data Grid's **Filters**
+button or a column menu to choose a field, operator and value. The quick search,
+sorting and pagination also use the grid's native controls. Filters apply on the
+server before pagination, not just to the visible page. The Community grid
+supports one column filter at a time, in addition to quick search. Then open a
+session's details. **Disconnect connections**
 keeps the session reusable; **End session** revokes it and runs cleanup. Both
 require confirmation of the exact target. A denied list does not grant or remove
 other permissions; action-only access can use **Advanced: target by ID**.
@@ -169,6 +171,12 @@ other permissions; action-only access can use **Advanced: target by ID**.
 **Bifröst** loads the short version and configured flows. Detailed build
 information is optional. Returning to a loaded view does not repeat its reads;
 use the refresh controls for current data.
+
+**Recordings** and **Audit logs** are separate navigation entries and keep their
+own selections and results. Opening a Recording prepares local playback after
+verification; opening an audit log shows verified events, not an inventory of
+raw files. Both use the same tab-local decryption-key cache described in
+[HTTP security and limits](../reference/connection/http/security.md#management-and-evidence).
 
 Like a terminal, each management tab owns one admitted connection. Its
 **Connection settings** use the flow's keepalive policy and saved preference;

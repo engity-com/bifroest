@@ -14,6 +14,8 @@ export interface EvidenceOptions {
   readonly producer: string;
   readonly allowUntrusted: boolean;
   readonly recipient: string;
+  readonly recipientFromKey?: boolean;
+  readonly recipientFromHeader?: boolean;
   readonly level: 'outer' | 'private';
   readonly export: boolean;
   readonly sensitive: boolean;
@@ -51,6 +53,12 @@ export function evidenceOptions(request: ArtifactRequest, value: unknown): Evide
       'export',
       'sensitive',
       'auditScope',
+      ...(value !== null && typeof value === 'object' && Object.hasOwn(value, 'recipientFromKey')
+        ? ['recipientFromKey']
+        : []),
+      ...(value !== null && typeof value === 'object' && Object.hasOwn(value, 'recipientFromHeader')
+        ? ['recipientFromHeader']
+        : []),
     ]);
     if (
       typeof body.producer !== 'string' ||
@@ -59,6 +67,16 @@ export function evidenceOptions(request: ArtifactRequest, value: unknown): Evide
       typeof body.allowUntrusted !== 'boolean' ||
       (body.producer === '' && !body.allowUntrusted) ||
       typeof body.recipient !== 'string' ||
+      (body.recipientFromHeader !== undefined &&
+        (typeof body.recipientFromHeader !== 'boolean' ||
+          (body.recipientFromHeader &&
+            (request.kind !== 'recording' ||
+              body.level !== 'outer' ||
+              body.recipient !== '' ||
+              body.recipientFromKey)))) ||
+      (body.recipientFromKey !== undefined &&
+        (typeof body.recipientFromKey !== 'boolean' ||
+          (body.recipientFromKey && (body.level !== 'private' || body.recipient !== '')))) ||
       (body.recipient !== '' && !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(body.recipient)) ||
       (body.level !== 'outer' && body.level !== 'private') ||
       typeof body.export !== 'boolean' ||
@@ -106,7 +124,14 @@ export function evidenceMetadata(
       (options.producer !== '' &&
         (body.producer !== options.producer || body.trust !== 'pinned')) ||
       (options.producer === '' && body.trust !== 'untrusted') ||
-      body.expectedRecipient !== options.recipient ||
+      (options.recipientFromHeader
+        ? typeof body.expectedRecipient !== 'string' ||
+          (body.expectedRecipient !== '' &&
+            !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(body.expectedRecipient))
+        : options.recipientFromKey
+          ? typeof body.expectedRecipient !== 'string' ||
+            !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(body.expectedRecipient)
+          : body.expectedRecipient !== options.recipient) ||
       typeof body.decryption !== 'string' ||
       !['not-checked', 'not-encrypted', 'authenticated', 'no-private-records'].includes(
         body.decryption,
@@ -121,8 +146,9 @@ export function evidenceMetadata(
       body.outputFormat !==
         (options.export ? (request.kind === 'recording' ? 'cast' : 'jsonl') : '') ||
       (body.decryption === 'authenticated' &&
-        (options.level !== 'private' || options.recipient === '')) ||
-      (body.decryption === 'not-encrypted' && options.recipient !== '')
+        (options.level !== 'private' || (options.recipient === '' && !options.recipientFromKey))) ||
+      (body.decryption === 'not-encrypted' &&
+        (options.recipient !== '' || options.recipientFromKey))
     ) {
       throw new Error();
     }

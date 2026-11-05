@@ -6,6 +6,12 @@ export interface PageOptions {
   readonly after?: string;
   readonly query?: string;
   readonly sort?: string;
+  readonly filter?: ColumnFilter | null;
+}
+export interface ColumnFilter {
+  readonly field: string;
+  readonly operator: string;
+  readonly value: string;
 }
 export interface SessionOptions extends PageOptions {
   readonly flow?: string;
@@ -172,11 +178,49 @@ export function pageFields(
     throw new RememberMeError('unavailable');
   }
   const query = text(options.query ?? '', 256);
+  const filter = options.filter;
+  if (filter !== undefined && filter !== null) {
+    object(filter, ['field', 'operator', 'value']);
+    text(filter.field, 64);
+    text(filter.operator, 32);
+    text(filter.value, 2048);
+    if (
+      !/^[A-Za-z][A-Za-z0-9]*$/u.test(filter.field) ||
+      ![
+        'contains',
+        'doesNotContain',
+        'equals',
+        'doesNotEqual',
+        'startsWith',
+        'endsWith',
+        'isEmpty',
+        'isNotEmpty',
+        'isAnyOf',
+        'is',
+        'not',
+        '=',
+        '!=',
+        '>',
+        '>=',
+        '<',
+        '<=',
+        'after',
+        'onOrAfter',
+        'before',
+        'onOrBefore',
+      ].includes(filter.operator)
+    ) {
+      throw new RememberMeError('unavailable');
+    }
+  }
   return {
     limit: String(limit),
     after,
     ...(query !== '' ? { query } : {}),
     ...(options.sort ? { sort: options.sort } : {}),
+    ...(filter
+      ? { filterField: filter.field, filterOperator: filter.operator, filterValue: filter.value }
+      : {}),
   };
 }
 export function sessionFields(options: SessionOptions): Record<string, string> {

@@ -116,10 +116,6 @@ export async function exerciseManagementForced(page, file, logout) {
     })
     .waitFor();
   await workspace(page, 'Sessions');
-  await page.locator('.session-filter-details > summary').click();
-  await page.getByRole('combobox', { name: 'Session state', exact: true }).click();
-  await page.getByRole('option', { name: 'All statuses', exact: true }).click();
-  await page.getByRole('button', { name: 'Search sessions', exact: true }).click();
   const table = page.getByRole('grid', { name: 'Live session metadata', exact: true });
   await table.getByText('alice', { exact: true }).waitFor();
   assert.equal(await table.locator('[role="row"][data-id]').count(), 1);
@@ -145,10 +141,10 @@ export async function exerciseManagementForced(page, file, logout) {
   const auditlogsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/auditlogs/list'),
   );
-  await workspace(page, 'Recordings & audit');
+  await workspace(page, 'Recordings');
   assert.equal((await auditlogsReply).status(), 403);
   const artifacts = page.getByRole('region', {
-    name: 'Recordings & audit',
+    name: 'Recordings',
     exact: true,
   });
   const catalog = artifacts.getByRole('region', {
@@ -218,23 +214,19 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
   const auditlogsReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/auditlogs/list'),
   );
-  await workspace(page, 'Recordings & audit');
+  await workspace(page, 'Audit logs');
   const auditlogsResponse = await auditlogsReply;
   assert.equal(auditlogsResponse.status(), 200);
   const artifacts = page.getByRole('region', {
-    name: 'Recordings & audit',
+    name: 'Audit logs',
     exact: true,
   });
-  const catalog = artifacts.getByRole('region', {
-    name: 'Artifact catalog (server metadata)',
-    exact: true,
-  });
+  const catalog = artifacts;
   assert.deepEqual(
     calls.map((path) => path.split('/management/')[1]),
     ['version/show', 'flows/list', 'sessions/list', 'auditlogs/list'],
     'each first visible view attempts only its authorized metadata read; no artifact download',
   );
-  await catalog.getByText('Audit log exports', { exact: true }).click();
   const table = catalog.getByRole('grid', {
     name: 'Configured auditlogs (server metadata)',
     exact: true,
@@ -251,16 +243,10 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
       { cause: error },
     );
   }
-  assert.equal((await auditlogsResponse.json()).auditlogs.items.length, 20);
-  assert((await table.textContent()).includes('Encryption configured'));
-  const deniedRecordingsReply = wire.waitForResponse((response) =>
-    response.url().endsWith('/management/recordings/list'),
-  );
-  await catalog.getByRole('button', { name: 'More recording sources', exact: true }).click();
-  assert.equal((await deniedRecordingsReply).status(), 403);
-  await catalog
-    .getByText('This sign-in cannot list recordings from this source.', { exact: false })
-    .waitFor();
+  const auditPage = (await auditlogsResponse.json()).auditlogs;
+  assert.equal(auditPage.items.length, 20);
+  assert(auditPage.items.every((row) => row.encrypted === true));
+  await table.locator('[data-field="encrypted"] svg[data-value="true"]').first().waitFor();
   const lastAuditPageReply = wire.waitForResponse((response) =>
     response.url().endsWith('/management/auditlogs/list'),
   );
@@ -278,20 +264,15 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     await catalog.getByRole('button', { name: 'More recording sources', exact: true }).count(),
     0,
   );
-  assert.equal(calls.filter((path) => path.endsWith('/auditlogs/list')).length, 3);
+  assert.equal(calls.filter((path) => path.endsWith('/auditlogs/list')).length, 2);
   assert.equal(calls.filter((path) => path.includes('/artifacts/')).length, 0);
-  assert.equal(
-    (await deniedRecordingsReply).status(),
-    403,
-    'after the final source page the sole source is selected without adding list permission',
-  );
   assert.equal(
     await catalog.getByRole('combobox', { name: 'Recording source', exact: true }).count(),
     0,
-    'the complete inventory has one recording source; no redundant chooser strands it',
+    'the audit page has no unrelated Recording source chooser',
   );
   assert.equal(await catalog.getByRole('grid', { name: /^Recordings · /u }).count(), 0);
-  assert.equal(calls.filter((path) => path.endsWith('/recordings/list')).length, 1);
+  assert.equal(calls.filter((path) => path.endsWith('/recordings/list')).length, 0);
   assert.equal(
     calls.filter((path) => path.includes('/artifacts/')).length,
     0,
@@ -304,10 +285,7 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     })
     .waitFor();
   assert.equal(calls.filter((path) => path.endsWith('/artifacts/audit')).length, 1);
-  assert.equal(
-    await artifacts.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
-    0,
-  );
+  assert.equal(await artifacts.getByRole('grid', { name: 'Audit events', exact: true }).count(), 0);
   for (const secret of [
     'private audit directory',
     'private identity file',
@@ -315,6 +293,20 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
   ]) {
     assert(!(await artifacts.textContent()).includes(secret));
   }
+  const sourcesReply = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/auditlogs/list'),
+  );
+  await workspace(page, 'Recordings');
+  assert.equal((await sourcesReply).status(), 200);
+  const deniedRecordingsReply = wire.waitForResponse((response) =>
+    response.url().endsWith('/management/recordings/list'),
+  );
+  await page.getByRole('button', { name: 'More recording sources', exact: true }).click();
+  assert.equal((await deniedRecordingsReply).status(), 403);
+  await page
+    .getByText('This sign-in cannot list recordings from this source.', { exact: false })
+    .waitFor();
+  assert.equal(calls.filter((path) => path.endsWith('/recordings/list')).length, 1);
   await workspace(page, 'Server');
   assert.equal(
     calls.filter((path) => path.endsWith('/management/flows/list')).length,
@@ -333,10 +325,7 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     0,
   );
   await logout(page);
-  assert.equal(
-    await page.getByRole('region', { name: 'Recordings & audit', exact: true }).count(),
-    0,
-  );
+  assert.equal(await page.getByRole('region', { name: 'Audit logs', exact: true }).count(), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   await assertUiPreferences(page);
 }

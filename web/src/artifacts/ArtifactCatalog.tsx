@@ -1,28 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RecordingOptions } from '../management/protocol';
+import type { ColumnFilter, RecordingOptions } from '../management/protocol';
 import type { AuditlogSummary, Page, RecordingSummary, WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { reportUiError } from '../ui/error-report';
-import { Alert, Button, Select, TextInput } from '../ui/material';
+import { Alert, Button, Select } from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import type { ArtifactRequest } from './protocol';
 
-interface Filters {
-  flow: string;
-  user: string;
-  from: string;
-  until: string;
-  status: string;
-}
-const emptyFilters: Filters = { flow: '', user: '', from: '', until: '', status: '' };
-const when = (value: string) =>
-  new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
-    new Date(value),
-  );
-function duration(row: RecordingSummary): string {
-  const seconds = Math.max(0, (Date.parse(row.endedAt) - Date.parse(row.startedAt)) / 1000);
+const when = (value: Date) =>
+  new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(value);
+function duration(seconds: number): string {
   const rounded = Math.round(seconds);
   if (rounded >= 3600) {
     return `${Math.floor(rounded / 3600)} h ${Math.floor(rounded / 60) % 60} min`;
@@ -49,143 +38,121 @@ export function ArtifactCatalog({
   disabled: boolean;
   active?: boolean;
   selected?: ArtifactRequest | null;
-  onSelect: (request: ArtifactRequest, summary?: RecordingSummary) => void;
+  onSelect(request: ArtifactRequest, summary?: RecordingSummary): void;
 }) {
-  const [auditlogs, setAuditlogs] = useState<Page<AuditlogSummary> | null>(null);
-  const [auditRows, setAuditRows] = useState<Page<AuditlogSummary> | null>(null);
-  const [auditPage, setAuditPage] = useState(0);
-  const [auditQuery, setAuditQuery] = useState('');
-  const [auditSort, setAuditSort] = useState<'asc' | 'desc'>('asc');
-  const auditCursors = useRef<string[]>(['']);
+  const [sources, setSources] = useState<Page<AuditlogSummary> | null>(null);
   const [source, setSource] = useState('');
-  const [recordings, setRecordings] = useState<Page<RecordingSummary> | null>(null);
-  const [filters, setFilters] = useState<Filters>(emptyFilters);
-  const [applied, setApplied] = useState<Filters>(emptyFilters);
-  const [pageIndex, setPageIndex] = useState(0);
-  const [gridQuery, setGridQuery] = useState('');
-  const [gridSort, setGridSort] = useState<'asc' | 'desc'>('desc');
+  const [rows, setRows] = useState<Page<RecordingSummary> | null>(null);
+  const [page, setPage] = useState(0);
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<'asc' | 'desc'>('desc');
+  const [filter, setFilter] = useState<ColumnFilter | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<Message | null>(null);
   const [cancelled, setCancelled] = useState(false);
-  const operation = useRef<AbortController | null>(null);
+  const request = useRef<AbortController | null>(null);
   const generation = useRef(0);
-  const initialAttempt = useRef(false);
-  const cursors = useRef<string[]>(['']);
-  const selectionHeading = useRef<HTMLHeadingElement | null>(null);
-  const availableNow = useRef(active && !disabled);
-  availableNow.current = active && !disabled;
-
-  // An immutable access owns its results. Merely hiding/reopening this view does
-  // not reread metadata or turn server labels into verification expectations.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Reset only at the actor/access boundary.
+  const attempted = useRef(false);
+  const cursors = useRef(['']);
+  const available = useRef(active && !disabled);
+  available.current = active && !disabled;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reset at the actor boundary, never retain another access's metadata.
   useEffect(() => {
     generation.current++;
-    operation.current?.abort();
-    operation.current = null;
-    initialAttempt.current = false;
+    attempted.current = false;
     cursors.current = [''];
-    setAuditlogs(null);
-    setAuditRows(null);
-    setAuditPage(0);
-    setAuditQuery('');
-    setAuditSort('asc');
-    auditCursors.current = [''];
+    setSources(null);
     setSource('');
-    setRecordings(null);
-    setFilters(emptyFilters);
-    setApplied(emptyFilters);
-    setPageIndex(0);
-    setGridQuery('');
-    setGridSort('desc');
+    setRows(null);
+    setPage(0);
+    setQuery('');
+    setSort('desc');
+    setFilter(null);
     setBusy(false);
     setFailed(null);
     setCancelled(false);
     return () => {
       generation.current++;
-      operation.current?.abort();
-      operation.current = null;
+      request.current?.abort();
+      request.current = null;
     };
   }, [access]);
   useEffect(() => {
     if (disabled) {
-      operation.current?.abort();
+      request.current?.abort();
     }
   }, [disabled]);
-
   async function run(action: (signal: AbortSignal, current: number) => Promise<void>) {
-    if (disabled || operation.current !== null) {
+    if (disabled || request.current !== null) {
       return;
     }
     const controller = new AbortController();
     const current = ++generation.current;
-    operation.current = controller;
+    request.current = controller;
     setBusy(true);
     setFailed(null);
     setCancelled(false);
     try {
       await action(controller.signal, current);
     } catch (error) {
-      if (current === generation.current && !controller.signal.aborted) {
-        if (!(error instanceof RememberMeError && error.code === 'cancelled')) {
-          reportUiError('artifact-catalog', error);
-          setFailed(
-            error instanceof RememberMeError && error.code === 'denied'
-              ? 'recordingReadDenied'
-              : 'recordingReadFailed',
-          );
-        }
+      if (
+        current === generation.current &&
+        !controller.signal.aborted &&
+        !(error instanceof RememberMeError && error.code === 'cancelled')
+      ) {
+        reportUiError('artifact-catalog', error);
+        setFailed(
+          error instanceof RememberMeError && error.code === 'denied'
+            ? 'recordingReadDenied'
+            : 'recordingReadFailed',
+        );
       }
     } finally {
-      if (operation.current === controller) {
-        operation.current = null;
+      if (request.current === controller) {
+        request.current = null;
         setBusy(false);
       }
     }
   }
-  function query(
-    values: Filters,
-    after = '',
-    search = gridQuery,
-    direction = gridSort,
+  function options(
+    index = 0,
+    search = query,
+    direction = sort,
+    predicate = filter,
   ): RecordingOptions {
     return {
-      after,
-      sort: direction === 'asc' ? 'started-asc' : 'started-desc',
+      after: index === 0 ? '' : (cursors.current[index] ?? ''),
       query: search,
-      flow: values.flow,
-      user: values.user,
-      target: '',
-      startedFrom: values.from === '' ? '' : new Date(values.from).toISOString(),
-      startedUntil: values.until === '' ? '' : new Date(values.until).toISOString(),
-      status:
-        values.status === '' ? 'all' : (values.status as NonNullable<RecordingOptions['status']>),
+      sort: direction === 'asc' ? 'started-asc' : 'started-desc',
+      filter: predicate,
     };
   }
-  async function loadRecordings(
-    name: string,
-    values = filters,
+  async function load(
+    name = source,
     index = 0,
-    search = gridQuery,
-    direction = gridSort,
+    search = query,
+    direction = sort,
+    predicate = filter,
   ) {
     await run(async (signal, current) => {
       const result = await access.managementRecordings(
         name,
-        query(values, cursors.current[index] ?? '', search, direction),
+        options(index, search, direction, predicate),
         signal,
       );
-      if (current === generation.current && !signal.aborted) {
-        setSource(name);
-        setRecordings(result);
-        setApplied({ ...values });
-        setPageIndex(index);
-        setGridQuery(search);
-        setGridSort(direction);
-        if (index === 0) {
-          cursors.current = [''];
-        }
-        cursors.current[index + 1] = result.next;
+      if (current !== generation.current || signal.aborted) {
+        return;
       }
+      if (index === 0) {
+        cursors.current = [''];
+      }
+      cursors.current[index + 1] = result.next;
+      setSource(name);
+      setRows(result);
+      setPage(index);
+      setQuery(search);
+      setSort(direction);
+      setFilter(predicate);
     });
   }
   async function loadSources(after = '') {
@@ -194,117 +161,74 @@ export function ArtifactCatalog({
       if (current !== generation.current || signal.aborted) {
         return;
       }
-      const items = after === '' ? result.items : [...(auditlogs?.items ?? []), ...result.items];
-      setAuditlogs({ ...result, items });
-      if (after === '') {
-        setAuditRows(result);
-        setAuditPage(0);
-        setAuditQuery('');
-        setAuditSort('asc');
-        auditCursors.current = ['', result.next];
-      }
-      const available = items.filter((row) => row.enabled && row.recordingEnabled);
-      // A sole source is established only after the complete source inventory,
-      // including later pages. Keep its identity even if its read is denied.
-      if (source === '' && available.length === 1 && result.next === '') {
-        const name = available[0]?.name;
+      const items = after === '' ? result.items : [...(sources?.items ?? []), ...result.items];
+      setSources({ ...result, items });
+      const enabled = items.filter((row) => row.enabled && row.recordingEnabled);
+      if (source === '' && enabled.length === 1 && result.next === '') {
+        const name = enabled[0]?.name;
         if (name === undefined) {
           return;
         }
         setSource(name);
-        const rows = await access.managementRecordings(name, query(emptyFilters), signal);
+        const result = await access.managementRecordings(
+          name,
+          options(0, '', 'desc', null),
+          signal,
+        );
         if (current !== generation.current || signal.aborted) {
           return;
         }
-        cursors.current = ['', rows.next];
-        setPageIndex(0);
-        setSource(name);
-        setRecordings(rows);
-        setFilters(emptyFilters);
-        setApplied(emptyFilters);
+        cursors.current = ['', result.next];
+        setRows(result);
+        setPage(0);
+        setQuery('');
+        setSort('desc');
+        setFilter(null);
       }
     });
   }
   useEffect(() => {
-    if (active && !disabled && !initialAttempt.current) {
+    if (available.current && !attempted.current) {
       const current = generation.current;
       queueMicrotask(() => {
-        if (current === generation.current && availableNow.current && !initialAttempt.current) {
-          initialAttempt.current = true;
+        if (current === generation.current && available.current && !attempted.current) {
+          attempted.current = true;
           void loadSources();
         }
       });
     }
   });
-  async function loadAuditRows(index: number, search = auditQuery, direction = auditSort) {
-    await run(async (signal, current) => {
-      const rows = await access.managementAuditlogs(
-        {
-          after: index === 0 ? '' : (auditCursors.current[index] ?? ''),
-          query: search,
-          ...(direction === 'desc' ? { sort: 'name-desc' } : {}),
-        },
-        signal,
-      );
-      if (current !== generation.current || signal.aborted) {
-        return;
-      }
-      setAuditRows(rows);
-      setAuditPage(index);
-      setAuditQuery(search);
-      setAuditSort(direction);
-      if (index === 0) {
-        auditCursors.current = [''];
-      }
-      auditCursors.current[index + 1] = rows.next;
-    });
-  }
-  function cancel() {
-    generation.current++;
-    operation.current?.abort();
-    setCancelled(true);
-  }
   const locked = disabled || busy;
-  const sources = auditlogs?.items.filter((row) => row.enabled && row.recordingEnabled) ?? [];
-  const selectionMatches = (row: RecordingSummary) =>
-    selected?.kind === 'recording' && selected.auditlog === row.auditlog && selected.id === row.id;
-  const patch = (key: keyof Filters, value: string) =>
-    setFilters((current) => ({ ...current, [key]: value }));
-  const choose = (row: RecordingSummary) => {
-    if (!locked) {
-      onSelect({ kind: 'recording', auditlog: row.auditlog, id: row.id }, row);
-    }
-  };
+  const enabled = sources?.items.filter((row) => row.enabled && row.recordingEnabled) ?? [];
   const identity = (row: RecordingSummary) =>
     row.encrypted || row.metadataUnavailable ? null : row;
   return (
     <section className="stack" aria-label={t('artifactCatalog')}>
-      <div className="section-heading">
-        <div>
-          <h3 ref={selectionHeading} className="recording-heading">
-            {t('recordingList')}
-          </h3>
-          <span className="caption subtle">{t('recordingSort')}</span>
-        </div>
-        <div className="actions">
+      <div className="actions">
+        <Button
+          variant="default"
+          disabled={locked}
+          onClick={() => {
+            void (source === '' ? loadSources() : load(source, page));
+          }}
+        >
+          {t('recordingRefresh')}
+        </Button>
+        {busy && (
           <Button
             variant="default"
-            disabled={locked}
             onClick={() => {
-              void (source === '' ? loadSources() : loadRecordings(source, applied));
+              generation.current++;
+              request.current?.abort();
+              setCancelled(true);
             }}
           >
-            {t('recordingRefresh')}
+            {t('artifactCatalogCancel')}
           </Button>
-          {busy && (
-            <Button variant="default" onClick={cancel}>
-              {t('artifactCatalogCancel')}
-            </Button>
-          )}
-        </div>
+        )}
       </div>
       {busy && <p role="status">{t('recordingLoading')}</p>}
-      {failed !== null && (
+      {failed && (
         <Alert role="status" color="red">
           {t(failed)}
         </Alert>
@@ -314,115 +238,83 @@ export function ArtifactCatalog({
           {t('artifactCatalogCancelled')}
         </Alert>
       )}
-      {((auditlogs?.skipped ?? 0) > 0 || (recordings?.skipped ?? 0) > 0) && (
+      {((sources?.skipped ?? 0) > 0 || (rows?.skipped ?? 0) > 0) && (
         <Alert color="yellow">{t('managementPartial')}</Alert>
       )}
-      {sources.length > 0 &&
-        (sources.length > 1 || (auditlogs?.next ?? '') !== '' || source === '') && (
+      {enabled.length > 0 &&
+        (enabled.length > 1 || (sources?.next ?? '') !== '' || source === '') && (
           <Select
             label={t('recordingSource')}
             value={source}
             placeholder={t('recordingChooseSource')}
             disabled={locked}
-            data={sources.map((row) => ({ value: row.name, label: row.name }))}
+            data={enabled.map((row) => ({ value: row.name, label: row.name }))}
             onChange={(name) => {
               if (name !== null) {
-                void loadRecordings(name);
+                void load(name, 0, '', 'desc', null);
               }
             }}
           />
         )}
-      {auditlogs !== null && auditlogs.next === '' && sources.length === 0 && !busy && (
-        <p className="empty-state">{t('recordingNoSources')}</p>
-      )}
-      {auditlogs?.next && (
+      {sources?.next && (
         <Button
           variant="subtle"
           disabled={locked}
           onClick={() => {
-            void loadSources(auditlogs.next);
+            void loadSources(sources.next);
           }}
         >
           {t('recordingSourcesMore')}
         </Button>
       )}
-      {source !== '' && (
-        <>
-          <details className="recording-filters">
-            <summary>{t('recordingFilters')}</summary>
-            <form
-              className="admin-filter-grid"
-              method="dialog"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void loadRecordings(source);
-              }}
-            >
-              <TextInput
-                label={t('recordingFilterUser')}
-                value={filters.user}
-                disabled={locked}
-                maxLength={256}
-                onChange={(event) => patch('user', event.currentTarget.value)}
-              />
-              <TextInput
-                label={t('recordingFilterFlow')}
-                value={filters.flow}
-                disabled={locked}
-                maxLength={255}
-                onChange={(event) => patch('flow', event.currentTarget.value)}
-              />
-              <Select
-                label={t('recordingFilterStatus')}
-                value={filters.status}
-                disabled={locked}
-                data={[
-                  { value: '', label: t('recordingFilterAll') },
-                  { value: 'completed', label: t('artifactCatalogCompleted') },
-                  { value: 'incomplete', label: t('artifactCatalogIncomplete') },
-                  { value: 'failed', label: t('artifactCatalogFailedStatus') },
-                ]}
-                onChange={(value) => patch('status', value ?? '')}
-              />
-              <TextInput
-                type="datetime-local"
-                label={t('recordingFilterFrom')}
-                value={filters.from}
-                disabled={locked}
-                onChange={(event) => patch('from', event.currentTarget.value)}
-              />
-              <TextInput
-                type="datetime-local"
-                label={t('recordingFilterUntil')}
-                value={filters.until}
-                disabled={locked}
-                onChange={(event) => patch('until', event.currentTarget.value)}
-              />
-              <Button type="submit" disabled={locked}>
-                {t('recordingFilterApply')}
-              </Button>
-            </form>
-          </details>
-          {JSON.stringify(filters) !== JSON.stringify(applied) && (
-            <p className="caption subtle">{t('recordingFiltersPending')}</p>
-          )}
-          {(filters.user !== '' || filters.flow !== '') && (
-            <p className="caption subtle">{t('recordingIdentityFilterHint')}</p>
-          )}
-        </>
+      {sources && sources.next === '' && enabled.length === 0 && !busy && (
+        <p className="empty-state">{t('recordingNoSources')}</p>
       )}
-      {recordings !== null && (
+      {rows && (
         <AdminDataGrid<RecordingSummary>
+          active={active}
+          key={source}
           actionField="open"
           label={`${t('recordingList')} · ${source}`}
-          rows={recordings.items}
+          rows={rows.items}
           columns={[
+            {
+              field: 'open',
+              headerName: t('recordingOpen'),
+              minWidth: 170,
+              filterable: false,
+              renderCell: (params) => (
+                <Button
+                  disabled={locked}
+                  aria-current={
+                    selected?.kind === 'recording' &&
+                    selected.id === params.row.id &&
+                    selected.auditlog === params.row.auditlog
+                      ? 'true'
+                      : undefined
+                  }
+                  aria-label={`${t('recordingOpen')} ${params.row.id}`}
+                  onClick={() => {
+                    if (!locked) {
+                      onSelect(
+                        { kind: 'recording', auditlog: params.row.auditlog, id: params.row.id },
+                        params.row,
+                      );
+                    }
+                  }}
+                >
+                  {t('recordingOpen')}
+                </Button>
+              ),
+            },
             {
               field: 'startedAt',
               headerName: t('recordingStarted'),
               minWidth: 190,
               flex: 1,
-              valueFormatter: (value) => when(value as string),
+              type: 'dateTime',
+              valueGetter: (_value, row) => new Date(row.startedAt),
+              valueFormatter: (value) => when(value as Date),
             },
             {
               field: 'user',
@@ -451,131 +343,60 @@ export function ArtifactCatalog({
               field: 'flow',
               headerName: t('recordingFilterFlow'),
               minWidth: 130,
-              valueGetter: (_value, row) => identity(row)?.flow || '—',
+              valueGetter: (_value, row) => identity(row)?.flow ?? '',
             },
             {
               field: 'status',
               headerName: t('recordingFilterStatus'),
               minWidth: 130,
-              valueFormatter: (value) =>
-                t(
-                  value === 'completed'
-                    ? 'artifactCatalogCompleted'
-                    : value === 'failed'
-                      ? 'artifactCatalogFailedStatus'
-                      : 'artifactCatalogIncomplete',
-                ),
+              type: 'singleSelect',
+              valueOptions: [
+                { value: 'completed', label: t('artifactCatalogCompleted') },
+                { value: 'failed', label: t('artifactCatalogFailedStatus') },
+                { value: 'incomplete', label: t('artifactCatalogIncomplete') },
+              ],
             },
             {
               field: 'duration',
               headerName: t('recordingDuration'),
               minWidth: 120,
-              valueGetter: (_value, row) => duration(row),
+              type: 'number',
+              valueGetter: (_value, row) =>
+                Math.max(0, (Date.parse(row.endedAt) - Date.parse(row.startedAt)) / 1000),
+              valueFormatter: (value) => duration(Number(value)),
             },
             {
               field: 'containerBytes',
               headerName: t('recordingSize'),
               minWidth: 100,
-              valueFormatter: (value) => bytes(value as number),
-            },
-            {
-              field: 'open',
-              headerName: t('recordingOpen'),
-              minWidth: 170,
-              renderCell: (params) => (
-                <Button
-                  disabled={locked}
-                  aria-current={selectionMatches(params.row) ? 'true' : undefined}
-                  aria-label={`${t('recordingOpen')} ${params.row.id}`}
-                  onClick={() => choose(params.row)}
-                >
-                  {t('recordingOpen')}
-                </Button>
-              ),
+              type: 'number',
+              valueFormatter: (value) => bytes(Number(value)),
             },
           ]}
           busy={busy}
           disabled={disabled}
-          page={pageIndex}
-          hasNext={recordings.next !== ''}
-          query={gridQuery}
+          page={page}
+          hasNext={rows.next !== ''}
+          query={query}
+          columnFilter={filter}
           sortField="startedAt"
-          sortDirection={gridSort}
+          sortDirection={sort}
           onPage={(index) => {
-            if (index <= pageIndex + 1 && cursors.current[index] !== undefined) {
-              void loadRecordings(source, applied, index);
+            if (index <= page + 1 && cursors.current[index] !== undefined) {
+              void load(source, index);
             }
           }}
-          onQuery={(search) => {
-            void loadRecordings(source, applied, 0, search, gridSort);
+          onQuery={(value) => {
+            void load(source, 0, value);
+          }}
+          onSearch={(search, predicate) => {
+            void load(source, 0, search, sort, predicate);
           }}
           onSort={(direction) => {
-            void loadRecordings(source, applied, 0, gridQuery, direction);
+            void load(source, 0, query, direction);
           }}
         />
       )}
-      <details className="context-help">
-        <summary>{t('recordingAuditExports')}</summary>
-        <div className="stack">
-          <p>{t('recordingServerMetadata')}</p>
-          {auditRows !== null && (
-            <AdminDataGrid<AuditlogSummary>
-              actionField="open"
-              label={t('artifactAuditlogCaption')}
-              rows={auditRows.items}
-              getRowId={(row) => row.name}
-              columns={[
-                { field: 'name', headerName: t('artifactAuditlog'), minWidth: 190, flex: 1 },
-                {
-                  field: 'configuration',
-                  headerName: t('artifactCatalogConfiguration'),
-                  minWidth: 300,
-                  flex: 1,
-                  valueGetter: (_value, row) =>
-                    `${t(row.recordingEnabled ? 'artifactCatalogRecordingOn' : 'artifactCatalogRecordingOff')} · ${t(row.encrypted ? 'artifactCatalogEncrypted' : 'artifactCatalogClear')}`,
-                },
-                {
-                  field: 'open',
-                  headerName: t('recordingOpenAudit'),
-                  minWidth: 170,
-                  renderCell: (params) => (
-                    <Button
-                      disabled={locked || !params.row.enabled}
-                      aria-label={`${t('recordingOpenAudit')} ${params.row.name}`}
-                      onClick={() => {
-                        if (!locked && params.row.enabled) {
-                          onSelect({ kind: 'audit', auditlog: params.row.name });
-                        }
-                      }}
-                    >
-                      {t('recordingOpenAudit')}
-                    </Button>
-                  ),
-                },
-              ]}
-              busy={busy}
-              disabled={disabled}
-              page={auditPage}
-              hasNext={auditRows.next !== ''}
-              query={auditQuery}
-              sortField="name"
-              sortDirection={auditSort}
-              onPage={(index) => {
-                if (index <= auditPage + 1 && auditCursors.current[index] !== undefined) {
-                  void loadAuditRows(index);
-                }
-              }}
-              onQuery={(search) => {
-                void loadAuditRows(0, search, auditSort);
-              }}
-              onSort={(direction) => {
-                void loadAuditRows(0, auditQuery, direction);
-              }}
-            />
-          )}
-          <p>{t('artifactCatalogWarning')}</p>
-        </div>
-      </details>
     </section>
   );
 }

@@ -5,11 +5,18 @@ import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useAdminDetail } from '../ui/admin-navigation';
 import { reportUiError } from '../ui/error-report';
-import { Alert, Button, Modal, Paper, Select, TextInput, Title } from '../ui/material';
+import { Alert, Button, Modal, Select, TextInput, Title } from '../ui/material';
 import { t } from '../ui/messages';
 import type { ActionPreview, SessionAction, SessionActionConfirmation } from './action';
 import { m, sessionStateLabel } from './messages';
-import type { FlowSummary, Page, SessionItem, SessionOptions, VersionInfo } from './protocol';
+import type {
+  ColumnFilter,
+  FlowSummary,
+  Page,
+  SessionItem,
+  SessionOptions,
+  VersionInfo,
+} from './protocol';
 
 export function ManagementPanel({
   access,
@@ -29,9 +36,8 @@ export function ManagementPanel({
   const [buildVersion, setBuildVersion] = useState<VersionInfo | null>(null);
   const [sessions, setSessions] = useState<Page<SessionItem> | null>(null);
   const [selected, setSelected] = useState<SessionItem | null>(null);
-  const [flow, setFlow] = useState('');
-  const [user, setUser] = useState('');
-  const [state, setState] = useState('active');
+  const [sessionFilter, setSessionFilter] = useState<ColumnFilter | null>(null);
+  const [flowFilter, setFlowFilter] = useState<ColumnFilter | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<'denied' | 'unavailable' | null>(null);
   const [readCompletion, setReadCompletion] = useState(0);
@@ -95,9 +101,8 @@ export function ManagementPanel({
     setFlowsFailed(false);
     attempted.current = { sessions: false, version: false, flows: false };
     lastFilter.current = {};
-    setFlow('');
-    setUser('');
-    setState('active');
+    setSessionFilter(null);
+    setFlowFilter(null);
     preparing.current = null;
     sending.current = false;
     setPreview(null);
@@ -144,7 +149,7 @@ export function ManagementPanel({
     }
     if (view === 'sessions' && !attempted.current.sessions) {
       attempted.current.sessions = true;
-      void loadSessions(false, { flow: '', user: '', state: 'active' });
+      void loadSessions(false, { state: 'all' });
     } else if (view === 'server' && !attempted.current.version) {
       attempted.current.version = true;
       void loadVersion();
@@ -247,11 +252,17 @@ export function ManagementPanel({
       }
     }
   }
-  async function loadFlows(after = '', index = 0, query = flowQuery, direction = flowSort) {
+  async function loadFlows(
+    after = '',
+    index = 0,
+    query = flowQuery,
+    direction = flowSort,
+    filter = flowFilter,
+  ) {
     attempted.current.flows = true;
     await run(async (signal, current) => {
       const result = await access.managementFlows(
-        { after, query, ...(direction === 'desc' ? { sort: 'name-desc' } : {}) },
+        { after, query, filter, ...(direction === 'desc' ? { sort: 'name-desc' } : {}) },
         signal,
       );
       if (current === generation.current) {
@@ -260,6 +271,7 @@ export function ManagementPanel({
         setFlowPage(index + 1);
         setFlowQuery(query);
         setFlowSort(direction);
+        setFlowFilter(filter);
         if (index === 0) {
           flowCursors.current = [''];
         }
@@ -292,7 +304,7 @@ export function ManagementPanel({
       after: '',
       flow: lastFilter.current.flow ?? '',
       user: lastFilter.current.user ?? '',
-      state: lastFilter.current.state ?? 'active',
+      state: lastFilter.current.state ?? 'all',
     });
   }
   async function loadSessions(next = false, initial?: SessionOptions, index?: number) {
@@ -302,9 +314,8 @@ export function ManagementPanel({
       (next
         ? { ...lastFilter.current, after: sessions?.next ?? '' }
         : {
-            flow,
-            user,
-            state: state as NonNullable<SessionOptions['state']>,
+            state: 'all',
+            filter: sessionFilter,
             query: sessionQuery,
             sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
           });
@@ -322,6 +333,7 @@ export function ManagementPanel({
         sessionCursors.current[pageIndex + 1] = result.next;
         setSessionQuery(filters.query ?? '');
         setSessionSort(filters.sort === 'flow-desc' ? 'desc' : 'asc');
+        setSessionFilter(filters.filter ?? null);
       }
     }, 'sessions');
   }
@@ -426,7 +438,7 @@ export function ManagementPanel({
   const isSelected = (item: SessionItem) => selected?.flow === item.flow && selected.id === item.id;
   const integratedNavigation = useAdminDetail('sessions', selected?.id ?? null, returnToSessions);
   return (
-    <Paper withBorder p="lg" className="stack" aria-label={t('managementTitle')}>
+    <section className="stack" aria-label={t('managementTitle')}>
       {!integratedNavigation && (
         <AdminBreadcrumbs
           items={
@@ -547,6 +559,7 @@ export function ManagementPanel({
               </Alert>
             )}
             <AdminDataGrid<FlowSummary>
+              active={active && view === 'server'}
               label={t('managementFlowsCaption')}
               rows={flows.items}
               getRowId={(item) => item.name}
@@ -571,6 +584,10 @@ export function ManagementPanel({
               page={flowPage - 1}
               hasNext={flows.next !== ''}
               query={flowQuery}
+              columnFilter={flowFilter}
+              onSearch={(query, filter) => {
+                void loadFlows('', 0, query, flowSort, filter);
+              }}
               sortField="name"
               sortDirection={flowSort}
               onPage={(index) => {
@@ -596,59 +613,16 @@ export function ManagementPanel({
       )}
       <section hidden={view !== 'sessions'} className="stack">
         <div hidden={selected !== null} className="stack">
-          <form
-            method="dialog"
-            className="stack session-search"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void loadSessions();
-            }}
-          >
-            <div className="admin-toolbar actions">
-              <TextInput
-                label={m('searchUser')}
-                helperText={m('searchHint')}
-                value={user}
-                onChange={(event) => setUser(event.currentTarget.value)}
-                disabled={locked}
-                maxLength={256}
-              />
-              <Button type="submit" disabled={locked}>
-                {m('search')}
-              </Button>
-              <Button
-                type="button"
-                variant="default"
-                disabled={locked}
-                onClick={() => void refreshSessions()}
-              >
-                {m('refreshSessions')}
-              </Button>
-            </div>
-            <details className="session-filter-details">
-              <summary>{m('filters')}</summary>
-              <div className="session-filters">
-                <TextInput
-                  label={t('managementFlowFilter')}
-                  value={flow}
-                  onChange={(event) => setFlow(event.currentTarget.value)}
-                  disabled={locked}
-                  maxLength={255}
-                />
-                <Select
-                  label={t('managementStateFilter')}
-                  value={state}
-                  onChange={(value) => setState(value ?? 'active')}
-                  data={['active', 'all', 'new', 'authorized', 'disposed'].map((value) => ({
-                    value,
-                    label: sessionStateLabel(value),
-                  }))}
-                  disabled={locked}
-                />
-              </div>
-              <p className="caption subtle">{m('filterHint')}</p>
-            </details>
-          </form>
+          <div className="actions">
+            <Button
+              type="button"
+              variant="default"
+              disabled={locked}
+              onClick={() => void refreshSessions()}
+            >
+              {m('refreshSessions')}
+            </Button>
+          </div>
           {loading === 'sessions' && <p role="status">{m('sessionsLoading')}</p>}
           {loading === 'details' && <p role="status">{m('detailsLoading')}</p>}
           {sessions === null && loading !== 'sessions' && (
@@ -658,12 +632,6 @@ export function ManagementPanel({
           )}
           {sessions !== null && (
             <>
-              <p className="caption subtle">
-                {m('appliedFilters')}: {lastFilter.current.user || m('anyUser')} ·{' '}
-                {lastFilter.current.flow || m('anyFlow')} ·{' '}
-                {sessionStateLabel(lastFilter.current.state ?? 'active')}. {m('page')} {sessionPage}
-                .
-              </p>
               <p className="caption subtle">{m('snapshot')}</p>
               {sessions.skipped > 0 && (
                 <Alert color="yellow">
@@ -674,6 +642,7 @@ export function ManagementPanel({
                 <Alert color="yellow">{t('managementLimited')}</Alert>
               )}
               <AdminDataGrid<SessionItem>
+                active={active && view === 'sessions' && selected === null}
                 actionField="details"
                 label={t('managementSessionsCaption')}
                 rows={sessions.items}
@@ -691,13 +660,19 @@ export function ManagementPanel({
                     field: 'state',
                     headerName: m('status'),
                     minWidth: 130,
-                    valueFormatter: (value) => sessionStateLabel(value as string),
+                    type: 'singleSelect',
+                    valueOptions: ['new', 'authorized', 'disposed'].map((value) => ({
+                      value,
+                      label: sessionStateLabel(value),
+                    })),
                   },
                   {
                     field: 'createdAt',
                     headerName: m('started'),
                     minWidth: 190,
-                    valueFormatter: (value) => when(value as string),
+                    type: 'dateTime',
+                    valueGetter: (_value, item) => new Date(item.createdAt),
+                    valueFormatter: (value) => when((value as Date).toISOString()),
                   },
                   {
                     field: 'remote',
@@ -730,6 +705,19 @@ export function ManagementPanel({
                 page={sessionPage - 1}
                 hasNext={sessions.next !== ''}
                 query={sessionQuery}
+                columnFilter={sessionFilter}
+                onSearch={(query, filter) => {
+                  void loadSessions(
+                    false,
+                    {
+                      state: 'all',
+                      query,
+                      filter,
+                      sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
+                    },
+                    0,
+                  );
+                }}
                 sortField="flow"
                 sortDirection={sessionSort}
                 onPage={(index) => {
@@ -964,6 +952,6 @@ export function ManagementPanel({
           </form>
         )}
       </Modal>
-    </Paper>
+    </section>
   );
 }

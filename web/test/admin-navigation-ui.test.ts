@@ -38,8 +38,8 @@ vi.mock('../src/management/ManagementPanel', () => ({
   },
 }));
 vi.mock('../src/artifacts/ArtifactPanel', () => ({
-  ArtifactPanel: () => {
-    useAdminDetail('artifacts', null, () => {});
+  ArtifactPanel: ({ view }: { view: 'recordings' | 'auditlogs' }) => {
+    useAdminDetail(view, null, () => {});
     return createElement('div', null, 'Recording content');
   },
 }));

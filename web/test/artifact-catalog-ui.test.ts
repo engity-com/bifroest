@@ -7,6 +7,7 @@ import type { AuditlogSummary, Page, RecordingSummary } from '../src/management/
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
 import { t } from '../src/ui/messages';
+import { closeNativeFilter, nativeColumnFilter } from './native-grid-filter-ui';
 import '../src/ui/app.css';
 
 const source: AuditlogSummary = {
@@ -121,22 +122,6 @@ function hasNamedCombobox(name: string): boolean {
       .some((id) => document.getElementById(id)?.textContent === name),
   );
 }
-async function field(label: string, value: string) {
-  const node = [...document.querySelectorAll('label')].find((node) => node.textContent === label);
-  const id = node?.getAttribute('for');
-  const input = id ? document.getElementById(id) : null;
-  if (!(input instanceof HTMLInputElement)) {
-    throw new Error(`Missing field ${label}`);
-  }
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  if (!setter) {
-    throw new Error('Missing native value setter');
-  }
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-}
 
 describe('finding and opening recordings without API choreography', () => {
   it('does not duplicate protected metadata reads during StrictMode effect replay', async () => {
@@ -154,10 +139,7 @@ describe('finding and opening recordings without API choreography', () => {
       'default',
       expect.objectContaining({
         sort: 'started-desc',
-        status: 'all',
-        flow: '',
-        user: '',
-        target: '',
+        filter: null,
         after: '',
       }),
       expect.any(AbortSignal),
@@ -210,29 +192,35 @@ describe('finding and opening recordings without API choreography', () => {
     );
   });
 
-  it('sends applied filters to the server and keeps page cursors bound to those filters, not unapplied drafts', async () => {
+  it('submits the native column predicate and retains it through real cursor page changes', async () => {
     vi.mocked(WebAccess.prototype.managementRecordings).mockResolvedValue({
       items: [row],
       next: 'bmp1.next',
       skipped: 0,
     });
-    await mount();
-    await field(t('recordingFilterUser'), 'alice');
+    const app = await mount();
     expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledTimes(1);
-    await click(button(t('recordingFilterApply')));
-    expect(
-      vi.mocked(WebAccess.prototype.managementRecordings).mock.calls.at(-1)?.[1],
-    ).toMatchObject({ user: 'alice', after: '' });
-    await field(t('recordingFilterUser'), 'unapplied-draft');
+    await nativeColumnFilter(app.element, 'User', 'alice');
+    await vi.waitFor(() =>
+      expect(
+        vi.mocked(WebAccess.prototype.managementRecordings).mock.calls.at(-1)?.[1],
+      ).toMatchObject({
+        filter: { field: 'user', operator: 'contains', value: 'alice' },
+        after: '',
+      }),
+    );
+    await closeNativeFilter(app.element);
     await click(button('Go to next page'));
     expect(
       vi.mocked(WebAccess.prototype.managementRecordings).mock.calls.at(-1)?.[1],
-    ).toMatchObject({ user: 'alice', after: 'bmp1.next' });
-    expect(document.body.textContent).toContain(t('recordingFiltersPending'));
+    ).toMatchObject({
+      filter: { field: 'user', operator: 'contains', value: 'alice' },
+      after: 'bmp1.next',
+    });
     await click(button('Go to previous page'));
     expect(
       vi.mocked(WebAccess.prototype.managementRecordings).mock.calls.at(-1)?.[1],
-    ).toMatchObject({ user: 'alice', after: '' });
+    ).toMatchObject({ filter: { field: 'user', operator: 'contains', value: 'alice' }, after: '' });
   });
   it('does not choose a source or download implicitly when the source inventory has another page', async () => {
     vi.mocked(WebAccess.prototype.managementAuditlogs).mockResolvedValue({
@@ -261,7 +249,7 @@ describe('finding and opening recordings without API choreography', () => {
     expect(WebAccess.prototype.managementAuditlogs).toHaveBeenCalledTimes(2);
     expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledExactlyOnceWith(
       'default',
-      expect.objectContaining({ sort: 'started-desc', status: 'all' }),
+      expect.objectContaining({ sort: 'started-desc', filter: null }),
       expect.any(AbortSignal),
     );
     expect(hasNamedCombobox(t('recordingSource'))).toBe(false);

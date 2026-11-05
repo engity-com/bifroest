@@ -167,7 +167,23 @@ The management login uses a separate SSH identity and trusted host key as in [th
 
 ## Browser alternative
 
-Add the HTTPS settings from [Browser access](browser-access.md), publish this administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`, and keep its existing requesting-name requirement. Sign in through **SSH key** as `management`. This flow already opts into original downloads with `allowArtifactTransfer: true`. In the browser, select the recipient private key locally to verify, decrypt and export downloaded originals or prepare recording playback. Use the independently retained producer ID and your recipient key's fingerprint, not unverified server metadata. The application code still comes from the server; keep the CLI workflow above when a separately trusted verification environment is required. See [Security and limits](../reference/connection/http/security.md).
+Add the HTTPS settings from [Browser access](browser-access.md), publish this administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`, and keep its existing requesting-name requirement. Sign in through **SSH key** as `management`. This flow already opts into original downloads with `allowArtifactTransfer: true`.
+
+Choose **Recordings** or **Audit logs**, then open the desired entry. Encryption
+is detected automatically. Select the recipient private key locally and enter
+its passphrase once; the matching public-key fingerprint is derived locally.
+After successful verification, the key is available only in this management tab
+for subsequent Recordings and audit logs. Choose another file to replace it or
+**Forget decryption key** to discard it. Logout, tab closure and reload discard
+the volatile cache. It is not saved in browser storage or uploaded.
+
+Audit logs show verified events with native grid filters and pagination.
+Verification status opens a detail dialog; raw files are an advanced option,
+not the primary view. For independent producer confirmation, enable signing-ID
+validation and replace the suggested header ID with your independently retained
+producer ID. A suggested value is not itself a trust anchor. The application
+code still comes from the server; keep the CLI workflow above when a separately
+trusted verification environment is required. See [Security and limits](../reference/connection/http/security.md).
 
 ## Offline alternatives
 

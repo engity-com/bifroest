@@ -16,6 +16,7 @@ import (
 )
 
 func (this *service) managementAuditlogPage(ctx context.Context, request protocol.ReadRequest) (protocol.Page[protocol.AuditlogSummary], error) {
+	filter := managementGridPredicate(request.GridFilter, request.Operation)
 	page := protocol.Page[protocol.AuditlogSummary]{Items: make([]protocol.AuditlogSummary, 0)}
 	after, _, err := request.Cursor()
 	if err != nil {
@@ -35,7 +36,10 @@ func (this *service) managementAuditlogPage(ctx context.Context, request protoco
 		if managementGridKey(name, descending) <= position || !managementSearch(request.Query, name) {
 			continue
 		}
-		items = insertRead(items, managementGridKey(name, descending), managementview.Auditlog(conf), request.Limit+1)
+		item := managementview.Auditlog(conf)
+		if filter(map[string]protocol.GridValue{"name": protocol.GridText(item.Name), "enabled": protocol.GridBoolean(item.Enabled), "recordingEnabled": protocol.GridBoolean(item.RecordingEnabled), "encrypted": protocol.GridBoolean(item.Encrypted)}) {
+			items = insertRead(items, managementGridKey(name, descending), item, request.Limit+1)
+		}
 	}
 	for i, item := range items {
 		if i == request.Limit {
@@ -92,6 +96,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		position, _ = protocol.RecordingTime(after.StartedAt)
 	}
 	selected := rows[:0]
+	filter := managementGridPredicate(request.GridFilter, request.Operation)
 	ascending := request.Sort == "started-asc"
 	for _, row := range rows {
 		// Older recordings lack the requesting user; target accounts remain
@@ -105,7 +110,17 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 			!position.IsZero() && ((!ascending && row.StartedAt.After(position)) || (ascending && row.StartedAt.Before(position)) || row.StartedAt.Equal(position) && row.RecordingId.String() <= after.ID) {
 			continue
 		}
-		selected = append(selected, row)
+		public := managementRecordingSummary(request.Auditlog, row)
+		fields := map[string]protocol.GridValue{"id": protocol.GridText(row.RecordingId.String()), "status": protocol.GridText(string(row.Status)), "format": protocol.GridText(public.Format), "startedAt": protocol.GridTime(row.StartedAt), "endedAt": protocol.GridTime(row.EndedAt), "containerBytes": protocol.GridNumber(float64(row.Bytes)), "duration": protocol.GridNumber(max(0, row.EndedAt.Sub(row.StartedAt).Seconds())), "encrypted": protocol.GridBoolean(public.Encrypted)}
+		if !public.MetadataUnavailable {
+			if public.User != "" {
+				fields["user"] = protocol.GridText(public.User)
+			}
+			fields["flow"] = protocol.GridText(public.Flow)
+		}
+		if filter(fields) {
+			selected = append(selected, row)
+		}
 	}
 	sort.Slice(selected, func(i, j int) bool {
 		if selected[i].StartedAt.Equal(selected[j].StartedAt) {

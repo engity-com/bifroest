@@ -8,7 +8,7 @@ import type { ArtifactRequest, ReceivedArtifact } from './protocol';
 import { artifactFields, maximumBufferedArtifactBytes } from './protocol';
 
 export interface EvidenceKey {
-  readonly file: File;
+  readonly file: Blob;
   readonly passphrase: string;
 }
 
@@ -130,7 +130,7 @@ export async function verifyArtifact(
     if (
       key !== null &&
       (options.level !== 'private' ||
-        options.recipient === '' ||
+        (options.recipient === '' && !options.recipientFromKey) ||
         key.file.size < 1 ||
         key.file.size > 64 << 10 ||
         key.passphrase.length > 4096 ||
@@ -140,6 +140,9 @@ export async function verifyArtifact(
     }
   } catch (error) {
     throw error instanceof EvidenceError ? error : new EvidenceError('input');
+  }
+  if (options.recipientFromKey && key === null) {
+    throw new EvidenceError('key');
   }
   const lifetime = AbortSignal.timeout(120_000);
   const stopped = AbortSignal.any([signal, lifetime]);

@@ -12,6 +12,15 @@ import (
 
 func managementReadRequest(path string, values map[string]string) (protocol.ReadRequest, error) {
 	request := protocol.ReadRequest{After: values["after"], Flow: values["flow"], User: values["user"], State: values["state"], ID: values["id"], Auditlog: values["auditlog"], Query: values["query"], Sort: values["sort"]}
+	_, field := values["filterField"]
+	_, operator := values["filterOperator"]
+	_, value := values["filterValue"]
+	if field || operator || value {
+		if !field || !operator || !value {
+			return request, protocol.ErrRequest
+		}
+		request.GridFilter = &protocol.GridFilter{Field: values["filterField"], Operator: values["filterOperator"], Value: values["filterValue"]}
+	}
 	switch path {
 	case webAPI + "management/version/show":
 		request.Operation = protocol.ShowVersion

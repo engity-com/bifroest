@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { exerciseArtifactPlayback } from './artifact-playback-ui.mjs';
 import { managementWire } from './management-wire.mjs';
 import {
   activeAccess,
   assertUiPreferences,
   captureLayout,
-  exactArtifactSelection,
   logoutAccess,
   notification,
   reauthenticate,
@@ -117,1088 +117,496 @@ try {
   const page = await context.newPage();
   const wire = managementWire(page);
   const errors = [];
-  const requests = [];
   const apiRequests = [];
-  const sessionGrants = [];
-  const logoutGrants = [];
-  let sockets = 0;
-  let managementSockets = 0;
-  const grantFingerprint = (value) =>
+  const transfers = [];
+  let terminalSocketCount = 0;
+  let managementSocketCount = 0;
+  let outboundBinary = 0;
+  const grants = [];
+  const logouts = [];
+  const fingerprint = (value) =>
     createHash('sha256')
       .update(value ?? '')
       .digest('hex');
+  page.on('pageerror', (error) => errors.push(error.message));
   page.on('websocket', (socket) => {
     if (new URL(socket.url()).pathname.endsWith('/management/channel')) {
-      managementSockets++;
+      managementSocketCount++;
       socket.on('framesent', ({ payload }) => {
-        if (typeof payload === 'string') {
-          const value = JSON.parse(payload);
-          if (value.type === 'open') {
-            sessionGrants.push(grantFingerprint(`Bearer ${value.accessToken}`));
-          }
+        if (typeof payload !== 'string') {
+          outboundBinary++;
+          return;
+        }
+        const value = JSON.parse(payload);
+        if (value.type === 'open') {
+          grants.push(fingerprint(`Bearer ${value.accessToken}`));
         }
       });
     } else {
-      sockets++;
+      terminalSocketCount++;
+    }
+  });
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    assert.equal(new URL(request.url()).search, '');
+    const body = request.postData() ?? '';
+    assert(!body.includes('PRIVATE KEY') && !body.includes('fixture secret'));
+    if (path.includes('/api/') && !path.endsWith('/management/channel')) {
+      apiRequests.push(path);
+    }
+    if (path.endsWith('/logout')) {
+      logouts.push(fingerprint(request.headers().authorization));
     }
   });
   wire.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
     const body = JSON.parse(request.postData());
-    apiRequests.push(new URL(request.url()).pathname);
-    const encoded = JSON.stringify(body);
-    assert(
-      !encoded.includes('PRIVATE KEY') &&
-        !encoded.includes('fixture secret') &&
-        !encoded.includes('offline-private'),
-    );
     assert.equal(request.slug(), 'Work');
-    if (request.url().endsWith('/management/version/show')) {
-      assert.deepEqual(
-        body,
-        { long: 'false' },
-        'the entry view requests only the short version, bound to its admitted scope',
-      );
-    }
-    // Record semantic target scope from the channel, not an invented RPC slug.
-    if (request.url().includes('/management/artifacts/')) {
-      requests.push({ slug: request.slug(), ...body });
-    }
-  });
-  page.on('pageerror', (error) => errors.push(error.message));
-  page.on('request', (request) => {
-    if (new URL(request.url()).pathname.includes('/api/')) {
-      if (!request.url().endsWith('/management/channel')) {
-        apiRequests.push(new URL(request.url()).pathname);
-      }
-      if (request.url().endsWith('/logout')) {
-        logoutGrants.push(request.headers().authorization);
-      }
-      const body = request.postData() ?? '';
-      assert(
-        !body.includes('PRIVATE KEY') &&
-          !body.includes('fixture secret') &&
-          !body.includes('offline-private'),
-      );
-      if (request.url().includes('/management/artifacts/')) {
-        requests.push(JSON.parse(body));
-      }
+    assert(!JSON.stringify(body).includes('PRIVATE KEY'));
+    apiRequests.push(path);
+    if (path.includes('/management/artifacts/')) {
+      transfers.push({ path, body, channel: request.channel() });
     }
   });
   const reply = await page.goto(`${origin}/Work`);
   assert.equal(reply.status(), 200);
   assert(!reply.headers()['content-security-policy'].includes('wasm-unsafe-eval'));
-  await page.getByLabel('User name', { exact: true }).fill('alice');
-  await page.getByLabel('Password', { exact: true }).fill('correct');
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await activeAccess(page, 'alice');
-  await page
-    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
-    .waitFor();
-  await workspace(page, 'Sessions');
-  await page.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
+  const login = async (user) => {
+    await page.getByLabel('User name', { exact: true }).fill(user);
+    await page.getByLabel('Password', { exact: true }).fill('correct');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await activeAccess(page, user);
+    await page
+      .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+      .waitFor();
+  };
+  await login('alice');
   const alicePaneID = await page.locator('[data-connection-active="true"]').getAttribute('id');
   const alicePane = page.locator(`#${alicePaneID}`);
   const aliceNode = await alicePane.elementHandle();
-  assert.deepEqual(
-    apiRequests
-      .filter((path) => path.includes('/management/'))
-      .map((path) => path.split('/management/')[1]),
-    ['version/show', 'flows/list', 'sessions/list'],
-    'entry metadata and the explicit Sessions page never download or prepare evidence',
-  );
-  await workspace(page, 'Server');
-  await page
-    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
-    .waitFor();
   const entry = await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-id', { credentials: 'omit' }).then((response) =>
       response.json(),
     ),
   );
-  const panel = page.getByRole('region', {
-    name: 'Recordings & audit',
-    exact: true,
-  });
-  await workspace(page, 'Recordings & audit');
-  const recordings = panel.getByRole('grid', { name: 'Recordings · default', exact: true });
-  await recordings
-    .getByRole('button', { name: `Open recording ${entry.id}`, exact: true })
-    .waitFor();
-  assert.deepEqual(
-    apiRequests
-      .filter((path) => path.includes('/management/'))
-      .map((path) => path.split('/management/')[1]),
-    ['version/show', 'flows/list', 'sessions/list', 'auditlogs/list', 'recordings/list'],
-    'first visible views read their exact metadata paths; a single recording source loads its page once',
-  );
-  assert.deepEqual(requests, [], 'finding a recording must never download it automatically');
-  await recordings.getByRole('button', { name: `Open recording ${entry.id}`, exact: true }).click();
-  await panel.getByRole('heading', { name: 'Check the recording', exact: true }).waitFor();
-  assert.equal(
-    await panel.getByRole('region', { name: 'Verification details', exact: true }).count(),
-    0,
-  );
-  await panel
-    .getByText(
-      'Choose how this recording should be protected. No server-supplied identity is trusted automatically.',
-      { exact: true },
-    )
-    .waitFor();
-  assert.equal(await panel.getByLabel('Trusted signing ID', { exact: false }).inputValue(), '');
-  assert.equal(
-    await panel.getByLabel('Trusted signing ID', { exact: false }).getAttribute('maxlength'),
-    '64',
-  );
-  assert.equal(
-    await panel.getByRole('button', { name: 'Check and open', exact: true }).isEnabled(),
-    false,
-  );
-  assert.deepEqual(
-    requests,
-    [{ slug: 'Work', auditlog: 'default', id: entry.id }],
-    'the row Open action downloads its exact target once',
-  );
-  const callsBeforeNavigation = apiRequests.length;
-  await workspace(page, 'Server');
-  await workspace(page, 'Recordings & audit');
-  assert.equal(
-    apiRequests.length,
-    callsBeforeNavigation,
-    'switching views must not replay a transfer',
-  );
-  assert.equal(await panel.getByLabel('Trusted signing ID', { exact: false }).inputValue(), '');
-  await captureLayout(page, `artifact-${mode}-verification`);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await captureLayout(page, `artifact-${mode}-mobile`);
-  await page.setViewportSize({ width: 1280, height: 720 });
-  assert.equal(
-    await panel
-      .getByRole('combobox', { name: 'Expected encryption', exact: true })
-      .locator('..')
-      .locator('input')
-      .inputValue(),
-    '',
-  );
-  assert.equal(
-    await panel
-      .getByRole('checkbox', {
-        name: 'Continue without independently confirming the signing identity',
-        exact: true,
-      })
-      .isChecked(),
-    false,
-  );
-  assert.equal(
-    await panel.getByRole('button', { name: 'Save verified export', exact: true }).count(),
-    0,
-  );
-  const advanced = async () => {
-    const summary = panel.getByText('Advanced verification options', { exact: true });
+  const panel = () =>
+    page
+      .locator('[data-connection-active="true"]')
+      .getByRole('region', { name: 'Recordings', exact: true });
+  const auditPanel = () =>
+    page
+      .locator('[data-connection-active="true"]')
+      .getByRole('region', { name: 'Audit logs', exact: true });
+  const options = async (current) => {
+    const summary = current.locator('.artifact-verification > summary');
+    await summary.waitFor();
     if (!(await summary.locator('..').evaluate((node) => node.open))) {
       await summary.click();
     }
   };
-  const result = panel.getByRole('region', { name: 'Verification details', exact: true });
-  let lastVerificationInputs = null;
-  const resultDetails = async (stage = 'verification') => {
-    const failed = panel.getByRole('status').filter({
-      hasText:
-        /^(?:Evidence verification failed\.|The local decryption key could not be imported|Check the exact selectors, independent expectations|The artifact exceeded|Local evidence processing failed|Artifact operation cancelled\.)/u,
+  const select = async (current, label, value) => {
+    await current.getByRole('combobox', { name: label, exact: true }).click();
+    await page.getByRole('option', { name: value, exact: true }).click();
+  };
+  const openDetails = async (current) => {
+    await current
+      .getByRole('button', { name: 'Signature, source and export details', exact: true })
+      .click();
+    const dialog = page.getByRole('dialog', {
+      name: 'Signature, source and export details',
+      exact: true,
     });
-    try {
-      await result.or(failed).waitFor();
-      assert.equal(
-        await failed.count(),
-        0,
-        'the explicitly requested verification must succeed, not merely leave a missing result',
-      );
-    } catch (cause) {
-      const workerState = await page.evaluate(() => {
-        const worker = window.ownedWorkers
-          .filter((entry) => entry.workerName === 'bifroest-evidence')
-          .at(-1);
-        return {
-          available: worker !== undefined,
-          ready: worker?.ready === true,
-          verificationSent: worker?.sentVerification === true,
-          terminated: worker?.terminated === true,
-          code: worker?.failureCode ?? 'none',
-        };
-      });
-      throw new Error(JSON.stringify({ stage, fields: lastVerificationInputs, workerState }), {
-        cause,
-      });
-    }
-    await result
-      .getByRole('heading', { name: 'Signature, source and export details', exact: true })
-      .waitFor();
+    await dialog.waitFor();
+    return dialog;
   };
-  const editVerification = async () => {
-    await result.getByRole('button', { name: 'Change verification settings', exact: true }).click();
-    assert.equal(await result.count(), 0, 'changing expectations must retire the old result');
-    await panel.getByRole('heading', { name: 'Check the recording', exact: true }).waitFor();
-    if (await panel.getByLabel('Decryption key file (local only)', { exact: true }).count()) {
-      assert.equal(
-        await panel
-          .getByLabel('Decryption key file (local only)', { exact: true })
-          .evaluate((input) => input.files.length),
-        0,
-        'reopening expectations cannot retain the local key input',
-      );
-      assert.equal(
-        await panel
-          .getByLabel('Decryption passphrase (optional, local only)', { exact: true })
-          .evaluate((input) => input.value === ''),
-        true,
-      );
-    }
+  const closeDetails = async () => {
+    await page
+      .getByRole('dialog', { name: 'Signature, source and export details', exact: true })
+      .getByRole('button', { name: 'Close', exact: true })
+      .click();
   };
-  const choose = async (label, option) => {
-    if (label === 'Verification depth' || label === 'Audit verification scope') {
-      await advanced();
-    }
-    await panel.getByRole('combobox', { name: label, exact: true }).click();
-    await page.getByRole('option', { name: option, exact: true }).click();
-  };
-  const producer = panel.getByLabel('Trusted signing ID', { exact: false });
-  const localKey = async (password = 'tab fixture secret') => {
-    if (!encrypted) {
-      return;
-    }
-    await panel.getByLabel('Decryption key file (local only)', { exact: true }).setInputFiles({
-      name: 'offline-private',
+  const key = async (current, password = 'tab fixture secret') => {
+    await current.getByLabel('Decryption key file (local only)', { exact: true }).setInputFiles({
+      name: 'local-key.pem',
       mimeType: 'application/octet-stream',
       buffer: readFileSync(keyPath),
     });
-    await panel
+    await current
       .getByLabel('Decryption passphrase (optional, local only)', { exact: true })
       .fill(password);
   };
-  const verify = async () => {
-    lastVerificationInputs = await panel.locator('.artifact-verification').evaluate((form) => {
-      const pin = form.querySelector('input[maxlength="64"]');
-      const recipient = form.querySelector('input[maxlength="50"]');
-      const key = form.querySelector('[name="evidence-private"]');
-      const password = form.querySelector('[name="evidence-passphrase"]');
-      const option = (label, allowed) => {
-        const control = [...form.querySelectorAll('[role="combobox"]')].find((entry) =>
-          (entry.getAttribute('aria-labelledby') ?? '')
-            .split(/\s+/u)
-            .some((id) => document.getElementById(id)?.textContent?.startsWith(label)),
-        );
-        const value = control?.parentElement?.querySelector('input')?.value;
-        return value === undefined ? 'unavailable' : allowed.includes(value) ? value : 'invalid';
-      };
-      return {
-        pinAvailable: pin !== null,
-        pinValid: /^[0-9a-f]{64}$/u.test(pin?.value ?? '') && !/^0+$/u.test(pin?.value ?? ''),
-        recipientAvailable: recipient !== null,
-        recipientValid: /^SHA256:[A-Za-z0-9+/]{43}$/u.test(recipient?.value ?? ''),
-        keyAvailable: key !== null,
-        keySelected: key?.files?.length === 1,
-        keyValid:
-          key?.files?.length === 1 && key.files[0].size > 0 && key.files[0].size <= 64 << 10,
-        passphraseAvailable: password !== null,
-        passphrasePresent: (password?.value.length ?? 0) > 0,
-        passphraseValid:
-          password !== null && password.value.length <= 4096 && password.value.isWellFormed(),
-        inputsValid: [...form.querySelectorAll('input')].every((input) => input.validity.valid),
-        encryption: option('Expected encryption', ['', 'clear', 'encrypted']),
-        level: option('Verification depth', ['outer', 'private']),
-        auditScope: option('Audit verification scope', ['complete', 'captured-prefix']),
-      };
+  const successful = async (current) => {
+    const status = current.getByRole('button', {
+      name: 'Signature, source and export details',
+      exact: true,
     });
-    await panel.getByRole('button', { name: 'Check and open', exact: true }).click();
+    try {
+      await status.waitFor();
+      await page.waitForFunction(
+        (node) => /^(?:Integrity OK|Verification OK)/u.test(node.textContent ?? ''),
+        await status.elementHandle(),
+      );
+    } catch (cause) {
+      throw new Error(
+        JSON.stringify({
+          status: (await status.count()) ? await status.textContent() : 'missing',
+          headings: await page.getByRole('heading').allTextContents(),
+          errors,
+          grids: await page
+            .getByRole('grid')
+            .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label'))),
+          notices: await current.getByRole('status').allTextContents(),
+          workers: await page.evaluate(() =>
+            window.ownedWorkers.map((worker) => ({
+              name: worker.workerName,
+              ready: worker.ready,
+              sent: worker.sentVerification,
+              terminated: worker.terminated,
+              code: worker.failureCode,
+            })),
+          ),
+        }),
+        { cause },
+      );
+    }
   };
-  const save = async () => {
+  const save = async (current) => {
+    await options(current);
     const downloading = page.waitForEvent('download');
-    await result.getByRole('button', { name: 'Save verified export', exact: true }).click();
-    const downloaded = await downloading;
+    await current.getByRole('button', { name: 'Save verified export', exact: true }).click();
+    const download = await downloading;
     const chunks = [];
-    for await (const chunk of await downloaded.createReadStream()) {
+    for await (const chunk of await download.createReadStream()) {
       chunks.push(chunk);
     }
-    return { filename: downloaded.suggestedFilename(), bytes: Buffer.concat(chunks) };
+    return { filename: download.suggestedFilename(), bytes: Buffer.concat(chunks) };
   };
-
-  async function recordingScenario() {
-    await advanced();
-    assert.equal(
-      await panel
-        .getByRole('radio', { name: 'Open content, prepare playback or export', exact: true })
-        .isChecked(),
-      true,
-    );
-    assert.equal(
-      await panel
-        .getByRole('checkbox', {
-          name: 'Prepare a verified local export after full success',
-          exact: true,
-        })
-        .isChecked(),
-      true,
-    );
-    await panel
-      .getByRole('radio', { name: 'Check signatures only (no content or playback)', exact: true })
-      .check();
-    await choose(
-      'Expected encryption',
-      encrypted ? 'This recording should be encrypted' : 'This recording should be unencrypted',
-    );
-    if (encrypted) {
-      assert.equal(
-        await panel.getByLabel('Expected recipient fingerprint', { exact: false }).inputValue(),
-        '',
-      );
-      await panel
-        .getByLabel('Expected recipient fingerprint', { exact: false })
-        .fill(entry.recipient);
-    }
-    await producer.fill('a'.repeat(64));
-    await verify();
-    await panel.getByText('Evidence verification failed.', { exact: false }).waitFor();
-    assert.equal(await result.count(), 0);
-    await producer.fill(entry.producer);
-    if (encrypted) {
-      await panel
-        .getByLabel('Expected recipient fingerprint', { exact: false })
-        .fill(`SHA256:${'A'.repeat(43)}`);
-      await verify();
-      await panel.getByText('Evidence verification failed.', { exact: false }).waitFor();
-      assert.equal(await result.count(), 0);
-      await panel
-        .getByLabel('Expected recipient fingerprint', { exact: false })
-        .fill(entry.recipient);
-    }
-    await verify();
-    await resultDetails();
-    await result
-      .getByText('Signing producer matches the independent expected ID', { exact: true })
-      .waitFor();
-    await result
-      .getByText('Outer signatures/container only — no private verification', { exact: true })
-      .waitFor();
-    if (encrypted) {
-      await result
-        .getByText('Not checked — outer verification does not prove decryption', { exact: true })
-        .waitFor();
-    }
-    assert.equal(
-      await panel.getByRole('button', { name: 'Save verified export', exact: true }).count(),
-      0,
-    );
-    await editVerification();
-    await advanced();
-    await panel
-      .getByRole('radio', { name: 'Open content, prepare playback or export', exact: true })
-      .check();
-    assert.equal(await result.count(), 0, 'changing expectations must retire the old result');
-    assert.equal(
-      await panel
-        .getByRole('checkbox', {
-          name: 'Prepare a verified local export after full success',
-          exact: true,
-        })
-        .isChecked(),
-      true,
-      'opening content is an explicit request to prepare a local export, never to auto-save or play',
-    );
-    if (encrypted) {
-      await localKey('wrong fixture secret');
-      await verify();
-      await panel
-        .getByText('The local decryption key could not be imported', { exact: false })
-        .waitFor();
-      assert.equal(await result.count(), 0);
-      assert.equal(
-        await panel
-          .getByLabel('Decryption passphrase (optional, local only)', { exact: true })
-          .evaluate((input) => input.value === ''),
-        true,
-      );
-      assert.equal(
-        await panel
-          .getByLabel('Decryption key file (local only)', { exact: true })
-          .evaluate((input) => input.files.length),
-        0,
-      );
-    }
-    await localKey();
-    const beforePlayback = apiRequests.length;
-    const titleBefore = await page.title();
-    const pagesBefore = context.pages().length;
-    await verify();
-    await resultDetails();
-    await result
-      .getByText('Full private semantics (decrypt when encrypted)', { exact: true })
-      .waitFor();
-    await result
-      .getByText(
-        encrypted
-          ? 'Authenticated decryption and private verification succeeded'
-          : 'Not encrypted; no decryption key was needed',
-        { exact: true },
-      )
-      .waitFor();
-    await result
-      .getByText('Not established; newer evidence may exist or have been withheld', { exact: true })
-      .waitFor();
-    const cast = await save();
-    assert.equal(cast.filename, `recording-${entry.id}.cast`);
-    assert(cast.bytes.toString().includes('# bifroest:signature:v1 '));
-    const playback = panel.getByRole('region', { name: 'Recording playback', exact: true });
-    await playback.locator('[data-playback-phase="paused"]').waitFor();
-    assert.equal(
-      await panel.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
-      0,
-      'the expectations form retires after success',
-    );
-    const playbackPreparations = () =>
-      page.evaluate(() =>
-        window.ownedWorkers
-          .filter((worker) => worker.workerName === 'bifroest-playback')
-          .map((worker) => worker.requests.map((request) => JSON.parse(request))),
-      );
-    const prepared = await playbackPreparations();
-    assert.equal(
-      prepared.length,
-      1,
-      'the explicit Open intent prepares the exact verified Cast once',
-    );
-    assert.deepEqual(
-      prepared[0]
-        .filter((request) => request.kind === 'playback')
-        .map((request) => request.options),
-      [{ id: entry.id, producer: entry.producer, allowUntrusted: false }],
-    );
-    assert.deepEqual(
-      await page.evaluate(() =>
-        Promise.all(
-          window.ownedWorkers
-            .filter((worker) => worker.workerName === 'bifroest-playback')
-            .flatMap((worker) => worker.playbackDigests),
-        ),
-      ),
-      [createHash('sha256').update(cast.bytes).digest('hex')],
-      'the player’s Go verifier must receive the exact independently checked Cast bytes',
-    );
-    assert.equal(
-      (await playback.locator('.xterm-accessibility-tree').textContent()).includes('PLAYBACK_ONLY'),
-      false,
-      'preparation must not auto-play',
-    );
-    const video = playback.getByRole('application', { name: 'Recording player', exact: true });
-    const normalBox = await video.boundingBox();
-    assert(normalBox !== null);
-    assert(
-      Math.abs(normalBox.width - (normalBox.height * 16) / 9) < 2,
-      'the recording keeps a 16:9 video box',
-    );
-    await video.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
-    await page.waitForFunction(() =>
-      document.fullscreenElement?.classList.contains('recording-video'),
-    );
-    const fullscreen = await page.evaluate(() => {
-      const element = document.fullscreenElement;
-      const box = element.getBoundingClientRect();
-      return {
-        width: box.width,
-        height: box.height,
-        viewportWidth: innerWidth,
-        viewportHeight: innerHeight,
-        controls: element.querySelector('.recording-controls') !== null,
-        timeline: element.querySelector('input[type="range"]') !== null,
-      };
+  let releaseModule;
+  let enteredModule;
+  let cancelledModule = false;
+  if (scenario === 'cancel') {
+    const entered = Promise.withResolvers();
+    const released = Promise.withResolvers();
+    enteredModule = entered.promise;
+    releaseModule = () => released.resolve();
+    await context.route('**/browser-evidence.wasm.gz', async (route) => {
+      entered.resolve();
+      await released.promise;
+      try {
+        await route.continue();
+      } catch (error) {
+        if (!cancelledModule) {
+          throw error;
+        }
+      }
     });
-    assert(
-      Math.abs(fullscreen.width - fullscreen.viewportWidth) < 2 &&
-        Math.abs(fullscreen.height - fullscreen.viewportHeight) < 2,
+  }
+  await workspace(page, 'Recordings');
+  await panel().getByRole('grid', { name: 'Recordings · default', exact: true }).waitFor();
+  assert.equal(transfers.length, 0, 'metadata discovery never downloads content');
+  await panel()
+    .getByRole('button', { name: `Open recording ${entry.id}`, exact: true })
+    .click();
+  if (scenario === 'cancel') {
+    await enteredModule;
+    await panel().getByRole('button', { name: 'Cancel artifact operation', exact: true }).click();
+    await panel().getByText('Artifact operation cancelled.', { exact: false }).waitFor();
+    const count = await page.evaluate(
+      () =>
+        window.ownedWorkers.filter((worker) => worker.workerName === 'bifroest-evidence').length,
     );
-    assert.equal(
-      fullscreen.controls && fullscreen.timeline,
-      true,
-      'native fullscreen keeps the same local controls',
-    );
-    await page.keyboard.press('Escape');
-    await page.waitForFunction(() => document.fullscreenElement === null);
-    assert.equal(
-      (await playbackPreparations()).length,
-      1,
-      'fullscreen never re-prepares or re-verifies another source',
-    );
-    assert.equal(apiRequests.length, beforePlayback, 'fullscreen is purely local');
-    await playback.getByRole('button', { name: 'Play', exact: true }).click();
-    await playback.locator('[data-playback-phase="ended"]').waitFor();
-    assert.equal(
-      await playback.getByRole('button', { name: 'Play again', exact: true }).isEnabled(),
-      true,
-    );
-    await playback
-      .getByRole('region', { name: 'Read-only recording viewport', exact: true })
-      .scrollIntoViewIfNeeded();
-    await page.waitForFunction(() =>
-      document
-        .querySelector('.playback-surface .xterm-accessibility-tree')
-        ?.textContent?.includes('PLAYBACK_ONLY'),
-    );
-    assert.equal(
-      await page.title(),
-      titleBefore,
-      'recorded OSC title cannot rename the application',
-    );
-    await playback.locator('.recording-video').scrollIntoViewIfNeeded();
-    const link = await playback
-      .locator('.xterm-accessibility-tree')
-      .getByText('blocked-playback-link', { exact: true })
-      .boundingBox();
-    assert(link !== null);
+    assert.equal(count, 1);
     assert.equal(
       await page.evaluate(
-        ({ x, y }) => Boolean(document.elementFromPoint(x, y)?.closest('.playback-surface')),
-        { x: link.x + link.width / 2, y: link.y + link.height / 2 },
+        () =>
+          window.ownedWorkers.filter((worker) => worker.workerName === 'bifroest-evidence').at(-1)
+            .terminated,
       ),
       true,
-      'the recorded link click must hit the console, never a player control or clipped/offscreen coordinate',
     );
-    await page.mouse.click(link.x + link.width / 2, link.y + link.height / 2);
-    assert.equal(context.pages().length, pagesBefore, 'recorded links cannot open windows');
-    assert.equal(
-      new URL(page.url()).origin,
-      origin,
-      'recorded links cannot navigate the existing page',
-    );
-    await playback.getByRole('button', { name: 'Start over', exact: true }).click();
-    await playback.locator('[data-playback-phase="paused"]').waitFor();
-    // Playback state and xterm's asynchronously updated accessibility view have
-    // separate completion events. Require the actual cleared view, not a delay.
-    await page.waitForFunction(() => {
-      const view = document.querySelector('.playback-surface .xterm-accessibility-tree');
-      return view !== null && !view.textContent.includes('PLAYBACK_ONLY');
-    });
-    assert.equal(
-      (await playback.locator('.xterm-accessibility-tree').textContent()).includes('PLAYBACK_ONLY'),
-      false,
-    );
-    await playback.getByRole('combobox', { name: 'Speed', exact: true }).selectOption('2');
-    await playback.getByRole('button', { name: 'Play', exact: true }).click();
-    await playback.locator('[data-playback-phase="ended"]').waitFor();
-    await playback.getByRole('button', { name: 'Start over', exact: true }).click();
-    await playback.locator('[data-playback-phase="paused"]').waitFor();
-    await playback.getByRole('button', { name: 'Play', exact: true }).click();
-    await playback.getByRole('button', { name: 'Pause', exact: true }).click();
-    await playback.locator('[data-playback-phase="paused"]').waitFor();
-    assert.equal(apiRequests.length, beforePlayback, 'playback must not issue API requests');
-    assert.equal(sockets, 0, 'local playback must not open a live terminal socket');
-    assert.equal(await page.evaluate(() => window.artifactURLs.size), 1);
-    await playback.getByRole('button', { name: 'Close player', exact: true }).click();
-    assert.equal(await playback.locator('.xterm').count(), 0);
-    await workspace(page, 'Server');
-    await workspace(page, 'Recordings & audit');
+    cancelledModule = true;
+    releaseModule();
+    await context.unroute('**/browser-evidence.wasm.gz');
     await page.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
     );
     assert.equal(
-      (await playbackPreparations()).length,
-      1,
-      'returning to the view cannot restart a closed player',
+      await page.evaluate(
+        () =>
+          window.ownedWorkers.filter((worker) => worker.workerName === 'bifroest-evidence').length,
+      ),
+      count,
+      'cancellation cannot restart a worker automatically',
     );
-    assert.equal(await playback.locator('.xterm').count(), 0);
-    assert.equal(
-      apiRequests.length,
-      beforePlayback,
-      'closing or reopening the view must not replay a transfer or authentication',
-    );
-    await playback.getByRole('button', { name: 'Prepare player', exact: true }).click();
-    await playback.locator('[data-playback-phase="paused"]').waitFor();
-    assert.equal(
-      (await playbackPreparations()).length,
-      2,
-      'a closed player requires one explicit new preparation',
-    );
-    assert.equal(apiRequests.length, beforePlayback);
-    await editVerification();
-    await panel
-      .getByRole('checkbox', {
-        name: 'Continue without independently confirming the signing identity',
-        exact: true,
-      })
-      .check();
-    assert.equal(
-      await panel.locator('.playback-surface .xterm').count(),
-      0,
-      'changing expectations must retire rendered private output',
-    );
-    assert.equal(await result.count(), 0);
-    assert.equal(
-      await page.evaluate(() => window.artifactURLs.size),
-      0,
-      'changing expectations revokes plaintext URLs',
-    );
-    await localKey();
-    await verify();
-    await result
-      .getByText('Signature checked. The signing identity has not been independently confirmed.', {
-        exact: true,
-      })
-      .first()
-      .waitFor();
-    await resultDetails();
-    await result
-      .getByText('Valid evidence from an untrusted producer', { exact: false })
-      .first()
-      .waitFor();
-    assert.equal(
-      await result
-        .getByText('Signing producer matches the independent expected ID', { exact: true })
-        .count(),
-      0,
-    );
-    await playback.locator('[data-playback-phase="paused"]').waitFor();
-    await save();
-    assert.equal(await page.evaluate(() => window.artifactURLs.size), 1);
+    await options(panel());
+    await panel().getByRole('button', { name: 'Check again', exact: true }).click();
   }
-
-  async function openAudit() {
-    await exactArtifactSelection(page);
+  assert.equal(
+    await panel().getByRole('combobox', { name: 'Expected encryption', exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await panel().getByLabel('Expected recipient fingerprint', { exact: false }).count(),
+    0,
+    'the header and local key, not manual guesses, determine protection',
+  );
+  if (encrypted) {
+    await panel().getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
     assert.equal(
-      await panel.locator('.playback-surface .xterm').count(),
-      0,
-      'opening another artifact retires the recording renderer',
-    );
-    assert.equal(
-      await page.evaluate(() => window.artifactURLs.size),
-      0,
-      'changing artifacts revokes the preceding plaintext export',
-    );
-    await choose('Artifact type', 'Audit inventory');
-    assert.equal(await result.count(), 0);
-    await panel.getByRole('button', { name: 'Open audit log', exact: true }).click();
-    await panel.getByRole('heading', { name: 'Check the recording', exact: true }).waitFor();
-    assert.equal(
-      await panel
-        .getByRole('checkbox', {
-          name: 'Continue without independently confirming the signing identity',
-          exact: true,
-        })
-        .isChecked(),
-      false,
-    );
-    assert.equal(await producer.inputValue(), '');
-    await producer.fill(entry.producer);
-    await choose(
-      'Expected encryption',
-      encrypted ? 'This recording should be encrypted' : 'This recording should be unencrypted',
-    );
-    if (encrypted) {
-      await panel
-        .getByLabel('Expected recipient fingerprint', { exact: false })
-        .fill(entry.recipient);
-    }
-  }
-
-  async function auditScenario() {
-    // Preserve the real recording -> audit trust-reset boundary, without also
-    // running every independent player attack/verification attempt in this peer.
-    await producer.fill(entry.producer);
-    await panel
-      .getByRole('checkbox', {
-        name: 'Continue without independently confirming the signing identity',
-        exact: true,
-      })
-      .check();
-    await choose(
-      'Expected encryption',
-      encrypted ? 'This recording should be encrypted' : 'This recording should be unencrypted',
-    );
-    if (encrypted) {
-      await panel
-        .getByLabel('Expected recipient fingerprint', { exact: false })
-        .fill(entry.recipient);
-    }
-    await localKey();
-    await verify();
-    await resultDetails();
-    await result
-      .getByText('Valid evidence from an untrusted producer', { exact: false })
-      .first()
-      .waitFor();
-    assert.equal(
-      await result
-        .getByText('Signing producer matches the independent expected ID', { exact: true })
-        .count(),
+      await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
       0,
     );
-    await panel
-      .getByRole('region', { name: 'Recording playback', exact: true })
-      .locator('[data-playback-phase="paused"]')
-      .waitFor();
-    await save();
-    assert.equal(await page.evaluate(() => window.artifactURLs.size), 1);
-    await openAudit();
-    await choose('Verification depth', 'Full private semantics (decrypt when encrypted)');
-    await panel
-      .getByRole('checkbox', {
-        name: 'Prepare a verified local export after full success',
-        exact: true,
-      })
-      .check();
-    assert.equal(
-      await panel
-        .getByRole('checkbox', { name: 'Include sensitive fields', exact: false })
-        .isChecked(),
-      false,
-    );
-    await localKey();
-    await verify();
-    await resultDetails();
-    await result
-      .getByText('Complete supplied chain ending at its signed head', { exact: true })
-      .waitFor();
-    const audit = await save();
-    assert.equal(audit.filename, 'audit-default.jsonl');
-    assert(audit.bytes.length > 0);
-    assert(
-      !audit.bytes.toString().includes('"flow"') && !audit.bytes.toString().includes('"sessionId"'),
-    );
-    await editVerification();
-    await advanced();
-    await panel.getByRole('checkbox', { name: 'Include sensitive fields', exact: false }).check();
-    assert.equal(await result.count(), 0);
-    await localKey();
-    await verify();
-    await resultDetails();
-    await result.getByText('Sensitive fields explicitly included', { exact: true }).waitFor();
-    const sensitiveAudit = await save();
-    assert(sensitiveAudit.bytes.toString().includes('"flow"'));
-    await editVerification();
-    await choose('Audit verification scope', 'Captured signed prefix (not the latest head)');
-    await localKey();
-    await verify();
-    await resultDetails();
-    await result
-      .getByText('Captured signed prefix (not the latest head)', { exact: true })
-      .waitFor();
-    await result
-      .getByText('Not established; newer evidence may exist or have been withheld', { exact: true })
-      .waitFor();
-    assert.deepEqual(requests, [
-      { slug: 'Work', auditlog: 'default', id: entry.id },
-      { slug: 'Work', auditlog: 'default' },
-    ]);
-    const prefix = await save();
-    assert.equal(prefix.filename, 'audit-default.jsonl');
-    assert(prefix.bytes.length > 0);
-  }
-
-  async function cancelScenario() {
-    await openAudit();
-    await localKey();
-    await verify();
-    await resultDetails();
-    await result
-      .getByText('Complete supplied chain ending at its signed head', { exact: true })
-      .waitFor();
-    await save();
-    assert.equal(await page.evaluate(() => window.artifactURLs.size), 1);
-    assert.deepEqual(requests, [
-      { slug: 'Work', auditlog: 'default', id: entry.id },
-      { slug: 'Work', auditlog: 'default' },
-    ]);
-    await panel.getByRole('button', { name: 'Close recording', exact: true }).click();
-    assert.equal(await result.count(), 0);
-    assert.equal(await page.evaluate(() => window.artifactURLs.size), 0);
-    await exactArtifactSelection(page);
-    await panel.getByRole('button', { name: 'Open audit log', exact: true }).click();
-    await panel.getByRole('heading', { name: 'Check the recording', exact: true }).waitFor();
-    assert.equal(await producer.inputValue(), '');
-    await producer.fill(entry.producer);
-    await choose(
-      'Expected encryption',
-      encrypted ? 'This recording should be encrypted' : 'This recording should be unencrypted',
-    );
-    if (encrypted) {
-      await panel
-        .getByLabel('Expected recipient fingerprint', { exact: false })
-        .fill(entry.recipient);
-    }
-    let release;
-    let entered;
-    let retired;
-    const holding = new Promise((resolve) => {
-      release = resolve;
-    });
-    const entering = new Promise((resolve) => {
-      entered = resolve;
-    });
-    const retiring = new Promise((resolve) => {
-      retired = resolve;
-    });
-    await context.route('**/browser-evidence.wasm.gz', async (route) => {
-      entered();
-      await holding;
-      try {
-        await route.abort().catch(() => undefined);
-      } finally {
-        retired();
-      }
-    });
-    await localKey();
-    await verify();
-    await entering;
-    await panel.getByRole('button', { name: 'Cancel artifact operation', exact: true }).click();
-    release();
-    await retiring;
-    await panel.getByText('Artifact operation cancelled.', { exact: false }).waitFor();
-    await panel
-      .getByRole('button', { name: 'Cancel artifact operation', exact: true })
-      .waitFor({ state: 'hidden' });
-    await panel
-      .getByRole('button', { name: 'Check and open', exact: true })
-      .waitFor({ state: 'visible' });
-    assert.equal(await result.count(), 0);
-    if (encrypted) {
+    if (scenario === 'recording') {
+      await options(panel());
+      await select(
+        panel(),
+        'Verification depth',
+        'Outer signatures/container only — no private verification',
+      );
+      await panel().getByRole('button', { name: 'Check again', exact: true }).click();
+      await panel().getByText('Signatures OK · decryption not checked', { exact: true }).waitFor();
       assert.equal(
-        await panel
-          .getByLabel('Decryption key file (local only)', { exact: true })
-          .evaluate((input) => input.files.length),
+        await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
         0,
       );
       assert.equal(
-        await panel
-          .getByLabel('Decryption passphrase (optional, local only)', { exact: true })
-          .evaluate((input) => input.value === ''),
-        true,
+        await panel().getByRole('button', { name: 'Save verified export', exact: true }).count(),
+        0,
+      );
+      await select(
+        panel(),
+        'Verification depth',
+        'Full private semantics (decrypt when encrypted)',
       );
     }
-    await context.unroute('**/browser-evidence.wasm.gz');
-    await localKey();
-    await verify();
-    assert.equal(
-      lastVerificationInputs.inputsValid,
-      true,
-      'the explicit post-cancel attempt must submit valid inputs',
-    );
-    assert.equal(lastVerificationInputs.level, 'private');
-    assert.equal(lastVerificationInputs.auditScope, 'complete');
-    if (encrypted) {
-      assert.equal(lastVerificationInputs.encryption, 'encrypted');
-      assert.equal(
-        lastVerificationInputs.keySelected &&
-          lastVerificationInputs.keyValid &&
-          lastVerificationInputs.passphrasePresent &&
-          lastVerificationInputs.passphraseValid,
-        true,
-        'the post-cancel attempt must explicitly reselect its local key and passphrase before submitting',
-      );
-    }
-    await resultDetails('after-cancel');
-    await result
-      .getByText('Signing producer matches the independent expected ID', { exact: true })
+    await key(panel(), 'wrong fixture secret');
+    await panel().getByRole('button', { name: 'Unlock and open', exact: true }).click();
+    await panel()
+      .getByText('The local decryption key could not be imported', { exact: false })
       .waitFor();
-    await save();
-    const aliceURLs = await page.evaluate(() => window.artifactURLs.size);
-    assert(aliceURLs > 0, 'the original access owns its prepared local export');
-    await reauthenticate(page);
-    await page.getByLabel('User name', { exact: true }).fill('bob');
-    await page.getByLabel('Password', { exact: true }).fill('correct');
-    const bobEntryReply = wire.waitForResponse((response) =>
-      response.url().endsWith('/management/flows/list'),
+    assert.equal(
+      await panel()
+        .getByLabel('Decryption key file (local only)', { exact: true })
+        .evaluate((input) => input.files.length),
+      1,
+      'a failed candidate remains editable, never silently replaced by an older cache',
     );
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await activeAccess(page, 'bob');
-    assert.equal((await bobEntryReply).status(), 200);
+    await panel()
+      .getByLabel('Decryption passphrase (optional, local only)', { exact: true })
+      .fill('tab fixture secret');
+    await panel().getByRole('button', { name: 'Unlock and open', exact: true }).click();
+  }
+  await successful(panel());
+  await captureLayout(page, `artifact-${mode}-opened`);
+  const originalCalls = transfers.length;
+  assert.equal(originalCalls, 1);
+  await options(panel());
+  assert.equal(
+    await panel().getByLabel('Trusted signing ID', { exact: false }).inputValue(),
+    entry.producer,
+  );
+  assert.equal(await panel().getByLabel('Trusted signing ID', { exact: false }).isDisabled(), true);
+  if (scenario === 'recording') {
+    await exerciseArtifactPlayback({
+      page,
+      context,
+      panel: panel(),
+      origin,
+      entry,
+      apiRequests,
+      terminalSockets: () => terminalSocketCount,
+      save: () => save(panel()),
+    });
+    await options(panel());
+    await panel()
+      .getByRole('checkbox', { name: 'Check the signing identity against this ID', exact: true })
+      .check();
+    await panel().getByLabel('Trusted signing ID', { exact: false }).fill('1'.repeat(64));
+    const before = transfers.length;
+    await panel().getByRole('button', { name: 'Check again', exact: true }).click();
+    await panel().getByText('Evidence verification failed.', { exact: false }).waitFor();
+    assert.equal(
+      await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
+      0,
+    );
+    const failed = await openDetails(panel());
+    await failed.getByText('verification', { exact: true }).waitFor();
+    await failed.getByText('1'.repeat(64), { exact: true }).waitFor();
+    await closeDetails();
+    await panel().getByLabel('Trusted signing ID', { exact: false }).fill(entry.producer);
+    await panel().getByRole('button', { name: 'Check again', exact: true }).click();
+    await successful(panel());
+    assert.equal(
+      transfers.length,
+      before,
+      'changing independent expectations must never fetch another artifact',
+    );
+    const pinned = await openDetails(panel());
+    await pinned
+      .getByText('Signature matches the user-selected signing ID', { exact: true })
+      .waitFor();
+    await closeDetails();
+    await save(panel());
+  }
+  if (scenario !== 'recording') {
+    await workspace(page, 'Audit logs');
+    await auditPanel()
+      .getByRole('grid', { name: 'Configured auditlogs (server metadata)', exact: true })
+      .waitFor();
+    const before = transfers.length;
+    await auditPanel().getByRole('button', { name: 'Open audit log default', exact: true }).click();
+    await successful(auditPanel());
+    assert.equal(transfers.length, before + 1);
+    assert.equal(
+      await auditPanel().getByLabel('Decryption key file (local only)', { exact: true }).count(),
+      0,
+      'the successfully verified Recording key must be reused in the same tab',
+    );
+    const events = auditPanel().getByRole('grid', { name: 'Audit events', exact: true });
+    await events.locator('[role="row"][data-id]').first().waitFor();
+    await captureLayout(page, `artifact-${mode}-events`);
+    const firstName = await events
+      .locator('[role="row"][data-id]')
+      .first()
+      .locator('[data-field="name"]')
+      .textContent();
+    assert.match(firstName, /^[a-z-]+\.[a-z.]+$/u);
+    assert.equal(
+      await auditPanel()
+        .getByRole('button', { name: /^Save unverified original/u })
+        .count(),
+      0,
+      'raw files are not the primary audit view',
+    );
+    await events
+      .locator('[role="row"][data-id]')
+      .first()
+      .getByRole('button', { name: 'Details', exact: true })
+      .click();
+    await page.getByRole('dialog', { name: 'Audit event details', exact: true }).waitFor();
     await page
-      .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+      .getByRole('dialog', { name: 'Audit event details', exact: true })
+      .getByRole('button', { name: 'Close', exact: true })
+      .click();
+    const beforeLocal = apiRequests.length;
+    const controls = events.locator('xpath=ancestor::div[@class="admin-data-grid"][1]');
+    await controls.getByRole('button', { name: 'Search', exact: true }).click();
+    await controls.getByPlaceholder('Search…', { exact: true }).fill('session');
+    await page.waitForFunction(() => {
+      const rows = [
+        ...document.querySelectorAll(
+          '[data-connection-active="true"] [aria-label="Audit events"] [role="row"][data-id] [data-field="name"]',
+        ),
+      ];
+      return rows.length > 0 && rows.every((row) => row.textContent.includes('session'));
+    });
+    assert.equal(
+      apiRequests.length,
+      beforeLocal,
+      'audit event filtering is local to already verified bytes',
+    );
+    const auditExport = await save(auditPanel());
+    assert.equal(auditExport.filename, 'audit-default.jsonl');
+    const records = auditExport.bytes
+      .toString()
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    assert(records.length > 0 && records.every((record) => typeof record.event?.name === 'string'));
+  }
+  if (scenario === 'cancel') {
+    const ownedURLs = await page.evaluate(() => window.artifactURLs.size);
+    assert(ownedURLs > 0);
+    await reauthenticate(page);
+    await login('bob');
+    const bobPane = page.locator('[data-connection-active="true"]');
+    assert.notEqual(await bobPane.getAttribute('id'), alicePaneID);
+    if (encrypted) {
+      await workspace(page, 'Recordings');
+      const bobGrid = panel().getByRole('grid', { name: 'Recordings · default', exact: true });
+      await bobGrid.waitFor();
+      const frame = bobGrid.locator('xpath=ancestor::div[@class="admin-data-grid"][1]');
+      await frame.getByRole('button', { name: 'Search', exact: true }).click();
+      await frame.getByPlaceholder('Search…', { exact: true }).fill(entry.id);
+      await panel()
+        .getByRole('button', { name: `Open recording ${entry.id}`, exact: true })
+        .click();
+      await panel().getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
+      assert.equal(
+        await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
+        0,
+        'a second actor must not borrow the first tab key',
+      );
+    }
+    await workspace(page, 'Audit logs');
+    await auditPanel()
+      .getByRole('button', { name: 'Open audit log default', exact: true })
       .waitFor();
-    const bobSessionsReply = wire.waitForResponse((response) =>
-      response.url().endsWith('/management/sessions/list'),
-    );
-    await workspace(page, 'Sessions');
-    assert.equal((await bobSessionsReply).status(), 200);
-    const bobPaneID = await page.locator('[data-connection-active="true"]').getAttribute('id');
-    const bobPane = page.locator(`#${bobPaneID}`);
-    assert.equal(bobPaneID !== alicePaneID, true);
-    assert.equal(await bobPane.getAttribute('data-connection-principal'), 'bob');
-    await bobPane.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
-    assert.equal(sessionGrants.length, 2);
-    assert.equal(
-      sessionGrants[0] !== undefined &&
-        sessionGrants[1] !== undefined &&
-        sessionGrants[0] !== sessionGrants[1],
-      true,
-      'the two panes must own distinct authenticated grants',
-    );
-    await workspace(page, 'Recordings & audit');
-    await panel.getByRole('grid', { name: 'Recordings · default', exact: true }).waitFor();
-    assert.equal(
-      await panel.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
-      0,
-    );
-    assert.equal(await result.count(), 0, 'Bob must not inherit Alice’s verification result');
-    assert.equal(
-      await panel.getByRole('region', { name: 'Recording playback', exact: true }).count(),
-      0,
-    );
-    assert.equal(
-      await page.evaluate(() => window.artifactURLs.size),
-      aliceURLs,
-      'an additional actor gets a separate view, not ownership or destruction of the original export',
-    );
-    await exactArtifactSelection(page);
-    await panel.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
-    await choose('Artifact type', 'Audit inventory');
     await page.evaluate(() =>
       fetch('/_bifroest/test/artifact-arm', { method: 'POST', credentials: 'omit' }),
     );
-    await panel.getByRole('button', { name: 'Open audit log', exact: true }).click();
+    await auditPanel().getByRole('button', { name: 'Open audit log default', exact: true }).click();
     await page.evaluate(() => fetch('/_bifroest/test/artifact-entered', { credentials: 'omit' }));
     assert.equal(
-      await panel.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
+      await auditPanel().getByRole('grid', { name: 'Audit events', exact: true }).count(),
       0,
-      'an incomplete audited transfer must not expose files',
+      'provisional audited transfer cannot publish event content',
     );
-    const bobLogoutReply = page.waitForResponse((response) => response.url().endsWith('/logout'));
+    const bobReply = page.waitForResponse((response) => response.url().endsWith('/logout'));
     await logoutAccess(page);
     await page.evaluate(() =>
       fetch('/_bifroest/test/artifact-release', { method: 'POST', credentials: 'omit' }),
     );
-    const bobLogout = await bobLogoutReply;
-    assert.equal(bobLogout.status(), 204);
-    assert.equal(
-      grantFingerprint(bobLogout.request().headers().authorization) === sessionGrants[1],
-      true,
-      'the interrupted transfer owner, Bob, is the exact logout target',
-    );
-    await bobPane.waitFor({ state: 'detached' });
+    const logout = await bobReply;
+    assert.equal(logout.status(), 204);
+    assert.equal(fingerprint(logout.request().headers().authorization) === grants[1], true);
     await notification(page, 'Logout confirmed.');
     await activeAccess(page, 'alice');
-    assert.equal(
-      await aliceNode.evaluate((node) => node.isConnected),
-      true,
-      'Bob logout must not remount or retire Alice’s evidence owner',
-    );
-    assert.equal(
-      await page
-        .getByRole('tablist', { name: 'Connections and terminals', exact: true })
-        .getByRole('tab')
-        .count(),
-      1,
-    );
-    assert.equal(logoutGrants.length, 1, 'Bob logout must not silently log out Alice as well');
-    await result
-      .getByText('Signing producer matches the independent expected ID', { exact: true })
-      .waitFor();
-    assert.equal(
-      await page.evaluate(() => window.artifactURLs.size),
-      aliceURLs,
-      'Bob logout must leave only the original Alice-owned export intact',
-    );
-    assert.deepEqual(
-      requests,
-      [
-        { slug: 'Work', auditlog: 'default', id: entry.id },
-        { slug: 'Work', auditlog: 'default' },
-        { slug: 'Work', auditlog: 'default' },
-        { slug: 'Work', auditlog: 'default' },
-      ],
-      'one recording Open, two deliberate Alice audit Opens and one interrupted Bob audit Open; no replay from verification, playback or actor navigation',
-    );
-    assert.equal(
-      apiRequests.filter((path) => path.endsWith('/login/password')).length,
-      2,
-      'only the two explicit actor sign-ins authenticate',
-    );
-    assert.equal(
-      apiRequests.filter((path) => path.includes('/remember/')).length,
-      0,
-      'artifact actions must not enroll or resume authentication',
-    );
+    assert.equal(await aliceNode.evaluate((node) => node.isConnected), true);
+    assert.equal(await page.evaluate(() => window.artifactURLs.size), ownedURLs);
+    assert.equal(logouts.length, 1);
   }
-
-  // Every mode is its own Go-created server/peer budget. No admission reset,
-  // waiting for a fresh minute, automatic retry, or skipped cleanup is involved.
-  if (scenario === 'recording') {
-    await recordingScenario();
-  } else if (scenario === 'audit') {
-    await auditScenario();
-  } else {
-    await cancelScenario();
-  }
-  const expectedTransfers = [
-    { slug: 'Work', auditlog: 'default', id: entry.id },
-    ...(scenario === 'recording' ? [] : [{ slug: 'Work', auditlog: 'default' }]),
-    ...(scenario === 'cancel'
-      ? [
-          { slug: 'Work', auditlog: 'default' },
-          { slug: 'Work', auditlog: 'default' },
-        ]
-      : []),
-  ];
-  assert.deepEqual(
-    requests,
-    expectedTransfers,
-    'only the scenario’s exact explicit Opens may transfer artifacts',
-  );
+  assert.equal(terminalSocketCount, 0);
+  assert.equal(outboundBinary, 0);
+  assert.equal(managementSocketCount, scenario === 'cancel' ? 2 : 1);
   assert.equal(
     apiRequests.filter((path) => path.endsWith('/login/password')).length,
     scenario === 'cancel' ? 2 : 1,
   );
   assert.equal(apiRequests.filter((path) => path.includes('/remember/')).length, 0);
-  assert.equal(sockets, 0, 'all artifact scenarios stay local and must never open a live terminal');
-  assert.equal(
-    managementSockets,
-    scenario === 'cancel' ? 2 : 1,
-    'only the explicit sign-ins open management channels; verification and playback never do',
+  assert.equal(await page.evaluate(() => window.artifactStorageWrites), 0);
+  assert(
+    transfers.every((request) =>
+      [
+        '/_bifroest/api/v1/management/artifacts/recording',
+        '/_bifroest/api/v1/management/artifacts/audit',
+      ].includes(request.path),
+    ),
   );
+  assert.deepEqual(transfers[0].body, { auditlog: 'default', id: entry.id });
   assert.equal(
-    await page.evaluate(() => window.artifactURLs.size),
+    transfers.filter(
+      (request) => request.path.endsWith('/recording') && request.channel === transfers[0].channel,
+    ).length,
     1,
-    'the owner has exactly its deliberately saved export before explicit logout',
+    'Alice opens one Recording; local verification and playback never replay it',
   );
-  const aliceLogoutReply = page.waitForResponse((response) => response.url().endsWith('/logout'));
+  const aliceReply = page.waitForResponse((response) => response.url().endsWith('/logout'));
   await logoutAccess(page);
-  const aliceLogout = await aliceLogoutReply;
-  assert.equal(aliceLogout.status(), 204);
-  assert.equal(
-    grantFingerprint(aliceLogout.request().headers().authorization) === sessionGrants[0],
-    true,
-    'retiring Alice’s evidence requires the separately requested logout of her exact grant',
-  );
+  const logout = await aliceReply;
+  assert.equal(logout.status(), 204);
+  assert.equal(fingerprint(logout.request().headers().authorization) === grants[0], true);
   await alicePane.waitFor({ state: 'detached' });
   assert.equal(await page.getByRole('tab').count(), 0);
+  assert.equal(await page.evaluate(() => window.artifactURLs.size), 0);
   assert.equal(
-    logoutGrants.length,
-    scenario === 'cancel' ? 2 : 1,
-    'only the explicitly requested owner-specific logout requests are permitted',
-  );
-  assert.equal(await panel.count(), 0);
-  assert.equal(
-    await page.evaluate(() => window.artifactURLs.size),
-    0,
-    'owning access logout revokes every retained local export',
+    await page.evaluate(() => window.ownedWorkers.every((worker) => worker.terminated)),
+    true,
   );
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   await assertUiPreferences(page);
-  assert.equal(
-    await page.evaluate(() => window.artifactStorageWrites),
-    0,
-    'no local keys, selectors or plaintext may be persisted by the artifact view',
-  );
-  assert(
-    await page.evaluate(() =>
-      window.ownedWorkers.every(
-        (worker) =>
-          worker.terminated &&
-          worker.requests.every(
-            (request) =>
-              !request.includes('bwa1.') &&
-              !request.includes('fixture secret') &&
-              !request.includes('offline-private'),
-          ),
-      ),
-    ),
-  );
   console.log(JSON.stringify({ success: true }));
 } finally {
   await browser.close();

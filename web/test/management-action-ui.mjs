@@ -5,6 +5,7 @@ import {
   assertAccessActionsBlocked,
   assertUiPreferences,
   captureLayout,
+  gridColumnFilter,
   reauthenticate,
   workspace,
 } from './workspace-ui.mjs';
@@ -309,7 +310,7 @@ export async function exerciseManagementActions(page, login, logout) {
   });
   assert.equal(
     await navigation
-      .getByRole('button', { name: 'Recordings & audit', exact: true, includeHidden: true })
+      .getByRole('button', { name: 'Recordings', exact: true, includeHidden: true })
       .isEnabled(),
     false,
   );
@@ -339,7 +340,7 @@ export async function exerciseManagementActions(page, login, logout) {
   assert.equal(commits, 2, 'no automatic confirmation replay after a lost response');
   assert.equal(interruption.losses(), 1, 'exactly one real committed action lost its completion');
   assert.equal(
-    await page.getByRole('button', { name: 'Search sessions', exact: true }).isEnabled(),
+    await page.getByRole('button', { name: 'Refresh sessions', exact: true }).isEnabled(),
     false,
     'a lost management channel cannot silently fall back to HTTP',
   );
@@ -352,10 +353,7 @@ export async function exerciseManagementActions(page, login, logout) {
     .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
     .waitFor();
   await workspace(page, 'Sessions');
-  await page.locator('[data-connection-active="true"] .session-filter-details > summary').click();
-  await page.getByRole('combobox', { name: 'Session state', exact: true }).click();
-  await page.getByRole('option', { name: 'All statuses', exact: true }).click();
-  await page.getByRole('button', { name: 'Search sessions', exact: true }).click();
+  await gridColumnFilter(page, table, 'Status', 'is', 'Ended');
   await table
     .locator('[role="row"][data-id]')
     .filter({ has: page.getByText('bob', { exact: true }) })

@@ -200,6 +200,7 @@ func insertRead[T any](items []readSlot[T], key string, value T, maximum int) []
 }
 
 func (this *service) managementFlowPage(ctx context.Context, request protocol.ReadRequest) (protocol.Page[protocol.FlowSummary], error) {
+	filter := managementGridPredicate(request.GridFilter, request.Operation)
 	page := protocol.Page[protocol.FlowSummary]{Items: make([]protocol.FlowSummary, 0)}
 	after, _, err := request.Cursor()
 	if err != nil {
@@ -220,7 +221,9 @@ func (this *service) managementFlowPage(ctx context.Context, request protocol.Re
 		if key <= position || !managementSearch(request.Query, item.Name, item.Environment, item.Authorization, item.Auditlog) {
 			continue
 		}
-		items = insertRead(items, key, item, request.Limit+1)
+		if filter(map[string]protocol.GridValue{"name": protocol.GridText(item.Name), "environment": protocol.GridText(item.Environment), "authorization": protocol.GridText(item.Authorization), "auditlog": protocol.GridText(item.Auditlog)}) {
+			items = insertRead(items, key, item, request.Limit+1)
+		}
 	}
 	for i, item := range items {
 		if i == request.Limit {
@@ -264,6 +267,7 @@ func managementSessionItemWithOwner(ctx context.Context, current session.Session
 }
 
 func (this *service) managementSessionPage(ctx context.Context, request protocol.ReadRequest, ceiling *managementpolicy.ReadCeiling) (protocol.Page[protocol.SessionItem], error) {
+	filter := managementGridPredicate(request.GridFilter, request.Operation)
 	page := protocol.Page[protocol.SessionItem]{Items: make([]protocol.SessionItem, 0)}
 	flow, id, err := request.Cursor()
 	if err != nil {
@@ -304,6 +308,13 @@ func (this *service) managementSessionPage(ctx context.Context, request protocol
 			item = ceiling.Project(item)
 		}
 		if !managementSearch(request.Query, item.ID, item.Flow, item.User, item.State, item.Remote) {
+			return true, nil
+		}
+		fields := map[string]protocol.GridValue{"id": protocol.GridText(item.ID), "flow": protocol.GridText(item.Flow), "user": protocol.GridText(item.User), "state": protocol.GridText(item.State), "createdAt": protocol.GridTime(item.CreatedAt)}
+		if ceiling == nil || !ceiling.TableList {
+			fields["remote"] = protocol.GridText(item.Remote)
+		}
+		if !filter(fields) {
 			return true, nil
 		}
 		items = insertRead(items, key, item, request.Limit+1)

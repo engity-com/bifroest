@@ -18,11 +18,6 @@ const browser = await chromium.launch({
   headless: true,
   args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'],
 });
-const failedResources = [];
-const failedRequests = [];
-const artifactErrors = [];
-const workerAssets = [];
-let observedPage;
 try {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   await context.addCookies([
@@ -36,500 +31,244 @@ try {
   });
   const page = await context.newPage();
   const wire = managementWire(page);
-  observedPage = page;
-  const errors = [];
   const requests = [];
-  const artifactResponses = [];
-  page.on('console', async (message) => {
-    if (
-      message.type() !== 'error' ||
-      message.args().length !== 2 ||
-      !['[Bifröst/artifact]', '[Bifröst/artifact-catalog]'].includes(
-        message.text().split(' ', 1)[0],
-      )
-    ) {
-      return;
-    }
-    const code = await message
-      .args()[1]
-      .evaluate((error) => Object.getOwnPropertyDescriptor(error, 'code')?.value);
-    artifactErrors.push(
-      [
-        'unavailable',
-        'busy',
-        'cancelled',
-        'denied',
-        'rate-limited',
-        'input',
-        'artifact-too-large',
-      ].includes(code)
-        ? code
-        : 'unknown',
-    );
-  });
-  context.on('response', (response) => {
-    const path = new URL(response.url()).pathname;
-    if (/\/(?:browser-transfer-worker\.js|browser-transfer\.wasm|go-wasm-exec\.js)$/u.test(path)) {
-      workerAssets.push({ path, status: response.status() });
-    }
-    if (path.includes('/management/artifacts/')) {
-      artifactResponses.push({ path, status: response.status() });
-    }
-    if (path.startsWith('/_bifroest/') && response.status() >= 400 && failedResources.length < 32) {
-      failedResources.push({ path, status: response.status(), at: Date.now() });
-    }
-  });
-  context.on('requestfailed', (request) => {
-    const path = new URL(request.url()).pathname;
-    if (failedRequests.length < 32) {
-      const code = request.failure()?.errorText;
-      failedRequests.push({
-        path,
-        code: /^net::ERR_[A-Z_]+$/u.test(code ?? '') ? code : 'unknown',
-        at: Date.now(),
-      });
-    }
-  });
+  const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  wire.on('response', (response) => {
-    if (response.url().includes('/management/artifacts/')) {
-      artifactResponses.push({ path: new URL(response.url()).pathname, status: response.status() });
-    }
-  });
   wire.on('request', (request) => {
-    if (new URL(request.url()).pathname.includes('/management/')) {
-      const body = JSON.parse(request.postData() ?? '{}');
-      assert(
-        !Object.keys(body).some((key) =>
-          [
-            'command',
-            'args',
-            'privateKey',
-            'passphrase',
-            'allowArtifactTransfer',
-            'includingCredentials',
-            'producer',
-            'recipient',
-          ].includes(key),
-        ),
-      );
-      assertCatalogRequestPrivacy(request);
-      assert.equal(request.slug(), 'Work');
-      requests.push({ path: new URL(request.url()).pathname, body });
-    }
+    const body = JSON.parse(request.postData());
+    assertCatalogRequestPrivacy(request);
+    assert.equal(request.slug(), 'Work');
+    assert(
+      !Object.keys(body).some((key) =>
+        [
+          'command',
+          'args',
+          'privateKey',
+          'passphrase',
+          'allowArtifactTransfer',
+          'includingCredentials',
+          'producer',
+          'recipient',
+        ].includes(key),
+      ),
+    );
+    requests.push({ path: new URL(request.url()).pathname, body, channel: request.channel() });
   });
+  const read = (captured, kind) => {
+    assert.equal(captured.error, undefined, 'capture must join the real RPC completion');
+    assert.equal(captured.status, 200);
+    assert.equal(captured.body.version, 1);
+    assert.equal(captured.body.operation, `${kind}.list`);
+    return captured.body[kind];
+  };
+  const capture = (kind) => captureJsonResponse(page, `/_bifroest/api/v1/management/${kind}/list`);
   const login = async (user) => {
     await page.getByLabel('User name', { exact: true }).fill(user);
     await page.getByLabel('Password', { exact: true }).fill('correct');
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await activeAccess(page, user);
+    await page
+      .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
+      .waitFor();
   };
-  const response = await page.goto(`${origin}/Work`);
-  assert.equal(response.status(), 200);
+  assert.equal((await page.goto(`${origin}/Work`)).status(), 200);
   await login('alice');
-  await page
-    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
-    .waitFor();
-  await workspace(page, 'Sessions');
-  await page.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
-  assert.deepEqual(
-    requests.map((request) => request.path.split('/management/')[1]),
-    ['version/show', 'flows/list', 'sessions/list'],
-    'the active Sessions view reads once; sign-in cannot discover artifacts or download',
-  );
-  const firstSourcesReply = captureJsonResponse(
-    page,
-    '/_bifroest/api/v1/management/auditlogs/list',
-  );
-  await workspace(page, 'Recordings & audit');
-  const catalog = page.getByRole('region', {
-    name: 'Artifact catalog (server metadata)',
-    exact: true,
-  });
-  const panel = page.getByRole('region', {
-    name: 'Recordings & audit',
-    exact: true,
-  });
-  await panel.evaluate((panel) => {
-    window.catalogDownloadProbe = { submits: 0, invalid: 0 };
-    const form = panel.querySelector(
-      '.artifact-selection > .artifact-selection-grid > details > form',
-    );
-    form.addEventListener(
-      'submit',
-      () => {
-        window.catalogDownloadProbe.submits++;
-      },
-      true,
-    );
-    form.addEventListener(
-      'invalid',
-      () => {
-        window.catalogDownloadProbe.invalid++;
-      },
-      true,
-    );
-  });
-  function readPage(captured, kind) {
-    assert.equal(captured.error, undefined, 'catalog response capture must complete');
-    assert.equal(captured.status, 200);
-    const body = captured.body;
-    assert(
-      body !== null && typeof body === 'object' && !Array.isArray(body),
-      'catalog receipt must be an object',
-    );
-    assert(body.version === 1, 'catalog receipt version must be 1');
-    assert(body.operation === `${kind}.list`, 'catalog receipt operation must match');
-    return body[kind];
-  }
-  const firstSources = readPage(await firstSourcesReply, 'auditlogs');
+  const firstSourcesReply = capture('auditlogs');
+  await workspace(page, 'Recordings');
+  const recordPanel = () =>
+    page
+      .locator('[data-connection-active="true"]')
+      .getByRole('region', { name: 'Recordings', exact: true });
+  const catalog = () =>
+    recordPanel().getByRole('region', { name: 'Artifact catalog (server metadata)', exact: true });
+  const firstSources = read(await firstSourcesReply, 'auditlogs');
   assert.equal(firstSources.items.length, 20);
   assert.deepEqual(
     firstSources.items.map((row) => row.name),
     Array.from({ length: 20 }, (_, index) => `catalog${String(index).padStart(2, '0')}`),
   );
   assert.match(firstSources.next, /^bmp1\./u);
+  assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 0);
+  const remainingSourcesReply = capture('auditlogs');
+  await catalog().getByRole('button', { name: 'More recording sources', exact: true }).click();
+  const remaining = read(await remainingSourcesReply, 'auditlogs');
   assert.deepEqual(
-    requests.map((request) => request.path.split('/management/')[1]),
-    ['version/show', 'flows/list', 'sessions/list', 'auditlogs/list'],
-    'only first-visible source metadata loads; multiple sources require an explicit choice',
-  );
-  await catalog.getByText('Audit log exports', { exact: true }).click();
-  const logs = catalog.getByRole('grid', {
-    name: 'Configured auditlogs (server metadata)',
-    exact: true,
-  });
-  await logs.getByText('catalog00', { exact: true }).waitFor();
-  assert.equal(firstSources.items.length, 20);
-  const nextSourcesReply = captureJsonResponse(page, '/_bifroest/api/v1/management/auditlogs/list');
-  await catalog.getByRole('button', { name: 'More recording sources', exact: true }).click();
-  const nextSources = readPage(await nextSourcesReply, 'auditlogs');
-  assert.deepEqual(
-    nextSources.items.map((row) => row.name),
+    remaining.items.map((row) => row.name),
     ['catalog20', 'default'],
   );
-  assert.equal(nextSources.next, '');
-  const nextAuditGridReply = captureJsonResponse(
-    page,
-    '/_bifroest/api/v1/management/auditlogs/list',
-  );
-  await logs
-    .locator('xpath=ancestor::div[@class="admin-data-grid"][1]')
-    .getByRole('button', { name: 'Go to next page', exact: true })
-    .click();
-  const nextAuditGrid = readPage(await nextAuditGridReply, 'auditlogs');
-  assert.deepEqual(nextAuditGrid.items, nextSources.items);
-  await logs.getByText('catalog20', { exact: true }).waitFor();
-  assert.equal(
-    await logs.locator('[role="row"][data-id]').count(),
-    2,
-    'the native audit grid shows exactly its final cursor page; source choices retain the complete inventory',
-  );
-  assert.equal(
-    await catalog.getByRole('button', { name: 'More recording sources', exact: true }).count(),
-    0,
-  );
-  assert(
-    await logs.getByRole('button', { name: 'Open audit log catalog20', exact: true }).isEnabled(),
-    'every configured audit log is active; there is no separate enabled flag',
-  );
-  await logs
-    .getByRole('row')
-    .filter({ has: page.getByRole('gridcell', { name: 'catalog20', exact: true }) })
-    .getByText('Recording disabled', { exact: false })
-    .waitFor();
-  await catalog.getByRole('combobox', { name: 'Recording source', exact: true }).click();
+  assert.equal(remaining.next, '');
+  await catalog().getByRole('combobox', { name: 'Recording source', exact: true }).click();
   assert.equal(await page.getByRole('option').count(), 21);
   assert.equal(
     await page.getByRole('option', { name: 'catalog20', exact: true }).count(),
     0,
-    'recording remains a separate opt-in: the recording-disabled logger is not a recording source',
+    'a recording-disabled audit log cannot become a recording source',
   );
   await page.keyboard.press('Escape');
-  assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 0);
-  const beforeAuditOpen = requests.length;
-  await logs.getByRole('button', { name: 'Open audit log default', exact: true }).click();
-  await waitDownload('audit-open');
-  await panel
-    .getByRole('region', { name: 'Unverified server hints and original files', exact: true })
-    .getByText('default', { exact: true })
-    .waitFor();
-  assert.equal(await panel.getByLabel('Trusted signing ID', { exact: false }).inputValue(), '');
-  assert.equal(
-    await panel.getByRole('region', { name: 'Verification details', exact: true }).count(),
-    0,
-  );
-  assert.deepEqual(
-    requests
-      .slice(beforeAuditOpen)
-      .map((request) => [request.path.split('/management/')[1], request.body]),
-    [['artifacts/audit', { auditlog: 'default' }]],
-    'opening an audit row is one explicit transfer of its exact target, not a separate selection plus download',
-  );
-  const beforeBack = requests.length;
-  await page
-    .getByRole('navigation', { name: 'Breadcrumb', exact: true })
-    .getByRole('button', { name: 'Recordings & audit', exact: true })
-    .click();
-  await logs.getByText('catalog20', { exact: true }).waitFor();
-  assert.equal(await logs.locator('[role="row"][data-id]').count(), 2);
-  assert.equal(
-    requests.length,
-    beforeBack,
-    'Back retains the catalog without rereading or replaying its open action',
-  );
-  const firstRecordingsReply = captureJsonResponse(
-    page,
-    '/_bifroest/api/v1/management/recordings/list',
-  );
-  await catalog.getByRole('combobox', { name: 'Recording source', exact: true }).click();
-  await page.getByRole('option', { name: 'catalog00', exact: true }).click();
-  const firstRecordings = readPage(await firstRecordingsReply, 'recordings');
-  const recordings = catalog.getByRole('grid', {
-    name: 'Recordings · catalog00',
-    exact: true,
-  });
-  await recordings
-    .getByRole('button', { name: `Open recording ${firstRecordings.items[0].id}`, exact: true })
-    .waitFor();
-  assert.equal(firstRecordings.items.length, 20);
-  const visibleRecordingIDs = await recordings
-    .getByRole('button', { name: /^Open recording / })
-    .evaluateAll((buttons) =>
-      buttons.map((button) => button.getAttribute('aria-label').slice('Open recording '.length)),
-    );
-  assert(visibleRecordingIDs.length > 0 && visibleRecordingIDs.length <= 20);
-  assert.deepEqual(
-    visibleRecordingIDs,
-    firstRecordings.items.slice(0, visibleRecordingIDs.length).map((row) => row.id),
-    'every virtualized visible row belongs to the exact loaded response, in server order',
-  );
-  await catalog
-    .getByText('Details reported by the server; not independent verification.', { exact: true })
-    .waitFor();
-  assert.match(firstRecordings.next, /^bmp1\./u);
-  const nextRecordingsReply = captureJsonResponse(
-    page,
-    '/_bifroest/api/v1/management/recordings/list',
-  );
-  await recordings
+  const firstAuditReply = capture('auditlogs');
+  await workspace(page, 'Audit logs');
+  const auditPanel = () =>
+    page
+      .locator('[data-connection-active="true"]')
+      .getByRole('region', { name: 'Audit logs', exact: true });
+  const logs = () =>
+    auditPanel().getByRole('grid', { name: 'Configured auditlogs (server metadata)', exact: true });
+  const firstAudit = read(await firstAuditReply, 'auditlogs');
+  assert.equal(firstAudit.items.length, 20);
+  await logs().getByRole('gridcell', { name: 'catalog00', exact: true }).waitFor();
+  const lastAuditReply = capture('auditlogs');
+  await logs()
     .locator('xpath=ancestor::div[@class="admin-data-grid"][1]')
     .getByRole('button', { name: 'Go to next page', exact: true })
     .click();
-  const nextRecordings = readPage(await nextRecordingsReply, 'recordings');
-  assert.equal(nextRecordings.items.length, 1);
-  assert.equal(nextRecordings.next, '');
-  const allRecordings = [...firstRecordings.items, ...nextRecordings.items];
+  const lastAudit = read(await lastAuditReply, 'auditlogs');
+  assert.deepEqual(lastAudit.items, remaining.items);
+  await logs().getByRole('gridcell', { name: 'catalog20', exact: true }).waitFor();
+  assert.equal(await logs().locator('[role="row"][data-id]').count(), 2);
+  assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 0);
+  const beforeAudit = requests.length;
+  await logs().getByRole('button', { name: 'Open audit log default', exact: true }).click();
+  const opened = async (current) => {
+    if (mode === 'catalog-encrypted') {
+      await current.getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
+      assert.equal(
+        await current.getByRole('grid', { name: 'Audit events', exact: true }).count(),
+        0,
+      );
+    } else {
+      await current
+        .getByRole('button', { name: 'Signature, source and export details', exact: true })
+        .waitFor();
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('[data-connection-active="true"] button')].some((node) =>
+          node.textContent.startsWith('Integrity OK'),
+        ),
+      );
+    }
+  };
+  await opened(auditPanel());
   assert.deepEqual(
-    allRecordings.map((row) => row.id).sort(),
+    requests
+      .slice(beforeAudit)
+      .map((request) => [request.path.split('/management/')[1], request.body]),
+    [['artifacts/audit', { auditlog: 'default' }]],
+    'opening an audit row is exactly one transfer, followed by local processing',
+  );
+  assert.equal(
+    await auditPanel()
+      .getByRole('button', { name: /^Save unverified original/u })
+      .count(),
+    0,
+    'raw files are not the primary audit view',
+  );
+  const beforeBack = requests.length;
+  await auditPanel().getByRole('button', { name: 'Back to list', exact: true }).click();
+  await logs().getByRole('gridcell', { name: 'catalog20', exact: true }).waitFor();
+  assert.equal(requests.length, beforeBack, 'Back retains the native audit page without replay');
+  await workspace(page, 'Recordings');
+  const firstRecordingsReply = capture('recordings');
+  await catalog().getByRole('combobox', { name: 'Recording source', exact: true }).click();
+  await page.getByRole('option', { name: 'catalog00', exact: true }).click();
+  const first = read(await firstRecordingsReply, 'recordings');
+  assert.equal(first.items.length, 20);
+  assert.match(first.next, /^bmp1\./u);
+  const recordings = () =>
+    catalog().getByRole('grid', { name: 'Recordings · catalog00', exact: true });
+  await recordings()
+    .getByRole('button', { name: `Open recording ${first.items[0].id}`, exact: true })
+    .waitFor();
+  const visible = await recordings()
+    .getByRole('button', { name: /^Open recording /u })
+    .evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('aria-label').slice('Open recording '.length)),
+    );
+  assert(visible.length > 0 && visible.length <= 20);
+  assert.deepEqual(
+    visible,
+    first.items.slice(0, visible.length).map((row) => row.id),
+  );
+  const nextRecordingsReply = capture('recordings');
+  await recordings()
+    .locator('xpath=ancestor::div[@class="admin-data-grid"][1]')
+    .getByRole('button', { name: 'Go to next page', exact: true })
+    .click();
+  const last = read(await nextRecordingsReply, 'recordings');
+  assert.equal(last.items.length, 1);
+  assert.equal(last.next, '');
+  const all = [...first.items, ...last.items];
+  assert.deepEqual(
+    all.map((row) => row.id).sort(),
     Array.from(
       { length: 21 },
       (_, index) => `${(index + 1).toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`,
     ),
-    'both real cursor pages contain exactly the 21 fixture recordings, without duplicates or omissions',
   );
-  for (const [index, row] of allRecordings.entries()) {
-    assert.equal(
-      row.verificationScope,
-      mode === 'catalog-encrypted' ? 'outer' : 'full',
-      'server inspection scope remains metadata, never browser verification',
-    );
+  for (const [index, row] of all.entries()) {
     assert.equal(row.encrypted, mode === 'catalog-encrypted');
+    assert.equal(row.verificationScope, mode === 'catalog-encrypted' ? 'outer' : 'full');
     assert.equal(row.format, mode === 'catalog-encrypted' ? 'becast-cbor/v1' : 'bcast/v1');
-    if (index > 0) {
-      const previous = allRecordings[index - 1];
+    if (index) {
+      const previous = all[index - 1];
       assert(
         previous.startedAt > row.startedAt ||
           (previous.startedAt === row.startedAt && previous.id < row.id),
-        'newest order must apply globally across the real server cursor boundary',
       );
     }
   }
-  const id = nextRecordings.items[0].id;
-  await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).waitFor();
-  assert.equal(await recordings.locator('[role="row"][data-id]').count(), 1);
-  assert.equal(
-    await recordings
-      .locator('xpath=ancestor::div[@class="admin-data-grid"][1]')
-      .getByRole('button', { name: 'Go to next page', exact: true })
-      .isEnabled(),
-    false,
-  );
-  assert.equal(
-    await recordings
-      .locator('xpath=ancestor::div[@class="admin-data-grid"][1]')
-      .getByRole('button', { name: 'Go to previous page', exact: true })
-      .isEnabled(),
-    true,
-  );
-  assert.equal(requests.filter((request) => request.path.endsWith('/artifacts/audit')).length, 1);
-  assert.equal(
-    requests.filter((request) => request.path.endsWith('/artifacts/recording')).length,
-    0,
-    'source choice and pagination must not download recordings',
-  );
-  await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).click();
-  async function waitDownload(stage) {
-    try {
-      const heading = panel.getByRole('heading', {
-        name: 'Check the recording',
-        exact: true,
-      });
-      const failed = panel
-        .getByRole('status')
-        .filter({ hasText: 'The artifact download could not be confirmed or is not permitted.' });
-      await heading.or(failed).waitFor();
-      assert.equal(
-        await failed.count(),
-        0,
-        'a download failure must be reported immediately, not hidden behind a later missing-heading timeout',
-      );
-      await heading.waitFor();
-    } catch (error) {
-      const state = await panel.evaluate((panel) => {
-        const form = panel.querySelector(
-          '.artifact-selection > .artifact-selection-grid > details > form',
-        );
-        return {
-          ...window.catalogDownloadProbe,
-          disabled: form.querySelector('button[type="submit"]').disabled,
-          invalidControls: [...form.querySelectorAll(':invalid')].map((input) => ({
-            tag: input.tagName,
-            missing: input.validity?.valueMissing,
-            pattern: input.validity?.patternMismatch,
-          })),
-          receiving: panel.textContent.includes('Opening recording…'),
-          statuses: [...panel.querySelectorAll('[role="status"]')].length,
-          hidden: panel.closest('[hidden]') !== null,
-        };
-      });
-      throw new Error(
-        JSON.stringify({
-          stage,
-          requestCount: requests.filter((request) => request.path.includes('/artifacts/')).length,
-          artifactResponses,
-          workerAssets,
-          artifactErrors,
-          failedResources,
-          failedRequests,
-          publicState: state,
-        }),
-        { cause: error },
-      );
-    }
-  }
-  await waitDownload('first-download');
-  await panel
-    .getByRole('region', { name: 'Unverified server hints and original files', exact: true })
-    .getByText(`catalog00 / ${id}`, { exact: true })
+  const id = last.items[0].id;
+  await recordings()
+    .getByRole('button', { name: `Open recording ${id}`, exact: true })
     .waitFor();
-  assert.equal(await panel.getByLabel('Trusted signing ID', { exact: false }).inputValue(), '');
-  assert.equal(
-    await panel.getByLabel('Trusted signing ID', { exact: false }).getAttribute('maxlength'),
-    '64',
-  );
-  assert.equal(
-    await panel
-      .getByRole('combobox', { name: 'Expected encryption', exact: true })
-      .locator('..')
-      .locator('input')
-      .inputValue(),
-    '',
-  );
-  await panel.getByRole('combobox', { name: 'Expected encryption', exact: true }).click();
-  await page
-    .getByRole('option', { name: 'This recording should be encrypted', exact: true })
+  assert.equal(await recordings().locator('[role="row"][data-id]').count(), 1);
+  await recordings()
+    .getByRole('button', { name: `Open recording ${id}`, exact: true })
     .click();
+  await opened(recordPanel());
   assert.equal(
-    await panel.getByLabel('Expected recipient fingerprint', { exact: false }).inputValue(),
-    '',
-  );
-  await panel.getByLabel('Trusted signing ID', { exact: false }).fill('a'.repeat(64));
-  await panel
-    .getByLabel('Expected recipient fingerprint', { exact: false })
-    .fill(`SHA256:${'A'.repeat(43)}`);
-  assert.equal(
-    await panel.getByRole('button', { name: 'Check and open', exact: true }).isEnabled(),
-    false,
-    'private verification also requires the local decryption key',
-  );
-  const beforeReturn = requests.length;
-  await page
-    .getByRole('navigation', { name: 'Breadcrumb', exact: true })
-    .getByRole('button', { name: 'Recordings & audit', exact: true })
-    .click();
-  await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).waitFor();
-  assert.equal(await recordings.locator('[role="row"][data-id]').count(), 1);
-  assert.equal(
-    requests.length,
-    beforeReturn,
-    'returning to page 2 cannot replay metadata reads or downloads',
-  );
-  assert.equal(
-    await panel.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
+    await recordPanel().getByRole('combobox', { name: 'Expected encryption', exact: true }).count(),
     0,
   );
   assert.equal(
-    await panel.getByRole('region', { name: 'Verification details', exact: true }).count(),
+    await recordPanel().getByLabel('Expected recipient fingerprint', { exact: false }).count(),
     0,
   );
+  const afterOpen = requests.length;
+  await recordPanel().getByRole('button', { name: 'Back to list', exact: true }).click();
+  await recordings()
+    .getByRole('button', { name: `Open recording ${id}`, exact: true })
+    .waitFor();
+  assert.equal(requests.length, afterOpen);
   if (mode === 'catalog-startup-failure') {
-    let blockedStarts = 0;
+    let blocked = 0;
     await context.route(
       '**/_bifroest/files/browser-transfer-worker.js',
       (route) => {
-        blockedStarts++;
+        blocked++;
         return route.abort('connectionfailed');
       },
       { times: 1 },
     );
-    await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).click();
-    await panel
-      .getByRole('status')
-      .filter({ hasText: 'The artifact download could not be confirmed or is not permitted.' })
+    await recordings()
+      .getByRole('button', { name: `Open recording ${id}`, exact: true })
+      .click();
+    await recordPanel()
+      .getByText('The artifact download could not be confirmed or is not permitted.', {
+        exact: false,
+      })
       .waitFor();
-    assert.equal(blockedStarts, 1);
+    assert.equal(blocked, 1);
     assert.equal(
       requests.filter((request) => request.path.endsWith('/artifacts/recording')).length,
       1,
-      'a worker startup failure must not start a recording request or replay the previous download',
+      'failed worker startup cannot issue or replay a transfer',
     );
-    assert.equal(
-      await panel.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
-      0,
-    );
-    assert.equal(
-      await panel.getByRole('region', { name: 'Verification details', exact: true }).count(),
-      0,
-    );
-    await page.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-    );
-    assert.equal(blockedStarts, 1, 'there must be no automatic worker restart');
-    assert.equal(
-      requests.filter((request) => request.path.endsWith('/artifacts/recording')).length,
-      1,
-    );
-    assert.equal(requests.filter((request) => request.path.endsWith('/artifacts/audit')).length, 1);
-    await panel.getByRole('button', { name: 'Try opening again', exact: true }).click();
+    await recordPanel().getByRole('button', { name: 'Try opening again', exact: true }).click();
   } else {
-    await recordings.getByRole('button', { name: `Open recording ${id}`, exact: true }).click();
+    await recordings()
+      .getByRole('button', { name: `Open recording ${id}`, exact: true })
+      .click();
   }
-  await waitDownload('second-download');
-  assert.equal(await panel.getByLabel('Trusted signing ID', { exact: false }).inputValue(), '');
-  assert.equal(
-    await panel
-      .getByRole('combobox', { name: 'Expected encryption', exact: true })
-      .locator('..')
-      .locator('input')
-      .inputValue(),
-    '',
-  );
-  assert.equal(
-    requests.filter((request) => request.path.endsWith('/artifacts/recording')).length,
-    2,
-    'only the two explicit clicks with a ready worker may download',
-  );
+  await opened(recordPanel());
   assert.deepEqual(
     requests
       .filter((request) => request.path.includes('/artifacts/'))
@@ -539,103 +278,59 @@ try {
       ['artifacts/recording', { auditlog: 'catalog00', id }],
       ['artifacts/recording', { auditlog: 'catalog00', id }],
     ],
-    'the audit Open and two ready recording Opens are the only transfers; startup failure and Back never replay',
   );
-  const recordPages = requests.filter((request) => request.path.endsWith('/recordings/list'));
-  assert.equal(recordPages.length, 2);
-  assert.equal(recordPages[0].body.auditlog, 'catalog00');
-  assert.equal(recordPages[0].body.after, '');
-  assert.equal(recordPages[0].body.sort, 'started-desc');
-  assert.equal(recordPages[1].body.auditlog, 'catalog00');
-  assert.equal(recordPages[1].body.after, firstRecordings.next);
-  assert.match(recordPages[1].body.after, /^bmp1\./u);
-  const sourcePages = requests.filter((request) => request.path.endsWith('/auditlogs/list'));
-  assert.equal(sourcePages.length, 3);
-  assert.equal(sourcePages[0].body.after, '');
-  assert.equal(sourcePages[1].body.after, firstSources.next);
-  assert.equal(sourcePages[2].body.after, firstSources.next);
+  const pages = requests.filter((request) => request.path.endsWith('/recordings/list'));
+  assert.equal(pages.length, 2);
+  assert.equal(pages[0].body.after, '');
+  assert.equal(pages[1].body.after, first.next);
+  assert.equal(pages[0].body.sort, 'started-desc');
+  assert.equal(pages[1].body.sort, 'started-desc');
   await reauthenticate(page);
   await login('bob');
-  await page
-    .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
-    .waitFor();
-  await workspace(page, 'Sessions');
-  await page.getByRole('grid', { name: 'Live session metadata', exact: true }).waitFor();
   await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-arm', { method: 'POST', credentials: 'omit' }),
   );
-  // Arm before the first visible catalog: its deliberate initial source read is
-  // the provisional operation, and must still wait for the final audit gate.
-  const beforeBobCatalog = requests.length;
-  await workspace(page, 'Recordings & audit');
+  const beforeBob = requests.length;
+  await workspace(page, 'Recordings');
   await page.evaluate(() => fetch('/_bifroest/test/artifact-entered', { credentials: 'omit' }));
   assert.equal(
-    await catalog.getByRole('grid', { includeHidden: true }).count(),
+    await catalog().getByRole('grid', { includeHidden: true }).count(),
     0,
-    'new actor must not inherit old catalog data, including collapsed tables',
-  );
-  assert.equal(
-    await catalog.getByRole('grid', { includeHidden: true }).count(),
-    0,
-    'a provisional page must not bypass final audit',
+    'new or provisional metadata cannot inherit the other actor rows',
   );
   assert.deepEqual(
-    requests.slice(beforeBobCatalog).map((request) => request.path.split('/management/')[1]),
+    requests.slice(beforeBob).map((request) => request.path.split('/management/')[1]),
     ['auditlogs/list'],
-    'only the new actor’s first-visible source read is in progress; no transfer or old-source recording read',
   );
-  await catalog.getByRole('button', { name: 'Cancel catalog request', exact: true }).click();
+  await catalog().getByRole('button', { name: 'Cancel catalog request', exact: true }).click();
   await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-release', { method: 'POST', credentials: 'omit' }),
   );
-  await catalog.getByText('Catalog request cancelled.', { exact: false }).waitFor();
-  assert.equal(await catalog.getByRole('grid', { includeHidden: true }).count(), 0);
-  const afterCancellation = requests.length;
-  await workspace(page, 'Sessions');
-  await workspace(page, 'Recordings & audit');
+  await catalog().getByText('Catalog request cancelled.', { exact: false }).waitFor();
+  const cancelled = requests.length;
+  await workspace(page, 'Bifröst');
+  await workspace(page, 'Recordings');
   await page.evaluate(
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   );
-  assert.equal(
-    requests.length,
-    afterCancellation,
-    'navigation cannot retry a cancelled first-visible read',
-  );
-  assert.equal(await catalog.getByRole('grid', { includeHidden: true }).count(), 0);
-  await catalog.getByRole('button', { name: 'Refresh recordings', exact: true }).click();
-  await catalog.getByText('Audit log exports', { exact: true }).click();
-  await logs.getByText('catalog00', { exact: true }).waitFor();
-  await logs.getByRole('gridcell', { name: 'catalog00', exact: true }).waitFor();
-  assert.equal(
-    requests.filter((request) => request.path.endsWith('/auditlogs/list')).length,
-    5,
-    'two Alice source pages, one explicit audit grid page, one cancelled Bob initial read and one explicit Bob refresh',
-  );
+  assert.equal(requests.length, cancelled, 'activation does not retry a cancelled read');
+  assert.equal(await catalog().getByRole('grid', { includeHidden: true }).count(), 0);
+  const refreshedReply = capture('auditlogs');
+  await catalog().getByRole('button', { name: 'Refresh recordings', exact: true }).click();
+  assert.equal(read(await refreshedReply, 'auditlogs').items.length, 20);
+  assert.equal(requests.filter((request) => request.path.endsWith('/auditlogs/list')).length, 6);
   assert.equal(requests.filter((request) => request.path.endsWith('/recordings/list')).length, 2);
-  assert.equal(
-    requests.filter((request) => request.path.includes('/artifacts/')).length,
-    3,
-    'catalog cancellation and refresh never start or replay a transfer',
-  );
+  assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 3);
   await logoutAccess(page);
   await notification(page, 'Logout confirmed.');
-  assert.equal(await catalog.count(), 0);
+  await activeAccess(page, 'alice');
+  await logoutAccess(page);
+  await notification(page, 'Logout confirmed.');
+  assert.equal(await page.getByRole('tab').count(), 0);
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   await assertUiPreferences(page);
   console.log(JSON.stringify({ success: true }));
-} catch (error) {
-  const publicState = await observedPage
-    ?.evaluate(() => ({
-      download: window.catalogDownloadProbe,
-      statusCount: document.querySelectorAll('[role="status"]').length,
-      recordedAt: Date.now(),
-    }))
-    .catch(() => ({ unavailable: true }));
-  throw new Error(
-    JSON.stringify({ failedResources, failedRequests, artifactErrors, workerAssets, publicState }),
-    { cause: error },
-  );
 } finally {
   await browser.close();
 }

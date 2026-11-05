@@ -1,9 +1,16 @@
-import { act, createElement } from 'react';
+import { act, createElement, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactPanel } from '../src/artifacts/ArtifactPanel';
-import type { EvidenceOptions, VerifiedArtifact } from '../src/artifacts/evidence-protocol';
+import type {
+  EvidenceMetadata,
+  EvidenceOptions,
+  VerifiedArtifact,
+} from '../src/artifacts/evidence-protocol';
+import { EvidenceError } from '../src/artifacts/evidence-protocol';
+import { inspectProtection } from '../src/artifacts/protection';
 import type { ArtifactRequest, ReceivedArtifact } from '../src/artifacts/protocol';
+import { ArtifactSecretsContext, useTabArtifactSecrets } from '../src/artifacts/session-secrets';
 import { verifyArtifact } from '../src/artifacts/verify';
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
@@ -15,45 +22,72 @@ const recording = {
   auditlog: 'default',
   id: '34e34ab8-7457-4d88-a5e4-c57791775c3a',
 } as const;
-const players = vi.hoisted(() => ({ mounted: 0, retired: 0 }));
-vi.mock('../src/artifacts/ArtifactCatalog', async () => {
-  const { createElement } = await import('react');
-  return {
-    ArtifactCatalog: ({
-      onSelect,
-      disabled,
-      active,
-    }: {
-      onSelect: (value: ArtifactRequest) => void;
-      disabled: boolean;
-      active: boolean;
-    }) =>
-      createElement(
-        'button',
-        {
-          disabled,
-          'data-catalog-active': active,
-          onClick: () =>
-            onSelect({
-              kind: 'recording',
-              auditlog: 'default',
-              id: '34e34ab8-7457-4d88-a5e4-c57791775c3a',
-            }),
-        },
-        'Open fixture recording',
-      ),
-  };
-});
+const signer = 'a'.repeat(64);
+const fingerprint = `SHA256:${'A'.repeat(43)}`;
+const players = vi.hoisted(() => ({
+  mounted: 0,
+  retired: 0,
+  expected: [] as { producer: string; allowUntrusted: boolean }[],
+}));
+vi.mock('../src/artifacts/ArtifactCatalog', () => ({
+  ArtifactCatalog: ({
+    onSelect,
+    disabled,
+    active,
+  }: {
+    onSelect(value: ArtifactRequest): void;
+    disabled: boolean;
+    active: boolean;
+  }) =>
+    createElement(
+      'button',
+      {
+        type: 'button',
+        disabled,
+        'data-catalog-active': active,
+        onClick: () =>
+          onSelect({
+            kind: 'recording',
+            auditlog: 'default',
+            id: '34e34ab8-7457-4d88-a5e4-c57791775c3a',
+          }),
+      },
+      'Open fixture recording',
+    ),
+}));
+vi.mock('../src/artifacts/AuditCatalog', () => ({
+  AuditCatalog: ({
+    onSelect,
+    disabled,
+  }: {
+    onSelect(value: ArtifactRequest): void;
+    disabled: boolean;
+  }) =>
+    createElement(
+      'button',
+      { type: 'button', disabled, onClick: () => onSelect({ kind: 'audit', auditlog: 'default' }) },
+      'Open fixture audit',
+    ),
+}));
 vi.mock('../src/artifacts/RecordingPlayer', async () => {
   const { createElement, useEffect } = await import('react');
   return {
-    RecordingPlayer: ({ autoPrepare, disabled }: { autoPrepare: boolean; disabled: boolean }) => {
+    RecordingPlayer: ({
+      autoPrepare,
+      disabled,
+      expected,
+    }: {
+      autoPrepare: boolean;
+      disabled: boolean;
+      expected: { producer: string; allowUntrusted: boolean };
+    }) => {
       useEffect(() => {
         players.mounted++;
+        players.expected.push(expected);
         return () => {
           players.retired++;
         };
-      }, []);
+      }, [expected]);
       return createElement('section', {
         'aria-label': 'Fixture player',
         'data-auto-prepare': autoPrepare,
@@ -62,6 +96,7 @@ vi.mock('../src/artifacts/RecordingPlayer', async () => {
     },
   };
 });
+vi.mock('../src/artifacts/protection', () => ({ inspectProtection: vi.fn() }));
 vi.mock('../src/artifacts/verify', async (original) => ({
   ...(await original<typeof import('../src/artifacts/verify')>()),
   verifyArtifact: vi.fn(),
@@ -70,7 +105,10 @@ vi.mock('../src/artifacts/verify', async (original) => ({
 function access(principal = 'alice') {
   const scope = { origin: 'https://app.example.org', slug: 'admin' };
   return new WebAccess(
-    new Http(scope, vi.fn()),
+    new Http(
+      scope,
+      vi.fn(async () => new Response(null, { status: 204 })),
+    ),
     {
       scope,
       principal,
@@ -82,48 +120,110 @@ function access(principal = 'alice') {
     null,
   );
 }
-const received: ReceivedArtifact = {
-  request: recording,
-  transport: 'complete',
-  evidence: 'unverified',
-  metadata: {
-    Version: 1,
-    ID: recording.id,
-    ProducerID: 'b'.repeat(64),
-    Size: 7,
-    SHA256: 'c'.repeat(64),
-  },
-  files: [{ name: 'recording', data: new Blob(['fixture']) }],
-};
-function verified(selected: ReceivedArtifact, options: EvidenceOptions): VerifiedArtifact {
+function image(request: ArtifactRequest): ReceivedArtifact {
+  return {
+    request,
+    transport: 'complete',
+    evidence: 'unverified',
+    metadata:
+      request.kind === 'recording'
+        ? {
+            Version: 1,
+            ID: request.id,
+            ProducerID: 'b'.repeat(64),
+            Size: 7,
+            SHA256: 'c'.repeat(64),
+          }
+        : {
+            Version: 1,
+            Name: request.auditlog,
+            Producer: 'b'.repeat(64),
+            Recipient: fingerprint,
+            Files: [],
+          },
+    files: [
+      {
+        name: request.kind === 'recording' ? 'recording' : 'head.cbor',
+        data: new Blob(['fixture']),
+      },
+    ],
+  };
+}
+let encrypted = false;
+function metadata(request: ArtifactRequest, options: EvidenceOptions): EvidenceMetadata {
+  return {
+    kind: request.kind,
+    validation: options.level,
+    trust: options.allowUntrusted ? 'untrusted' : 'pinned',
+    producer: options.producer || signer,
+    expectedRecipient: encrypted ? fingerprint : '',
+    decryption: encrypted
+      ? options.level === 'private'
+        ? 'authenticated'
+        : 'not-checked'
+      : 'not-encrypted',
+    recordingId: request.kind === 'recording' ? request.id : '',
+    auditScope: request.kind === 'audit' ? 'complete' : '',
+    records: '1',
+    privateRecords: encrypted ? '1' : '0',
+    outputFormat: options.export ? (request.kind === 'recording' ? 'cast' : 'jsonl') : '',
+  };
+}
+function result(selected: ReceivedArtifact, options: EvidenceOptions): VerifiedArtifact {
   return {
     request: selected.request,
     provenance: 'bytes-only',
-    output: new Blob(['checked cast']),
-    metadata: {
-      kind: 'recording',
-      validation: options.level,
-      trust: options.allowUntrusted ? 'untrusted' : 'pinned',
-      producer: options.producer || 'a'.repeat(64),
-      expectedRecipient: options.recipient,
-      decryption: 'not-encrypted',
-      recordingId: recording.id,
-      auditScope: '',
-      records: '1',
-      privateRecords: '1',
-      outputFormat: 'cast',
-    },
+    metadata: metadata(selected.request, options),
+    output: !options.export
+      ? null
+      : new Blob([
+          selected.request.kind === 'recording'
+            ? 'checked cast'
+            : `${JSON.stringify({
+                id: 'event-1',
+                recordedAt: '2026-11-04T12:00:00Z',
+                event: { name: 'session.task.completed', outcome: 'success', flow: 'work' },
+              })}\n`,
+        ]),
   };
 }
 const cleanups: (() => void)[] = [];
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  encrypted = false;
   players.mounted = 0;
   players.retired = 0;
-  vi.spyOn(WebAccess.prototype, 'downloadArtifact').mockResolvedValue(received);
-  vi.mocked(verifyArtifact).mockImplementation(async (selected, options) =>
-    verified(selected, options),
+  players.expected = [];
+  vi.spyOn(WebAccess.prototype, 'downloadArtifact').mockImplementation(async (request) =>
+    image(request),
   );
+  vi.mocked(inspectProtection).mockImplementation(async (selected) =>
+    metadata(selected.request, {
+      producer: '',
+      allowUntrusted: true,
+      recipient: '',
+      level: 'outer',
+      export: false,
+      sensitive: false,
+      auditScope: selected.request.kind === 'audit' ? 'complete' : '',
+    }),
+  );
+  vi.mocked(verifyArtifact).mockImplementation(async (selected, options, key) => {
+    if (options.producer !== '' && options.producer !== signer) {
+      throw new EvidenceError('verification');
+    }
+    if (encrypted && options.level === 'private') {
+      const bytes = await key?.file.text();
+      if (
+        !key ||
+        !bytes?.startsWith('GOOD-KEY') ||
+        key.passphrase !== (bytes === 'GOOD-KEY-SECOND' ? 'second secret' : 'tab secret')
+      ) {
+        throw new EvidenceError('key');
+      }
+    }
+    return result(selected, options);
+  });
 });
 afterEach(async () => {
   await act(async () => {
@@ -137,174 +237,299 @@ afterEach(async () => {
 });
 async function mount(selected = access()) {
   const container = document.createElement('div');
+  container.style.width = '1000px';
   document.body.append(container);
   const root = createRoot(container);
-  const render = async (
-    options: { access?: WebAccess; remoteDisabled?: boolean; active?: boolean } = {},
-  ) => {
-    await act(async () =>
-      root.render(createElement(ArtifactPanel, { access: selected, disabled: false, ...options })),
-    );
-  };
   cleanups.push(() => {
     root.unmount();
     container.remove();
   });
+  async function render(
+    options: { access?: WebAccess; active?: boolean; remoteDisabled?: boolean } = {},
+  ) {
+    await act(async () =>
+      root.render(createElement(ArtifactPanel, { access: selected, disabled: false, ...options })),
+    );
+  }
   await render();
   return { container, render };
 }
-function button(name: string) {
-  const element = [...document.querySelectorAll('button')].find(
-    (button) => button.textContent === name,
+function button(name: string, parent: ParentNode = document) {
+  const node = [...parent.querySelectorAll<HTMLButtonElement>('button')].find(
+    (node) => node.textContent === name || node.getAttribute('aria-label') === name,
   );
-  if (!element) {
+  if (!node) {
     throw new Error(`Missing button ${name}`);
   }
-  return element;
+  return node;
 }
-async function click(element: HTMLElement) {
-  await act(async () => element.click());
+async function click(node: HTMLElement) {
+  await act(async () => node.click());
 }
-async function chooseProtection() {
-  const checkbox = document.querySelector<HTMLInputElement>(
-    '.artifact-verification input[type="checkbox"]',
-  );
-  if (!checkbox) {
-    throw new Error('Missing trust decision');
+async function options(parent: ParentNode = document) {
+  const summary = parent.querySelector<HTMLElement>('details.artifact-verification > summary');
+  if (!summary) {
+    throw new Error('Missing verification options');
   }
-  await click(checkbox);
-  const select = document.querySelector<HTMLElement>('.artifact-verification [role="combobox"]');
-  if (!select) {
-    throw new Error('Missing expected protection');
+  if (!summary.parentElement?.hasAttribute('open')) {
+    await click(summary);
   }
-  await act(async () =>
-    select.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true })),
-  );
-  const clear = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-    (node) => node.textContent === t('artifactClear'),
-  );
-  if (!clear) {
-    throw new Error('Missing unencrypted choice');
+}
+async function fill(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+async function selectKey(parent: ParentNode, contents = 'GOOD-KEY', password = 'tab secret') {
+  const file = parent.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!file) {
+    throw new Error('Missing key picker');
   }
-  await click(clear);
+  const data = new DataTransfer();
+  data.items.add(new File([contents], 'local-key.pem'));
+  await act(async () => {
+    file.files = data.files;
+    file.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  const pass = parent.querySelector<HTMLInputElement>('[name="evidence-passphrase"]');
+  if (!pass) {
+    throw new Error('Missing passphrase input');
+  }
+  await fill(pass, password);
 }
 
-describe('opening an existing recording as a user task', () => {
-  it('keeps actions content-sized on one left-aligned row and exposes evidence in a persistent card', async () => {
-    const app = await mount();
-    app.container.style.width = '800px';
-    await click(button('Open fixture recording'));
-    const check = button(t('artifactVerify'));
-    const close = button(t('artifactClearTab'));
-    expect(check.parentElement).toBe(close.parentElement);
-    expect(getComputedStyle(check.parentElement as HTMLElement).flexWrap).toBe('nowrap');
-    expect(check.getBoundingClientRect().top).toBe(close.getBoundingClientRect().top);
-    expect(check.getBoundingClientRect().width).toBeLessThan(300);
-    await chooseProtection();
-    await click(check);
-    const actions = [
-      button(t('artifactSaveExport')),
-      button(t('recordingChangeVerification')),
-      button(t('artifactClearTab')),
-    ];
-    for (const action of actions) {
-      expect(action.parentElement).toBe(actions[0]?.parentElement);
-      expect(action.getBoundingClientRect().top).toBe(actions[0]?.getBoundingClientRect().top);
-      expect(action.getBoundingClientRect().width).toBeLessThan(300);
-    }
-    const card = document.querySelector('.recording-evidence');
-    expect(card?.closest('details')).toBeNull();
-    expect(card?.textContent).toContain(t('recordingVerificationDetails'));
-    expect(card?.textContent).toContain(t('artifactHints'));
-    expect(card?.querySelector('dl')).not.toBeNull();
-    expect(
-      document.querySelector(`nav[aria-label="${t('adminBreadcrumbs')}"] [aria-current="page"]`),
-    ).not.toBeNull();
-  });
-  it('opens only on an explicit row action, never copies server hints into independent expectations, and prepares playback after full verification', async () => {
+describe('usable local evidence without manual protection guesses', () => {
+  it('opens only explicitly, detects protection locally, and never treats prefilled header IDs as independent trust', async () => {
     await mount();
     expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
+    expect(inspectProtection).not.toHaveBeenCalled();
     await click(button('Open fixture recording'));
-    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
-    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledWith(
+    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledExactlyOnceWith(
       recording,
       expect.any(AbortSignal),
     );
-    expect(document.querySelector<HTMLInputElement>('input[maxlength="64"]')?.value).toBe('');
-    expect(button(t('artifactVerify')).disabled).toBe(true);
-    expect(verifyArtifact).not.toHaveBeenCalled();
-    await chooseProtection();
-    expect(button(t('artifactVerify')).disabled).toBe(false);
-    await click(button(t('artifactVerify')));
+    expect(inspectProtection).toHaveBeenCalledOnce();
     expect(verifyArtifact).toHaveBeenCalledExactlyOnceWith(
-      received,
+      image(recording),
       expect.objectContaining({
         producer: '',
         allowUntrusted: true,
         recipient: '',
         level: 'private',
         export: true,
-        sensitive: false,
-        auditScope: '',
       }),
       null,
       expect.any(AbortSignal),
     );
-    expect(
-      document.querySelector('[aria-label="Fixture player"]')?.getAttribute('data-auto-prepare'),
-    ).toBe('true');
-    expect(document.querySelector('form.artifact-verification')).toBeNull();
-    expect(document.body.textContent).toContain(t('recordingIdentityUnknown'));
+    expect(document.querySelector<HTMLInputElement>('input[maxlength="64"]')?.value).toBe(signer);
+    expect(document.querySelector<HTMLInputElement>('input[maxlength="64"]')?.disabled).toBe(true);
+    expect(document.querySelector('[aria-label="Fixture player"]')).not.toBeNull();
+    expect(players.expected.at(-1)).toEqual({
+      id: recording.id,
+      producer: '',
+      allowUntrusted: true,
+    });
+    await options();
+    const check = document.querySelector<HTMLInputElement>(
+      '.artifact-verification input[type="checkbox"]',
+    );
+    if (!check) {
+      throw new Error('Missing identity validation toggle');
+    }
+    await click(check);
+    await click(button(t('artifactCheckAgain')));
+    expect(players.expected.at(-1)).toEqual({
+      id: recording.id,
+      producer: '',
+      allowUntrusted: true,
+    });
+    const pin = document.querySelector<HTMLInputElement>('input[maxlength="64"]');
+    if (!pin) {
+      throw new Error('Missing selected ID');
+    }
+    await fill(pin, 'c'.repeat(64));
+    await click(button(t('artifactCheckAgain')));
+    expect(document.querySelector('[aria-label="Fixture player"]')).toBeNull();
+    expect(document.body.textContent).toContain(t('artifactVerificationFailed'));
+    await fill(pin, signer);
+    await click(button(t('artifactCheckAgain')));
+    expect(players.expected.at(-1)).toEqual({
+      id: recording.id,
+      producer: signer,
+      allowUntrusted: false,
+    });
   });
-
-  it('retains local verified output across hidden-view changes and remote expiry without re-downloading or re-verifying', async () => {
+  it('keeps the outer page frameless, actions text-sized, and recording metadata structured below the content', async () => {
     const app = await mount();
     await click(button('Open fixture recording'));
-    await chooseProtection();
-    await click(button(t('artifactVerify')));
+    const back = button(t('artifactBackToList'));
+    const status = button(t('recordingVerificationDetails'));
+    expect(back.parentElement).toBe(status.parentElement);
+    expect(back.getBoundingClientRect().width).toBeLessThan(300);
+    expect(status.getBoundingClientRect().width).toBeLessThan(350);
+    const panel = app.container.querySelector('.artifact-panel');
+    expect(panel?.classList.contains('MuiPaper-root')).toBe(false);
+    expect(panel?.querySelectorAll('h2')).toHaveLength(1);
+    const details = panel?.querySelector('.recording-evidence');
+    expect(details?.querySelector('dl')).not.toBeNull();
+    expect(details?.closest('details')).toBeNull();
+    expect(details?.querySelector('ul')).toBeNull();
+    expect(details?.textContent).toContain(t('recordingDetails'));
+    await click(status);
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+        t('artifactSuggestedSigner'),
+      ),
+    );
+  });
+  it('retains local verified output through hiding and remote expiry without another download or verification', async () => {
+    const app = await mount();
+    await click(button('Open fixture recording'));
+    const calls = vi.mocked(verifyArtifact).mock.calls.length;
     await app.render({ active: false });
     await app.render({ active: true, remoteDisabled: true });
-    expect(players.mounted).toBe(1);
-    expect(players.retired).toBe(0);
-    expect(
-      document.querySelector('[aria-label="Fixture player"]')?.getAttribute('data-disabled'),
-    ).toBe('false');
+    expect(document.querySelector('[aria-label="Fixture player"]')).not.toBeNull();
     expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
-    expect(verifyArtifact).toHaveBeenCalledTimes(1);
-    await click(button(t('artifactTitle')));
+    expect(verifyArtifact).toHaveBeenCalledTimes(calls);
+    await click(button(t('artifactBackToList')));
     expect(button('Open fixture recording').disabled).toBe(true);
-    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
   });
-
-  it('retires the old actor’s local data and independently selected expectations on an access change', async () => {
+  it('retires old actor output and selected expectations, and cannot adopt a late old download', async () => {
     const app = await mount();
     await click(button('Open fixture recording'));
-    await chooseProtection();
-    await click(button(t('artifactVerify')));
-    await app.render({ access: access('bob') });
-    expect(players.retired).toBe(1);
-    expect(document.querySelector('[aria-label="Fixture player"]')).toBeNull();
-    expect(document.querySelector('form.artifact-verification')).toBeNull();
-    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
-    await click(button('Open fixture recording'));
-    expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false);
-    expect(button(t('artifactVerify')).disabled).toBe(true);
-  });
-
-  it('does not adopt a late download after ownership changed or restart it automatically', async () => {
-    let release!: (value: ReceivedArtifact) => void;
-    vi.mocked(WebAccess.prototype.downloadArtifact).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = resolve;
-        }),
+    await options();
+    const toggle = document.querySelector<HTMLInputElement>(
+      '.artifact-verification input[type="checkbox"]',
     );
-    const app = await mount();
-    await click(button('Open fixture recording'));
+    if (!toggle) {
+      throw new Error('Missing toggle');
+    }
+    await click(toggle);
+    const pin = document.querySelector<HTMLInputElement>('input[maxlength="64"]');
+    if (!pin) {
+      throw new Error('Missing pin');
+    }
+    await fill(pin, 'c'.repeat(64));
     await app.render({ access: access('bob') });
-    await act(async () => release(received));
-    expect(document.querySelector('form.artifact-verification')).toBeNull();
-    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
-    expect(verifyArtifact).not.toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="Fixture player"]')).toBeNull();
+    expect(document.querySelector('input[maxlength="64"]')).toBeNull();
+    const deferred = Promise.withResolvers<ReceivedArtifact>();
+    vi.mocked(WebAccess.prototype.downloadArtifact).mockReturnValueOnce(deferred.promise);
+    await click(button('Open fixture recording'));
+    await app.render({ access: access('carol') });
+    const before = vi.mocked(verifyArtifact).mock.calls.length;
+    await act(async () => deferred.resolve(image(recording)));
+    expect(verifyArtifact).toHaveBeenCalledTimes(before);
+    expect(document.querySelector('[aria-label="Fixture player"]')).toBeNull();
   });
+});
+
+function SessionHarness({
+  owner,
+  signal,
+  view,
+}: {
+  owner: WebAccess;
+  signal: AbortSignal;
+  view: 'recordings' | 'auditlogs';
+}) {
+  const secrets = useTabArtifactSecrets(owner, signal);
+  return createElement(
+    ArtifactSecretsContext.Provider,
+    { value: secrets },
+    ...(['recordings', 'auditlogs'] as const).map((page) =>
+      createElement(
+        'div',
+        { key: page, hidden: view !== page, 'data-artifact-view': page },
+        createElement(ArtifactPanel, {
+          access: owner,
+          disabled: false,
+          active: view === page,
+          view: page,
+        }),
+      ),
+    ),
+  );
+}
+it('remembers only a successfully decrypted key across Recording/Audit pages, honors replacement, and clears the scope on tab close under StrictMode', async () => {
+  encrypted = true;
+  const owner = access();
+  const controller = new AbortController();
+  const host = document.createElement('div');
+  host.style.width = '1000px';
+  document.body.append(host);
+  const root = createRoot(host);
+  cleanups.push(() => {
+    root.unmount();
+    host.remove();
+  });
+  const render = async (view: 'recordings' | 'auditlogs') =>
+    act(async () =>
+      root.render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(SessionHarness, { owner, signal: controller.signal, view }),
+        ),
+      ),
+    );
+  await render('recordings');
+  const recordings = host.querySelector<HTMLElement>('[data-artifact-view="recordings"]');
+  const audit = host.querySelector<HTMLElement>('[data-artifact-view="auditlogs"]');
+  if (!recordings || !audit) {
+    throw new Error('Missing separate owned pages');
+  }
+  await click(button('Open fixture recording', recordings));
+  expect(verifyArtifact).not.toHaveBeenCalled();
+  await selectKey(recordings, 'GOOD-KEY', 'wrong');
+  await click(button(t('artifactUnlock'), recordings));
+  await vi.waitFor(() => expect(recordings.textContent).toContain(t('artifactKeyFailed')));
+  expect(recordings.querySelector<HTMLInputElement>('input[type="file"]')?.files).toHaveLength(1);
+  await fill(
+    recordings.querySelector<HTMLInputElement>('[name="evidence-passphrase"]') as HTMLInputElement,
+    'tab secret',
+  );
+  await click(button(t('artifactUnlock'), recordings));
+  await vi.waitFor(() =>
+    expect(recordings.querySelector('[aria-label="Fixture player"]')).not.toBeNull(),
+  );
+  await render('auditlogs');
+  await click(button('Open fixture audit', audit));
+  await vi.waitFor(() => expect(audit.textContent).toContain('session.task.completed'));
+  expect(audit.querySelector('input[type="file"]')).toBeNull();
+  expect(vi.mocked(verifyArtifact).mock.calls.at(-1)?.[2]?.passphrase).toBe('tab secret');
+  await render('recordings');
+  await options(recordings);
+  await click(button(t('artifactReplaceKey'), recordings));
+  await selectKey(recordings, 'WRONG-KEY', 'wrong');
+  await click(button(t('artifactUnlock'), recordings));
+  await vi.waitFor(() => expect(recordings.textContent).toContain(t('artifactKeyFailed')));
+  const beforeRetry = vi.mocked(verifyArtifact).mock.calls.length;
+  await click(button(t('artifactUnlock'), recordings));
+  await vi.waitFor(() => expect(verifyArtifact).toHaveBeenCalledTimes(beforeRetry + 1));
+  await vi.waitFor(() => expect(recordings.textContent).toContain(t('artifactKeyFailed')));
+  expect(await vi.mocked(verifyArtifact).mock.calls.at(-1)?.[2]?.file.text()).toBe('WRONG-KEY');
+  await selectKey(recordings, 'GOOD-KEY-SECOND', 'second secret');
+  await click(button(t('artifactUnlock'), recordings));
+  await vi.waitFor(() =>
+    expect(recordings.querySelector('[aria-label="Fixture player"]')).not.toBeNull(),
+  );
+  const beforeReopen = vi.mocked(verifyArtifact).mock.calls.length;
+  await click(button(t('artifactBackToList'), recordings));
+  await click(button('Open fixture recording', recordings));
+  await vi.waitFor(() => expect(verifyArtifact).toHaveBeenCalledTimes(beforeReopen + 1));
+  await vi.waitFor(() =>
+    expect(vi.mocked(verifyArtifact).mock.calls.at(-1)?.[2]?.passphrase).toBe('second secret'),
+  );
+  expect(verifyArtifact).toHaveBeenCalledTimes(beforeReopen + 1);
+  await vi.waitFor(() =>
+    expect(recordings.querySelector('[aria-label="Fixture player"]')).not.toBeNull(),
+  );
+  await act(async () => controller.abort());
+  await click(button(t('artifactBackToList'), recordings));
+  const count = vi.mocked(verifyArtifact).mock.calls.length;
+  await click(button('Open fixture recording', recordings));
+  expect(recordings.querySelector('input[type="file"]')).not.toBeNull();
+  expect(verifyArtifact).toHaveBeenCalledTimes(count);
 });

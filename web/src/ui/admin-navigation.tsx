@@ -4,7 +4,7 @@ export interface AdminDetail {
   readonly label: string;
   readonly back: () => void;
 }
-export type AdminSection = 'sessions' | 'artifacts';
+export type AdminSection = 'sessions' | 'recordings' | 'auditlogs';
 export const AdminDetailContext = createContext<
   ((section: AdminSection, detail: AdminDetail | null) => void) | null
 >(null);

@@ -105,11 +105,29 @@ Artifact download additionally requires
 [`allowArtifactTransfer`](../../environment/management.md#property-allowArtifactTransfer).
 The first active view loads only its authorized metadata, not recording content.
 **Open recording** explicitly downloads the selected original into this tab.
-**Check and open** uses your protection and trust choices for full verification
-and player preparation; **Play** remains a separate local action.
+The signed header determines encryption automatically. A matching previously
+verified tab key can be reused; otherwise **Unlock and open** asks for a local key
+and passphrase. Recipient fingerprints are derived locally. Full verification
+prepares playback or an audit-event list; **Play** remains a separate local action.
 Verification, decryption, export preparation and playback run locally. Private
 decryption keys and decrypted content are not uploaded or persisted by the app.
 Explicitly saved files remain on the user's machine after logout.
+
+Only after successful private verification does the management tab retain its
+decryption key and passphrase in volatile memory. Its Recordings and Audit logs
+pages share that cache, but unrelated tabs, accounts and login grants do not.
+A newly selected file takes precedence over the cached key; failed candidates
+do not replace the last verified key. **Forget decryption key**, authoritative
+logout, closing the management tab or reloading releases the cache. Owned
+passphrase bytes are wiped; JavaScript strings/immutable Blobs remain subject to
+browser garbage collection, so this is not a physical-memory-erasure guarantee.
+The cache is never stored in IndexedDB, localStorage, URLs or RememberMe.
+
+Audit events are displayed only from successfully verified local export bytes.
+The view keeps a bounded offset/time index and materializes only a page of rows,
+not one retained JavaScript object for every event. Column predicates use the
+native grid operators. Viewing, filtering and paging those events do not issue
+additional server requests.
 
 Seeking replays the verified local output prefix, including recorded resizes;
 display scaling and fullscreen do not resize a live terminal or alter recorded
@@ -117,8 +135,11 @@ dimensions. Player shortcuts are focus-scoped. Optional OS media controls bind
 only after interaction with an active player and release on deactivation or
 close. They expose a generic player title, not recording or account metadata.
 
-Obtain expected producer IDs and recipient fingerprints independently. A server's
-own metadata is not a trust anchor. Valid signatures do not prove that newer
+The optional signing-ID field is prefilled from the selected signed header and
+is editable when identity validation is enabled. Prefilling does not establish
+independent trust: the default status explicitly distinguishes checked integrity
+from independently confirmed identity. Use a separately obtained producer ID
+when independent identity confirmation is needed. Valid signatures do not prove that newer
 records were not withheld. The application code also comes from that server:
 use the [CLI](../../cli/verification.md) in a separately trusted environment when
 independent verification matters.
@@ -128,6 +149,12 @@ apply across the bounded inventory, with newest recordings first. New recordings
 can contain the original requesting name; older or encrypted recordings may not
 expose identity details. Missing names and target accounts are not reconstructed
 from current sessions or authorization.
+
+The native Community filter panel supports one column predicate plus quick
+search. All remote predicates are applied before pagination and remain bound to
+their cursor, actor and scope. Hidden or unavailable metadata cannot match
+negative or empty-value predicates. Filters never expand forced-command rights
+or verification budgets.
 
 ## Practical limits
 
@@ -140,6 +167,7 @@ from current sessions or authorization.
 | Artifact payload | 64 MiB in tab memory; use native tools for larger artifacts |
 | Recording catalog | At most 1,024 sealed recordings; bounded 128 MiB verification budgets and a four-second query deadline. Filters do not bypass these inventory limits. CLI UUID-paged listing remains available for larger archives. |
 | Recording playback | 100,000 events, at most 512 columns, 256 rows and 32,768 cells |
+| Local audit-event view | At most 250,000 records / 64 MiB of verified JSONL; bounded typed index, at most 1 MiB per event line and 20 displayed rows per page |
 
 Encrypted PKCS#8, PPK and multi-key files are not supported. Browser terminals
 provide shells, not SFTP or port forwarding. OS/browser shortcuts that never

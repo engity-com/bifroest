@@ -268,7 +268,7 @@ describe('standalone management grant expiry without an admitted channel', () =>
     expect(workspace.onSignIn).toHaveBeenCalledExactlyOnceWith(owner.access.snapshot().scope);
     expect(document.getElementById('terminal-tab-2')).toBeNull();
     expect(WebAccess.prototype.openManagement).toHaveBeenCalledTimes(1);
-    expect(panels.artifactsMounted).toEqual([owner.access]);
+    expect(panels.artifactsMounted).toEqual([owner.access, owner.access]);
   });
   it('expires on the real clock, preserves local evidence and requests only an explicit new sign-in in its own scope', async () => {
     const owner = permission('Original', 1_500);
@@ -281,7 +281,7 @@ describe('standalone management grant expiry without an admitted channel', () =>
     await click(button(t('workspaceServer')));
     await vi.waitFor(() => expect(workspace.container.textContent).toContain('Owned version'));
     const reads = owner.transport.mock.calls.length;
-    await click(button(t('workspaceArtifacts')));
+    await click(button(t('workspaceRecordings')));
     await click(button('Fixture local recording'));
     expect(workspace.container.textContent).toContain('Retained local recording');
     await expired(owner.access);
@@ -296,7 +296,7 @@ describe('standalone management grant expiry without an admitted channel', () =>
     expect(button('Fixture local recording').disabled).toBe(false);
     expect(workspace.container.textContent).toContain(accessMessages.expiredNotice);
     expect(workspace.container.textContent).toContain('Retained local recording');
-    expect(panels.artifactsMounted).toEqual([owner.access]);
+    expect(panels.artifactsMounted).toEqual([owner.access, owner.access]);
     expect(owner.transport).toHaveBeenCalledTimes(reads);
     expect(workspace.onSignIn).not.toHaveBeenCalled();
     noAuthenticationOrSavedReads();
@@ -311,7 +311,7 @@ describe('standalone management grant expiry without an admitted channel', () =>
   it('allows returning to an expired background tab without reads, remounts or disturbing a running terminal', async () => {
     const owner = permission('Original', 1_200);
     const workspace = await mountWorkspace(owner.access);
-    await click(button(t('workspaceArtifacts')));
+    await click(button(t('workspaceRecordings')));
     await click(button('Fixture local recording'));
     const reads = owner.transport.mock.calls.length;
     const shell = permission('Shell', 60_000, true);
@@ -322,7 +322,7 @@ describe('standalone management grant expiry without an admitted channel', () =>
     await click(document.getElementById('terminal-tab-1'));
     expect(document.getElementById('terminal-pane-1')?.dataset.connectionActive).toBe('true');
     expect(workspace.container.textContent).toContain('Retained local recording');
-    expect(panels.artifactsMounted).toEqual([owner.access]);
+    expect(panels.artifactsMounted).toEqual([owner.access, owner.access]);
     expect(panels.terminals.get(2)?.aborted).toBe(false);
     expect(panels.unmounted).toEqual([]);
     expect(owner.transport).toHaveBeenCalledTimes(reads);

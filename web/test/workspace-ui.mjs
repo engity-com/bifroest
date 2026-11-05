@@ -375,7 +375,10 @@ export async function workspace(page, name) {
   });
   const button = pane
     .getByRole('navigation', { name: 'Workspace', exact: true })
-    .getByRole('button', { name: name === 'Server' ? 'Bifröst' : name, exact: true });
+    .getByRole('button', {
+      name: name === 'Server' ? 'Bifröst' : name === 'Recordings & audit' ? 'Recordings' : name,
+      exact: true,
+    });
   if (
     (await pane
       .getByRole('button', { name: 'Open management navigation', exact: true })
@@ -387,13 +390,16 @@ export async function workspace(page, name) {
   assert.equal(await button.getAttribute('aria-current'), 'page');
 }
 
-export async function exactArtifactSelection(page) {
-  await workspace(page, 'Recordings & audit');
-  const selection = page.locator('[data-connection-active="true"] .artifact-selection');
+export async function exactArtifactSelection(page, view = 'Recordings') {
+  await workspace(page, view);
+  const panel = page
+    .locator('[data-connection-active="true"]')
+    .getByRole('region', { name: view, exact: true });
+  const selection = panel.locator('.artifact-selection');
   if (!(await selection.isVisible())) {
     await page
       .getByRole('navigation', { name: 'Breadcrumb', exact: true })
-      .getByRole('button', { name: 'Recordings & audit', exact: true })
+      .getByRole('button', { name: view, exact: true })
       .click();
   }
   await selection.waitFor({ state: 'visible' });
@@ -401,4 +407,21 @@ export async function exactArtifactSelection(page) {
   if (!(await summary.locator('..').evaluate((node) => node.open))) {
     await summary.click();
   }
+}
+
+export async function gridColumnFilter(page, grid, column, operator, value) {
+  const frame = grid.locator('xpath=ancestor::div[@class="admin-data-grid"][1]');
+  await frame.getByRole('button', { name: 'Filters', exact: true }).click();
+  await page.locator('.MuiDataGrid-filterFormColumnInput').getByRole('combobox').click();
+  await page.getByRole('option', { name: column, exact: true }).click();
+  await page.locator('.MuiDataGrid-filterFormOperatorInput').getByRole('combobox').click();
+  await page.getByRole('option', { name: operator, exact: true }).click();
+  const input = page.locator('.MuiDataGrid-filterFormValueInput');
+  if (await input.getByRole('combobox').count()) {
+    await input.getByRole('combobox').click();
+    await page.getByRole('option', { name: value, exact: true }).click();
+  } else {
+    await input.locator('input').fill(value);
+  }
+  await frame.getByRole('button', { name: 'Filters', exact: true }).click();
 }

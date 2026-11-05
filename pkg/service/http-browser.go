@@ -585,15 +585,15 @@ func webRequestFields(path string) []string {
 	case webAPI + "remember/prove":
 		return []string{"signature"}
 	case webAPI + "management/flows/list":
-		return []string{"limit", "after", "sort", "query"}
+		return []string{"limit", "after", "sort", "query", "filterField", "filterOperator", "filterValue"}
 	case webAPI + "management/version/show":
 		return []string{"long"}
 	case webAPI + "management/auditlogs/list":
-		return []string{"limit", "after", "sort", "query"}
+		return []string{"limit", "after", "sort", "query", "filterField", "filterOperator", "filterValue"}
 	case webAPI + "management/recordings/list":
-		return []string{"auditlog", "limit", "after", "flow", "user", "target", "startedFrom", "startedUntil", "status", "sort", "query"}
+		return []string{"auditlog", "limit", "after", "flow", "user", "target", "startedFrom", "startedUntil", "status", "sort", "query", "filterField", "filterOperator", "filterValue"}
 	case webAPI + "management/sessions/list":
-		return []string{"limit", "after", "flow", "user", "state", "sort", "query"}
+		return []string{"limit", "after", "flow", "user", "state", "sort", "query", "filterField", "filterOperator", "filterValue"}
 	case webAPI + "management/sessions/show":
 		return []string{"flow", "id"}
 	case webAPI + "management/artifacts/recording":

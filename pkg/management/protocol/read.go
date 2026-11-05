@@ -47,12 +47,20 @@ type ReadRequest struct {
 	Status        string        `json:"status,omitempty"`
 	Sort          string        `json:"sort,omitempty"`
 	Query         string        `json:"query,omitempty"`
+	GridFilter    *GridFilter   `json:"gridFilter,omitempty"`
 }
 
 func text(value string, maximum int) bool {
 	return len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsFunc(value, unicode.IsControl)
 }
 func (this ReadRequest) Normalize() (ReadRequest, error) {
+	if this.GridFilter != nil {
+		filter := *this.GridFilter
+		if filter.Validate(this.Operation) != nil {
+			return this, ErrRequest
+		}
+		this.GridFilter = &filter
+	}
 	if !text(this.Flow, 255) || !text(this.User, 256) || !text(this.Query, 256) || len(this.After) > MaximumCursorBytes {
 		return this, ErrRequest
 	}
@@ -186,6 +194,13 @@ func (this ReadRequest) Next(flow, id string) string {
 }
 
 func (this ReadRequest) filter() [32]byte {
+	if this.GridFilter != nil {
+		selected := this
+		selected.After = ""
+		selected.Limit = 0
+		raw, _ := json.Marshal(selected)
+		return sha256.Sum256(raw)
+	}
 	if this.Operation == ListRecordings {
 		raw, _ := json.Marshal(struct{ Auditlog string }{this.Auditlog})
 		return sha256.Sum256(raw)

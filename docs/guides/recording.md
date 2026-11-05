@@ -85,16 +85,19 @@ This Linux example adds audit logging and session recording to a local-account h
 The same settings capture output from [browser shells](browser-access.md). With
 a management flow and `allowArtifactTransfer: true`:
 
-1. Open **Recordings & audit**. The first page loads newest recordings first;
-   choose a source only when several are available. Use **Filter recordings** to
-   search by recorded requesting user, flow, time or status.
-2. Choose **Open recording**. Set the expected protection and signing identity,
-   using an independently retained ID rather than downloaded metadata. Without
-   an independent ID, continuing requires an explicit choice and the source
-   remains marked as unconfirmed.
-3. Choose **Check and open**, then **Play**. Full verification and player
-   preparation run locally; playback does not start automatically. Saving an
-   export is a separate action.
+1. Open **Recordings**. The first page loads newest recordings first; choose a
+   source only when several are available. Use the grid's **Filters** button or a
+   column menu for requesting user, flow, time, status and other available fields.
+2. Choose **Open recording**. Protection is detected from the signed header.
+   Unencrypted content opens after local verification. For encrypted content,
+   select your local decryption key and passphrase once and choose **Unlock and
+   open**. The recipient fingerprint is derived locally; you do not have to type
+   it. A successfully verified key is reused only within this management tab.
+3. Choose **Play**. Playback does not start automatically. The compact status
+   opens a dialog with verification and diagnostic details. **Verification
+   options** lets you pin a separately obtained signing ID or choose advanced
+   verification depth. The suggested header ID is not independent confirmation.
+   Saving an export is a separate action.
 
 The player keeps a 16:9 viewing area and scales the recorded terminal
 proportionally, without changing its recorded rows or columns. Its bottom

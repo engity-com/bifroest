@@ -4,8 +4,12 @@ import {
   type GridFilterModel,
   type GridSortModel,
   type GridValidRowModel,
+  useGridApiRef,
 } from '@mui/x-data-grid';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ColumnFilter } from '../management/protocol';
+import { type GridSearch, gridModel, gridSearch } from './grid-filter';
+import { t } from './messages';
 
 // Native grid controls, but authoritative filtering/order/pagination stay on the
 // server. Never pretend that sorting one loaded page sorts the whole inventory.
@@ -25,6 +29,9 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   onQuery,
   onSort,
   actionField,
+  columnFilter = null,
+  onSearch,
+  active = true,
 }: {
   label: string;
   rows: readonly R[];
@@ -41,30 +48,49 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   onQuery(query: string): void;
   onSort(direction: 'asc' | 'desc'): void;
   actionField?: string;
+  columnFilter?: ColumnFilter | null;
+  onSearch?: (query: string, filter: ColumnFilter | null) => void;
+  active?: boolean;
 }) {
-  const [draft, setDraft] = useState(query);
-  const pending = useRef<string | null>(null);
-  const send = useRef(onQuery);
-  send.current = onQuery;
+  const apiRef = useGridApiRef();
+  useLayoutEffect(() => {
+    if (!active || disabled) {
+      pending.current = null;
+      apiRef.current?.hideFilterPanel?.();
+      apiRef.current?.hideColumnMenu?.();
+    }
+  }, [active, disabled, apiRef]);
+  const [model, setModel] = useState<GridFilterModel>(() => gridModel(query, columnFilter));
+  const [filterInvalid, setFilterInvalid] = useState(false);
+  const currentColumns = useRef(columns);
+  currentColumns.current = columns;
+  const pending = useRef<GridSearch | null>(null);
+  const send = useRef((value: GridSearch) =>
+    onSearch ? onSearch(value.query, value.filter) : onQuery(value.query),
+  );
+  send.current = (value) => (onSearch ? onSearch(value.query, value.filter) : onQuery(value.query));
+  const sent = useRef(JSON.stringify({ query, filter: columnFilter }));
   useEffect(() => {
     if (pending.current === null) {
-      setDraft(query);
+      sent.current = JSON.stringify({ query, filter: columnFilter });
+      setModel((current) => {
+        try {
+          return JSON.stringify(gridSearch(current, currentColumns.current)) === sent.current
+            ? current
+            : gridModel(query, columnFilter);
+        } catch {
+          return current;
+        }
+      });
     }
-  }, [query]);
+  }, [query, columnFilter]);
   useEffect(() => {
-    if (!busy && !disabled && pending.current !== null) {
+    if (!busy && !disabled && active && pending.current !== null) {
       const next = pending.current;
       pending.current = null;
       send.current(next);
     }
-  }, [busy, disabled]);
-  const filters: GridFilterModel = useMemo(
-    () => ({
-      items: [],
-      quickFilterValues: draft.split(/\s+/u).filter(Boolean),
-    }),
-    [draft],
-  );
+  }, [busy, disabled, active]);
   const order: GridSortModel = useMemo(
     () => [{ field: sortField, sort: sortDirection }],
     [sortField, sortDirection],
@@ -73,6 +99,7 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   return (
     <div className="admin-data-grid">
       <DataGrid<R>
+        apiRef={apiRef}
         nonce={
           document.querySelector<HTMLMetaElement>('meta[name="bifroest-nonce"]')?.content ?? ''
         }
@@ -82,7 +109,7 @@ export function AdminDataGrid<R extends GridValidRowModel>({
           .toSorted((a, b) => Number(b.field === actionField) - Number(a.field === actionField))
           .map((column) => ({
             ...column,
-            filterable: false,
+            filterable: !!onSearch && column.field !== actionField && column.filterable !== false,
             sortable: column.field === sortField,
           }))}
         {...(getRowId ? { getRowId } : {})}
@@ -92,6 +119,16 @@ export function AdminDataGrid<R extends GridValidRowModel>({
         disableDensitySelector
         showToolbar
         slotProps={{
+          filterPanel: {
+            filterFormProps: {
+              valueInputProps: {
+                InputComponentProps: {
+                  error: filterInvalid,
+                  helperText: filterInvalid ? t('adminFilterLimit') : '',
+                },
+              },
+            },
+          },
           toolbar: {
             csvOptions: { disableToolbarButton: true },
             printOptions: { disableToolbarButton: true },
@@ -109,19 +146,31 @@ export function AdminDataGrid<R extends GridValidRowModel>({
         rowCount={hasNext ? -1 : page * 20 + rows.length}
         pageSizeOptions={[20]}
         onPaginationModelChange={(model) => {
-          if (!disabled && !busy && model.page !== page) {
+          if (active && !disabled && !busy && model.page !== page) {
             onPage(model.page);
           }
         }}
-        filterModel={filters}
-        onFilterModelChange={(model) => {
-          const next = (model.quickFilterValues ?? []).join(' ').slice(0, 256);
-          if (!disabled && next !== draft) {
-            setDraft(next);
+        filterModel={model}
+        onFilterModelChange={(nextModel) => {
+          if (disabled || !active) {
+            return;
+          }
+          setModel(nextModel);
+          let next: GridSearch;
+          try {
+            next = gridSearch(nextModel, columns);
+            setFilterInvalid(false);
+          } catch {
+            setFilterInvalid(true);
+            return;
+          }
+          const key = JSON.stringify(next);
+          if (key !== sent.current) {
+            sent.current = key;
             if (busy) {
               pending.current = next;
             } else {
-              onQuery(next);
+              send.current(next);
             }
           }
         }}
@@ -129,11 +178,17 @@ export function AdminDataGrid<R extends GridValidRowModel>({
         sortingOrder={['asc', 'desc']}
         onSortModelChange={(model) => {
           const next = model[0]?.sort;
-          if (!disabled && !busy && (next === 'asc' || next === 'desc') && next !== sortDirection) {
+          if (
+            active &&
+            !disabled &&
+            !busy &&
+            (next === 'asc' || next === 'desc') &&
+            next !== sortDirection
+          ) {
             onSort(next);
           }
         }}
-        disableColumnFilter
+        disableColumnFilter={!onSearch}
         hideFooterSelectedRowCount
         sx={{
           border: 0,

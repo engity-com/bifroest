@@ -36,13 +36,16 @@ type File struct {
 }
 
 type Options struct {
-	Producer       string `json:"producer"`
-	AllowUntrusted bool   `json:"allowUntrusted"`
-	Recipient      string `json:"recipient"`
-	Level          string `json:"level"` // outer or private
-	Export         bool   `json:"export"`
-	Sensitive      bool   `json:"sensitive"`
-	AuditScope     string `json:"auditScope"` // complete or captured-prefix
+	Producer            string `json:"producer"`
+	AllowUntrusted      bool   `json:"allowUntrusted"`
+	Recipient           string `json:"recipient"`
+	RecipientFromKey    bool   `json:"recipientFromKey,omitempty"`
+	RecipientFromHeader bool   `json:"recipientFromHeader,omitempty"`
+	identities          *keydata.AgeSshIdentities
+	Level               string `json:"level"` // outer or private
+	Export              bool   `json:"export"`
+	Sensitive           bool   `json:"sensitive"`
+	AuditScope          string `json:"auditScope"` // complete or captured-prefix
 }
 
 type Result struct {
@@ -87,7 +90,13 @@ func Verify(ctx context.Context, request protocol.ArtifactRequest, files []File,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if options.RecipientFromKey && (options.Level != "private" || options.Recipient != "" || len(privateKey) == 0) {
+		return nil, ErrInput
+	}
 	if request.Validate() != nil || len(files) == 0 || options.Level != "outer" && options.Level != "private" || options.Export && options.Level != "private" || options.Sensitive && options.Level != "private" || !evidence.ValidAuditRecipientFingerprint(options.Recipient) {
+		return nil, ErrInput
+	}
+	if options.RecipientFromHeader && (options.RecipientFromKey || options.Recipient != "" || options.Level != "outer" || len(privateKey) != 0 || request.Operation != protocol.DownloadRecording) {
 		return nil, ErrInput
 	}
 	var expected evidence.ProducerId
@@ -98,7 +107,7 @@ func Verify(ctx context.Context, request protocol.ArtifactRequest, files []File,
 	} else if !options.AllowUntrusted {
 		return nil, ErrInput
 	}
-	if len(privateKey) != 0 && (options.Level != "private" || options.Recipient == "") || len(privateKey) == 0 && len(passphrase) != 0 {
+	if len(privateKey) != 0 && (options.Level != "private" || options.Recipient == "" && !options.RecipientFromKey) || len(privateKey) == 0 && len(passphrase) != 0 {
 		return nil, ErrInput
 	}
 	var total int64
@@ -112,6 +121,21 @@ func Verify(ctx context.Context, request protocol.ArtifactRequest, files []File,
 		}
 		seen[file.Name] = true
 		total += int64(len(file.Data))
+	}
+	if options.RecipientFromKey {
+		parsed, err := browserkey.ParsePrivateKey(privateKey, passphrase)
+		if err != nil {
+			return nil, ErrKey
+		}
+		key, err := keydata.PrivateKeyFromSdk(parsed)
+		if err != nil {
+			return nil, ErrKey
+		}
+		options.Recipient = ssh.FingerprintSHA256(key.PublicKey().ToSsh())
+		options.identities, err = keydata.NewAgeSshIdentities([]keydata.PrivateKey{key})
+		if err != nil {
+			return nil, ErrKey
+		}
 	}
 	if request.Operation == protocol.DownloadRecording {
 		if len(files) != 1 || files[0].Name != "recording" || options.Sensitive || options.AuditScope != "" {
@@ -142,6 +166,13 @@ func privateIdentities(private, passphrase []byte, expected string) (*keydata.Ag
 		return nil, ErrKey
 	}
 	return identities, nil
+}
+
+func (options Options) privateIdentities(private, passphrase []byte) (*keydata.AgeSshIdentities, error) {
+	if options.identities != nil {
+		return options.identities, nil
+	}
+	return privateIdentities(private, passphrase, options.Recipient)
 }
 
 func resultFor(kind string, options Options, producer evidence.ProducerId, trusted bool) *Result {
@@ -190,6 +221,9 @@ func verifyRecording(ctx context.Context, request protocol.ArtifactRequest, data
 	if err != nil {
 		return nil, verificationError(err)
 	}
+	if options.RecipientFromHeader {
+		options.Recipient = outer.Header.Recipient
+	}
 	if cast.Id(outer.Header.RecordingId).String() != request.ID || outer.Header.Recipient != options.Recipient {
 		return nil, ErrVerification
 	}
@@ -201,7 +235,7 @@ func verifyRecording(ctx context.Context, request protocol.ArtifactRequest, data
 	if options.Level == "outer" {
 		return result, nil
 	}
-	keys, err := privateIdentities(private, passphrase, options.Recipient)
+	keys, err := options.privateIdentities(private, passphrase)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +332,7 @@ func verifyAudit(ctx context.Context, request protocol.ArtifactRequest, files []
 	if options.Level == "outer" {
 		return result, nil
 	}
-	verify.DecryptionIdentities, err = privateIdentities(private, passphrase, options.Recipient)
+	verify.DecryptionIdentities, err = options.privateIdentities(private, passphrase)
 	if err != nil {
 		return nil, err
 	}
