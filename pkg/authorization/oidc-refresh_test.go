@@ -18,6 +18,7 @@ import (
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
 	essh "github.com/engity-com/ssh-server-go"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/oauth2"
@@ -760,130 +761,159 @@ func TestOidcRefreshOnVerifiedOnlyAfterPersistence(t *testing.T) {
 }
 
 func TestOidcRotatedRefreshWaitsForJWKSBeforeTrustingCredentials(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	var keysAvailable atomic.Bool
-	var exchanges atomic.Int32
-	var jwksRequests atomic.Int32
-	var idToken string
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/token":
-			exchanges.Add(1)
-			if err := r.ParseForm(); err != nil || r.Form.Get("refresh_token") != "old-refresh" {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
-				return
+	for _, tc := range []struct {
+		name    string
+		restart bool
+	}{
+		{"after_restart", true},
+		{"without_restart", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, err := rsa.GenerateKey(rand.Reader, 2048)
+			require.NoError(t, err)
+			var keysAvailable atomic.Bool
+			var exchanges atomic.Int32
+			var jwksRequests atomic.Int32
+			var idToken string
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/token":
+					exchanges.Add(1)
+					if err := r.ParseForm(); err != nil || r.Form.Get("refresh_token") != "old-refresh" {
+						w.WriteHeader(http.StatusBadRequest)
+						_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "rotated-access", "refresh_token": "rotated-refresh", "token_type": "Bearer", "expires_in": 3600, "id_token": idToken})
+				case "/keys":
+					jwksRequests.Add(1)
+					if !keysAvailable.Load() {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]any{
+						"kty": "RSA", "kid": "rotated-key", "alg": "RS256", "use": "sig",
+						"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+						"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+					}}})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			encode := base64.RawURLEncoding.EncodeToString
+			header, err := json.Marshal(map[string]any{"alg": "RS256", "kid": "rotated-key"})
+			require.NoError(t, err)
+			claims, err := json.Marshal(map[string]any{
+				"iss": server.URL, "sub": "subject", "aud": "client", "iat": time.Now().Add(-time.Minute).Unix(), "exp": time.Now().Add(time.Hour).Unix(), "role": "unverified-role",
+			})
+			require.NoError(t, err)
+			signingInput := encode(header) + "." + encode(claims)
+			hash := sha256.Sum256([]byte(signingInput))
+			signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
+			require.NoError(t, err)
+			idToken = signingInput + "." + encode(signature)
+			ctx := context.WithValue(context.Background(), oauth2.HTTPClient, server.Client())
+			type verification struct {
+				token    []byte
+				deadline time.Time
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "rotated-access", "refresh_token": "rotated-refresh", "token_type": "Bearer", "expires_in": 3600, "id_token": idToken})
-		case "/keys":
-			jwksRequests.Add(1)
-			if !keysAvailable.Load() {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
+			var verified []verification
+			newAuthorizer := func() *OidcDeviceAuthAuthorizer {
+				return &OidcDeviceAuthAuthorizer{
+					flow: "flow", conf: &configuration.AuthorizationOidcDeviceAuth{
+						RetrieveIdToken: true, ForceDisposeSessionOn: "lostAccess", RefreshToken: configuration.AuthorizationOidcRefreshToken{Mode: "proactive"},
+					},
+					oauth2Config: oauth2.Config{ClientID: "client", Endpoint: oauth2.Endpoint{TokenURL: server.URL + "/token"}},
+					verifier:     coidc.NewVerifier(server.URL, coidc.NewRemoteKeySet(ctx, server.URL+"/keys"), &coidc.Config{ClientID: "client"}),
+					OnVerified: func(got session.Session, deadline time.Time) {
+						// Capture the persisted state before the callback returns, including during retries.
+						verified = append(verified, verification{
+							token: append([]byte(nil), got.(*authorizationRestoreTestSession).token...), deadline: deadline,
+						})
+					},
+				}
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]any{
-				"kty": "RSA", "kid": "rotated-key", "alg": "RS256", "use": "sig",
-				"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
-			}}})
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	encode := base64.RawURLEncoding.EncodeToString
-	header, err := json.Marshal(map[string]any{"alg": "RS256", "kid": "rotated-key"})
-	require.NoError(t, err)
-	claims, err := json.Marshal(map[string]any{
-		"iss": server.URL, "sub": "subject", "aud": "client", "iat": time.Now().Add(-time.Minute).Unix(), "exp": time.Now().Add(time.Hour).Unix(), "role": "unverified-role",
-	})
-	require.NoError(t, err)
-	signingInput := encode(header) + "." + encode(claims)
-	hash := sha256.Sum256([]byte(signingInput))
-	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
-	require.NoError(t, err)
-	idToken = signingInput + "." + encode(signature)
-	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, server.Client())
-	a := &OidcDeviceAuthAuthorizer{
-		flow: "flow", conf: &configuration.AuthorizationOidcDeviceAuth{
-			RetrieveIdToken: true, ForceDisposeSessionOn: "lostAccess", RefreshToken: configuration.AuthorizationOidcRefreshToken{Mode: "proactive"},
-		},
-		oauth2Config: oauth2.Config{ClientID: "client", Endpoint: oauth2.Endpoint{TokenURL: server.URL + "/token"}},
-		verifier:     coidc.NewVerifier(server.URL, coidc.NewRemoteKeySet(ctx, server.URL+"/keys"), &coidc.Config{ClientID: "client"}),
-	}
-	initial := oidcToken{
-		Token:      &oauth2.Token{AccessToken: "old-access", RefreshToken: "old-refresh", Expiry: time.Now().Add(time.Hour)},
-		ReceivedAt: time.Now().Add(-3 * time.Hour), LastVerifiedAt: time.Now().Add(-time.Minute), Subject: "subject", Issuer: server.URL,
-	}
-	sess := oidcRefreshTestSession(t, initial)
-	var verified []time.Time
-	a.OnVerified = func(got session.Session, deadline time.Time) {
-		stored := oidcToken{}
-		require.NoError(t, json.Unmarshal(got.(*authorizationRestoreTestSession).token, &stored))
-		require.Nil(t, stored.Pending)
-		require.Equal(t, "rotated-refresh", stored.RefreshToken)
-		require.True(t, stored.LastVerifiedAt.Add(a.maxUnverifiedFor()).Equal(deadline))
-		verified = append(verified, deadline)
-	}
-	next, lost, err := a.RefreshSession(ctx, sess)
-	require.ErrorContains(t, err, "refreshed ID token could not be verified")
-	require.False(t, lost)
-	require.True(t, next.After(time.Now()))
-	require.EqualValues(t, 1, exchanges.Load())
-	require.Positive(t, jwksRequests.Load())
-	require.Empty(t, verified)
-	var pending oidcToken
-	require.NoError(t, json.Unmarshal(sess.token, &pending))
-	require.Equal(t, "old-access", pending.AccessToken)
-	require.Equal(t, "old-refresh", pending.RefreshToken)
-	require.Empty(t, pending.IdToken)
-	require.Nil(t, pending.Token.Extra("id_token"))
-	require.Equal(t, initial.LastVerifiedAt.UnixNano(), pending.LastVerifiedAt.UnixNano())
-	require.NotNil(t, pending.Pending)
-	require.Equal(t, "rotated-access", pending.Pending.AccessToken)
-	require.Equal(t, "rotated-refresh", pending.Pending.RefreshToken)
-	require.Equal(t, idToken, pending.Pending.IdToken)
-	due, err := a.NextRefreshAt(ctx, sess)
-	require.NoError(t, err)
-	require.True(t, due.After(time.Now()))
-	_, err = a.finalizeAuth(ctx, a.logger(), &pending, true)
-	require.ErrorContains(t, err, "unverified pending credentials")
-	_, err = a.RestoreFromSession(ctx, sess, &RestoreOpts{})
-	require.ErrorContains(t, err, "pending ID token could not be verified")
-	require.NotErrorIs(t, err, ErrUnusableAuthorizationToken)
-	require.EqualValues(t, 1, exchanges.Load())
-	_, err = a.AuthorizePublicKey(oidcRefreshTestPublicKeyRequest{
-		repository: oidcRefreshTestRepository{candidate: sess}, ctx: oidcRefreshTestContext{base: ctx},
-	})
-	require.ErrorContains(t, err, "pending ID token could not be verified")
-	require.EqualValues(t, 1, exchanges.Load())
+			a := newAuthorizer()
+			initial := oidcToken{
+				Token:      &oauth2.Token{AccessToken: "old-access", RefreshToken: "old-refresh", Expiry: time.Now().Add(time.Hour)},
+				ReceivedAt: time.Now().Add(-3 * time.Hour), LastVerifiedAt: time.Now().Add(-time.Minute), Subject: "subject", Issuer: server.URL,
+			}
+			sess := oidcRefreshTestSession(t, initial)
+			next, lost, err := a.RefreshSession(ctx, sess)
+			require.ErrorContains(t, err, "refreshed ID token could not be verified")
+			require.False(t, lost)
+			require.True(t, next.After(time.Now()))
+			require.EqualValues(t, 1, exchanges.Load())
+			require.Positive(t, jwksRequests.Load())
+			require.Empty(t, verified)
+			var pending oidcToken
+			require.NoError(t, json.Unmarshal(sess.token, &pending))
+			require.Equal(t, "old-access", pending.AccessToken)
+			require.Equal(t, "old-refresh", pending.RefreshToken)
+			require.Empty(t, pending.IdToken)
+			require.Nil(t, pending.Token.Extra("id_token"))
+			require.Equal(t, initial.LastVerifiedAt.UnixNano(), pending.LastVerifiedAt.UnixNano())
+			require.NotNil(t, pending.Pending)
+			require.Equal(t, "rotated-access", pending.Pending.AccessToken)
+			require.Equal(t, "rotated-refresh", pending.Pending.RefreshToken)
+			require.Equal(t, idToken, pending.Pending.IdToken)
+			due, err := a.NextRefreshAt(ctx, sess)
+			require.NoError(t, err)
+			require.True(t, due.After(time.Now()))
+			_, err = a.finalizeAuth(ctx, a.logger(), &pending, true)
+			require.ErrorContains(t, err, "unverified pending credentials")
+			_, err = a.RestoreFromSession(ctx, sess, &RestoreOpts{})
+			require.ErrorContains(t, err, "pending ID token could not be verified")
+			require.NotErrorIs(t, err, ErrUnusableAuthorizationToken)
+			require.EqualValues(t, 1, exchanges.Load())
+			_, err = a.AuthorizePublicKey(oidcRefreshTestPublicKeyRequest{
+				repository: oidcRefreshTestRepository{candidate: sess}, ctx: oidcRefreshTestContext{base: ctx},
+			})
+			require.ErrorContains(t, err, "pending ID token could not be verified")
+			require.EqualValues(t, 1, exchanges.Load())
 
-	// Reload the JSON into a new session and authorizer, as after a process restart.
-	reloaded := &authorizationRestoreTestSession{flow: "flow", token: append([]byte(nil), sess.token...)}
-	keysAvailable.Store(true)
-	next, lost, err = a.RefreshSession(ctx, reloaded)
-	require.NoError(t, err)
-	require.False(t, lost)
-	require.True(t, next.After(time.Now()))
-	require.EqualValues(t, 1, exchanges.Load())
-	require.Len(t, verified, 1)
-	var stored oidcToken
-	require.NoError(t, json.Unmarshal(reloaded.token, &stored))
-	require.Nil(t, stored.Pending)
-	require.Equal(t, "rotated-access", stored.AccessToken)
-	require.Equal(t, "rotated-refresh", stored.RefreshToken)
-	require.Equal(t, idToken, stored.IdToken)
-	require.WithinDuration(t, time.Now(), stored.LastVerifiedAt, time.Second)
-	auth, err := a.RestoreFromSession(ctx, reloaded, &RestoreOpts{})
-	require.NoError(t, err)
-	require.Equal(t, "rotated-access", auth.(*oidc).token.AccessToken)
-	role, ok, err := auth.(*oidc).idToken.GetField("role")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "unverified-role", role)
-	require.EqualValues(t, 1, exchanges.Load())
+			keysAvailable.Store(true)
+			if tc.restart {
+				// A process restart reloads the JSON and discards the old remote key set's in-flight state.
+				sess = &authorizationRestoreTestSession{flow: "flow", token: append([]byte(nil), sess.token...)}
+				a = newAuthorizer()
+				next, lost, err = a.RefreshSession(ctx, sess)
+				require.NoError(t, err)
+			} else {
+				// RemoteKeySet may briefly reuse a completed failed request before clearing its in-flight state.
+				require.EventuallyWithT(t, func(c *assert.CollectT) {
+					next, lost, err = a.RefreshSession(ctx, sess)
+					require.NoError(c, err)
+				}, 5*time.Second, 10*time.Millisecond)
+			}
+			require.False(t, lost)
+			require.True(t, next.After(time.Now()))
+			require.EqualValues(t, 1, exchanges.Load())
+			require.Len(t, verified, 1)
+			var observed oidcToken
+			require.NoError(t, json.Unmarshal(verified[0].token, &observed))
+			require.Nil(t, observed.Pending)
+			require.Equal(t, "rotated-refresh", observed.RefreshToken)
+			require.True(t, observed.LastVerifiedAt.Add(a.maxUnverifiedFor()).Equal(verified[0].deadline))
+			var stored oidcToken
+			require.NoError(t, json.Unmarshal(sess.token, &stored))
+			require.Nil(t, stored.Pending)
+			require.Equal(t, "rotated-access", stored.AccessToken)
+			require.Equal(t, "rotated-refresh", stored.RefreshToken)
+			require.Equal(t, idToken, stored.IdToken)
+			require.WithinDuration(t, time.Now(), stored.LastVerifiedAt, time.Second)
+			auth, err := a.RestoreFromSession(ctx, sess, &RestoreOpts{})
+			require.NoError(t, err)
+			require.Equal(t, "rotated-access", auth.(*oidc).token.AccessToken)
+			role, ok, err := auth.(*oidc).idToken.GetField("role")
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, "unverified-role", role)
+			require.EqualValues(t, 1, exchanges.Load())
+		})
+	}
 }
 
 func TestOidcPendingVerificationDeadlineAndPersistenceFailure(t *testing.T) {
