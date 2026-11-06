@@ -12,8 +12,10 @@ import type { ReceivedArtifact } from '../src/artifacts/protocol';
 import { verifyArtifact } from '../src/artifacts/verify';
 import { SessionActionConfirmation } from '../src/management/action';
 import { ManagementPanel } from '../src/management/ManagementPanel';
+import type { RecordingSummary } from '../src/management/protocol';
 import type { WebAccess } from '../src/remember';
 import { RememberMeError } from '../src/remember';
+import { ManagementWorkspace } from '../src/ui/ManagementWorkspace';
 import { managementPath, parseManagementLocation } from '../src/ui/management-location';
 import { ManagementNavigationContext } from '../src/ui/management-navigation';
 import { t } from '../src/ui/messages';
@@ -51,7 +53,9 @@ function fixture() {
       expiresAt: '2100-01-01T00:00:00Z',
     }),
     status: () => 'active',
+    managementStatus: () => 'active',
     subscribeStatus: () => () => {},
+    openManagement: vi.fn(() => ({ disconnect: vi.fn() })),
     managementSessions: vi.fn(async (_options: unknown, _signal?: AbortSignal) => ({
       items: [session],
       next: '',
@@ -92,14 +96,30 @@ function Scene({
   source,
 }: {
   access: WebAccess;
-  kind: 'sessions' | 'recordings' | 'audit';
+  kind: 'sessions' | 'recordings' | 'audit' | 'workspace';
   source: Blob;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
   const route = useMemo(() => parseManagementLocation(scope, location), [location]);
+  const cancellation = useMemo(() => new AbortController(), []);
   if (!route) {
     throw new Error('Invalid routed fixture');
+  }
+  if (kind === 'workspace') {
+    return createElement(ManagementWorkspace, {
+      access,
+      owner: 1,
+      active: true,
+      disabled: false,
+      onActionLock: noLock,
+      onReauthenticate: noLock,
+      signal: cancellation.signal,
+      location: route,
+      onNavigate: (_owner, target, replace) => {
+        void navigate(managementPath(scope, target), { replace: replace ?? false });
+      },
+    });
   }
   return createElement(
     ManagementNavigationContext.Provider,
@@ -142,7 +162,7 @@ afterEach(async () => {
 });
 async function mount(
   path: string,
-  kind: 'sessions' | 'recordings' | 'audit',
+  kind: 'sessions' | 'recordings' | 'audit' | 'workspace',
   access: WebAccess,
   source = new Blob(),
 ) {
@@ -175,6 +195,219 @@ function button(host: ParentNode, label: string) {
   return result;
 }
 const click = async (node: HTMLElement) => act(async () => node.click());
+
+function recordingCatalogFixture() {
+  const { api, access } = fixture();
+  const row: RecordingSummary = {
+    auditlog: 'default',
+    id,
+    producerId: 'a'.repeat(64),
+    format: 'bcast/v1',
+    status: 'completed',
+    startedAt: '2026-11-05T00:00:00Z',
+    endedAt: '2026-11-05T00:00:01Z',
+    containerBytes: 7,
+    chunkCount: 1,
+    encrypted: false,
+    verificationScope: 'full',
+    flow: 'docker',
+    sessionId: session.id,
+    user: 'alice',
+  };
+  const page = { items: [row], next: '', skipped: 0 };
+  api.managementRecordings.mockResolvedValue(page);
+  const image: ReceivedArtifact = {
+    request: { kind: 'recording', auditlog: 'default', id },
+    transport: 'complete',
+    evidence: 'unverified',
+    metadata: { Version: 1, ID: id, ProducerID: row.producerId, Size: 7, SHA256: 'b'.repeat(64) },
+    files: [{ name: 'recording', data: new Blob(['fixture']) }],
+  };
+  api.downloadArtifact.mockResolvedValue(image);
+  const metadata: EvidenceMetadata = {
+    kind: 'recording',
+    validation: 'private',
+    trust: 'untrusted',
+    producer: row.producerId,
+    expectedRecipient: '',
+    decryption: 'not-encrypted',
+    recordingId: id,
+    auditScope: '',
+    records: '0',
+    privateRecords: '0',
+    outputFormat: 'cast',
+  };
+  vi.mocked(inspectProtection).mockResolvedValue({
+    ...metadata,
+    validation: 'outer',
+    outputFormat: '',
+  });
+  vi.mocked(verifyArtifact).mockResolvedValue({
+    request: image.request,
+    provenance: 'bytes-only',
+    metadata,
+    output: new Blob([`{}\n# bifroest:metadata:v1 {"recordingId":"${id}","flow":"docker"}\n`]),
+  });
+  return { api, access, page };
+}
+
+it('returns through the real flow breadcrumb to the retained dataset when the sole source becomes explicit in the URI', async () => {
+  const { api, access, page } = recordingCatalogFixture();
+  api.managementRecordings
+    .mockReset()
+    .mockResolvedValueOnce(page)
+    .mockRejectedValue(new RememberMeError('catalog-incomplete'));
+  const { host, router } = await mount('/Admin/admin/recordings/docker', 'workspace', access);
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+  const grid = host.querySelector('[role="grid"][aria-label="Recordings · default"]');
+  await click(button(host, `Open recording ${id}`));
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Routed player"]')).not.toBeNull());
+  await click(button(host, 'docker'));
+  await vi.waitFor(() =>
+    expect(router.state.location.pathname).toBe('/Admin/admin/recordings/docker'),
+  );
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Routed player"]')).toBeNull());
+  await vi.waitFor(() => expect(button(host, 'Refresh recordings').disabled).toBe(false));
+  expect(router.state.location.search).toBe('?auditlog=default');
+  expect(api.managementRecordings).toHaveBeenCalledOnce();
+  expect(host.textContent).not.toContain(t('recordingCatalogWarming'));
+  expect(button(host, `Open recording ${id}`).disabled).toBe(false);
+  expect(host.querySelector('[role="grid"][aria-label="Recordings · default"]')).toBe(grid);
+  expect(api.downloadArtifact).toHaveBeenCalledOnce();
+});
+
+it('loads a genuinely new breadcrumb flow and exposes no earlier rows when that read needs continuation', async () => {
+  const { api, access, page } = recordingCatalogFixture();
+  api.managementRecordings
+    .mockReset()
+    .mockResolvedValueOnce(page)
+    .mockRejectedValueOnce(new RememberMeError('catalog-incomplete'))
+    .mockResolvedValue(page);
+  const { host, router } = await mount('/Admin/admin/recordings', 'workspace', access);
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+  await click(button(host, `Open recording ${id}`));
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Routed player"]')).not.toBeNull());
+  await click(button(host, 'docker'));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  expect(router.state.location.pathname).toBe('/Admin/admin/recordings/docker');
+  expect(api.managementRecordings).toHaveBeenCalledTimes(2);
+  expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
+  await click(button(host, 'Continue verification'));
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(3));
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+  expect(host.textContent).not.toContain(t('recordingCatalogWarming'));
+  expect(api.managementRecordings.mock.calls[2]?.[1]).toMatchObject({
+    flow: 'docker',
+    filter: { field: 'flow', operator: 'equals', value: 'docker' },
+  });
+});
+
+it('invalidates rows and paging after a failed same-scope refresh instead of displaying an earlier successful page', async () => {
+  const { api, access, page } = recordingCatalogFixture();
+  api.managementRecordings
+    .mockReset()
+    .mockResolvedValueOnce({ ...page, next: 'opaque-cursor' })
+    .mockRejectedValueOnce(new RememberMeError('catalog-incomplete'))
+    .mockResolvedValue(page);
+  const { host } = await mount(
+    '/Admin/admin/recordings/docker?auditlog=default',
+    'recordings',
+    access,
+  );
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+  const grid = host.querySelector('[role="grid"]');
+  await click(button(host, 'Refresh recordings'));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  expect(api.managementRecordings).toHaveBeenCalledTimes(2);
+  expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
+  expect(button(host, 'Go to next page').disabled).toBe(true);
+  expect(host.querySelector('[role="grid"]')).toBe(grid);
+  await click(button(host, 'Continue verification'));
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+  expect(api.managementRecordings).toHaveBeenCalledTimes(3);
+  expect(api.managementRecordings.mock.calls[2]?.[1]).toMatchObject({ after: '', flow: 'docker' });
+});
+
+it('repeats only the explicit failed native-filter intent when verification is continued', async () => {
+  const { api, access, page } = recordingCatalogFixture();
+  api.managementRecordings
+    .mockReset()
+    .mockResolvedValueOnce(page)
+    .mockRejectedValueOnce(new RememberMeError('catalog-incomplete'))
+    .mockResolvedValue(page);
+  const { host } = await mount('/Admin/admin/recordings?auditlog=default', 'recordings', access);
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+  await nativeColumnFilter(host, 'User', 'alice', 'contains');
+  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  expect(api.managementRecordings).toHaveBeenCalledTimes(2);
+  await click(button(host, 'Continue verification'));
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(3));
+  expect(api.managementRecordings.mock.calls[2]?.[1]).toMatchObject({
+    filter: { field: 'user', operator: 'contains', value: 'alice' },
+  });
+});
+
+it('does not publish a late warmup failure from an earlier breadcrumb flow into the new route', async () => {
+  const { api, access, page } = recordingCatalogFixture();
+  type RecordingPage = Awaited<ReturnType<WebAccess['managementRecordings']>>;
+  const first = Promise.withResolvers<RecordingPage>();
+  const second = Promise.withResolvers<RecordingPage>();
+  api.managementRecordings
+    .mockReset()
+    .mockImplementationOnce(() => first.promise)
+    .mockImplementationOnce(() => second.promise);
+  const { host, router } = await mount(
+    '/Admin/admin/recordings/docker?auditlog=default',
+    'recordings',
+    access,
+  );
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledOnce());
+  await act(async () => router.navigate('/Admin/admin/recordings/other?auditlog=default'));
+  await act(async () => first.reject(new RememberMeError('catalog-incomplete')));
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(2));
+  expect(host.textContent).not.toContain(t('recordingCatalogWarming'));
+  expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
+  const other = {
+    ...page.items[0],
+    id: '70d5159d-a0e4-46ca-b011-c4f831f4ade0',
+    flow: 'other',
+  } as RecordingSummary;
+  await act(async () => second.resolve({ items: [other], next: '', skipped: 0 }));
+  await vi.waitFor(() => expect(button(host, `Open recording ${other.id}`).disabled).toBe(false));
+  expect(host.textContent).not.toContain(t('recordingCatalogWarming'));
+  expect(api.managementRecordings.mock.calls[1]?.[1]).toMatchObject({ flow: 'other' });
+  expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(1);
+});
+
+it('retains an unfinished read warning for its owned page without an automatic retry when returning from another main page', async () => {
+  const { api, access, page } = recordingCatalogFixture();
+  type RecordingPage = Awaited<ReturnType<WebAccess['managementRecordings']>>;
+  const pending = Promise.withResolvers<RecordingPage>();
+  api.managementRecordings
+    .mockReset()
+    .mockImplementationOnce(() => pending.promise)
+    .mockResolvedValue(page);
+  const { host, router } = await mount(
+    '/Admin/admin/recordings/docker?auditlog=default',
+    'workspace',
+    access,
+  );
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledOnce());
+  await act(async () => router.navigate('/Admin/admin'));
+  await act(async () => pending.reject(new RememberMeError('catalog-incomplete')));
+  await vi.waitFor(() => expect(api.managementFlows).toHaveBeenCalledOnce());
+  await click(button(host, 'Recordings'));
+  await vi.waitFor(() =>
+    expect(router.state.location.pathname).toBe('/Admin/admin/recordings/docker'),
+  );
+  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  expect(api.managementRecordings).toHaveBeenCalledOnce();
+  expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
+  await click(button(host, 'Continue verification'));
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+});
 
 it('binds a sessions URI to the literal flow and opens/closes details through the router without rereading the retained list', async () => {
   const { access, api } = fixture();

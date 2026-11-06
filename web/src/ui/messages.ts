@@ -487,7 +487,8 @@ export const messages = {
   recordingReadFailed:
     'Recordings could not be loaded. Check the Bifröst server log for the cause, then refresh the list.',
   recordingCatalogWarming:
-    'The recording catalog is not fully verified yet. Verified progress was retained; select Refresh recordings to continue. No incomplete list is shown. See the server log for details.',
+    'Catalog verification needs another read. Continue verification promptly; cached progress expires after 30 seconds. No results from the failed read are shown. See the server log for details.',
+  recordingCatalogContinue: 'Continue verification',
   artifactDownloadDenied:
     'This sign-in is not permitted to open this recording or audit log. Choose an allowed source or use a different sign-in.',
   recordingNoMatches: 'No recordings match these filters.',

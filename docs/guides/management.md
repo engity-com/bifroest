@@ -190,6 +190,10 @@ Returning to an otherwise unchanged loaded view does not repeat its reads.
 In debug/instrumented builds, a cold Recording catalog may need more than one
 bounded read. A yellow notice means verified progress was retained, not that a
 partial list is ready: select **Refresh recordings** to continue explicitly.
+The notice also provides **Continue verification**. Cached progress expires
+after 30 seconds; continue promptly rather than treating the notice as a loaded
+list. Failed reads clear old rows and paging, and an explicit continuation keeps
+the requested source, literal flow and native filter/sort intent.
 Server logs identify the actual backend failure and, for WebSocket operations,
 its request ID. Other failures still require diagnosis; no timeout, byte budget,
 verification or permission limit is bypassed.
@@ -235,6 +239,12 @@ preserve the requested context. Reload still requires explicit sign-in or **Use
 saved access**, and the authorized management flow must match the link; URLs
 never restore grants or terminal executions. The server delivers the static SPA
 entry for these links; all React rendering happens in the browser.
+
+Returning through a flow breadcrumb to an already loaded source/flow dataset
+retains its list rather than querying it again. Making a sole, automatically
+selected auditlog explicit in a detail URL does not change that dataset. A new
+flow or source still requires its own authorized read; rows from an earlier
+successful read are never displayed as the result of a failed new read.
 
 Management tab labels follow their selected main page. Live shell tab labels
 start with the resolved flow title (`title`, or `name`) and follow the shell's

@@ -129,7 +129,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 		node, err = exec.LookPath("node")
 		require.NoError(t, err)
 	}
-	for _, mode := range []string{"normal", "encrypted", "ui-clear", "ui-encrypted", "ui-audit-clear", "ui-audit-encrypted", "ui-cancel-clear", "ui-cancel-encrypted", "catalog-clear", "catalog-encrypted", "catalog-startup-failure", "held-success", "held-failure"} {
+	for _, mode := range []string{"normal", "encrypted", "ui-clear", "ui-encrypted", "ui-breadcrumb", "ui-audit-clear", "ui-audit-encrypted", "ui-cancel-clear", "ui-cancel-encrypted", "catalog-clear", "catalog-encrypted", "catalog-startup-failure", "held-success", "held-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			var keyPath, recipient string
 			private := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
@@ -221,6 +221,10 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 						id = ids[0].String()
 					}
 					w.Header().Set("Content-Type", "application/json")
+					if mode == "ui-breadcrumb" {
+						_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "producer": svc.auditIdentities[flow.Auditlog].ProducerId().String(), "recipient": recipient, "managementFlow": flow.Name.String(), "flow": flow.Name.String()})
+						return
+					}
 					_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "producer": svc.auditIdentities[flow.Auditlog].ProducerId().String(), "recipient": recipient})
 					return
 				case "/_bifroest/test/artifact-arm":
@@ -311,6 +315,9 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 			script := "artifact-client.mjs"
 			if strings.HasPrefix(mode, "ui-") {
 				script = "artifact-ui.mjs"
+			}
+			if mode == "ui-breadcrumb" {
+				script = "recording-breadcrumb-ui.mjs"
 			}
 			if strings.HasPrefix(mode, "catalog-") {
 				script = "catalog-ui.mjs"

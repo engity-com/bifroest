@@ -73,6 +73,7 @@ export function ArtifactCatalog({
   const [filter, setFilter] = useState<ColumnFilter | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<Message | null>(null);
+  const failedRoute = useRef<string | null>(null);
   const request = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const attempted = useRef(false);
@@ -96,6 +97,7 @@ export function ArtifactCatalog({
     setFilter(null);
     setBusy(false);
     setFailed(null);
+    failedRoute.current = null;
     return () => {
       generation.current++;
       request.current?.abort();
@@ -108,7 +110,7 @@ export function ArtifactCatalog({
     }
   }, [disabled]);
   async function run(action: (signal: AbortSignal, current: number) => Promise<void>) {
-    if (disabled || request.current !== null) {
+    if (!active || disabled || request.current !== null) {
       return;
     }
     const controller = new AbortController();
@@ -116,6 +118,7 @@ export function ArtifactCatalog({
     request.current = controller;
     setBusy(true);
     setFailed(null);
+    failedRoute.current = null;
     try {
       await action(controller.signal, current);
     } catch (error) {
@@ -124,7 +127,12 @@ export function ArtifactCatalog({
         !controller.signal.aborted &&
         !(error instanceof RememberMeError && error.code === 'cancelled')
       ) {
+        loadedScope.current = null;
+        setRows(null);
+        setPage(0);
+        cursors.current = [''];
         reportUiError('artifact-catalog', error);
+        failedRoute.current = routeKey;
         setFailed(
           error instanceof RememberMeError && error.code === 'denied'
             ? 'recordingReadDenied'
@@ -162,11 +170,15 @@ export function ArtifactCatalog({
     predicate = filter,
   ) {
     await run(async (signal, current) => {
-      const result = await access.managementRecordings(
-        name,
-        options(index, search, direction, predicate),
-        signal,
-      );
+      const selected = options(index, search, direction, predicate);
+      consumedRoute.current = routeKey;
+      loadedScope.current = null;
+      setRows(null);
+      setSource(name);
+      setQuery(search);
+      setSort(direction);
+      setFilter(predicate);
+      const result = await access.managementRecordings(name, selected, signal);
       if (current !== generation.current || signal.aborted || routeKey !== currentRoute.current) {
         if (routeKey !== currentRoute.current && consumedRoute.current === routeKey) {
           consumedRoute.current = null;
@@ -213,6 +225,11 @@ export function ArtifactCatalog({
           ? { field: 'flow', operator: 'equals', value: route.flow }
           : null;
         consumedRoute.current = routeKey;
+        loadedScope.current = null;
+        setRows(null);
+        setQuery('');
+        setSort('desc');
+        setFilter(predicate);
         const result = await access.managementRecordings(
           name,
           options(0, '', 'desc', predicate),
@@ -261,6 +278,14 @@ export function ArtifactCatalog({
     const native = nativeFilterIntent.current?.key === routeKey ? nativeFilterIntent.current : null;
     nativeFilterIntent.current = null;
     consumedRoute.current = routeKey;
+    // A row/detail URL makes an automatically selected sole source explicit.
+    // That spelling change is not a different dataset and must not replay its
+    // retained list read after playback. A genuinely different flow/source or
+    // pending native filter intent still requires an authoritative new read.
+    if (!native && rows !== null && loadedScope.current === JSON.stringify([route.flow, name])) {
+      setFailed(null);
+      return;
+    }
     setRows(null);
     setPage(0);
     setSource(name);
@@ -291,11 +316,30 @@ export function ArtifactCatalog({
   const enabled = sources?.items.filter((row) => row.enabled && row.recordingEnabled) ?? [];
   const identity = (row: RecordingSummary) =>
     row.encrypted || row.metadataUnavailable ? null : row;
+  const visibleFailure = failedRoute.current === routeKey ? failed : null;
   return (
     <section className="stack" aria-label={t('artifactCatalog')}>
-      {failed && (
-        <Alert role="status" color={failed === 'recordingCatalogWarming' ? 'yellow' : 'red'}>
-          {t(failed)}
+      {visibleFailure && (
+        <Alert
+          role="status"
+          color={visibleFailure === 'recordingCatalogWarming' ? 'yellow' : 'red'}
+        >
+          <div className="stack">
+            <span>{t(visibleFailure)}</span>
+            {visibleFailure === 'recordingCatalogWarming' && (
+              <div className="actions">
+                <Button
+                  variant="default"
+                  disabled={locked || !active}
+                  onClick={() => {
+                    void (source === '' ? loadSources() : load(source, 0, query, sort, filter));
+                  }}
+                >
+                  {t('recordingCatalogContinue')}
+                </Button>
+              </div>
+            )}
+          </div>
         </Alert>
       )}
       {((sources?.skipped ?? 0) > 0 || (rows?.skipped ?? 0) > 0) && (
