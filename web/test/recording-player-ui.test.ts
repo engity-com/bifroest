@@ -1,6 +1,7 @@
 import { act, createElement, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 import { EvidenceError } from '../src/artifacts/evidence-protocol';
 import { RecordingPlayback } from '../src/artifacts/playback';
 import { PlaybackImage, type PlaybackOptions } from '../src/artifacts/playback-protocol';
@@ -127,6 +128,18 @@ async function click(element: HTMLElement) {
 async function ready() {
   await vi.waitFor(() => expect(button(t('playbackPlay')).disabled).toBe(false));
 }
+async function parkPointerOutsidePlayer() {
+  const heading = document.querySelector<HTMLElement>('h4');
+  if (!heading) {
+    throw new Error('Missing player heading');
+  }
+  // element.click() does not move the real browser pointer. Settle native
+  // hit-testing outside the stage after preparation/scrollIntoView, otherwise
+  // an asynchronous layout-driven pointerenter can restart the fake idle clock.
+  await act(async () => userEvent.hover(heading));
+  expect(heading.matches(':hover')).toBe(true);
+  expect(document.querySelector('.recording-video')?.matches(':hover')).toBe(false);
+}
 
 describe('preparing a player as part of the explicit open-recording task', () => {
   it('uses a fixed 16:9 stage with bottom controls rather than external playback buttons', async () => {
@@ -196,20 +209,75 @@ describe('preparing a player as part of the explicit open-recording task', () =>
     try {
       await mount();
       await ready();
+      await parkPointerOutsidePlayer();
       await click(button(t('playbackPlay')));
       const stage = document.querySelector<HTMLElement>('.recording-video');
       if (!stage) {
         throw new Error('Missing video stage');
       }
-      await act(async () => vi.advanceTimersByTimeAsync(3001));
+      await act(async () => vi.advanceTimersByTimeAsync(2999));
+      expect(stage.dataset.controlsVisible).toBe('true');
+      await act(async () => vi.advanceTimersByTimeAsync(1));
       expect(stage.dataset.controlsVisible).toBe('false');
       await act(async () =>
         stage.dispatchEvent(new PointerEvent('pointermove', { bubbles: true })),
       );
       expect(stage.dataset.controlsVisible).toBe('true');
+      await act(async () => vi.advanceTimersByTimeAsync(2999));
+      expect(stage.dataset.controlsVisible).toBe('true');
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(stage.dataset.controlsVisible).toBe('false');
       await click(button(t('playbackPause')));
       await act(async () => vi.advanceTimersByTimeAsync(4000));
       expect(stage.dataset.controlsVisible).toBe('true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts a fresh inactivity deadline for a trusted layout-driven pointer entry', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    vi.mocked(prepareRecordingPlayback).mockImplementation(async (_source, options) =>
+      image(options, 60_000_000),
+    );
+    try {
+      await mount();
+      await ready();
+      const stage = document.querySelector<HTMLElement>('.recording-video');
+      if (!stage) {
+        throw new Error('Missing video stage');
+      }
+      const cover = document.createElement('div');
+      cover.style.cssText = 'position:fixed;inset:0;z-index:99999;background:white';
+      document.body.append(cover);
+      cleanups.push(() => cover.remove());
+      const box = stage.getBoundingClientRect();
+      await act(async () =>
+        userEvent.hover(cover, { position: { x: box.left + 50, y: box.top + 50 } }),
+      );
+      // Retain the original fixture's programmatic activation: the pointer is
+      // stationary on the cover, not moved to the Play button by this click.
+      await click(button(t('playbackPlay')));
+      await act(async () => vi.advanceTimersByTimeAsync(1500));
+      const entered = Promise.withResolvers<PointerEvent>();
+      const movement = vi.fn();
+      stage.addEventListener('pointermove', movement);
+      stage.addEventListener('pointerenter', (event) => entered.resolve(event), { once: true });
+      let event: PointerEvent | undefined;
+      await act(async () => {
+        cover.remove();
+        event = await entered.promise;
+      });
+      expect(event?.isTrusted).toBe(true);
+      expect(stage.matches(':hover')).toBe(true);
+      expect(movement).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTimeAsync(1500));
+      expect(stage.dataset.controlsVisible).toBe('true');
+      await act(async () => vi.advanceTimersByTimeAsync(1499));
+      expect(stage.dataset.controlsVisible).toBe('true');
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(stage.dataset.controlsVisible).toBe('false');
+      expect(button(t('playbackPause')).disabled).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -254,6 +322,7 @@ describe('preparing a player as part of the explicit open-recording task', () =>
     try {
       await mount();
       await ready();
+      await parkPointerOutsidePlayer();
       await click(button(t('playbackPlay')));
       const stage = document.querySelector<HTMLElement>('.recording-video');
       const timeline = document.querySelector<HTMLInputElement>('.recording-timeline');

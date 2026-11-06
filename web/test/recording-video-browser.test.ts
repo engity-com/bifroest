@@ -234,6 +234,11 @@ describe('real console inside the recording video', () => {
     await vi.waitFor(() => verifyFit());
     await act(async () => userEvent.keyboard('f'));
     await vi.waitFor(() => expect(document.fullscreenElement).toBe(stage));
+    // The native property changes before fullscreenchange has necessarily
+    // reached React. Require its rendered acknowledgement before using it.
+    await expect
+      .element(page.getByRole('button', { name: t('playbackExitFullscreen'), exact: true }))
+      .toBeVisible();
     await act(async () =>
       userEvent.click(page.getByRole('button', { name: t('playbackExitFullscreen'), exact: true })),
     );
