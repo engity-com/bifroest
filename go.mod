@@ -20,13 +20,13 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/docker/go-connections v0.8.2
 	github.com/docker/go-units v0.5.0
-	github.com/ebitengine/purego v0.11.2
+	github.com/ebitengine/purego v0.11.3
 	github.com/echocat/cli4g v0.3.0
 	github.com/echocat/slf4g v1.9.0
 	github.com/echocat/slf4g/native v1.9.0
 	github.com/engity-com/ssh-server-go v0.4.1
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/fxamacker/cbor/v2 v2.9.6
+	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/go-delve/delve v1.27.2
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-github/v65 v65.0.0
@@ -46,7 +46,7 @@ require (
 	github.com/openwall/yescrypt-go v1.0.0
 	github.com/otiai10/copy v1.14.1
 	github.com/pkg/sftp v1.13.12
-	github.com/shirou/gopsutil/v4 v4.26.9
+	github.com/shirou/gopsutil/v4 v4.26.10
 	github.com/stretchr/testify v1.12.1
 	github.com/tc-hib/winres v0.3.1
 	github.com/tg123/go-htpasswd v1.2.5

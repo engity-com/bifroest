@@ -136,7 +136,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
 
       - name: Install pinned WebCrypto test runtime
         run: mise -C web install node
@@ -196,7 +196,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
 
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"
@@ -258,7 +258,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
 
       - *install-go-dependencies
 
@@ -321,7 +321,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
 
       - *install-go-dependencies
 
@@ -353,7 +353,7 @@ jobs:
       contents: write
       packages: write
     container:
-      image: ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:083b2302959b7ae61f41f7c5c8f796c04802494ebbf2827f201a3369fd710cb2
+      image: ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:2b1e90943c82e4cb4014e2cc06927ea99e2a3adcfbc4f291d7277a531f60a3d6
     env:
       GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
       GITHUB_SHA: ${{ inputs.commit || github.sha }}
@@ -383,7 +383,7 @@ jobs:
           restore-keys: images-dependencies
 
       - name: Install MISE
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
 
       - name: Lint licenses
         if: inputs.lint_reuse
