@@ -12,6 +12,7 @@ import '../src/ui/app.css';
 vi.mock('../src/artifacts/audit-events', () => ({
   indexAuditEvents: vi.fn(),
   auditEventPage: vi.fn(),
+  auditEventByID: vi.fn(),
 }));
 const indexFor = (source: Blob): AuditEventIndex => ({
   source,

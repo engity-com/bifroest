@@ -26,7 +26,7 @@ type Props = Omit<TabProps, 'id' | 'onSelect'> & {
 };
 
 // A genuine Material Tab, forwarded through MUI Tabs' selection/focus contract.
-// The default visible label is the verified principal only, not URL punctuation.
+// Titles are display metadata; the verified principal stays separate in ARIA/tooltip.
 export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function ConnectionTab(
   { id, principal, title, scope, kind, access, state, active, onSelect, onMenu, onClose, ...props },
   ref,
@@ -47,6 +47,20 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
         aria-selected={active}
         aria-haspopup="menu"
         onClick={onSelect}
+        onMouseDown={(event) => {
+          if (event.button === 1) {
+            event.preventDefault();
+          }
+        }}
+        onAuxClick={(event) => {
+          if (event.button === 1) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!props.disabled) {
+              onClose();
+            }
+          }
+        }}
         onKeyDown={(event) => {
           if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
             event.preventDefault();
@@ -113,7 +127,9 @@ export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function Connecti
                   whiteSpace: 'nowrap',
                 }}
               >
-                {title || principal}
+                {title ||
+                  access.snapshot().flow?.title ||
+                  t(kind === 'management' ? 'workspaceOverview' : 'terminalTitle')}
               </Box>
               {accessLabel && (
                 <Box component="span" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>

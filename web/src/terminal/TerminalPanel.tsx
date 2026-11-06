@@ -123,6 +123,40 @@ export function TerminalPanel({
         emulator.current.options.disableStdin = true;
       }
     };
+    const forget = () => {
+      let failed = false;
+      try {
+        stop();
+      } catch {
+        failed = true;
+      }
+      connection = null;
+      observer?.disconnect();
+      observer = undefined;
+      clearTimeout(timer);
+      layout.current = null;
+      for (const subscription of subscriptions.splice(0)) {
+        try {
+          subscription.dispose();
+        } catch {
+          failed = true;
+        }
+      }
+      try {
+        emulator.current?.dispose();
+      } catch {
+        failed = true;
+      }
+      emulator.current = null;
+      container.current?.replaceChildren();
+      state.current = { phase: 'disconnected' };
+      titleCallback.current?.(id, '');
+      onState(id, state.current);
+      if (failed) {
+        throw new Error('Terminal reset cleanup incomplete');
+      }
+    };
+    const stopReset = access.registerResetCleanup(forget);
     signal.addEventListener('abort', stop, { once: true });
     if (signal.aborted) {
       stop();
@@ -282,6 +316,7 @@ export function TerminalPanel({
         }
       });
     return () => {
+      stopReset();
       stop();
       signal.removeEventListener('abort', stop);
       clearTimeout(timer);

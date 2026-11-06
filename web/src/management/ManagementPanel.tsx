@@ -1,5 +1,8 @@
 import CloseIcon from '@mui/icons-material/Close';
-import { IconButton } from '@mui/material';
+import DescriptionIcon from '@mui/icons-material/Description';
+import FactCheckIcon from '@mui/icons-material/FactCheckOutlined';
+import PeopleOutlineIcon from '@mui/icons-material/PeopleOutlineOutlined';
+import { CircularProgress, IconButton, Link, Tooltip } from '@mui/material';
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
@@ -8,8 +11,11 @@ import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useAdminDetail } from '../ui/admin-navigation';
 import { useDetailRefresh } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
-import { Alert, Button, Modal, Select, TextInput, Title } from '../ui/material';
+import { exactFlow, type ManagementLocation, managementPath } from '../ui/management-location';
+import { useManagementNavigation } from '../ui/management-navigation';
+import { Alert, Button, Modal, TextInput } from '../ui/material';
 import { t } from '../ui/messages';
+import { profileResetEvent } from '../ui/profile-reset';
 import type { ActionPreview, SessionAction, SessionActionConfirmation } from './action';
 import { m, sessionStateLabel } from './messages';
 import type {
@@ -20,6 +26,7 @@ import type {
   SessionOptions,
   VersionInfo,
 } from './protocol';
+import { SessionTarget, type SessionTargetValue } from './SessionTarget';
 import { VersionDetails } from './VersionDetails';
 
 export function ManagementPanel({
@@ -36,6 +43,26 @@ export function ManagementPanel({
   view: 'sessions' | 'server' | 'version';
 }) {
   const [flows, setFlows] = useState<Page<FlowSummary> | null>(null);
+  const [target, setTarget] = useState<SessionTargetValue>({ flow: '', id: '', action: 'details' });
+  useEffect(() => {
+    const reset = () => setTarget({ flow: '', id: '', action: 'details' });
+    window.addEventListener(profileResetEvent, reset);
+    return () => window.removeEventListener(profileResetEvent, reset);
+  }, []);
+  const navigation = useManagementNavigation();
+  const route = navigation?.location.page === 'sessions' ? navigation.location : null;
+  const routeKey = JSON.stringify(route);
+  const routeNow = useRef(route);
+  routeNow.current = route;
+  const nativeFilterIntent = useRef<{
+    key: string;
+    query: string;
+    filter: ColumnFilter | null;
+  } | null>(null);
+  const mutationRoute = useRef<ManagementLocation | null>(null);
+  const consumedRoute = useRef<string | null>(null);
+  const loadedFlow = useRef<string | null>(null);
+  const returnRoute = useRef<ManagementLocation | null>(null);
   const [version, setVersion] = useState<VersionInfo | null>(null);
   const [buildVersion, setBuildVersion] = useState<VersionInfo | null>(null);
   const [sessions, setSessions] = useState<Page<SessionItem> | null>(null);
@@ -72,9 +99,6 @@ export function ManagementPanel({
   isActive.current = active;
   const [preview, setPreview] = useState<ActionPreview | null>(null);
   const [typed, setTyped] = useState('');
-  const [actionFlow, setActionFlow] = useState('');
-  const [actionID, setActionID] = useState('');
-  const [actionKind, setActionKind] = useState<SessionAction>('disconnect');
   const [notice, setNotice] = useState<{
     kind: 'confirmed' | 'unknown';
     preview: ActionPreview;
@@ -85,6 +109,12 @@ export function ManagementPanel({
     request.current?.abort();
     request.current = null;
     setFlows(null);
+    setTarget({ flow: '', id: '', action: 'details' });
+    consumedRoute.current = null;
+    mutationRoute.current = null;
+    nativeFilterIntent.current = null;
+    loadedFlow.current = null;
+    returnRoute.current = null;
     setVersion(null);
     setBuildVersion(null);
     setSessions(null);
@@ -109,9 +139,6 @@ export function ManagementPanel({
     sending.current = false;
     setPreview(null);
     setTyped('');
-    setActionFlow('');
-    setActionID('');
-    setActionKind('disconnect');
     setNotice(null);
     onActionLock(false);
     return () => {
@@ -149,7 +176,7 @@ export function ManagementPanel({
     if (!active || disabled || busy || request.current !== null || notice?.kind === 'unknown') {
       return;
     }
-    if (view === 'sessions' && !attempted.current.sessions) {
+    if (view === 'sessions' && !route && !attempted.current.sessions) {
       attempted.current.sessions = true;
       void loadSessions(false, { state: 'all' });
     } else if (view === 'version' && !attempted.current.version) {
@@ -176,6 +203,95 @@ export function ManagementPanel({
       });
     }
   }, [access, active, disabled, busy, view, readCompletion]);
+  const readRoute = useEffectEvent(() => {
+    if (
+      !active ||
+      disabled ||
+      busy ||
+      request.current !== null ||
+      !route ||
+      consumedRoute.current === routeKey
+    ) {
+      return;
+    }
+    consumedRoute.current = routeKey;
+    if (route.id && route.flow) {
+      if (selected?.id !== route.id || selected?.flow !== route.flow) {
+        setSelected(null);
+        void show({ flow: route.flow, id: route.id });
+      }
+      return;
+    }
+    setSelected(null);
+    if (loadedFlow.current === (route.flow ?? '') && sessions !== null) {
+      return;
+    }
+    const native = nativeFilterIntent.current?.key === routeKey ? nativeFilterIntent.current : null;
+    nativeFilterIntent.current = null;
+    const filter = native
+      ? native.filter
+      : route.flow
+        ? { field: 'flow', operator: 'equals', value: route.flow }
+        : exactFlow(sessionFilter)
+          ? null
+          : sessionFilter;
+    setSessions(null);
+    setSessionPage(1);
+    sessionCursors.current = [''];
+    setSessionFilter(filter);
+    setSessionQuery(native?.query ?? '');
+    void loadSessions(
+      false,
+      {
+        state: 'all',
+        ...(route.flow ? { flow: route.flow } : {}),
+        filter,
+        query: native?.query ?? '',
+        sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
+      },
+      0,
+    );
+  });
+  const finishMutationRoute = useEffectEvent(() => {
+    if (
+      !active ||
+      disabled ||
+      busy ||
+      notice?.kind === 'unknown' ||
+      !mutationRoute.current ||
+      !navigation
+    ) {
+      return;
+    }
+    const target = mutationRoute.current;
+    mutationRoute.current = null;
+    const { id: _id, ...list } = target;
+    const parent = returnRoute.current ?? list;
+    // The action invalidated this list. Match the old X/detail behavior: return
+    // to its URI, but require explicit Refresh rather than replaying a read.
+    attempted.current.sessions = true;
+    const filter = parent.flow
+      ? { field: 'flow', operator: 'equals', value: parent.flow }
+      : exactFlow(sessionFilter)
+        ? null
+        : sessionFilter;
+    lastFilter.current = { ...lastFilter.current, flow: parent.flow ?? '', filter, after: '' };
+    setSessionFilter(filter);
+    loadedFlow.current = parent.flow ?? '';
+    consumedRoute.current = JSON.stringify(parent);
+    navigation.navigate(parent, true);
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Completion wakes a queued route intent when React batches busy transitions; consumed routes, including failures, are never retried.
+  useEffect(() => {
+    if (active && !disabled && !busy && routeKey !== consumedRoute.current) {
+      readRoute();
+    }
+  }, [routeKey, active, disabled, busy, readCompletion]);
+  useEffect(() => {
+    if (active && !disabled && !busy && notice?.kind !== 'unknown') {
+      finishMutationRoute();
+    }
+  }, [active, disabled, busy, notice?.kind]);
   const focusDetails = useEffectEvent(() => {
     if (active && view === 'sessions') {
       detailElement.current?.focus({ preventScroll: true });
@@ -196,6 +312,11 @@ export function ManagementPanel({
   }, [selected]);
   function returnToSessions() {
     returningToList.current = true;
+    if (navigation && route) {
+      const { id: _id, ...parent } = route;
+      navigation.navigate(returnRoute.current ?? parent);
+      return;
+    }
     setSelected(null);
   }
   function cancel() {
@@ -304,7 +425,7 @@ export function ManagementPanel({
     await loadSessions(false, {
       ...lastFilter.current,
       after: '',
-      flow: lastFilter.current.flow ?? '',
+      flow: navigation ? (route?.flow ?? '') : (lastFilter.current.flow ?? ''),
       user: lastFilter.current.user ?? '',
       state: lastFilter.current.state ?? 'all',
     });
@@ -320,12 +441,17 @@ export function ManagementPanel({
             filter: sessionFilter,
             query: sessionQuery,
             sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
+            ...(route?.flow ? { flow: route.flow } : {}),
           });
     const pageIndex = index ?? (next ? sessionPage : 0);
     await run(async (signal, current) => {
       const result = await access.managementSessions(filters, signal);
-      if (current === generation.current) {
+      if (
+        current === generation.current &&
+        (!routeNow.current || routeNow.current.flow === (filters.flow || undefined))
+      ) {
         lastFilter.current = filters;
+        loadedFlow.current = filters.flow ?? '';
         setSessions(result);
         setSelected(null);
         setSessionPage(pageIndex + 1);
@@ -339,13 +465,30 @@ export function ManagementPanel({
       }
     }, 'sessions');
   }
-  async function show(item: SessionItem) {
+  async function show(item: Pick<SessionItem, 'flow' | 'id'>) {
     await run(async (signal, current) => {
       const result = await access.managementSession(item.flow, item.id, signal);
-      if (current === generation.current) {
+      if (
+        current === generation.current &&
+        (!routeNow.current ||
+          (routeNow.current.flow === item.flow && routeNow.current.id === item.id))
+      ) {
         setSelected(result);
       }
     }, 'details');
+  }
+  function openSession(item: Pick<SessionItem, 'flow' | 'id'>) {
+    if (navigation) {
+      returnRoute.current = navigation.location;
+      navigation.navigate({
+        managementFlow: navigation.location.managementFlow,
+        page: 'sessions',
+        flow: item.flow,
+        id: item.id,
+      });
+    } else {
+      void show(item);
+    }
   }
   async function prepare(
     action: SessionAction,
@@ -399,6 +542,7 @@ export function ManagementPanel({
     const current = ++generation.current;
     request.current = controller;
     sending.current = true;
+    mutationRoute.current = route?.id ? route : null;
     setBusy(true);
     setError(null);
     onActionLock(true);
@@ -475,7 +619,6 @@ export function ManagementPanel({
       )}
       <section hidden={view !== 'version'} className="stack">
         <div className="section-heading admin-toolbar">
-          <Title order={3}>{t('managementVersionTitle')}</Title>
           <Button
             variant="default"
             disabled={locked}
@@ -557,8 +700,111 @@ export function ManagementPanel({
               minWidth: 170,
               flex: 1,
             },
-            { field: 'auditlog', headerName: t('managementAuditlog'), minWidth: 170, flex: 1 },
+            {
+              field: 'auditlog',
+              headerName: t('managementAuditlog'),
+              minWidth: 170,
+              flex: 1,
+              renderCell: (params) =>
+                params.row.auditlog && navigation ? (
+                  <Link
+                    href={
+                      locked
+                        ? undefined
+                        : managementPath(access.snapshot().scope, {
+                            managementFlow: navigation.location.managementFlow,
+                            page: 'auditlogs',
+                            auditlog: params.row.auditlog,
+                          })
+                    }
+                    aria-disabled={locked}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (locked) {
+                        event.preventDefault();
+                        return;
+                      }
+                      if (
+                        event.button !== 0 ||
+                        event.ctrlKey ||
+                        event.metaKey ||
+                        event.shiftKey ||
+                        event.altKey
+                      ) {
+                        return;
+                      }
+                      event.preventDefault();
+                      navigation.navigate({
+                        managementFlow: navigation.location.managementFlow,
+                        page: 'auditlogs',
+                        auditlog: params.row.auditlog,
+                      });
+                    }}
+                  >
+                    {params.row.auditlog}
+                  </Link>
+                ) : (
+                  params.row.auditlog
+                ),
+            },
           ]}
+          rowActions={(row) => (
+            <div className="actions">
+              <Tooltip title={t('workspaceSessions')}>
+                <IconButton
+                  size="small"
+                  disabled={locked || !navigation}
+                  aria-label={`${t('workspaceSessions')} ${row.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    navigation?.navigate({
+                      managementFlow: navigation.location.managementFlow,
+                      page: 'sessions',
+                      flow: row.name,
+                    });
+                  }}
+                >
+                  <PeopleOutlineIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={t('workspaceRecordings')}>
+                <IconButton
+                  size="small"
+                  disabled={locked || !navigation || !row.auditlog}
+                  aria-label={`${t('workspaceRecordings')} ${row.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    navigation?.navigate({
+                      managementFlow: navigation.location.managementFlow,
+                      page: 'recordings',
+                      flow: row.name,
+                      auditlogHint: row.auditlog,
+                    });
+                  }}
+                >
+                  <DescriptionIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={t('workspaceAuditlogs')}>
+                <IconButton
+                  size="small"
+                  disabled={locked || !navigation || !row.auditlog}
+                  aria-label={`${t('workspaceAuditlogs')} ${row.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    navigation?.navigate({
+                      managementFlow: navigation.location.managementFlow,
+                      page: 'auditlogs',
+                      auditlog: row.auditlog,
+                      flow: row.name,
+                    });
+                  }}
+                >
+                  <FactCheckIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </div>
+          )}
           busy={busy || !attempted.current.flows}
           disabled={disabled || notice?.kind === 'unknown'}
           page={flowPage - 1}
@@ -590,7 +836,11 @@ export function ManagementPanel({
         </Button>
       )}
       <section hidden={view !== 'sessions'} className="stack">
-        <div hidden={selected !== null} className="stack" ref={listElement}>
+        <div
+          hidden={(!route && selected !== null) || !!route?.id}
+          className="stack"
+          ref={listElement}
+        >
           {(sessions?.skipped ?? 0) > 0 && (
             <Alert color="yellow">
               {t('managementPartial')} ({sessions?.skipped})
@@ -600,7 +850,9 @@ export function ManagementPanel({
             active={active && view === 'sessions' && selected === null}
             actionField="details"
             label={t('managementSessionsCaption')}
-            rows={sessions?.items ?? []}
+            rows={
+              !route || loadedFlow.current === (route.flow ?? '') ? (sessions?.items ?? []) : []
+            }
             onRefresh={() => {
               void refreshSessions();
             }}
@@ -608,9 +860,18 @@ export function ManagementPanel({
             detailsAvailable
             detailed={detailed}
             detailFields={['user', 'remote']}
-            onOpen={(item) => {
-              void show(item);
-            }}
+            onOpen={openSession}
+            openByID={
+              <SessionTarget
+                disabled={locked}
+                value={target}
+                onChange={setTarget}
+                onOpen={(flow, id) => openSession({ flow, id })}
+                onPrepare={(action, flow, id) => {
+                  void prepare(action, { flow, id });
+                }}
+              />
+            }
             openLabel={(item) => `${t('managementDetails')} ${item.id}`}
             getRowId={(item) => `${item.flow}/${item.id}`}
             columns={[
@@ -655,10 +916,21 @@ export function ManagementPanel({
             query={sessionQuery}
             columnFilter={sessionFilter}
             onSearch={(query, filter) => {
+              const flow = exactFlow(filter);
+              if (navigation && route && flow !== route.flow) {
+                setSessionQuery(query);
+                setSessionFilter(filter);
+                const { flow: _flow, id: _id, ...parent } = route;
+                const next = { ...parent, ...(flow ? { flow } : {}) };
+                nativeFilterIntent.current = { key: JSON.stringify(next), query, filter };
+                navigation.navigate(next);
+                return;
+              }
               void loadSessions(
                 false,
                 {
                   state: 'all',
+                  ...(route?.flow ? { flow: route.flow } : {}),
                   query,
                   filter,
                   sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
@@ -690,138 +962,96 @@ export function ManagementPanel({
             }}
           />
         </div>
-        {selected !== null && (
-          <section
-            ref={detailElement}
-            id={detailID}
-            tabIndex={-1}
-            aria-label={m('detailsTitle')}
-            className="stack session-details record-card"
-          >
-            <div className="section-heading">
-              <IconButton aria-label={t('close')} disabled={locked} onClick={returnToSessions}>
-                <CloseIcon />
-              </IconButton>
-            </div>
-            <dl className="metadata-grid">
-              {detailed && (
-                <>
-                  <dt>{m('user')}</dt>
-                  <dd>{field(selected, selected.user)}</dd>
-                </>
-              )}
-              <dt>{t('managementFlow')}</dt>
-              <dd>{selected.flow}</dd>
-              <dt>{m('status')}</dt>
-              <dd>{sessionStateLabel(selected.state)}</dd>
-              <dt>{m('started')}</dt>
-              <dd>{when(selected.createdAt)}</dd>
-              {detailed && (
-                <>
-                  <dt>{m('origin')}</dt>
-                  <dd>{field(selected, selected.remote)}</dd>
-                </>
-              )}
-              <dt>{t('managementSessionId')}</dt>
-              <dd className="identifier">{selected.id}</dd>
-              {detailed &&
-                (selected.owner === null ? (
-                  <>
-                    <dt>{t('managementOwner')}</dt>
-                    <dd>{ownerLabel(selected)}</dd>
-                  </>
-                ) : (
-                  <>
-                    <dt>{m('issuer')}</dt>
-                    <dd>{selected.owner.issuer}</dd>
-                    <dt>{m('subject')}</dt>
-                    <dd>{selected.owner.subject}</dd>
-                  </>
-                ))}
-              {detailed && selected.lastAccessed !== undefined && (
-                <>
-                  <dt>{m('lastAccessed')}</dt>
-                  <dd>{when(selected.lastAccessed)}</dd>
-                </>
-              )}
-              <dt>{t('managementValidUntil')}</dt>
-              <dd>
-                {selected.validUntil === undefined
-                  ? t(selected.policyLimited ? 'managementWithheldOwner' : 'managementNoLimit')
-                  : when(selected.validUntil)}
-              </dd>
-              <dt>{t('adminGridActions')}</dt>
-              <dd className="actions">
-                <Button
-                  disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
-                  color="orange"
-                  onClick={() => {
-                    void prepare('disconnect', selected);
-                  }}
-                >
-                  {m('disconnect')}
-                </Button>
-                <Button
-                  disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
-                  color="red"
-                  onClick={() => {
-                    void prepare('dispose', selected);
-                  }}
-                >
-                  {m('end')}
-                </Button>
-              </dd>
-            </dl>
-          </section>
-        )}
-        <details className="advanced-action" hidden={selected !== null}>
-          <summary>{m('direct')}</summary>
-          <section aria-label={m('direct')} className="stack">
-            <p className="caption subtle">{t('managementDirectActionHint')}</p>
-            <form
-              method="dialog"
-              className="session-filters"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void prepare(actionKind, { flow: actionFlow, id: actionID });
-              }}
+        {route?.id &&
+          busy &&
+          (!selected || selected.id !== route.id || selected.flow !== route.flow) && (
+            <CircularProgress aria-label={m('detailsLoading')} />
+          )}
+        {selected !== null &&
+          (!route || (selected.id === route.id && selected.flow === route.flow)) && (
+            <section
+              ref={detailElement}
+              id={detailID}
+              tabIndex={-1}
+              aria-label={m('detailsTitle')}
+              className="stack session-details record-card"
             >
-              <TextInput
-                label={t('managementActionFlow')}
-                value={actionFlow}
-                onChange={(event) => setActionFlow(event.currentTarget.value)}
-                disabled={locked}
-                maxLength={255}
-                required
-              />
-              <TextInput
-                label={t('managementActionID')}
-                value={actionID}
-                onChange={(event) => setActionID(event.currentTarget.value)}
-                disabled={locked}
-                maxLength={36}
-                required
-                pattern="[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
-              />
-              <Select
-                label={t('managementActionKind')}
-                value={actionKind}
-                onChange={(value) => setActionKind(value === 'dispose' ? 'dispose' : 'disconnect')}
-                data={[
-                  { value: 'disconnect', label: m('disconnect') },
-                  { value: 'dispose', label: m('end') },
-                ]}
-                disabled={locked}
-              />
-              <p className="caption subtle">
-                {m(actionKind === 'dispose' ? 'endHint' : 'disconnectHint')}
-              </p>
-              <Button type="submit" disabled={locked || notice?.kind === 'unknown'}>
-                {t('managementPrepareAction')}
-              </Button>
-            </form>
-          </section>
-        </details>
+              <div className="section-heading">
+                <IconButton aria-label={t('close')} disabled={locked} onClick={returnToSessions}>
+                  <CloseIcon />
+                </IconButton>
+              </div>
+              <dl className="metadata-grid">
+                {detailed && (
+                  <>
+                    <dt>{m('user')}</dt>
+                    <dd>{field(selected, selected.user)}</dd>
+                  </>
+                )}
+                <dt>{t('managementFlow')}</dt>
+                <dd>{selected.flow}</dd>
+                <dt>{m('status')}</dt>
+                <dd>{sessionStateLabel(selected.state)}</dd>
+                <dt>{m('started')}</dt>
+                <dd>{when(selected.createdAt)}</dd>
+                {detailed && (
+                  <>
+                    <dt>{m('origin')}</dt>
+                    <dd>{field(selected, selected.remote)}</dd>
+                  </>
+                )}
+                <dt>{t('managementSessionId')}</dt>
+                <dd className="identifier">{selected.id}</dd>
+                {detailed &&
+                  (selected.owner === null ? (
+                    <>
+                      <dt>{t('managementOwner')}</dt>
+                      <dd>{ownerLabel(selected)}</dd>
+                    </>
+                  ) : (
+                    <>
+                      <dt>{m('issuer')}</dt>
+                      <dd>{selected.owner.issuer}</dd>
+                      <dt>{m('subject')}</dt>
+                      <dd>{selected.owner.subject}</dd>
+                    </>
+                  ))}
+                {detailed && selected.lastAccessed !== undefined && (
+                  <>
+                    <dt>{m('lastAccessed')}</dt>
+                    <dd>{when(selected.lastAccessed)}</dd>
+                  </>
+                )}
+                <dt>{t('managementValidUntil')}</dt>
+                <dd>
+                  {selected.validUntil === undefined
+                    ? t(selected.policyLimited ? 'managementWithheldOwner' : 'managementNoLimit')
+                    : when(selected.validUntil)}
+                </dd>
+                <dt>{t('adminGridActions')}</dt>
+                <dd className="actions">
+                  <Button
+                    disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
+                    color="orange"
+                    onClick={() => {
+                      void prepare('disconnect', selected);
+                    }}
+                  >
+                    {m('disconnect')}
+                  </Button>
+                  <Button
+                    disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
+                    color="red"
+                    onClick={() => {
+                      void prepare('dispose', selected);
+                    }}
+                  >
+                    {m('end')}
+                  </Button>
+                </dd>
+              </dl>
+            </section>
+          )}
       </section>
       <Modal
         classNames={{ content: 'confirmation-dialog' }}

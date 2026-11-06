@@ -6,6 +6,7 @@ import { ManagementPanel } from '../src/management/ManagementPanel';
 import type { Page, SessionItem, SessionOptions } from '../src/management/protocol';
 import { RememberMeError, type WebAccess } from '../src/remember';
 import { closeNativeFilter, nativeColumnFilter } from './native-grid-filter-ui';
+import { openSessionTarget, sessionTargetAction } from './session-target-ui';
 import '../src/ui/app.css';
 
 const item: SessionItem = {
@@ -221,8 +222,10 @@ describe('management view read intent and retained ownership', () => {
   it('retains selected details, version and target fields through view changes; resets for a new actor', async () => {
     const { api, access } = fixture();
     const { container, render } = await mount(access);
-    await fill('Target flow', 'retained-flow', container);
-    await fill('Target session ID', item.id, container);
+    await openSessionTarget(container);
+    await fill('Target flow', 'retained-flow');
+    await fill('Target session ID', item.id);
+    await click(button('Open by ID', container));
     await click(button(`Session details ${item.id}`, container));
     const details = container.querySelector('.session-details');
     expect(document.activeElement).toBe(details);
@@ -237,7 +240,9 @@ describe('management view read intent and retained ownership', () => {
     expect(container.querySelector('.session-details')).toBe(details);
     expect(api.managementSession).toHaveBeenCalledTimes(1);
     expect(api.managementSessions).toHaveBeenCalledTimes(1);
-    expect(container.querySelector<HTMLInputElement>('.advanced-action input')?.value).toBe(
+    await click(button('Close', container));
+    await openSessionTarget(container);
+    expect(document.querySelector<HTMLInputElement>('[role="dialog"] input')?.value).toBe(
       'retained-flow',
     );
     const next = fixture();
@@ -246,7 +251,7 @@ describe('management view read intent and retained ownership', () => {
     expect(container.querySelector('.session-details')).toBeNull();
     expect(container.textContent).not.toContain('verified-issuer');
     expect(container.textContent).not.toContain('Bifröst test');
-    expect(container.querySelector<HTMLInputElement>('.advanced-action input')?.value).toBe('');
+    expect(document.querySelector<HTMLInputElement>('[role="dialog"] input')?.value).toBe('');
     expect(next.api.managementSessions).toHaveBeenCalledTimes(1);
   });
 
@@ -350,9 +355,11 @@ describe('management view read intent and retained ownership', () => {
       ),
     );
     const { container } = await mount(access);
-    await fill('Target flow', item.flow, container);
-    await fill('Target session ID', item.id, container);
-    await click(button('Prepare session action', container));
+    const target = await openSessionTarget(container);
+    await fill('Target flow', item.flow, target);
+    await fill('Target session ID', item.id, target);
+    await sessionTargetAction(target, 'Disconnect connections');
+    await click(button('Go', target));
     expect(api.prepareSessionAction).toHaveBeenCalledExactlyOnceWith(
       'disconnect',
       item.flow,
@@ -389,7 +396,7 @@ describe('management view read intent and retained ownership', () => {
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(lock).toHaveBeenLastCalledWith(true);
     expect(container.textContent).toContain('The session action result is unknown.');
-    expect(button('Prepare session action', container).disabled).toBe(true);
+    expect(button('Open by ID', container).disabled).toBe(true);
     await render({ active: false });
     await render({ active: true });
     expect(confirm).toHaveBeenCalledTimes(1);

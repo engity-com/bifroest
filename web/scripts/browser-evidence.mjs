@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { browserGoToolchain } from './browser-key.mjs';
+import { completeReviewedInventory } from './reviewed-go-modules.mjs';
 
 // Reviewed MISE go-licenses 2.0.1 report/save for cmd/browser-evidence. This is
 // conservative module-level notice inventory, not release-wide source proof.
@@ -30,6 +31,11 @@ const approved = new Map([
   ],
   [
     'github.com/fxamacker/cbor/v2@v2.9.6',
+    ['MIT', [['LICENSE', '78cad457d5ea7318230f3d969d4cdf29cef45524a1fc8ca3a97646da1ad7a841']]],
+  ],
+  // main's reviewed update introduces no further js/wasm module paths.
+  [
+    'github.com/fxamacker/cbor/v2@v2.10.0',
     ['MIT', [['LICENSE', '78cad457d5ea7318230f3d969d4cdf29cef45524a1fc8ca3a97646da1ad7a841']]],
   ],
   [
@@ -129,7 +135,7 @@ export function buildBrowserEvidence(output) {
     });
     modules.set(module, { module, license, files: texts });
   }
-  if (modules.size !== approved.size) {
+  if (!completeReviewedInventory(modules.keys(), approved.keys())) {
     throw new Error('Browser evidence module inventory changed');
   }
   const entries = [...modules.values()].sort((left, right) =>

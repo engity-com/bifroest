@@ -5,9 +5,11 @@ import { managementWire } from './management-wire.mjs';
 import {
   activeAccess,
   assertAccessActionsBlocked,
+  chooseSessionTargetAction,
   duplicateTab,
   logoutAccess,
   notification,
+  sessionTarget,
   settledLogin,
   terminalAction,
   workspace,
@@ -173,7 +175,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
           document.getElementById(`terminal-tab-${id}`)?.getAttribute('aria-selected') === 'true' &&
           pane?.getAttribute('data-connection-active') === 'true' &&
           pane.getAttribute('data-connection-principal') === user &&
-          pane.getAttribute('data-connection-scope') === location.pathname.slice(1) &&
+          location.pathname.startsWith(`/${pane.getAttribute('data-connection-scope')}/`) &&
           history.state?.usr?.view === id
         );
       },
@@ -223,10 +225,11 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
   const bobNode = await page.locator('#terminal-pane-2').elementHandle();
   await alice.click();
   await committedView(1, 'alice');
-  await alicePanel.getByText('Advanced: target by ID', { exact: true }).click();
+  let targetForm = await sessionTarget(page, alicePanel);
   await page.getByRole('textbox', { name: /^Target flow/u }).fill(target.flow);
   await page.getByRole('textbox', { name: /^Target session ID/u }).fill(target.id);
-  await page.getByRole('button', { name: 'Prepare session action', exact: true }).click();
+  await chooseSessionTargetAction(page, targetForm, 'Disconnect connections');
+  await targetForm.getByRole('button', { name: 'Go', exact: true }).click();
   await page.evaluate(async () => {
     const response = await fetch('/_bifroest/test/preparation-entered', { credentials: 'omit' });
     if (response.status !== 204) {
@@ -271,17 +274,18 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
       'a late Alice preparation cannot open a portal over Bob',
     );
     await committedView(2, 'bob');
-    await bobPanel.getByText('Advanced: target by ID', { exact: true }).click();
+    targetForm = await sessionTarget(page, bobPanel);
     assert.equal(
-      await bobPanel.getByRole('textbox', { name: /^Target flow/u }).inputValue(),
+      await targetForm.getByRole('textbox', { name: /^Target flow/u }).inputValue(),
       '',
       'Alice preparation must not populate Bob action fields',
     );
     assert.equal(
-      await bobPanel.getByRole('textbox', { name: /^Target session ID/u }).inputValue(),
+      await targetForm.getByRole('textbox', { name: /^Target session ID/u }).inputValue(),
       '',
       'Alice preparation must not populate Bob target session',
     );
+    await page.keyboard.press('Escape');
   }
   assert.equal(commits, 0);
   await alice.click();
@@ -291,13 +295,14 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
     0,
     'the unused hidden confirmation is retired, not resurrected',
   );
+  targetForm = await sessionTarget(page, alicePanel);
   assert.equal(
-    (await alicePanel.getByRole('textbox', { name: /^Target flow/u }).inputValue()) === target.flow,
+    (await targetForm.getByRole('textbox', { name: /^Target flow/u }).inputValue()) === target.flow,
     true,
     'reactivating Alice must preserve her independently owned target flow',
   );
   assert.equal(
-    (await alicePanel.getByRole('textbox', { name: /^Target session ID/u }).inputValue()) ===
+    (await targetForm.getByRole('textbox', { name: /^Target session ID/u }).inputValue()) ===
       target.id,
     true,
     'reactivating Alice must preserve her independently owned target session',
@@ -314,7 +319,7 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
     }
   });
   interruption.arm('management/sessions/confirm');
-  await page.getByRole('button', { name: 'Prepare session action', exact: true }).click();
+  await targetForm.getByRole('button', { name: 'Go', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByText('Work · alice', { exact: true }).waitFor();
   await dialog

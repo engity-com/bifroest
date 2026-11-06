@@ -98,10 +98,28 @@ action before changing Slug.
 **Remember this browser** is a separate opt-in, not automatic login. It saves independent browser credentials, not your password or imported SSH key. Eligibility depends on the authorization method and platform. In this PAM-backed example it requires an operator-reviewed server opt-in; see [local RememberMe](../reference/authorization/local.md#browser-rememberme) before enabling it.
 
 * Confirming closure of a live terminal tab closes that connection, not other tabs or the session. Closing the page is not logout either.
+* Middle-clicking a tab title uses the same close path as its X. **Close all sessions** in the application menu confirms closure of all connection tabs in this window. It does not explicitly dispose of server sessions or workloads, revoke saved credentials, or close other windows' tabs.
 * **Log out** closes connections owned by that browser access and revokes its linked saved access, if present. It does not disconnect unrelated SSH access or dispose of the workspace.
 * **End session** is a separate management action. It revokes the session and runs its configured cleanup, which can remove workloads or managed accounts.
 
 The terminal or management tab's **Connection settings** can change its keepalive interval unless the flow enforces one. Keepalive does not extend session or login lifetimes; see [flow keepalive](../reference/flow.md#http-property-keepAlive). An already admitted management channel, like an existing terminal, can remain usable after the web credential expires; it does not authorize a new connection.
+
+The always-visible appearance button beside the application menu cycles
+**Auto → Light → Dark → Auto**. Its setting is shared by this browser origin,
+including its Slugs.
+
+**Reset all settings and credentials** requires confirmation. It forgets local
+Bifröst preferences, saved browser credentials and in-memory decryption/login
+keys for the origin, including other Slugs, and closes connection tabs. Open
+same-origin windows are notified to retire their local capabilities too. The
+reset attempts server logout and RememberMe revocation without signing in or
+resuming access. Local forgetting does not depend on the network succeeding;
+the result distinguishes local cleanup from unconfirmed remote operations.
+Offline, suspended or already closed windows cannot confirm remote cleanup;
+do not treat local forgetting as proof of server revocation. This does not erase
+private-key files, downloaded files, the browser's password manager or server
+workloads. Use the separate server-side revocation paths when remote cleanup
+cannot be confirmed.
 
 ## Next steps
 

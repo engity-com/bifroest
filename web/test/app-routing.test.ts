@@ -102,6 +102,8 @@ async function mountApp(
     publishedSlugs?: readonly string[];
     precedingPath?: string;
     failDiscovery?: boolean;
+    entrySlug?: string;
+    flow?: { name: string; title: string };
   } = {},
 ) {
   const requests: {
@@ -141,6 +143,7 @@ async function mountApp(
           environment: management ? 'management' : 'terminal',
           terminalAvailable: !management,
           keepAlive: { interval: '15s', locked: false },
+          ...(scenario.flow ? { flow: scenario.flow } : {}),
         }),
         { headers: { 'Content-Type': 'application/json' } },
       );
@@ -173,10 +176,30 @@ async function mountApp(
         { headers: { 'Content-Type': 'application/json' } },
       );
     }
+    if (path.endsWith('/management/sessions/show')) {
+      return new Response(
+        JSON.stringify({
+          version: 1,
+          operation: 'sessions.show',
+          session: {
+            flow: fields?.flow,
+            id: fields?.id,
+            state: 'authorized',
+            user: 'alice',
+            remote: 'alice@127.0.0.1',
+            createdAt: '2026-01-01T00:00:00Z',
+            owner: null,
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
     throw new Error(`Unexpected authentication request ${path}`);
   });
   vi.stubGlobal('fetch', transport);
-  const slug = (typeof initial === 'string' ? initial : (initial.pathname ?? '/')).slice(1);
+  const slug =
+    scenario.entrySlug ??
+    (typeof initial === 'string' ? initial : (initial.pathname ?? '/')).slice(1);
   const router = createMemoryRouter(
     [
       {
@@ -692,5 +715,136 @@ describe('owned workspace view routing with the real router and workspace', () =
     expect(app.requests.map((request) => request.path)).toEqual(['/', '/']);
     expect(app.requests.every((request) => request.options?.method !== 'POST')).toBe(true);
     expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
+  });
+
+  it('preserves a cold management suffix through explicit login and uses fresh local history ownership', async () => {
+    const app = await mountApp('/Work/admin/version', false, true, {
+      entrySlug: 'Work',
+      flow: { name: 'admin', title: 'Administration' },
+    });
+    expect(app.requests).toEqual([]);
+    expect(dialog().querySelector('form')).not.toBeNull();
+    expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
+    await signIn();
+    await vi.waitFor(() =>
+      expect(document.getElementById('terminal-tab-1')?.textContent).toBe('Version'),
+    );
+    expect(app.router.state.location.pathname).toBe('/Work/admin/version');
+    expect(app.router.state.location.state.view).toBe(1);
+    expect(
+      app.requests
+        .filter((request) => request.path.includes('/management/'))
+        .map((request) => request.path.split('/management/')[1]),
+    ).toEqual(['version/show', 'version/show']);
+    expect(
+      app.requests
+        .filter((request) => request.path.includes('/management/'))
+        .map((request) => request.fields?.long),
+    ).toEqual(['false', 'true']);
+    const cold = await mountApp(app.router.state.location, false, true, {
+      entrySlug: 'Work',
+      flow: { name: 'admin', title: 'Administration' },
+    });
+    expect(cold.requests).toEqual([]);
+    expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
+  });
+  it('rejects a successful login to the wrong actual management flow without opening or reading the requested view', async () => {
+    const app = await mountApp('/Work/expected/version', false, true, {
+      entrySlug: 'Work',
+      flow: { name: 'different', title: 'Administration' },
+    });
+    await signIn();
+    expect(document.querySelector('[role="tab"]')).toBeNull();
+    expect(app.router.state.location.pathname).toBe('/Work/expected/version');
+    expect(app.requests.map((request) => request.path)).toEqual([
+      '/_bifroest/api/v1/login/password',
+    ]);
+    expect(dialog().textContent).toContain('does not match this management link');
+  });
+  it('retains each main page URI, exact flow and details when switching away and back without replaying reads', async () => {
+    const id = '34e34ab8-7457-4d88-a5e4-c57791775c3a';
+    const path = `/Work/admin/sessions/Docker/${id}`;
+    const app = await mountApp(path, false, true, {
+      entrySlug: 'Work',
+      flow: { name: 'admin', title: 'Administration' },
+    });
+    await signIn();
+    await vi.waitFor(() => expect(document.querySelector('.session-details')).not.toBeNull());
+    await click(button('Version'));
+    await vi.waitFor(() => expect(app.router.state.location.pathname).toBe('/Work/admin/version'));
+    await click(button('Sessions'));
+    await vi.waitFor(() => expect(app.router.state.location.pathname).toBe(path));
+    expect(document.querySelector('.session-details')).not.toBeNull();
+    expect(app.requests.filter((request) => request.path.endsWith('/sessions/show'))).toHaveLength(
+      1,
+    );
+  });
+  it('confirms close-all once, cancels the owned connections like X, and does not log out, revoke, dispose, or forget settings', async () => {
+    const app = await mountApp();
+    await signIn();
+    await click(button('New connection'));
+    await signIn();
+    const requests = app.requests.length;
+    localStorage.setItem('bifroest-ui-v1:theme', 'dark');
+    const menuItem = () =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (node) => node.textContent === 'Close all sessions',
+      ) ?? null;
+    await click(button('Application menu'));
+    await click(menuItem());
+    expect(panels.unmounted).toEqual([]);
+    await click(button('Cancel'));
+    expect(panels.unmounted).toEqual([]);
+    await click(button('Application menu'));
+    await click(menuItem());
+    await click(button('Confirm'));
+    await vi.waitFor(() => expect(document.querySelector('[role="tab"]')).toBeNull());
+    expect([...panels.signals.values()].every((signal) => signal.aborted)).toBe(true);
+    expect(panels.unmounted).toEqual([1, 2]);
+    expect(app.requests).toHaveLength(requests);
+    expect(localStorage.getItem('bifroest-ui-v1:theme')).toBe('dark');
+    localStorage.removeItem('bifroest-ui-v1:theme');
+  });
+  it('runs the central confirmed reset for all owned accesses, closes their tabs and clears origin preferences', async () => {
+    const app = await mountApp();
+    await signIn();
+    await click(button('New connection'));
+    await signIn();
+    const before = app.requests.length;
+    const clears = vi.spyOn(BrowserBinding, 'clearForReset').mockResolvedValue(0);
+    vi.spyOn(BrowserBinding, 'selectionsForReset').mockResolvedValue({
+      handles: [],
+      unconfirmed: 0,
+    });
+    localStorage.setItem('bifroest-ui-v1:theme', 'dark');
+    localStorage.setItem('unrelated-app-key', 'untouched');
+    try {
+      await click(button('Application menu'));
+      await click(
+        [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+          (node) => node.textContent === 'Reset all settings and credentials',
+        ) ?? null,
+      );
+      expect(clears).not.toHaveBeenCalled();
+      expect(panels.unmounted).toEqual([]);
+      await click(button('Confirm'));
+      await vi.waitFor(() => expect(document.querySelector('[role="tab"]')).toBeNull());
+      await vi.waitFor(() =>
+        expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+          'requested remote logouts and revocations were confirmed',
+        ),
+      );
+      expect(app.requests.slice(before).map((request) => request.path)).toEqual([
+        '/_bifroest/api/v1/logout',
+        '/_bifroest/api/v1/logout',
+      ]);
+      expect(panels.unmounted).toEqual([1, 2]);
+      expect(localStorage.getItem('bifroest-ui-v1:theme')).toBeNull();
+      expect(localStorage.getItem('unrelated-app-key')).toBe('untouched');
+      expect(clears).toHaveBeenCalledTimes(2);
+    } finally {
+      localStorage.removeItem('bifroest-ui-v1:theme');
+      localStorage.removeItem('unrelated-app-key');
+    }
   });
 });

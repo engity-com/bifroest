@@ -27,6 +27,7 @@ import {
 import { exerciseManagement } from './management-ui.mjs';
 import { managementWire } from './management-wire.mjs';
 import { exercisePreferences } from './preferences-ui.mjs';
+import { exerciseProfileReset } from './profile-reset-ui.mjs';
 import { exerciseSlugHistory } from './slug-history-ui.mjs';
 import { exerciseStoppedAuthRoute } from './stopped-auth-route-ui.mjs';
 import { exerciseTerminalExpiry } from './terminal-expiry-ui.mjs';
@@ -385,6 +386,11 @@ try {
     }
     if (process.argv[3] === 'preferences') {
       await exercisePreferences(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'profile-reset') {
+      await exerciseProfileReset(page, login);
       assert.deepEqual(errors, []);
       return;
     }

@@ -32,7 +32,7 @@ async function deleteDatabase(): Promise<void> {
 
 async function rawRecord(change?: (record: RawRecord) => void): Promise<RawRecord> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(database, 1);
+    const request = indexedDB.open(database);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
@@ -85,6 +85,64 @@ async function challenge(
 beforeEach(deleteDatabase);
 
 describe('real browser RememberMe keys and IndexedDB', () => {
+  it('upgrades a v1 profile without rewriting or exporting its encrypted binding', async () => {
+    const pending = await BrowserBinding.prepare(scope, { explicitOptIn: true });
+    const original = await rawRecord();
+    const publicKey = await pending.publicKey();
+    await deleteDatabase();
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(database, 1);
+      request.onupgradeneeded = () =>
+        request.result.createObjectStore('bindings', { keyPath: 'tag' });
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('bindings', 'readwrite');
+      tx.objectStore('bindings').put(original);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+    const restored = await BrowserBinding.load(scope);
+    expect(await restored?.publicKey()).toBe(publicKey);
+    const current = await rawRecord();
+    expect(current.generation).toBe(original.generation);
+    expect([...new Uint8Array(current.ciphertext)]).toEqual([
+      ...new Uint8Array(original.ciphertext),
+    ]);
+    expect(current.signing.privateKey.extractable).toBe(false);
+    expect((await indexedDB.databases()).find((value) => value.name === database)?.version).toBe(2);
+  });
+  it('fences a key preparation that finishes after an explicit origin reset', async () => {
+    const entered = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const encrypt = crypto.subtle.encrypt.bind(crypto.subtle);
+    const blocked = vi.spyOn(crypto.subtle, 'encrypt').mockImplementation(async (...args) => {
+      const result = await encrypt(...args);
+      entered.resolve();
+      await released.promise;
+      return result;
+    });
+    try {
+      const pending = BrowserBinding.prepare(scope, { explicitOptIn: true });
+      await entered.promise;
+      expect(await BrowserBinding.clearForReset({ explicitConfirmation: true })).toBe(0);
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'changed' });
+      released.resolve();
+      await rejected;
+      expect(await BrowserBinding.load(scope)).toBeNull();
+    } finally {
+      released.resolve();
+      blocked.mockRestore();
+    }
+  });
+  it('does not let a late enrollment completion recreate forgotten credentials', async () => {
+    const pending = await BrowserBinding.prepare(scope, { explicitOptIn: true });
+    expect(await BrowserBinding.clearForReset({ explicitConfirmation: true })).toBe(1);
+    await expect(pending.complete(binding)).rejects.toMatchObject({ code: 'changed' });
+    expect(await BrowserBinding.load(scope)).toBeNull();
+  });
   it('requires explicit opt-in before creating any database or key state', async () => {
     await expect(BrowserBinding.prepare(scope, { explicitOptIn: false })).rejects.toMatchObject({
       code: 'opt-in-required',

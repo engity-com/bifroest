@@ -15,6 +15,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Scope, WebAccess } from '../remember';
 import { ManagementWorkspace } from '../ui/ManagementWorkspace';
+import type { ManagementLocation } from '../ui/management-location';
 import { ActionIcon, Button, Menu, Modal } from '../ui/material';
 import { t } from '../ui/messages';
 import { canCloseView, ownerLocks } from '../ui/workspace-state';
@@ -31,9 +32,11 @@ export interface ConnectionView {
   readonly id: number;
   readonly access: WebAccess;
   readonly scope: Scope;
+  readonly navigation?: { current: ManagementLocation | null };
 }
 
 interface ShellTab extends ConnectionView {
+  readonly navigation: { current: ManagementLocation | null };
   readonly kind: 'terminal' | 'management';
   readonly cancellation: AbortController;
   readonly state: TerminalState;
@@ -41,6 +44,9 @@ interface ShellTab extends ConnectionView {
   readonly title?: string;
 }
 export const maximumTabs = 8;
+export interface WorkspaceControls {
+  closeAll(options?: { resetConfirmed?: boolean }): boolean;
+}
 
 export function TerminalWorkspace({
   authentication,
@@ -60,6 +66,9 @@ export function TerminalWorkspace({
   onActionLock,
   onTabCount,
   onLogout,
+  managementLocation = null,
+  onManagementNavigate,
+  onWorkspaceControls,
 }: {
   authentication: AuthenticationView | null;
   activeView: number | null;
@@ -78,6 +87,13 @@ export function TerminalWorkspace({
   onActionLock: (locked: boolean) => void;
   onTabCount: (count: number) => void;
   onLogout: (access: WebAccess) => void;
+  managementLocation?: ManagementLocation | null;
+  onManagementNavigate?: (
+    owner: ConnectionView,
+    location: ManagementLocation,
+    replace?: boolean,
+  ) => void;
+  onWorkspaceControls?: (controls: WorkspaceControls | null) => void;
 }) {
   const [tabs, setTabs] = useState<readonly ShellTab[]>([]);
   const current = useRef<readonly ShellTab[]>([]);
@@ -197,6 +213,10 @@ export function TerminalWorkspace({
         cancellation: new AbortController(),
         state: { phase: 'connecting' },
         inputClosed: false,
+        navigation: { current: null },
+        title: selected.snapshot().terminalAvailable
+          ? (selected.snapshot().flow?.title ?? t('terminalTitle'))
+          : t('workspaceOverview'),
       };
       updateTabs([...current.current, tab]);
       onSelectView(tab, replace);
@@ -272,6 +292,31 @@ export function TerminalWorkspace({
   );
 
   const closingTab = tabs.find((tab) => tab.id === closing);
+  useLayoutEffect(() => {
+    onWorkspaceControls?.({
+      closeAll: (options = {}) => {
+        if (actionOwners.current.size > 0 || (!options.resetConfirmed && blocked)) {
+          return false;
+        }
+        for (const tab of current.current) {
+          tab.cancellation.abort();
+        }
+        updateTabs([]);
+        lastAuthorization.current = null;
+        if (options.resetConfirmed) {
+          lastRetired.current = null;
+        }
+        setClosing(null);
+        setMenuTab(null);
+        setSettingsTab(null);
+        setNewMenuOpen(false);
+        setLimit(false);
+        selectView.current(null, true);
+        return true;
+      },
+    });
+    return () => onWorkspaceControls?.(null);
+  }, [onWorkspaceControls, blocked, updateTabs]);
   useLayoutEffect(() => {
     const showActive = () => {
       const list = tabList.current;
@@ -744,6 +789,17 @@ export function TerminalWorkspace({
                 onState={onState}
                 onConnectionActions={onConnectionActions}
                 onTitle={onTitle}
+                location={active === tab.id ? managementLocation : tab.navigation.current}
+                onNavigate={(owner, location, replace) => {
+                  if (
+                    !blocked &&
+                    !focusBlocked &&
+                    actionOwners.current.size === 0 &&
+                    owner === tab.id
+                  ) {
+                    onManagementNavigate?.(tab, location, replace);
+                  }
+                }}
                 active={
                   authentication === null &&
                   active === tab.id &&

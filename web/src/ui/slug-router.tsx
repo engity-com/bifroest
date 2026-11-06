@@ -9,13 +9,24 @@ import {
   useNavigate,
 } from 'react-router';
 import { type Scope, validateScope } from '../remember/protocol';
+import {
+  type ManagementLocation,
+  managementPath,
+  parseManagementLocation,
+} from './management-location';
 
 export interface SlugRoute {
   readonly scope: Scope | null;
   readonly key: string;
   readonly view: number | null;
+  readonly management: ManagementLocation | null;
   navigate(slug: string, replace?: boolean): Promise<void>;
-  activate(slug: string, view: number, replace?: boolean): Promise<void>;
+  activate(
+    slug: string,
+    view: number,
+    replace?: boolean,
+    management?: ManagementLocation,
+  ): Promise<void>;
 }
 
 interface ViewIntent {
@@ -62,9 +73,13 @@ export function scopeFromSlugLocation(
   }
 }
 
-export function useSlugRoute(blocked: boolean, onBlocked: () => void): SlugRoute {
+export function useSlugRoute(
+  blocked: boolean,
+  onBlocked: () => void,
+  slugs: readonly string[] = [],
+): SlugRoute {
   const current = useLocation();
-  const activation = useRef<{ key: string; slug: string; view: number } | null>(null);
+  const activation = useRef<{ key: string; slug: string; view: number; path: string } | null>(null);
   useLayoutEffect(() => {
     if (activation.current?.key !== current.key) {
       activation.current = null;
@@ -85,10 +100,27 @@ export function useSlugRoute(blocked: boolean, onBlocked: () => void): SlugRoute
   const routerNavigate = useNavigate();
   const origin = window.location.origin;
   const { pathname, search, hash } = current;
-  const scope = useMemo(
-    () => scopeFromSlugLocation(origin, { pathname, search, hash }),
-    [origin, pathname, search, hash],
-  );
+  const choices = JSON.stringify([...new Set(slugs)]);
+  const resolved = useMemo(() => {
+    const candidates = (JSON.parse(choices) as string[])
+      .map((slug) => ({
+        scope: { origin, slug },
+        management: parseManagementLocation({ origin, slug }, { pathname, search, hash }),
+      }))
+      .filter((value) => value.management !== null);
+    // Preserve exact access-link selection when its public metadata identifies
+    // that slug. Do not decode or infer aliases from an unrelated active grant.
+    const legacy = scopeFromSlugLocation(origin, { pathname, search, hash });
+    if (legacy && (JSON.parse(choices) as string[]).includes(legacy.slug)) {
+      return { scope: legacy, management: null };
+    }
+    if (candidates.length === 1) {
+      return candidates[0] ?? { scope: null, management: null };
+    }
+    return { scope: candidates.length === 0 ? legacy : null, management: null };
+  }, [origin, pathname, search, hash, choices]);
+  const scope = resolved.scope;
+  const management = resolved.management;
   const shouldBlock = useCallback<BlockerFunction>(
     ({ currentLocation, nextLocation }) =>
       blockedNow.current &&
@@ -124,12 +156,18 @@ export function useSlugRoute(blocked: boolean, onBlocked: () => void): SlugRoute
     [origin, pathname, search, hash, current.state, routerNavigate],
   );
   const activate = useCallback(
-    async (slug: string, nextView: number, replace = false): Promise<void> => {
+    async (
+      slug: string,
+      nextView: number,
+      replace = false,
+      target?: ManagementLocation,
+    ): Promise<void> => {
       validateScope({ origin, slug });
       if (!Number.isSafeInteger(nextView) || nextView < 1) {
         throw new Error('Invalid local view ID');
       }
-      if (pathname === `/${slug}` && search === '' && hash === '' && view === nextView) {
+      const path = target ? managementPath({ origin, slug }, target) : `/${slug}`;
+      if (pathname + search === path && hash === '' && view === nextView) {
         return;
       }
       // Native pointer focus and click can request the same tab before React
@@ -138,14 +176,15 @@ export function useSlugRoute(blocked: boolean, onBlocked: () => void): SlugRoute
       if (
         activation.current?.key === current.key &&
         activation.current.slug === slug &&
-        activation.current.view === nextView
+        activation.current.view === nextView &&
+        activation.current.path === path
       ) {
         return;
       }
-      const requested = { key: current.key, slug, view: nextView };
+      const requested = { key: current.key, slug, view: nextView, path };
       activation.current = requested;
       try {
-        await routerNavigate(`/${slug}`, {
+        await routerNavigate(path, {
           replace,
           state: { generation: generation.current, view: nextView } satisfies ViewIntent,
         });
@@ -158,5 +197,5 @@ export function useSlugRoute(blocked: boolean, onBlocked: () => void): SlugRoute
     },
     [origin, pathname, search, hash, view, current.key, routerNavigate],
   );
-  return { scope, key: current.key, view, navigate, activate };
+  return { scope, key: current.key, view, management, navigate, activate };
 }

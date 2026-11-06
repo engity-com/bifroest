@@ -43,6 +43,7 @@ export interface AccessSnapshot {
   readonly environment: 'terminal' | 'management';
   readonly terminalAvailable: boolean;
   readonly keepAlive?: KeepAlivePolicy;
+  readonly flow?: { readonly name: string; readonly title: string };
 }
 
 export type AccessStatus = 'active' | 'expired' | 'closed';
@@ -80,6 +81,9 @@ function accessResponse(value: unknown, scope: Scope): AccessResponse {
     'environment',
     'terminalAvailable',
     'keepAlive',
+    ...(value !== null && typeof value === 'object' && Object.hasOwn(value, 'flow')
+      ? ['flow']
+      : []),
   ]);
   const selected = object(body.scope, ['origin', 'slug']);
   if (
@@ -95,6 +99,24 @@ function accessResponse(value: unknown, scope: Scope): AccessResponse {
   ) {
     throw new RememberMeError('unavailable');
   }
+  let flow: AccessSnapshot['flow'];
+  if (body.flow !== undefined) {
+    const item = object(body.flow, ['name', 'title']);
+    if (
+      typeof item.name !== 'string' ||
+      !/^[A-Za-z0-9.-]{1,255}$/u.test(item.name) ||
+      item.name === '.' ||
+      item.name === '..' ||
+      typeof item.title !== 'string' ||
+      item.title.trim() === '' ||
+      !item.title.isWellFormed() ||
+      new TextEncoder().encode(item.title).byteLength > 255 ||
+      /[\p{Cc}\p{Cf}]/u.test(item.title)
+    ) {
+      throw new RememberMeError('unavailable');
+    }
+    flow = Object.freeze({ name: item.name, title: item.title });
+  }
   return {
     accessToken: body.accessToken,
     expiresAt: time(body.expiresAt),
@@ -103,6 +125,7 @@ function accessResponse(value: unknown, scope: Scope): AccessResponse {
     environment: body.environment,
     terminalAvailable: body.terminalAvailable as boolean,
     keepAlive: keepAlivePolicy(body.keepAlive),
+    ...(flow ? { flow } : {}),
   };
 }
 
@@ -153,9 +176,11 @@ export class WebAccess {
   #managementHttp: Pick<Http, 'post' | 'artifactImage'>;
   #managementChannel: ManagementConnection | null = null;
   #managementAttempted = false;
-  readonly #response: AccessResponse;
+  #response: AccessResponse;
+  #forgotten = false;
   #closed = false;
   readonly #statusListeners = new Set<() => void>();
+  readonly #resetCleanups = new Set<() => void>();
   #binding: BrowserBinding | null;
   #enrollment: {
     handle: BrowserBinding | null;
@@ -173,7 +198,7 @@ export class WebAccess {
   }
 
   snapshot(): AccessSnapshot {
-    const { scope, principal, expiresAt, environment, terminalAvailable, keepAlive } =
+    const { scope, principal, expiresAt, environment, terminalAvailable, keepAlive, flow } =
       this.#response;
     return Object.freeze({
       scope,
@@ -182,6 +207,7 @@ export class WebAccess {
       environment,
       terminalAvailable,
       ...(keepAlive ? { keepAlive } : {}),
+      ...(flow ? { flow } : {}),
     });
   }
   toJSON(): AccessSnapshot {
@@ -202,6 +228,10 @@ export class WebAccess {
     return () => {
       this.#statusListeners.delete(listener);
     };
+  }
+  registerResetCleanup(cleanup: () => void): () => void {
+    this.#resetCleanups.add(cleanup);
+    return () => this.#resetCleanups.delete(cleanup);
   }
 
   managementStatus(): AccessStatus {
@@ -676,7 +706,10 @@ export class WebAccess {
   // Stop new use immediately. Server logout is authoritative, including while
   // enrollment is signing/committing; parent closure prevents late enrollment.
   // On failure keep local keys/selectors for explicit retry, never claim logout.
-  async logout(): Promise<LogoutResult> {
+  async logout(signal?: AbortSignal): Promise<LogoutResult> {
+    if (this.#forgotten) {
+      throw new RememberMeError('denied');
+    }
     if (this.#logout !== null) {
       return this.#logout;
     }
@@ -697,7 +730,7 @@ export class WebAccess {
     const operation = (async () => {
       let failed: unknown;
       try {
-        await this.#http.post('logout', {}, this.#response.accessToken, 204);
+        await this.#http.post('logout', {}, this.#response.accessToken, 204, signal);
       } catch (error) {
         failed = error;
       } finally {
@@ -716,7 +749,7 @@ export class WebAccess {
           handle?.binding !== null &&
           handle?.binding !== undefined
         ) {
-          await revoke(this.#http, handle);
+          await revoke(this.#http, handle, signal);
         } else {
           throw failed;
         }
@@ -738,6 +771,49 @@ export class WebAccess {
     } catch (error) {
       this.#logout = null;
       throw error;
+    }
+  }
+  rememberedBindingForReset(): Binding | null {
+    return this.#binding?.binding ?? null;
+  }
+  // Explicit profile reset may discard local capabilities even when remote
+  // logout was not confirmed. Ordinary logout keeps its existing failure path.
+  async retireForReset(): Promise<void> {
+    this.#closed = true;
+    this.#response = Object.freeze({ ...this.#response, accessToken: '' });
+    this.#forgotten = true;
+    const enrollment = this.#enrollment;
+    const artifact = this.#artifact;
+    enrollment?.controller.abort();
+    artifact?.controller.abort();
+    let failed = false;
+    for (const cleanup of [...this.#resetCleanups]) {
+      try {
+        cleanup();
+      } catch {
+        failed = true;
+      }
+    }
+    this.#resetCleanups.clear();
+    try {
+      this.#managementChannel?.disconnect();
+    } catch {
+      failed = true;
+    }
+    for (const listener of [...this.#statusListeners]) {
+      try {
+        listener();
+      } catch {
+        console.error('[Bifröst/access-status]', 'listener-failed');
+      }
+    }
+    await Promise.allSettled([enrollment?.done, artifact?.done, this.#logout]);
+    this.#binding = null;
+    this.#enrollment = null;
+    this.#response = Object.freeze({ ...this.#response, accessToken: '' });
+    this.#forgotten = true;
+    if (failed) {
+      throw new RememberMeError('unavailable');
     }
   }
 }

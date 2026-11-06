@@ -11,13 +11,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router/dom';
 import './ui/app.css';
-import { RememberMeError } from './remember/protocol';
 import { App } from './ui/App';
 import { reportUiError } from './ui/error-report';
-import { type LinkMetadata, loadLinkMetadata } from './ui/link-metadata';
+import { type LinkMetadata, loadEntryMetadata } from './ui/link-metadata';
 import { t } from './ui/messages';
-import { isThemePreference, preferredTheme, saveThemePreference } from './ui/preferences';
-import { createSlugRouter, scopeFromSlugLocation } from './ui/slug-router';
+import {
+  isThemePreference,
+  preferredTheme,
+  saveThemePreference,
+  themePreferenceKey,
+} from './ui/preferences';
+import { profilePreferencesResetEvent } from './ui/profile-reset';
+import { createSlugRouter } from './ui/slug-router';
 
 const cache = createCache({
   key: 'bifroest',
@@ -26,6 +31,20 @@ const cache = createCache({
 
 function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string }) {
   const [scheme, setScheme] = useState(preferredTheme);
+  useEffect(() => {
+    const reset = () => setScheme(preferredTheme());
+    window.addEventListener(profilePreferencesResetEvent, reset);
+    return () => window.removeEventListener(profilePreferencesResetEvent, reset);
+  }, []);
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.key === null || event.key === themePreferenceKey) {
+        setScheme(preferredTheme());
+      }
+    };
+    window.addEventListener('storage', changed);
+    return () => window.removeEventListener('storage', changed);
+  }, []);
   const dark = useMediaQuery('(prefers-color-scheme: dark)');
   const mode = scheme === 'auto' ? (dark ? 'dark' : 'light') : scheme === 'dark' ? 'dark' : 'light';
   const theme = useMemo(
@@ -108,11 +127,7 @@ async function start() {
   }
   starting = true;
   try {
-    const scope = scopeFromSlugLocation(location.origin, location);
-    if (scope === null) {
-      throw new RememberMeError('unavailable');
-    }
-    const metadata = await loadLinkMetadata(scope);
+    const metadata = await loadEntryMetadata(location.origin, location);
     const customization = { version: 1, title: t('brand') };
     window.dispatchEvent(new CustomEvent('bifroest:configure', { detail: customization }));
     const title =

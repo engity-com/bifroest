@@ -133,6 +133,7 @@ h3.recording-heading { font-size: 1.125rem; }
   .tab-scope { max-width: 6rem; }
   .tab-owner { max-width: 5rem; }
   .admin-content { padding: .5rem; }
+  .terminal-tab-list .MuiTabs-scrollButtons { width:24px; flex-shrink:0; }
   .artifact-selection[data-kind="recordings"] { grid-template-columns:minmax(0,1fr) auto; }
   .artifact-selection[data-kind="recordings"] > :first-child { grid-column:1 / -1; }
 }

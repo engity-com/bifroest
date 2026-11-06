@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { auditEventPage, indexAuditEvents } from '../src/artifacts/audit-events';
+import { auditEventByID, auditEventPage, indexAuditEvents } from '../src/artifacts/audit-events';
 
 function record(index: number) {
   return {
@@ -58,4 +58,55 @@ it('handles UTF-8 byte offsets without changing or retaining original event byte
   expect(page.items).toHaveLength(1);
   expect(page.items[0]?.flow).toBe('äö漢字');
   expect(await source.text()).toBe(original);
+});
+it('binds route flow selectors literally and finds ID shortcuts across the verified source without guessing duplicates', async () => {
+  const id = '34e34ab8-7457-4d88-a5e4-c57791775c3a';
+  const other = '70d5159d-a0e4-46ca-b011-c4f831f4ade0';
+  const source = new Blob(
+    [
+      {
+        id,
+        recordedAt: '2026-11-05T00:00:00Z',
+        event: { name: 'session.task.completed', flow: 'Docker' },
+      },
+      {
+        id,
+        recordedAt: '2026-11-05T00:01:00Z',
+        event: { name: 'session.task.completed', flow: 'docker' },
+      },
+      { id: other, recordedAt: '2026-11-05T00:02:00Z', event: { name: 'session.task.completed' } },
+    ].map((row) => `${JSON.stringify(row)}\n`),
+  );
+  const signal = new AbortController().signal;
+  const index = await indexAuditEvents(source, signal);
+  expect(
+    (
+      await auditEventPage(
+        index,
+        0,
+        '',
+        { field: 'flow', operator: 'equals', value: 'Docker' },
+        false,
+        signal,
+        'Docker',
+      )
+    ).items.map((row) => row.flow),
+  ).toEqual(['Docker']);
+  expect(
+    (
+      await auditEventPage(
+        index,
+        0,
+        '',
+        { field: 'flow', operator: 'isEmpty', value: '' },
+        false,
+        signal,
+        '-',
+      )
+    ).items.map((row) => row.record.id),
+  ).toEqual([other]);
+  expect((await auditEventByID(index, id, signal, 'Docker'))?.flow).toBe('Docker');
+  await expect(auditEventByID(index, id, signal)).rejects.toMatchObject({ code: 'verification' });
+  expect(await auditEventByID(index, other, signal, 'Docker')).toBeNull();
+  expect((await auditEventByID(index, other, signal, '-'))?.flow).toBe('');
 });

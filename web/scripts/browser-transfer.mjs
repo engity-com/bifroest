@@ -3,12 +3,18 @@ import { appendFileSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { browserGoToolchain } from './browser-key.mjs';
+import { completeReviewedInventory } from './reviewed-go-modules.mjs';
 
 // Reviewed against MISE go-licenses 2.0.1 report/save for this exact js/wasm
 // entry. These are module license texts, not complete release source provenance.
 const approved = new Map([
   [
     'github.com/fxamacker/cbor/v2@v2.9.6',
+    '78cad457d5ea7318230f3d969d4cdf29cef45524a1fc8ca3a97646da1ad7a841',
+  ],
+  // main's Dependabot update: same MIT text and float16@v0.8.4-only graph.
+  [
+    'github.com/fxamacker/cbor/v2@v2.10.0',
     '78cad457d5ea7318230f3d969d4cdf29cef45524a1fc8ca3a97646da1ad7a841',
   ],
   [
@@ -59,7 +65,7 @@ export function buildBrowserTransfer(output) {
       text: text.toString('utf8'),
     });
   }
-  if (entries.size !== approved.size) {
+  if (!completeReviewedInventory(entries.keys(), approved.keys())) {
     throw new Error('Browser transfer Go module inventory changed');
   }
   const modules = [...entries.values()].sort((left, right) =>

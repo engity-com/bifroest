@@ -175,6 +175,7 @@ export async function auditEventPage(
   filter: ColumnFilter | null,
   descending: boolean,
   signal: AbortSignal,
+  exactFlow?: string,
 ): Promise<{ items: AuditEventRow[]; next: string; skipped: number }> {
   if (
     !Number.isSafeInteger(page) ||
@@ -188,7 +189,7 @@ export async function auditEventPage(
   let count = 0;
   const accepts = predicate(filter);
   const tokens = query.toLowerCase().split(/\s+/u).filter(Boolean);
-  if (filter === null && tokens.length === 0) {
+  if (filter === null && tokens.length === 0 && exactFlow === undefined) {
     for (let row = 0; row < index.count; row++) {
       matched[count++] = row;
     }
@@ -199,7 +200,12 @@ export async function auditEventPage(
       const search = [row.name, row.outcome, row.flow, row.reason, row.sessionId]
         .join(' ')
         .toLowerCase();
-      if (accepts(row) && tokens.every((token) => search.includes(token))) {
+      if (
+        (exactFlow === undefined ||
+          (exactFlow === '-' ? row.flow === '' : row.flow === exactFlow)) &&
+        accepts(row) &&
+        tokens.every((token) => search.includes(token))
+      ) {
         matched[count++] = number;
       }
       number++;
@@ -226,4 +232,40 @@ export async function auditEventPage(
     throw new EvidenceError('cancelled');
   }
   return { items, next: (page + 1) * 20 < count ? 'next' : '', skipped: 0 };
+}
+
+export async function auditEventByID(
+  index: AuditEventIndex,
+  id: string,
+  signal: AbortSignal,
+  flow?: string,
+): Promise<AuditEventRow | null> {
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(id)) {
+    throw new EvidenceError('input');
+  }
+  let number = 0;
+  let found: AuditEventRow | null = null;
+  for await (const line of lines(index.source, signal)) {
+    if (number >= index.count) {
+      throw new EvidenceError('verification');
+    }
+    const row = rowFor(JSON.parse(line.text) as unknown, number);
+    if (
+      row.record.id === id &&
+      (flow === undefined || (flow === '-' ? row.flow === '' : row.flow === flow))
+    ) {
+      if (found !== null) {
+        throw new EvidenceError('verification');
+      }
+      found = row;
+    }
+    number++;
+    if (number % 4096 === 0) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+  }
+  if (signal.aborted) {
+    throw new EvidenceError('cancelled');
+  }
+  return found;
 }

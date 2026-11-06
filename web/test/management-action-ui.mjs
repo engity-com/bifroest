@@ -7,6 +7,7 @@ import {
   captureLayout,
   gridColumnFilter,
   reauthenticate,
+  sessionTarget,
   workspace,
 } from './workspace-ui.mjs';
 
@@ -97,10 +98,10 @@ export async function exerciseManagementActions(page, login, logout) {
       .first()
       .getAttribute('aria-label')
   ).slice('Session details '.length);
-  await page.locator('.advanced-action > summary').click();
-  const direct = page.getByRole('region', { name: 'Advanced: target by ID', exact: true });
+  let direct = await sessionTarget(page);
   await direct.getByLabel('Target flow', { exact: false }).fill('work');
   await direct.getByLabel('Target session ID', { exact: false }).fill(draftID);
+  await page.keyboard.press('Escape');
   await workspace(page, 'Server');
   await page
     .getByRole('grid', { name: 'Configured flows (not public discovery links)', exact: true })
@@ -119,11 +120,13 @@ export async function exerciseManagementActions(page, login, logout) {
   );
   const afterFirstViews = managementCalls;
   await workspace(page, 'Sessions');
+  direct = await sessionTarget(page);
   assert.equal(await direct.getByLabel('Target flow', { exact: false }).inputValue(), 'work');
   assert.equal(
     await direct.getByLabel('Target session ID', { exact: false }).inputValue(),
     draftID,
   );
+  await page.keyboard.press('Escape');
   for (const name of ['Server', 'Recordings & audit', 'Sessions']) {
     await workspace(page, name);
   }
@@ -136,12 +139,13 @@ export async function exerciseManagementActions(page, login, logout) {
     'returning to initialized views must not repeat any reads, downloads or preparations',
   );
   assert.equal(afterFirstViews, 4);
+  direct = await sessionTarget(page);
   assert.equal(await direct.getByLabel('Target flow', { exact: false }).inputValue(), 'work');
   assert.equal(
     await direct.getByLabel('Target session ID', { exact: false }).inputValue(),
     draftID,
   );
-  await page.locator('.advanced-action > summary').click();
+  await page.keyboard.press('Escape');
   async function connection() {
     return page.evaluate(async () => {
       const { BrowserClient } = await import('/_bifroest/test/client.js');
@@ -200,6 +204,7 @@ export async function exerciseManagementActions(page, login, logout) {
         'local detail navigation must not refresh or prepare anything',
       );
     }
+    await table.waitFor();
     await page.getByRole('button', { name: 'Refresh sessions', exact: true }).click();
     const row = table
       .locator('[role="row"][data-id]')
@@ -346,7 +351,9 @@ export async function exerciseManagementActions(page, login, logout) {
   assert.equal(commits, 2, 'no automatic confirmation replay after a lost response');
   assert.equal(interruption.losses(), 1, 'exactly one real committed action lost its completion');
   assert.equal(
-    await page.getByRole('button', { name: 'Refresh sessions', exact: true }).isEnabled(),
+    await page
+      .getByRole('button', { name: 'Refresh sessions', exact: true, includeHidden: true })
+      .isEnabled(),
     false,
     'a lost management channel cannot silently fall back to HTTP',
   );

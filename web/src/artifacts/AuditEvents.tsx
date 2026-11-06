@@ -4,11 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ColumnFilter } from '../management/protocol';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useDetailRefresh } from '../ui/detail-preference';
-import { Alert } from '../ui/material';
+import { exactFlow, type ManagementLocation } from '../ui/management-location';
+import { useManagementNavigation } from '../ui/management-navigation';
+import { Alert, Button, TextInput } from '../ui/material';
 import { t } from '../ui/messages';
 import {
   type AuditEventIndex,
   type AuditEventRow,
+  auditEventByID,
   auditEventPage,
   indexAuditEvents,
 } from './audit-events';
@@ -24,6 +27,19 @@ export function AuditEvents({
   selected?: AuditEventRow | null;
   onSelect?: (row: AuditEventRow | null) => void;
 }) {
+  const navigation = useManagementNavigation();
+  const route = navigation?.location.page === 'auditlogs' ? navigation.location : null;
+  const routeKey = JSON.stringify(route);
+  const navigateRef = useRef(navigation);
+  navigateRef.current = navigation;
+  const returnRoute = useRef<ManagementLocation | null>(null);
+  const cachedEvent = useRef<{ source: Blob; key: string; row: AuditEventRow } | null>(null);
+  const [eventInput, setEventInput] = useState('');
+  const nativeFilterIntent = useRef<{
+    flow: string | undefined;
+    query: string;
+    filter: ColumnFilter | null;
+  } | null>(null);
   const [rows, setRows] = useState<AuditEventRow[]>([]);
   const [page, setPage] = useState(0);
   const [query, setQuery] = useState('');
@@ -34,7 +50,30 @@ export function AuditEvents({
   const [failed, setFailed] = useState(false);
   const [ownSelected, setOwnSelected] = useState<AuditEventRow | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const selected = controlled === undefined ? ownSelected : controlled;
+  const rawSelected = controlled === undefined ? ownSelected : controlled;
+  const requestedID = route?.id ?? route?.eventHint;
+  const detailIntent = !!requestedID;
+  const selected =
+    navigation && route
+      ? rawSelected &&
+        rawSelected.record.id === requestedID &&
+        (!route.flow ||
+          (route.flow === '-' ? rawSelected.flow === '' : rawSelected.flow === route.flow))
+        ? rawSelected
+        : null
+      : rawSelected;
+  const shownFilter: ColumnFilter | null =
+    route && !detailIntent
+      ? route.flow
+        ? {
+            field: 'flow',
+            operator: route.flow === '-' ? 'isEmpty' : 'equals',
+            value: route.flow === '-' ? '' : route.flow,
+          }
+        : exactFlow(filter) || (filter?.field === 'flow' && filter.operator === 'isEmpty')
+          ? null
+          : filter
+      : filter;
   const choose = useCallback(
     (row: AuditEventRow | null) => {
       setOwnSelected(row);
@@ -42,19 +81,28 @@ export function AuditEvents({
     },
     [onSelect],
   );
-  const detailed = useDetailRefresh(active && selected === null, false, busy, () => {
-    setFilter(null);
-    setPage(0);
-    setRefresh((value) => value + 1);
-  });
+  const detailed = useDetailRefresh(
+    active && selected === null && !detailIntent,
+    false,
+    busy,
+    () => {
+      setFilter(null);
+      setPage(0);
+      setRefresh((value) => value + 1);
+    },
+  );
   const index = useRef<AuditEventIndex | null>(null);
   const generation = useRef(0);
   const indexedRevision = useRef(0);
+  const listScope = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (index.current?.source === source) {
       return;
     }
     index.current = null;
+    cachedEvent.current = null;
+    returnRoute.current = null;
+    listScope.current = undefined;
     setRows([]);
     setPage(0);
     setQuery('');
@@ -80,15 +128,79 @@ export function AuditEvents({
         }
         index.current = ownedIndex;
         indexedRevision.current = refresh;
+        const target = JSON.parse(routeKey) as ManagementLocation | null;
+        if (target && (target.id || target.eventHint)) {
+          const id = target.id ?? target.eventHint ?? '';
+          const key = JSON.stringify([target.auditlog, target.flow, target.id, target.eventHint]);
+          const cached = cachedEvent.current;
+          if (cached?.source === source && cached.key === key) {
+            choose(cached.row);
+            return;
+          }
+          choose(null);
+          const row = await auditEventByID(ownedIndex, id, controller.signal, target.flow);
+          if (current !== generation.current || controller.signal.aborted) {
+            return;
+          }
+          if (!row || !target.auditlog || row.flow === '-') {
+            setFailed(true);
+            return;
+          }
+          const canonical: ManagementLocation = {
+            managementFlow: target.managementFlow,
+            page: 'auditlogs',
+            auditlog: target.auditlog,
+            flow: row.flow || '-',
+            id,
+          };
+          cachedEvent.current = {
+            source,
+            key: JSON.stringify([
+              canonical.auditlog,
+              canonical.flow,
+              canonical.id,
+              canonical.eventHint,
+            ]),
+            row,
+          };
+          choose(row);
+          if (target.eventHint) {
+            navigateRef.current?.navigate(canonical, true);
+          }
+          return;
+        }
+        if (navigateRef.current) {
+          choose(null);
+        }
+        const requestedFilter: ColumnFilter | null = target?.flow
+          ? {
+              field: 'flow',
+              operator: target.flow === '-' ? 'isEmpty' : 'equals',
+              value: target.flow === '-' ? '' : target.flow,
+            }
+          : target &&
+              (exactFlow(filter) || (filter?.field === 'flow' && filter.operator === 'isEmpty'))
+            ? null
+            : filter;
+        const scopeChanged = target?.flow !== listScope.current;
+        const native =
+          nativeFilterIntent.current?.flow === target?.flow ? nativeFilterIntent.current : null;
         const result = await auditEventPage(
           ownedIndex,
-          page,
-          query,
-          filter,
+          scopeChanged ? 0 : page,
+          scopeChanged ? (native?.query ?? '') : query,
+          requestedFilter,
           sort === 'desc',
           controller.signal,
+          target?.flow,
         );
         if (current === generation.current && !controller.signal.aborted) {
+          listScope.current = target?.flow;
+          if (scopeChanged) {
+            setPage(0);
+            setQuery(native?.query ?? '');
+          }
+          nativeFilterIntent.current = null;
           setRows(result.items);
           setNext(result.next !== '');
         }
@@ -104,7 +216,29 @@ export function AuditEvents({
       }
     })();
     return () => controller.abort();
-  }, [source, active, page, query, filter, sort, refresh]);
+  }, [source, active, page, query, filter, sort, refresh, routeKey, choose]);
+  function openRow(row: AuditEventRow) {
+    if (navigation && route?.auditlog && typeof row.record.id === 'string') {
+      returnRoute.current = route;
+      navigation.navigate({
+        managementFlow: route.managementFlow,
+        page: 'auditlogs',
+        auditlog: route.auditlog,
+        flow: row.flow || '-',
+        id: row.record.id,
+      });
+    } else {
+      choose(row);
+    }
+  }
+  function close() {
+    if (navigation && route) {
+      const { id: _id, eventHint: _hint, ...parent } = route;
+      navigation.navigate(returnRoute.current ?? parent);
+    } else {
+      choose(null);
+    }
+  }
   const event = selected?.record.event;
   const fields =
     event !== null && typeof event === 'object' && !Array.isArray(event)
@@ -115,12 +249,43 @@ export function AuditEvents({
   return (
     <section className="stack" aria-label={t('auditEvents')}>
       {failed && <Alert color="red">{t('auditEventsFailed')}</Alert>}
-      <div hidden={selected !== null}>
+      {busy && detailIntent && selected === null && <p role="status">{t('auditEventLoading')}</p>}
+      <div hidden={selected !== null || detailIntent}>
         <AdminDataGrid<AuditEventRow>
-          active={active && selected === null}
+          active={active && selected === null && !detailIntent}
           label={t('auditEvents')}
-          rows={rows}
-          onOpen={choose}
+          rows={!route || listScope.current === route.flow ? rows : []}
+          onOpen={openRow}
+          openByID={
+            <form
+              method="dialog"
+              className="actions"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (navigation && route?.auditlog) {
+                  returnRoute.current = route;
+                  navigation.navigate({
+                    managementFlow: route.managementFlow,
+                    page: 'auditlogs',
+                    auditlog: route.auditlog,
+                    eventHint: eventInput,
+                  });
+                }
+              }}
+            >
+              <TextInput
+                label={t('artifactEventID')}
+                value={eventInput}
+                onChange={(event) => setEventInput(event.currentTarget.value)}
+                required
+                maxLength={36}
+                pattern="[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+              />
+              <Button type="submit" disabled={busy || !active || !navigation}>
+                Go
+              </Button>
+            </form>
+          }
           openLabel={(row) => `${t('auditEventDetails')} ${row.id}`}
           detailsAvailable
           detailed={detailed}
@@ -150,7 +315,7 @@ export function AuditEvents({
           page={page}
           hasNext={next}
           query={query}
-          columnFilter={filter}
+          columnFilter={shownFilter}
           sortField="recordedAt"
           sortDirection={sort}
           onPage={setPage}
@@ -162,6 +327,13 @@ export function AuditEvents({
             setQuery(query);
             setFilter(filter);
             setPage(0);
+            const flow =
+              filter?.field === 'flow' && filter.operator === 'isEmpty' ? '-' : exactFlow(filter);
+            if (navigation && route && flow !== route.flow) {
+              nativeFilterIntent.current = { flow, query, filter };
+              const { flow: _flow, id: _id, eventHint: _hint, ...parent } = route;
+              navigation.navigate({ ...parent, ...(flow ? { flow } : {}) });
+            }
           }}
           onSort={(value) => {
             setSort(value);
@@ -176,7 +348,7 @@ export function AuditEvents({
           tabIndex={-1}
         >
           <div className="section-heading">
-            <IconButton aria-label={t('close')} onClick={() => choose(null)}>
+            <IconButton aria-label={t('close')} onClick={close}>
               <CloseIcon />
             </IconButton>
           </div>

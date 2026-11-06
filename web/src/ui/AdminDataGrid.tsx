@@ -45,6 +45,7 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   detailFields = [],
   detailed = true,
   detailsAvailable = false,
+  rowActions,
 }: {
   label: string;
   rows: readonly R[];
@@ -73,6 +74,7 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   detailFields?: readonly string[];
   detailed?: boolean;
   detailsAvailable?: boolean;
+  rowActions?: (row: R) => ReactNode;
 }) {
   const apiRef = useGridApiRef();
   useLayoutEffect(() => {
@@ -145,36 +147,39 @@ export function AdminDataGrid<R extends GridValidRowModel>({
               (column) =>
                 column.field !== actionField && (detailed || !detailFields.includes(column.field)),
             ),
-            ...(onOpen
+            ...(onOpen || rowActions
               ? [
                   {
                     field: 'actions',
                     type: 'actions' as const,
                     headerName: t('adminGridActions'),
-                    width: 90,
+                    width: rowActions ? 144 : 90,
                     hideable: false,
                     disableColumnMenu: true,
                     filterable: false,
                     sortable: false,
-                    renderCell: (params: { row: R }) => (
-                      <Tooltip title={openLabel?.(params.row) ?? t('adminGridOpen')}>
-                        <span>
-                          <IconButton
-                            size="small"
-                            aria-label={openLabel?.(params.row) ?? t('adminGridOpen')}
-                            disabled={
-                              disabled || busy || !active || canOpen?.(params.row) === false
-                            }
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onOpen(params.row);
-                            }}
-                          >
-                            <SearchIcon fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    ),
+                    renderCell: (params: { row: R }) =>
+                      rowActions ? (
+                        rowActions(params.row)
+                      ) : (
+                        <Tooltip title={openLabel?.(params.row) ?? t('adminGridOpen')}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              aria-label={openLabel?.(params.row) ?? t('adminGridOpen')}
+                              disabled={
+                                disabled || busy || !active || canOpen?.(params.row) === false
+                              }
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onOpen?.(params.row);
+                              }}
+                            >
+                              <SearchIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      ),
                   },
                 ]
               : []),

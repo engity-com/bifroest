@@ -1,5 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
+import { profileResetEvent } from '../ui/profile-reset';
 import type { VerifiedArtifact } from './evidence-protocol';
 import { EvidenceError } from './evidence-protocol';
 import type { EvidenceKey } from './verify';
@@ -88,11 +89,13 @@ export function useTabArtifactSecrets(
       }
     });
     signal?.addEventListener('abort', retire, { once: true });
+    window.addEventListener(profileResetEvent, retire);
     if (signal?.aborted || access.status() === 'closed') {
       retire();
     }
     return () => {
       signal?.removeEventListener('abort', retire);
+      window.removeEventListener(profileResetEvent, retire);
       unsubscribe();
       retire();
     };

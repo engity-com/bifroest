@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useSyncExternalStore } from 'react';
 import { reportUiError } from './error-report';
+import { profilePreferencesResetEvent } from './profile-reset';
 
 // Presentation only: never a credential, permission, decryption or trust flag.
 // localStorage is origin-bound; no account names or artifact selectors are saved.
@@ -25,9 +26,15 @@ function subscribe(changed: () => void): () => void {
   };
   window.addEventListener('storage', storage);
   window.addEventListener(changedEvent, changed);
+  const reset = () => {
+    volatileOverride = null;
+    changed();
+  };
+  window.addEventListener(profilePreferencesResetEvent, reset);
   return () => {
     window.removeEventListener('storage', storage);
     window.removeEventListener(changedEvent, changed);
+    window.removeEventListener(profilePreferencesResetEvent, reset);
   };
 }
 export function setDetailedView(value: boolean): void {

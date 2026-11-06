@@ -15,9 +15,30 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { captureBrowserInputs, writeBrowserRelease } from '../scripts/browser-release.mjs';
+import { completeReviewedInventory } from '../scripts/reviewed-go-modules.mjs';
 
 const output = fileURLToPath(new URL('../../pkg/webui/assets/', import.meta.url));
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+test('reviewed Go module alternatives still require one exact version per complete module path', () => {
+  const old = 'github.com/fxamacker/cbor/v2@v2.9.6';
+  const current = 'github.com/fxamacker/cbor/v2@v2.10.0';
+  const dependency = 'github.com/x448/float16@v0.8.4';
+  const reviewed = [old, current, dependency];
+  assert(completeReviewedInventory([old, dependency], reviewed));
+  assert(completeReviewedInventory([current, dependency], reviewed));
+  for (const actual of [
+    [old],
+    [dependency],
+    [old, current],
+    [old, current, dependency],
+    [current, dependency, 'example.org/unreviewed@v1.0.0'],
+    ['github.com/fxamacker/cbor/v2@v2.10.1', dependency],
+    ['github.com/fxamacker/cbor/v2', dependency],
+  ]) {
+    assert.equal(completeReviewedInventory(actual, reviewed), false);
+  }
+});
 
 test('documentation favicon checkout preserves source bytes on CRLF-default build hosts', () => {
   const root = fileURLToPath(new URL('../../', import.meta.url));

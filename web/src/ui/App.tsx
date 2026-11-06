@@ -1,17 +1,23 @@
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ClearAllIcon from '@mui/icons-material/ClearAllOutlined';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForeverOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import DescriptionIcon from '@mui/icons-material/Description';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-import PaletteIcon from '@mui/icons-material/Palette';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import { keyLoginDiagnostic, keyLoginError, publicRememberErrorCode } from '../login/diagnostic';
 import { verificationLink } from '../login/links';
 import type { AccessSnapshot, LoginStep, LogoutResult, WebAccess } from '../remember';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
 import type { AuthenticationView } from '../terminal/AuthenticationTerminal';
-import { type ConnectionView, maximumTabs, TerminalWorkspace } from '../terminal/TerminalWorkspace';
+import {
+  type ConnectionView,
+  maximumTabs,
+  TerminalWorkspace,
+  type WorkspaceControls,
+} from '../terminal/TerminalWorkspace';
 import { reportUiError } from './error-report';
 import {
   type LinkMetadata,
@@ -21,6 +27,7 @@ import {
   loginOptionFor,
   loginOptionKey,
 } from './link-metadata';
+import type { ManagementLocation } from './management-location';
 import {
   ActionIcon,
   Alert,
@@ -41,13 +48,17 @@ import {
 import type { Message } from './messages';
 import { t } from './messages';
 import { preferredUsername, saveSuccessfulUsername } from './preferences';
+import { type ProfileResetResult, resetPeerContexts, resetProfile } from './profile-reset';
+import { observeProfileResets } from './profile-reset-peers';
 import { useSlugRoute } from './slug-router';
+import { ThemeSwitcher } from './ThemeSwitcher';
 
 type Saved = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
 type Notice = {
   key: Message;
   color: 'red' | 'yellow' | 'green';
   context?: AccessSnapshot;
+  reset?: ProfileResetResult;
 };
 
 const loginMethodMessages: Record<LoginMethod, { label: Message; description: Message }> = {
@@ -90,7 +101,21 @@ function errorNotice(error: unknown): Notice {
 }
 
 function NoticeBody({ notice }: { notice: Notice }) {
-  return <>{t(notice.key)}</>;
+  return (
+    <>
+      {notice.reset ? <p>{t(notice.key)}</p> : t(notice.key)}
+      {notice.reset && (
+        <dl className="metadata-grid">
+          <dt>{t('resetLocalCleared')}</dt>
+          <dd>{notice.reset.localCleared ? '✓' : '✕'}</dd>
+          <dt>{t('resetViewsClosed')}</dt>
+          <dd>{notice.reset.viewsClosed ? '✓' : '✕'}</dd>
+          <dt>{t('resetRemoteUnconfirmed')}</dt>
+          <dd>{notice.reset.remoteUnconfirmed}</dd>
+        </dl>
+      )}
+    </>
+  );
 }
 
 export function App({
@@ -136,7 +161,12 @@ export function App({
   const [passwordKey, setPasswordKey] = useState(0);
   const [loginOpen, setLoginOpen] = useState(true);
   const [applicationMenuOpen, setApplicationMenuOpen] = useState(false);
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<'close' | 'reset' | null>(null);
+  const workspaceControls = useRef<WorkspaceControls | null>(null);
+  const registerWorkspaceControls = useCallback((controls: WorkspaceControls | null) => {
+    workspaceControls.current = controls;
+  }, []);
+  const peerResetting = useRef(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [authorizationEvent, setAuthorizationEvent] = useState<WebAccess | null>(null);
   const [retiredAccess, setRetiredAccess] = useState<WebAccess | null>(null);
@@ -207,8 +237,26 @@ export function App({
     setNoticeOpen(true);
   }, [closing, rememberUncertain]);
   const slugRoute = useSlugRoute(
-    busy || closing || managementLocked || rememberUncertain || confirm !== null,
+    busy ||
+      closing ||
+      managementLocked ||
+      rememberUncertain ||
+      confirm !== null ||
+      bulkConfirm !== null,
     routeBlocked,
+    [
+      metadata.scope.slug,
+      ...metadata.publishedSlugs,
+      loginMetadata.scope.slug,
+      ...loginMetadata.publishedSlugs,
+      ...tabScopes.map((scope) => scope.slug),
+    ].filter(
+      (slug) =>
+        slug !== '' ||
+        metadata.rootAvailable ||
+        loginMetadata.rootAvailable ||
+        tabScopes.some((scope) => scope.slug === ''),
+    ),
   );
   const routeOrigin = slugRoute.scope?.origin ?? null;
   const routeSlug = slugRoute.scope?.slug ?? null;
@@ -254,6 +302,17 @@ export function App({
         view.scope.slug === routeSlug,
     );
     if (selected) {
+      if (
+        slugRoute.management &&
+        selected.access.snapshot().flow?.name !== slugRoute.management.managementFlow
+      ) {
+        setNotice({ key: 'managementRouteMismatch', color: 'red' });
+        setLoginOpen(true);
+        return;
+      }
+      if (selected.navigation && slugRoute.management) {
+        selected.navigation.current = slugRoute.management;
+      }
       // View navigation only selects a still-owned local view. In particular it
       // must not enter routing/blocked, reload discovery or touch saved access.
       if (routeOperation.current !== null) {
@@ -345,7 +404,15 @@ export function App({
     return () => {
       controller.abort();
     };
-  }, [slugRoute.key, slugRoute.view, routeOrigin, routeSlug, routeRevision, readSaved]);
+  }, [
+    slugRoute.key,
+    slugRoute.view,
+    slugRoute.management,
+    routeOrigin,
+    routeSlug,
+    routeRevision,
+    readSaved,
+  ]);
   useEffect(() => {
     void readSaved();
     return () => {
@@ -379,9 +446,27 @@ export function App({
         selectAccess(selected?.access ?? null);
         return;
       }
-      void slugRoute.activate(selected.scope.slug, selected.id, replace);
+      const flow = selected.access.snapshot().flow;
+      let target = selected.navigation?.current ?? undefined;
+      if (!target && selected.access.snapshot().environment === 'management' && flow) {
+        target =
+          slugRoute.view === null &&
+          slugRoute.scope?.slug === selected.scope.slug &&
+          slugRoute.management?.managementFlow === flow.name
+            ? slugRoute.management
+            : { managementFlow: flow.name, page: 'server' };
+      }
+      void slugRoute.activate(selected.scope.slug, selected.id, replace, target);
     },
-    [routing, loginOpen, selectAccess, slugRoute.activate],
+    [
+      routing,
+      loginOpen,
+      selectAccess,
+      slugRoute.activate,
+      slugRoute.management,
+      slugRoute.scope?.slug,
+      slugRoute.view,
+    ],
   );
 
   const linkChoices = linkSlugs(metadata, loginMetadata, routeSlug, tabScopes);
@@ -649,6 +734,16 @@ export function App({
       access.current = result;
       candidate.current = result;
       setSnapshot(result.snapshot());
+      if (
+        slugRoute.management &&
+        (result.snapshot().environment !== 'management' ||
+          result.snapshot().flow?.name !== slugRoute.management.managementFlow)
+      ) {
+        setNotice({ key: 'managementRouteMismatch', color: 'red', context: result.snapshot() });
+        setTerminalLogin(null);
+        setLoginOpen(true);
+        return;
+      }
       setClosing(false);
       setRememberUncertain(false);
       let uncertain = false;
@@ -693,6 +788,15 @@ export function App({
       access.current = result;
       candidate.current = result;
       setSnapshot(result.snapshot());
+      if (
+        slugRoute.management &&
+        (result.snapshot().environment !== 'management' ||
+          result.snapshot().flow?.name !== slugRoute.management.managementFlow)
+      ) {
+        setNotice({ key: 'managementRouteMismatch', color: 'red', context: result.snapshot() });
+        setLoginOpen(true);
+        return;
+      }
       setClosing(false);
       setLoginOpen(false);
       setRememberUncertain(false);
@@ -782,6 +886,144 @@ export function App({
   function showConfirmation(value: 'revoke' | 'local') {
     confirmationHandle.current = savedHandle.current;
     setConfirm(value);
+  }
+  function resetAccesses() {
+    return [
+      ...new Set([
+        ...views.current.map((view) => view.access),
+        ...(access.current ? [access.current] : []),
+        ...(candidate.current ? [candidate.current] : []),
+        ...(retiredAccess ? [retiredAccess] : []),
+      ]),
+    ];
+  }
+  function resetViews() {
+    candidate.current = null;
+    access.current = null;
+    savedHandle.current = null;
+    confirmationHandle.current = null;
+    pendingResponse.current = null;
+    setSnapshot(null);
+    setAuthorizationEvent(null);
+    setRetiredAccess(null);
+    setRememberUncertain(false);
+    setTerminalLogin(null);
+    setLoginStep(null);
+    setLoginPending(null);
+    setProviderInformation(null);
+    setLoginOpen(false);
+    setLoginUser('');
+    setSaved('missing');
+    setLoginChoice(
+      loginMetadata.loginOptions[0] ? loginOptionKey(loginMetadata.loginOptions[0]) : '',
+    );
+    return workspaceControls.current?.closeAll({ resetConfirmed: true }) ?? true;
+  }
+  const receiveReset = useEffectEvent(
+    async (covered: readonly string[]): Promise<ProfileResetResult> => {
+      if (peerResetting.current) {
+        return { localCleared: false, remoteUnconfirmed: 1, viewsClosed: false };
+      }
+      peerResetting.current = true;
+      const selected = resetAccesses();
+      const interrupted = operation.current !== null;
+      const current = ++generation.current;
+      operation.current?.abort();
+      operation.current = null;
+      routeOperation.current?.abort();
+      routeOperation.current = null;
+      setBulkConfirm(null);
+      setConfirm(null);
+      setApplicationMenuOpen(false);
+      setBusy(true);
+      setClosing(true);
+      setPasswordKey((value) => value + 1);
+      setOptIn(false);
+      try {
+        const raw = await resetPeerContexts({
+          covered,
+          accesses: selected,
+          closeViews: resetViews,
+        });
+        const result = { ...raw, remoteUnconfirmed: raw.remoteUnconfirmed + (interrupted ? 1 : 0) };
+        if (current === generation.current) {
+          if (!result.localCleared) {
+            setSaved('unavailable');
+          }
+          const complete =
+            result.localCleared && result.remoteUnconfirmed === 0 && result.viewsClosed;
+          setNotice({
+            key: complete ? 'resetComplete' : 'resetPartial',
+            color: complete ? 'green' : 'yellow',
+            reset: result,
+          });
+          setNoticeOpen(true);
+        }
+        return result;
+      } finally {
+        peerResetting.current = false;
+        if (current === generation.current) {
+          setBusy(false);
+          setClosing(false);
+        }
+      }
+    },
+  );
+  useEffect(() => observeProfileResets((covered) => receiveReset(covered)), []);
+  async function confirmBulk() {
+    if (managementLocked || busy || routing || closing || bulkConfirm === null) {
+      return;
+    }
+    const action = bulkConfirm;
+    setBulkConfirm(null);
+    setApplicationMenuOpen(false);
+    if (action === 'close') {
+      workspaceControls.current?.closeAll();
+      return;
+    }
+    const selected = resetAccesses();
+    peerResetting.current = true;
+    const current = ++generation.current;
+    operation.current?.abort();
+    operation.current = null;
+    routeOperation.current?.abort();
+    routeOperation.current = null;
+    setBusy(true);
+    setClosing(true);
+    setNotice(null);
+    setPasswordKey((value) => value + 1);
+    setOptIn(false);
+    try {
+      const result = await resetProfile({
+        explicitConfirmation: true,
+        accesses: selected,
+        closeViews: resetViews,
+      });
+      if (current === generation.current) {
+        if (!result.localCleared) {
+          setSaved('unavailable');
+        }
+        const complete =
+          result.localCleared && result.remoteUnconfirmed === 0 && result.viewsClosed;
+        setNotice({
+          key: complete ? 'resetComplete' : 'resetPartial',
+          color: complete ? 'green' : 'yellow',
+          reset: result,
+        });
+        setNoticeOpen(true);
+      }
+    } catch (error) {
+      if (current === generation.current) {
+        setNotice(errorNotice(error));
+        setNoticeOpen(true);
+      }
+    } finally {
+      peerResetting.current = false;
+      if (current === generation.current) {
+        setBusy(false);
+        setClosing(false);
+      }
+    }
   }
 
   function showLogin(scope = access.current?.snapshot().scope ?? slugRoute.scope ?? undefined) {
@@ -879,7 +1121,7 @@ export function App({
           loginOpen ||
           (loginStep !== null && terminalLogin === null) ||
           applicationMenuOpen ||
-          appearanceOpen ||
+          bulkConfirm !== null ||
           noticeOpen ||
           confirm !== null
         }
@@ -888,6 +1130,24 @@ export function App({
         onNewConnection={() => showLogin()}
         onSelectView={selectView}
         onViewsChange={registerViews}
+        onWorkspaceControls={registerWorkspaceControls}
+        managementLocation={slugRoute.management}
+        onManagementNavigate={(
+          owner: ConnectionView,
+          next: ManagementLocation,
+          replace = false,
+        ) => {
+          if (
+            !managementLocked &&
+            !busy &&
+            !closing &&
+            !routing &&
+            owner.id === activeView &&
+            owner.access.snapshot().flow?.name === next.managementFlow
+          ) {
+            void slugRoute.activate(owner.scope.slug, owner.id, replace, next);
+          }
+        }}
         onActionLock={setManagementLocked}
         onTabCount={setTabCount}
         onLogout={(selected) => {
@@ -909,36 +1169,86 @@ export function App({
           ) : null
         }
         utilities={
-          <Menu
-            opened={applicationMenuOpen}
-            onChange={setApplicationMenuOpen}
-            position="bottom-end"
-          >
-            <Menu.Target>
-              <ActionIcon variant="subtle" color="gray" size="lg" aria-label={t('applicationMenu')}>
-                <MoreVertIcon />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item
-                icon={<PaletteIcon fontSize="small" />}
-                onClick={() => setAppearanceOpen(true)}
-              >
-                {t('appearance')}
-              </Menu.Item>
-              <Menu.Item
-                component="a"
-                icon={<DescriptionIcon fontSize="small" />}
-                href="/_bifroest/files/third-party-licenses.txt"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {t('notices')}
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
+          <>
+            <ThemeSwitcher scheme={scheme} onScheme={onScheme} />
+            <Menu
+              opened={applicationMenuOpen}
+              onChange={setApplicationMenuOpen}
+              position="bottom-end"
+            >
+              <Menu.Target>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="lg"
+                  aria-label={t('applicationMenu')}
+                >
+                  <MoreVertIcon />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item
+                  icon={<ClearAllIcon fontSize="small" />}
+                  disabled={
+                    tabCount === 0 ||
+                    busy ||
+                    closing ||
+                    routing ||
+                    managementLocked ||
+                    rememberUncertain
+                  }
+                  onClick={() => setBulkConfirm('close')}
+                >
+                  {t('closeAllSessions')}
+                </Menu.Item>
+                <Menu.Item
+                  icon={<DeleteForeverIcon fontSize="small" />}
+                  disabled={busy || closing || routing || managementLocked}
+                  onClick={() => setBulkConfirm('reset')}
+                >
+                  {t('resetAllSettings')}
+                </Menu.Item>
+                <Menu.Divider />
+                <Menu.Item
+                  component="a"
+                  icon={<DescriptionIcon fontSize="small" />}
+                  href="/_bifroest/files/third-party-licenses.txt"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {t('notices')}
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </>
         }
       />
+      <Modal
+        lockScroll={false}
+        opened={bulkConfirm !== null}
+        onClose={() => setBulkConfirm(null)}
+        title={t(bulkConfirm === 'close' ? 'closeAllSessions' : 'resetAllSettings')}
+      >
+        <div className="stack">
+          <p>
+            {t(bulkConfirm === 'close' ? 'closeAllSessionsConfirm' : 'resetAllSettingsConfirm')}
+          </p>
+          <div className="actions">
+            <Button
+              color="red"
+              disabled={busy || closing || routing || managementLocked}
+              onClick={() => {
+                void confirmBulk();
+              }}
+            >
+              {t('bulkConfirmAction')}
+            </Button>
+            <Button variant="default" onClick={() => setBulkConfirm(null)}>
+              {t('cancel')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
       <Modal
         classNames={{ content: 'confirmation-dialog login-dialog' }}
         size="sm"
@@ -1186,27 +1496,6 @@ export function App({
             </form>
           )}
         </Stack>
-      </Modal>
-      <Modal
-        classNames={{ content: 'confirmation-dialog' }}
-        lockScroll={false}
-        opened={appearanceOpen}
-        onClose={() => setAppearanceOpen(false)}
-        title={t('appearance')}
-        closeButtonProps={{ 'aria-label': t('close') }}
-      >
-        <div className="stack">
-          <SegmentedControl
-            aria-label={t('theme')}
-            value={scheme}
-            onChange={onScheme}
-            data={[
-              { value: 'auto', label: t('auto') },
-              { value: 'light', label: t('light') },
-              { value: 'dark', label: t('dark') },
-            ]}
-          />
-        </div>
       </Modal>
       <Modal
         lockScroll={false}

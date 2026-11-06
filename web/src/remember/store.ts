@@ -3,6 +3,7 @@ import { encode64, proofBytes, RememberMeError, validateBinding, validateScope }
 
 const databaseName = 'bifroest-browser-remember-v1';
 const objectStore = 'bindings';
+const metadataStore = 'metadata';
 const schema = 'bifroest-browser-state-v1';
 const encoder = new TextEncoder();
 
@@ -90,7 +91,7 @@ async function encrypt(
   };
 }
 
-async function decrypt(record: RecordValue, scope: Scope): Promise<State> {
+async function decrypt(record: RecordValue, scope?: Scope): Promise<State> {
   if (
     Object.keys(record).sort().join(',') !== 'ciphertext,encryption,generation,iv,signing,tag' ||
     Object.keys(record.signing).sort().join(',') !== 'privateKey,publicKey'
@@ -99,7 +100,9 @@ async function decrypt(record: RecordValue, scope: Scope): Promise<State> {
   }
   validateKeys(record);
   if (
-    record.tag !== (await scopeTag(scope)) ||
+    typeof record.tag !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(record.tag) ||
+    (scope !== undefined && record.tag !== (await scopeTag(scope))) ||
     !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(record.generation) ||
     !(record.iv instanceof Uint8Array) ||
     record.iv.byteLength !== 12 ||
@@ -118,8 +121,12 @@ async function decrypt(record: RecordValue, scope: Scope): Promise<State> {
     Object.keys(state).sort().join(',') !== 'binding,schema,scope' ||
     state.schema !== schema ||
     Object.keys(state.scope).sort().join(',') !== 'origin,slug' ||
-    !sameScope(state.scope, scope)
+    (scope !== undefined && !sameScope(state.scope, scope))
   ) {
+    throw new RememberMeError('unavailable');
+  }
+  validateScope(state.scope);
+  if (record.tag !== (await scopeTag(state.scope))) {
     throw new RememberMeError('unavailable');
   }
   if (state.binding !== null) {
@@ -150,9 +157,15 @@ async function decrypt(record: RecordValue, scope: Scope): Promise<State> {
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let blocked = false;
-    const request = indexedDB.open(databaseName, 1);
-    request.onupgradeneeded = () =>
-      request.result.createObjectStore(objectStore, { keyPath: 'tag' });
+    const request = indexedDB.open(databaseName, 2);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(objectStore)) {
+        request.result.createObjectStore(objectStore, { keyPath: 'tag' });
+      }
+      if (!request.result.objectStoreNames.contains(metadataStore)) {
+        request.result.createObjectStore(metadataStore);
+      }
+    };
     request.onblocked = () => {
       blocked = true;
       reject(new RememberMeError('unavailable'));
@@ -174,27 +187,48 @@ function openDatabase(): Promise<IDBDatabase> {
 async function transact<T>(
   mode: IDBTransactionMode,
   action: (store: IDBObjectStore, result: (value: T) => void, fail: () => void) => void,
+  expectedReset?: string,
 ): Promise<T> {
   const db = await openDatabase();
   try {
     return await new Promise<T>((resolve, reject) => {
-      const transaction = db.transaction(objectStore, mode);
+      const transaction = db.transaction(
+        expectedReset === undefined ? objectStore : [objectStore, metadataStore],
+        mode,
+      );
       let value: T;
+      let resetChanged = false;
       transaction.oncomplete = () => resolve(value);
-      transaction.onerror = transaction.onabort = () => reject(new RememberMeError('unavailable'));
+      transaction.onerror = transaction.onabort = () =>
+        reject(new RememberMeError(resetChanged ? 'changed' : 'unavailable'));
       const fail = () => {
         transaction.abort();
       };
-      try {
-        action(
-          transaction.objectStore(objectStore),
-          (result) => {
-            value = result;
-          },
-          fail,
-        );
-      } catch {
-        transaction.abort();
+      const invoke = () => {
+        try {
+          action(
+            transaction.objectStore(objectStore),
+            (result) => {
+              value = result;
+            },
+            fail,
+          );
+        } catch {
+          transaction.abort();
+        }
+      };
+      if (expectedReset === undefined) {
+        invoke();
+      } else {
+        const epoch = transaction.objectStore(metadataStore).get('reset');
+        epoch.onsuccess = () => {
+          if ((epoch.result ?? '') !== expectedReset) {
+            resetChanged = true;
+            transaction.abort();
+          } else {
+            invoke();
+          }
+        };
       }
     });
   } finally {
@@ -209,25 +243,55 @@ async function read(tag: string): Promise<RecordValue | undefined> {
   });
 }
 
-async function replace(record: RecordValue, expected: string | undefined): Promise<void> {
+async function replace(
+  record: RecordValue,
+  expected: string | undefined,
+  expectedReset?: string,
+): Promise<void> {
   let changed = false;
-  await transact<void>('readwrite', (store, _result, fail) => {
-    const request = store.get(record.tag);
-    request.onsuccess = () => {
-      const current = request.result as RecordValue | undefined;
-      if (expected === undefined ? current !== undefined : current?.generation !== expected) {
-        changed = true;
-        fail();
-        return;
-      }
-      store.put(record);
-    };
-  }).catch((error) => {
+  await transact<void>(
+    'readwrite',
+    (store, _result, fail) => {
+      const request = store.get(record.tag);
+      request.onsuccess = () => {
+        const current = request.result as RecordValue | undefined;
+        if (expected === undefined ? current !== undefined : current?.generation !== expected) {
+          changed = true;
+          fail();
+          return;
+        }
+        store.put(record);
+      };
+    },
+    expectedReset,
+  ).catch((error) => {
     if (changed) {
       throw new RememberMeError('changed');
     }
     throw error;
   });
+}
+
+async function resetGeneration(): Promise<string> {
+  const db = await openDatabase();
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const transaction = db.transaction(metadataStore, 'readonly');
+      const request = transaction.objectStore(metadataStore).get('reset');
+      let value = '';
+      request.onsuccess = () => {
+        if (request.result !== undefined && typeof request.result !== 'string') {
+          transaction.abort();
+        } else {
+          value = request.result ?? '';
+        }
+      };
+      transaction.oncomplete = () => resolve(value);
+      transaction.onabort = transaction.onerror = () => reject(new RememberMeError('unavailable'));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 // A tab-local capability over structured-cloned non-exportable keys. It contains
@@ -257,6 +321,7 @@ export class BrowserBinding {
     validateScope(scope);
     scope = { origin: scope.origin, slug: scope.slug };
     try {
+      const reset = await resetGeneration();
       const [signing, encryption] = await Promise.all([
         crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
           'sign',
@@ -269,7 +334,7 @@ export class BrowserBinding {
         { schema, scope: { ...scope }, binding: null },
       );
       // Persist keys BEFORE any enrollment request can create a server binding.
-      await replace(record, undefined);
+      await replace(record, undefined, reset);
       // A real structured-clone roundtrip is required; memory-only CryptoKeys or
       // private-key export/import are not a fallback for unsupported browsers.
       const stored = await BrowserBinding.load(scope);
@@ -297,6 +362,74 @@ export class BrowserBinding {
       return new BrowserBinding(scope, state.binding, record);
     } catch {
       throw new RememberMeError('unavailable');
+    }
+  }
+
+  // Explicit origin-wide reset only. Discover scopes by decrypting the existing
+  // owned records, not by logging in or querying a server's account inventory.
+  static async selectionsForReset(options: {
+    origin: string;
+    explicitConfirmation: boolean;
+  }): Promise<{ handles: BrowserBinding[]; unconfirmed: number }> {
+    if (options.explicitConfirmation !== true || options.origin !== location.origin) {
+      throw new RememberMeError('opt-in-required');
+    }
+    const collected = await transact<{ records: RecordValue[]; total: number }>(
+      'readonly',
+      (store, result) => {
+        const state = { records: [] as RecordValue[], total: 0 };
+        result(state);
+        const count = store.count();
+        count.onsuccess = () => {
+          state.total = count.result;
+        };
+        const cursor = store.openCursor();
+        cursor.onsuccess = () => {
+          const next = cursor.result;
+          if (next && state.records.length < 256) {
+            state.records.push(next.value as RecordValue);
+            next.continue();
+          }
+        };
+      },
+    );
+    const handles: BrowserBinding[] = [];
+    let unconfirmed = Math.max(0, collected.total - collected.records.length);
+    for (const record of collected.records) {
+      try {
+        const state = await decrypt(record);
+        if (state.scope.origin !== options.origin || state.binding === null) {
+          unconfirmed++;
+          continue;
+        }
+        handles.push(new BrowserBinding(state.scope, state.binding, record));
+      } catch {
+        unconfirmed++;
+      }
+    }
+    return { handles, unconfirmed };
+  }
+  static async clearForReset(options: { explicitConfirmation: boolean }): Promise<number> {
+    if (options.explicitConfirmation !== true) {
+      throw new RememberMeError('opt-in-required');
+    }
+    const db = await openDatabase();
+    try {
+      return await new Promise<number>((resolve, reject) => {
+        const transaction = db.transaction([objectStore, metadataStore], 'readwrite');
+        let removed = 0;
+        const count = transaction.objectStore(objectStore).count();
+        count.onsuccess = () => {
+          removed = count.result;
+        };
+        transaction.objectStore(metadataStore).put(crypto.randomUUID(), 'reset');
+        transaction.objectStore(objectStore).clear();
+        transaction.oncomplete = () => resolve(removed);
+        transaction.onabort = transaction.onerror = () =>
+          reject(new RememberMeError('unavailable'));
+      });
+    } finally {
+      db.close();
     }
   }
 

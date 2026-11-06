@@ -122,9 +122,16 @@ export function AdminGridToolbar() {
         placement="bottom-end"
         sx={{ zIndex: 1300 }}
       >
-        <ClickAwayListener onClickAway={() => setAnchor(null)}>
+        {/* Leading events keep a Select's newly opened portal from turning the
+            remainder of its opening pointer gesture into an outside click. */}
+        <ClickAwayListener
+          mouseEvent="onMouseDown"
+          touchEvent="onTouchStart"
+          onClickAway={() => setAnchor(null)}
+        >
           <Paper
             role="dialog"
+            onSubmit={() => setAnchor(null)}
             aria-label={t('recordingManual')}
             sx={{ p: 2, maxWidth: 'min(34rem, calc(100vw - 2rem))' }}
             onKeyDown={(event) => {

@@ -170,7 +170,8 @@ session's details by clicking a row or the magnifier in its last **Actions**
 column. **Disconnect connections**
 keeps the session reusable; **End session** revokes it and runs cleanup. Both
 require confirmation of the exact target. A denied list does not grant or remove
-other permissions; action-only access can use **Advanced: target by ID**.
+other permissions; action-only access can use the grid's **Open by ID** pin to
+enter a flow and session ID and prepare the action without a list read.
 
 **Overview** shows configured flows. **Version** automatically loads the allowed
 server version/build information and displays it as structured fields and feature
@@ -192,11 +193,45 @@ verification; opening an audit log shows verified events, not an inventory of
 raw files. Both use the same tab-local decryption-key cache described in
 [HTTP security and limits](../reference/connection/http/security.md#management-and-evidence).
 The grid's pin opens a popover for an exact ID; it does not replace filters or
-issue a transfer until **Go** is selected. Audit-event details open as an owned
+issue a transfer until **Go** is selected. The audit-log pin requires **Auditlog
+Name** and optionally accepts an **Event ID**; the verified event grid has its own
+event-ID pin. Audit-event details open as an owned
 page, not a modal. Close icons return to the retained list.
 
+### Direct management links
+
+After signing in through `/Admin` to the management flow `administration`, its
+Overview is `/Admin/administration`. Without a Slug it is `/administration`.
+These prefixes use the **management access flow name**, not its display title.
+Append the following paths to that prefix:
+
+| View | Path |
+| --- | --- |
+| Sessions | `/sessions`, `/sessions/<flow>`, `/sessions/<flow>/<sessionId>` |
+| Recordings | `/recordings`, `/recordings/<flow>`, `/recordings/<flow>/<recordingId>` |
+| Audit logs/events | `/auditlogs`, `/auditlogs/<auditlog>`, `/auditlogs/<auditlog>/<flow>`, `/auditlogs/<auditlog>/<flow>/<eventId>` |
+| Version | `/version` |
+
+Recording links may include `?auditlog=workload` to select their source explicitly;
+no global search through unrelated archives is required. If a Recording's flow
+is not yet known, the pin retains `?recording=<recordingId>&auditlog=workload`
+until local verification can replace it with the canonical flow path. An audit
+event shortcut similarly uses `/auditlogs/<auditlog>?event=<eventId>` until the
+verified event identifies its flow. In audit-event paths, `-` means **no flow
+assigned**, never “flow still unknown”.
+
+An exact Flow filter binds both the URI and the queried dataset to that literal,
+case-sensitive flow. Changing to a non-exact operator removes the flow segment.
+Overview's auditlog links and last-column actions navigate to the corresponding
+audit log, sessions, Recordings or flow-scoped events. Back/Forward and reload
+preserve the requested context. Reload still requires explicit sign-in or **Use
+saved access**, and the authorized management flow must match the link; URLs
+never restore grants or terminal executions. The server delivers the static SPA
+entry for these links; all React rendering happens in the browser.
+
 Management tab labels follow their selected main page. Live shell tab labels
-follow the shell's terminal title when one is supplied, with the login identity
+start with the resolved flow title (`title`, or `name`) and follow the shell's
+terminal title when a nonempty one is supplied, with the login identity
 still available in the tooltip. These titles are untrusted display text and do
 not alter the browser page title or another tab. Recorded terminal titles do not
 rename tabs.

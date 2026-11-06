@@ -64,8 +64,8 @@ export async function exerciseConnections(page, login) {
     );
   const auditlogInput = () =>
     page
-      .getByRole('dialog', { name: 'Advanced: open by ID', exact: true })
-      .getByRole('textbox', { name: /^Artifact auditlog/u });
+      .getByRole('dialog', { name: 'Open by ID', exact: true })
+      .getByRole('textbox', { name: /^Auditlog Name/u });
   const select = async (id, user, kind) => {
     await tab(id, user, kind).click();
     // The same principal can own several flows/views. Selection is controlled
@@ -77,7 +77,9 @@ export async function exerciseConnections(page, login) {
           document.getElementById(`terminal-tab-${id}`)?.getAttribute('aria-selected') === 'true' &&
           pane?.getAttribute('data-connection-active') === 'true' &&
           pane.getAttribute('data-connection-principal') === user &&
-          pane.getAttribute('data-connection-scope') === location.pathname.slice(1) &&
+          (pane.classList.contains('management-workspace')
+            ? location.pathname.startsWith(`/${pane.getAttribute('data-connection-scope')}/`)
+            : pane.getAttribute('data-connection-scope') === location.pathname.slice(1)) &&
           history.state?.usr?.view === id
         );
       },

@@ -22,7 +22,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
-	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/webui"
 )
 
@@ -181,7 +180,7 @@ func (this *webService) stop() { this.operations.stop(); this.loginWorkers.stop(
 func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// https.Boundary must already have validated TLS, authority and Origin. This
 	// handler is installed only behind that boundary, never exposed standalone.
-	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+	if strings.HasPrefix(r.URL.Path, "/_bifroest/") && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
 		webError(w, http.StatusBadRequest, "query parameters are not accepted")
 		return
 	}
@@ -404,6 +403,14 @@ func (this *webService) completeAuthentication(w http.ResponseWriter, ctx contex
 }
 
 func (this *webService) accessResponse(access *webAccess, token string) any {
+	name := access.auth.Flow().String()
+	title := name
+	for _, flow := range this.service.Configuration.Flows {
+		if flow.Name == access.auth.Flow() {
+			title = flow.GetTitle()
+			break
+		}
+	}
 	kind := "terminal"
 	if this.service.isManagementFlow(access.auth.Flow()) {
 		kind = "management"
@@ -417,7 +424,14 @@ func (this *webService) accessResponse(access *webAccess, token string) any {
 		Environment       string       `json:"environment"`
 		TerminalAvailable bool         `json:"terminalAvailable"`
 		KeepAlive         webKeepAlive `json:"keepAlive"`
-	}{"authorized", token, access.expires, access.scope, access.identity.Principal, kind, kind != "management", access.keepAlive}
+		Flow              struct {
+			Name  string `json:"name"`
+			Title string `json:"title"`
+		} `json:"flow"`
+	}{"authorized", token, access.expires, access.scope, access.identity.Principal, kind, kind != "management", access.keepAlive, struct {
+		Name  string `json:"name"`
+		Title string `json:"title"`
+	}{name, title}}
 }
 
 var webDiscoveryTemplate = htmltemplate.Must(htmltemplate.New("discovery").Parse(`<!doctype html><html lang="en-US"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifröst</title><h1>Bifröst</h1><p>Published access links. Each link still requires authorization.</p><ul>{{range .}}<li><a href="/{{.}}">{{.}}</a></li>{{else}}<li>No access links published on this host.</li>{{end}}</ul><p>This build does not include the browser application. Use SSH or a build with bundled browser resources.</p></html>`))
@@ -433,7 +447,11 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	slug, err := bnet.HttpSlugFromURL(r.URL)
+	if this.service.authorizerDiscovery == nil {
+		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
+		return
+	}
+	slug, err := this.describeSlug(r)
 	if err != nil {
 		webError(w, http.StatusBadRequest, "invalid flow path")
 		return

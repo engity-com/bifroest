@@ -4,6 +4,7 @@ export async function nativeColumnFilter(
   parent: ParentNode,
   columnLabel: string,
   value: string,
+  operator?: string,
 ): Promise<void> {
   const trigger = [...parent.querySelectorAll<HTMLButtonElement>('button')].find(
     (node) => !node.closest('[hidden]') && node.getAttribute('aria-label') === 'Filters',
@@ -28,6 +29,24 @@ export async function nativeColumnFilter(
     throw new Error(`Missing native filter column ${columnLabel}`);
   }
   await act(async () => option.click());
+  if (operator !== undefined) {
+    const control = document.querySelector<HTMLElement>(
+      '.MuiDataGrid-filterFormOperatorInput [role="combobox"]',
+    );
+    if (!control) {
+      throw new Error('Missing native operator selector');
+    }
+    await act(async () =>
+      control.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true })),
+    );
+    const selected = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (node) => node.textContent === operator,
+    );
+    if (!selected) {
+      throw new Error(`Missing operator ${operator}`);
+    }
+    await act(async () => selected.click());
+  }
   const input = document.querySelector<HTMLInputElement>('input[placeholder="Filter value"]');
   if (!input) {
     throw new Error('Missing native filter value input');

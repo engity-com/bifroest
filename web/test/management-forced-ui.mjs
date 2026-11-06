@@ -152,8 +152,8 @@ export async function exerciseManagementForced(page, file, logout) {
     .waitFor();
   assert.equal(await catalog.getByRole('grid').locator('[role="row"][data-id]').count(), 0);
   await exactArtifactSelection(page);
-  const selector = page.getByRole('dialog', { name: 'Advanced: open by ID', exact: true });
-  await selector.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
+  const selector = page.getByRole('dialog', { name: 'Open by ID', exact: true });
+  await selector.getByRole('textbox', { name: 'Auditlog Name', exact: true }).fill('default');
   await selector
     .getByRole('textbox', { name: 'Recording ID', exact: true })
     .fill('34e34ab8-7457-4d88-a5e4-c57791775c3a');

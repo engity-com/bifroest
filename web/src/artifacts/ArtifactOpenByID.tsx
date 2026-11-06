@@ -35,16 +35,17 @@ export function ArtifactOpenByID({
         maxLength={128}
         disabled={disabled}
       />
-      {view === 'recordings' && (
+      {
         <TextInput
-          label={t('artifactRecordingID')}
+          label={t(view === 'recordings' ? 'artifactRecordingID' : 'artifactEventID')}
           value={id}
           onChange={(event) => onID(event.currentTarget.value)}
-          required
+          required={view === 'recordings'}
           maxLength={36}
+          pattern="[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
           disabled={disabled}
         />
-      )}
+      }
       <Button type="submit" disabled={disabled}>
         Go
       </Button>

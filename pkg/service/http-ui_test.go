@@ -105,6 +105,17 @@ func TestBrowserManagementUiStructuredTablesAndActorIsolation(t *testing.T) {
 	testBrowserLoginUi(t, true, "management")
 }
 
+func TestBrowserProfileResetUiClosesOnlyConfirmedTabsAndRevokesAcrossSlugsAndWindows(t *testing.T) {
+	testBrowserLoginUi(t, true, "profile-reset", func(conf *configuration.Configuration) {
+		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
+		other := conf.Flows[0]
+		other.Name = "other"
+		other.DiscoverAsSlug = "Other"
+		other.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Other$")
+		conf.Flows = append(conf.Flows, other)
+	})
+}
+
 func TestBrowserConnectionWorkspaceUiKeepsFlowActorAndManagementContexts(t *testing.T) {
 	testBrowserLoginUi(t, true, "workspace", func(conf *configuration.Configuration) {
 		other := conf.Flows[0]
@@ -245,7 +256,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if mode == "dummy-banner" || mode == "admin-shell" {
 		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 	}
-	if mode == "management" || mode == "management-actions" || workspaceActionMode || forcedReadMode || forcedActionMode || mode == "workspace" {
+	if mode == "management" || mode == "management-actions" || workspaceActionMode || forcedReadMode || forcedActionMode || mode == "workspace" || mode == "profile-reset" {
 		if mode != "workspace" {
 			svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 		}
@@ -615,7 +626,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted), "a failed local key operation must not authenticate")
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionTaskStarted), "a failed local key operation must not start a shell")
 	}
-	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || mode == "preferences" || mode == "slug-history" || forcedActionMode {
+	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || mode == "preferences" || mode == "slug-history" || forcedActionMode || mode == "profile-reset" {
 		expectedSessions = 2
 	}
 	if mode == "workspace" {
@@ -634,6 +645,10 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		expectedSessions = 3
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
+	if mode == "profile-reset" {
+		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionDisposeStarted), "profile reset is never session disposal")
+		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionDisposeCompleted))
+	}
 	if terminalCounters != nil {
 		switch mode {
 		case "slug-history":

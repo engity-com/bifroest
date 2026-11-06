@@ -201,30 +201,20 @@ export async function changeTheme(page, name) {
     await notice.getByRole('button', { name: 'Close', exact: true }).click();
     await notice.waitFor({ state: 'hidden' });
   }
-  try {
-    await page.getByRole('button', { name: 'Application menu', exact: true }).click();
-  } catch (error) {
-    const dialogs = await page.locator('[role="dialog"]').evaluateAll((nodes) =>
-      nodes.map((node) => ({
-        title: document.getElementById(node.getAttribute('aria-labelledby'))?.textContent,
-        visible: node.getBoundingClientRect().height > 0,
-        hidden: node.closest('[aria-hidden="true"]') !== null,
-      })),
-    );
-    throw new Error(
-      JSON.stringify({
-        stage: 'appearance-owner',
-        dialogs,
-        rootHidden: await page.locator('#root').getAttribute('aria-hidden'),
-      }),
-      { cause: error },
-    );
+  const modes = ['Auto', 'Light', 'Dark'];
+  const control = page.getByRole('button', { name: /^Appearance: (?:Auto|Light|Dark)$/u });
+  const current = (await control.getAttribute('aria-label')).slice('Appearance: '.length);
+  assert(modes.includes(current) && modes.includes(name), 'known theme cycle endpoints');
+  const steps = (modes.indexOf(name) - modes.indexOf(current) + modes.length) % modes.length;
+  for (let step = 0; step < steps; step++) {
+    await page
+      .getByRole('button', {
+        name: `Appearance: ${modes[(modes.indexOf(current) + step) % modes.length]}`,
+        exact: true,
+      })
+      .click();
   }
-  await page.getByRole('menuitem', { name: 'Appearance', exact: true }).click();
-  const account = page.getByRole('dialog', { name: 'Appearance', exact: true });
-  await account.getByText(name, { exact: true }).click();
-  await account.getByRole('button', { name: 'Close', exact: true }).click();
-  await account.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: `Appearance: ${name}`, exact: true }).waitFor();
   if (reopen) {
     await page.getByRole('button', { name: 'New connection', exact: true }).click();
   }
@@ -397,6 +387,12 @@ export async function workspace(page, name) {
     await pane.getByRole('button', { name: 'Open management navigation', exact: true }).click();
   }
   await button.click();
+  // React Router commits navigation asynchronously; assert the committed page,
+  // not the preceding in-memory view immediately after the pointer event.
+  await page.waitForFunction(
+    (node) => node?.getAttribute('aria-current') === 'page',
+    await button.elementHandle(),
+  );
   assert.equal(await button.getAttribute('aria-current'), 'page');
 }
 
@@ -405,7 +401,7 @@ export async function exactArtifactSelection(page, view = 'Recordings') {
   const panel = page
     .locator('[data-connection-active="true"]')
     .getByRole('region', { name: view, exact: true });
-  const pin = panel.getByRole('button', { name: 'Advanced: open by ID', exact: true });
+  const pin = panel.getByRole('button', { name: 'Open by ID', exact: true });
   if (!(await pin.isVisible())) {
     await page
       .getByRole('navigation', { name: 'Breadcrumb', exact: true })
@@ -413,7 +409,19 @@ export async function exactArtifactSelection(page, view = 'Recordings') {
       .click();
   }
   await pin.click();
-  await page.getByRole('dialog', { name: 'Advanced: open by ID', exact: true }).waitFor();
+  await page.getByRole('dialog', { name: 'Open by ID', exact: true }).waitFor();
+}
+
+export async function sessionTarget(page, owner = page.locator('[data-connection-active="true"]')) {
+  await owner.getByRole('button', { name: 'Open by ID', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Open by ID', exact: true });
+  await dialog.waitFor();
+  return dialog;
+}
+
+export async function chooseSessionTargetAction(page, dialog, label) {
+  await dialog.getByRole('combobox', { name: 'Session action', exact: true }).click();
+  await page.getByRole('option', { name: label, exact: true }).click();
 }
 
 export async function gridColumnFilter(page, grid, column, operator, value) {

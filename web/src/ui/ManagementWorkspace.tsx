@@ -12,7 +12,6 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
-  Typography,
 } from '@mui/material';
 import {
   lazy,
@@ -32,6 +31,8 @@ import { AdminBreadcrumbs } from './AdminBreadcrumbs';
 import { accessMessages } from './access-messages';
 import { type AdminDetail, AdminDetailContext, type AdminSection } from './admin-navigation';
 import { reportUiError } from './error-report';
+import type { ManagementLocation } from './management-location';
+import { ManagementNavigationContext } from './management-navigation';
 import { Alert, Button } from './material';
 import { t } from './messages';
 import { preferredKeepAlive } from './preferences';
@@ -58,6 +59,8 @@ export function ManagementWorkspace({
   onState,
   onConnectionActions,
   onTitle,
+  location,
+  onNavigate,
 }: {
   access: WebAccess;
   owner: number;
@@ -70,8 +73,21 @@ export function ManagementWorkspace({
   onState?: (id: number, state: TerminalState) => void;
   onConnectionActions?: (id: number, actions: ConnectionActions | null) => void;
   onTitle?: (id: number, title: string) => void;
+  location?: ManagementLocation | null;
+  onNavigate?: (owner: number, location: ManagementLocation, replace?: boolean) => void;
 }) {
-  const [view, setView] = useState<AdminSection | 'server' | 'version'>('server');
+  const [legacyView, setView] = useState<AdminSection | 'server' | 'version'>('server');
+  const view = location?.page ?? legacyView;
+  const retainedRoutes = useRef<{
+    access: WebAccess;
+    pages: Partial<Record<ManagementLocation['page'], ManagementLocation>>;
+  }>({ access, pages: {} });
+  if (retainedRoutes.current.access !== access) {
+    retainedRoutes.current = { access, pages: {} };
+  }
+  if (location) {
+    retainedRoutes.current.pages[location.page] = location;
+  }
   const sectionTitle = t(
     view === 'server'
       ? 'workspaceOverview'
@@ -170,8 +186,18 @@ export function ManagementWorkspace({
     [onActionLock, owner],
   );
   const navigate = (next: typeof view) => {
-    if (!disabled && !locked) {
-      setView(next);
+    if (active && !disabled && !locked) {
+      if (location && onNavigate) {
+        onNavigate(
+          owner,
+          retainedRoutes.current.pages[next] ?? {
+            managementFlow: location.managementFlow,
+            page: next,
+          },
+        );
+      } else {
+        setView(next);
+      }
       setTemporaryOpen(false);
     }
   };
@@ -181,7 +207,7 @@ export function ManagementWorkspace({
     }
   }, [active]);
   const detail = view === 'server' || view === 'version' ? null : details[view];
-  const crumbs = [
+  const legacyCrumbs = [
     {
       label: t('workspaceBifroest'),
     },
@@ -203,206 +229,259 @@ export function ManagementWorkspace({
     ...(detail?.parents.map((label) => ({ label })) ?? []),
     ...(detail ? [{ label: detail.label }] : []),
   ];
+  const routeNavigate = (next: ManagementLocation, replace = false) => {
+    if (active && !disabled && !locked) {
+      onNavigate?.(owner, next, replace);
+    }
+  };
+  const crumbs = location
+    ? [
+        { label: t('workspaceBifroest') },
+        {
+          label: sectionTitle,
+          ...(location.flow || location.id || location.auditlog
+            ? {
+                onClick: () =>
+                  routeNavigate({ managementFlow: location.managementFlow, page: location.page }),
+              }
+            : {}),
+        },
+        ...(location.auditlog
+          ? [
+              {
+                label: location.auditlog,
+                ...(location.flow || location.id
+                  ? {
+                      onClick: () =>
+                        routeNavigate({
+                          managementFlow: location.managementFlow,
+                          page: 'auditlogs',
+                          ...(location.auditlog ? { auditlog: location.auditlog } : {}),
+                        }),
+                    }
+                  : {}),
+              },
+            ]
+          : []),
+        ...(location.flow
+          ? [
+              {
+                label: location.flow,
+                ...(location.id
+                  ? {
+                      onClick: () => {
+                        const { id: _id, ...parent } = location;
+                        routeNavigate(parent);
+                      },
+                    }
+                  : {}),
+              },
+            ]
+          : []),
+        ...(location.id ? [{ label: location.id }] : []),
+      ]
+    : legacyCrumbs;
   const drawerOpen = wide ? !collapsed : active && temporaryOpen;
   return (
     <AdminDetailContext.Provider value={publishDetail}>
-      <ArtifactSecretsContext.Provider value={secrets}>
-        <Box
-          ref={pane}
-          component="section"
-          className="admin-shell"
-          aria-label={t('workspaceManagement')}
-          data-admin-drawer={wide ? 'persistent' : 'temporary'}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape' && !wide && temporaryOpen) {
-              setTemporaryOpen(false);
-            }
-          }}
-        >
-          <Drawer
-            variant="persistent"
-            open={drawerOpen}
-            onClose={() => setTemporaryOpen(false)}
-            ModalProps={{
-              container: () => pane.current,
-              disablePortal: true,
-              disableScrollLock: true,
-              keepMounted: true,
+      <ManagementNavigationContext.Provider
+        value={location ? { location, navigate: routeNavigate } : null}
+      >
+        <ArtifactSecretsContext.Provider value={secrets}>
+          <Box
+            ref={pane}
+            component="section"
+            className="admin-shell"
+            aria-label={t('workspaceManagement')}
+            data-admin-drawer={wide ? 'persistent' : 'temporary'}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !wide && temporaryOpen) {
+                setTemporaryOpen(false);
+              }
             }}
-            sx={
-              wide
-                ? {
-                    width: drawerOpen ? 232 : 0,
-                    flexShrink: 0,
-                    transition: 'width .15s',
-                    overflow: 'hidden',
-                    '& .MuiDrawer-paper': {
-                      position: 'relative',
-                      width: 232,
-                      height: '100%',
-                      boxSizing: 'border-box',
-                    },
-                  }
-                : {
-                    position: 'absolute',
-                    inset: 0,
-                    top: 'var(--admin-header-height, 56px)',
-                    zIndex: 3,
-                    pointerEvents: drawerOpen ? 'auto' : 'none',
-                    '& .MuiBackdrop-root': { position: 'absolute' },
-                    '& .MuiDrawer-paper': {
-                      position: 'absolute',
-                      width: 232,
-                      height: '100%',
-                      backgroundColor:
-                        'color-mix(in srgb, var(--app-background, #202020) 88%, transparent)',
-                      backdropFilter: 'saturate(1.8) blur(5px)',
-                      boxSizing: 'border-box',
-                    },
-                  }
-            }
           >
-            <Box className="admin-drawer-heading">
-              <Typography sx={{ fontWeight: 600 }}>{t('workspaceBifroest')}</Typography>
-            </Box>
-            <nav id={`${navigationID}-navigation`} aria-label={t('workspaceNavigation')}>
-              <List>
-                {(['server', 'sessions', 'recordings', 'auditlogs', 'version'] as const).map(
-                  (section) => (
-                    <ListItemButton
-                      key={section}
-                      component="button"
-                      type="button"
-                      selected={view === section}
-                      disabled={disabled || locked}
-                      aria-current={view === section ? 'page' : undefined}
-                      onClick={() => navigate(section)}
-                    >
-                      <ListItemIcon>
-                        {section === 'server' ? (
-                          <HomeOutlinedIcon />
-                        ) : section === 'version' ? (
-                          <InfoOutlinedIcon />
-                        ) : section === 'sessions' ? (
-                          <PeopleOutlineIcon />
-                        ) : (
-                          <DescriptionIcon />
-                        )}
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={t(
-                          section === 'server'
-                            ? 'workspaceOverview'
-                            : section === 'version'
-                              ? 'workspaceVersion'
-                              : section === 'sessions'
-                                ? 'workspaceSessions'
-                                : section === 'recordings'
-                                  ? 'workspaceRecordings'
-                                  : 'workspaceAuditlogs',
-                        )}
-                      />
-                    </ListItemButton>
-                  ),
-                )}
-              </List>
-            </nav>
-          </Drawer>
-          {!wide && drawerOpen && (
-            <Box
-              component="button"
-              className="admin-drawer-backdrop"
-              type="button"
-              aria-label={t('adminNavigationCollapse')}
-              onClick={() => setTemporaryOpen(false)}
-              sx={{
-                position: 'absolute',
-                inset: 0,
-                top: 'var(--admin-header-height, 56px)',
-                border: 0,
-                bgcolor: 'rgba(0,0,0,.25)',
-                zIndex: 2,
+            <Drawer
+              variant="persistent"
+              open={drawerOpen}
+              onClose={() => setTemporaryOpen(false)}
+              ModalProps={{
+                container: () => pane.current,
+                disablePortal: true,
+                disableScrollLock: true,
+                keepMounted: true,
               }}
-            />
-          )}
-          <div className="admin-main">
-            <header className="admin-page-heading" ref={header}>
-              <IconButton
-                aria-label={t('adminNavigationOpen')}
-                aria-expanded={drawerOpen}
-                aria-controls={`${navigationID}-navigation`}
-                disabled={disabled || locked}
-                onClick={() =>
-                  wide ? setCollapsed((value) => !value) : setTemporaryOpen((value) => !value)
-                }
-              >
-                {drawerOpen ? <ArrowBackIcon /> : <MenuIcon />}
-              </IconButton>
-              <AdminBreadcrumbs items={crumbs} />
-            </header>
-            <div className="admin-content" data-playback-bounds="true">
-              {remoteDisabled && (
-                <Alert
-                  color="yellow"
-                  action={
-                    <Button
-                      variant="subtle"
-                      disabled={disabled || locked || reauthenticationBlocked || !active}
-                      onClick={() => {
-                        if (!disabled && !locked && !reauthenticationBlocked && active) {
-                          onReauthenticate();
-                        }
-                      }}
-                    >
-                      {accessMessages.reauthenticate}
-                    </Button>
+              sx={
+                wide
+                  ? {
+                      width: drawerOpen ? 232 : 0,
+                      flexShrink: 0,
+                      transition: 'width .15s',
+                      overflow: 'hidden',
+                      '& .MuiDrawer-paper': {
+                        position: 'relative',
+                        width: 232,
+                        height: '100%',
+                        boxSizing: 'border-box',
+                      },
+                    }
+                  : {
+                      position: 'absolute',
+                      inset: 0,
+                      top: 'var(--admin-header-height, 56px)',
+                      zIndex: 3,
+                      pointerEvents: drawerOpen ? 'auto' : 'none',
+                      '& .MuiBackdrop-root': { position: 'absolute' },
+                      '& .MuiDrawer-paper': {
+                        position: 'absolute',
+                        width: 232,
+                        height: '100%',
+                        backgroundColor:
+                          'color-mix(in srgb, var(--app-background, #202020) 88%, transparent)',
+                        backdropFilter: 'saturate(1.8) blur(5px)',
+                        boxSizing: 'border-box',
+                      },
+                    }
+              }
+            >
+              <nav id={`${navigationID}-navigation`} aria-label={t('workspaceNavigation')}>
+                <List>
+                  {(['server', 'sessions', 'recordings', 'auditlogs', 'version'] as const).map(
+                    (section) => (
+                      <ListItemButton
+                        key={section}
+                        component="button"
+                        type="button"
+                        selected={view === section}
+                        disabled={disabled || locked}
+                        aria-current={view === section ? 'page' : undefined}
+                        onClick={() => navigate(section)}
+                      >
+                        <ListItemIcon>
+                          {section === 'server' ? (
+                            <HomeOutlinedIcon />
+                          ) : section === 'version' ? (
+                            <InfoOutlinedIcon />
+                          ) : section === 'sessions' ? (
+                            <PeopleOutlineIcon />
+                          ) : (
+                            <DescriptionIcon />
+                          )}
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={t(
+                            section === 'server'
+                              ? 'workspaceOverview'
+                              : section === 'version'
+                                ? 'workspaceVersion'
+                                : section === 'sessions'
+                                  ? 'workspaceSessions'
+                                  : section === 'recordings'
+                                    ? 'workspaceRecordings'
+                                    : 'workspaceAuditlogs',
+                          )}
+                        />
+                      </ListItemButton>
+                    ),
+                  )}
+                </List>
+              </nav>
+            </Drawer>
+            {!wide && drawerOpen && (
+              <Box
+                component="button"
+                className="admin-drawer-backdrop"
+                type="button"
+                aria-label={t('adminNavigationCollapse')}
+                onClick={() => setTemporaryOpen(false)}
+                sx={{
+                  position: 'absolute',
+                  inset: 0,
+                  top: 'var(--admin-header-height, 56px)',
+                  border: 0,
+                  bgcolor: 'rgba(0,0,0,.25)',
+                  zIndex: 2,
+                }}
+              />
+            )}
+            <div className="admin-main">
+              <header className="admin-page-heading" ref={header}>
+                <IconButton
+                  aria-label={t('adminNavigationOpen')}
+                  aria-expanded={drawerOpen}
+                  aria-controls={`${navigationID}-navigation`}
+                  disabled={disabled || locked}
+                  onClick={() =>
+                    wide ? setCollapsed((value) => !value) : setTemporaryOpen((value) => !value)
                   }
                 >
-                  {status === 'expired'
-                    ? accessMessages.expiredNotice
-                    : accessMessages.closedNotice}
-                </Alert>
-              )}
-              <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}>
-                <div
-                  hidden={view !== 'sessions' && view !== 'server' && view !== 'version'}
-                  id={`${navigationID}-management-panel`}
-                >
-                  <ManagementPanel
-                    access={access}
-                    active={
-                      active && (view === 'server' || view === 'sessions' || view === 'version')
+                  {drawerOpen ? <ArrowBackIcon /> : <MenuIcon />}
+                </IconButton>
+                <AdminBreadcrumbs items={crumbs} />
+              </header>
+              <div className="admin-content" data-playback-bounds="true">
+                {remoteDisabled && (
+                  <Alert
+                    color="yellow"
+                    action={
+                      <Button
+                        variant="subtle"
+                        disabled={disabled || locked || reauthenticationBlocked || !active}
+                        onClick={() => {
+                          if (!disabled && !locked && !reauthenticationBlocked && active) {
+                            onReauthenticate();
+                          }
+                        }}
+                      >
+                        {accessMessages.reauthenticate}
+                      </Button>
                     }
-                    disabled={disabled || remoteDisabled}
-                    onActionLock={lock}
-                    view={
-                      view === 'server' ? 'server' : view === 'version' ? 'version' : 'sessions'
-                    }
-                  />
-                </div>
-                <div hidden={view !== 'recordings'} id={`${navigationID}-recordings-panel`}>
-                  <ArtifactPanel
-                    view="recordings"
-                    access={access}
-                    disabled={disabled || locked}
-                    remoteDisabled={remoteDisabled}
-                    active={active && view === 'recordings'}
-                  />
-                </div>
-                <div hidden={view !== 'auditlogs'} id={`${navigationID}-auditlogs-panel`}>
-                  <ArtifactPanel
-                    view="auditlogs"
-                    access={access}
-                    disabled={disabled || locked}
-                    remoteDisabled={remoteDisabled}
-                    active={active && view === 'auditlogs'}
-                  />
-                </div>
-              </Suspense>
+                  >
+                    {status === 'expired'
+                      ? accessMessages.expiredNotice
+                      : accessMessages.closedNotice}
+                  </Alert>
+                )}
+                <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}>
+                  <div
+                    hidden={view !== 'sessions' && view !== 'server' && view !== 'version'}
+                    id={`${navigationID}-management-panel`}
+                  >
+                    <ManagementPanel
+                      access={access}
+                      active={
+                        active && (view === 'server' || view === 'sessions' || view === 'version')
+                      }
+                      disabled={disabled || remoteDisabled}
+                      onActionLock={lock}
+                      view={
+                        view === 'server' ? 'server' : view === 'version' ? 'version' : 'sessions'
+                      }
+                    />
+                  </div>
+                  <div hidden={view !== 'recordings'} id={`${navigationID}-recordings-panel`}>
+                    <ArtifactPanel
+                      view="recordings"
+                      access={access}
+                      disabled={disabled || locked}
+                      remoteDisabled={remoteDisabled}
+                      active={active && view === 'recordings'}
+                    />
+                  </div>
+                  <div hidden={view !== 'auditlogs'} id={`${navigationID}-auditlogs-panel`}>
+                    <ArtifactPanel
+                      view="auditlogs"
+                      access={access}
+                      disabled={disabled || locked}
+                      remoteDisabled={remoteDisabled}
+                      active={active && view === 'auditlogs'}
+                    />
+                  </div>
+                </Suspense>
+              </div>
             </div>
-          </div>
-        </Box>
-      </ArtifactSecretsContext.Provider>
+          </Box>
+        </ArtifactSecretsContext.Provider>
+      </ManagementNavigationContext.Provider>
     </AdminDetailContext.Provider>
   );
 }

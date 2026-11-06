@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { forcedKeyLogin } from './management-forced-ui.mjs';
 import { managementInterruption } from './management-interruption.mjs';
 import { managementWire } from './management-wire.mjs';
-import { assertUiPreferences, workspace } from './workspace-ui.mjs';
+import { assertUiPreferences, sessionTarget, workspace } from './workspace-ui.mjs';
 
 export async function exerciseManagementForcedAction(page, file, logout) {
   const { action, flow, id } = JSON.parse(await readFile(file, 'utf8'));
@@ -78,8 +78,7 @@ export async function exerciseManagementForcedAction(page, file, logout) {
   }
   await connect();
   await connect();
-  await page.locator('.advanced-action > summary').click();
-  const direct = page.getByRole('region', { name: 'Advanced: target by ID', exact: true });
+  let direct = await sessionTarget(page);
   await direct.waitFor();
   await direct.getByLabel('Target flow', { exact: false }).fill(flow);
   await direct.getByLabel('Target session ID', { exact: false }).fill(id);
@@ -96,14 +95,15 @@ export async function exerciseManagementForcedAction(page, file, logout) {
   const denied = wire.waitForResponse(
     (response) => response.url().endsWith('/sessions/prepare') && response.status() === 403,
   );
-  await direct.getByRole('button', { name: 'Prepare session action', exact: true }).click();
+  await direct.getByRole('button', { name: 'Go', exact: true }).click();
   await denied;
   assert.equal(await page.getByRole('dialog').count(), 0);
+  direct = await sessionTarget(page);
   await choose(action);
   const preparationReply = wire.waitForResponse(
     (response) => response.url().endsWith('/sessions/prepare') && response.status() === 202,
   );
-  await direct.getByRole('button', { name: 'Prepare session action', exact: true }).click();
+  await direct.getByRole('button', { name: 'Go', exact: true }).click();
   let dialog = page.getByRole('dialog');
   await dialog
     .getByText('Session details are not returned under this action-only policy.', { exact: false })
@@ -127,7 +127,8 @@ export async function exerciseManagementForcedAction(page, file, logout) {
     ),
     true,
   );
-  await direct.getByRole('button', { name: 'Prepare session action', exact: true }).click();
+  direct = await sessionTarget(page);
+  await direct.getByRole('button', { name: 'Go', exact: true }).click();
   dialog = page.getByRole('dialog');
   await dialog.getByText(`${flow}/${id}`, { exact: true }).waitFor();
   await dialog
@@ -186,7 +187,7 @@ export async function exerciseManagementForcedAction(page, file, logout) {
       false,
     );
     assert.equal(
-      await direct.getByRole('button', { name: 'Prepare session action', exact: true }).isEnabled(),
+      await page.getByRole('button', { name: 'Open by ID', exact: true }).isEnabled(),
       false,
     );
     await page

@@ -28,6 +28,14 @@ Unique flow name, used in logs and stored [sessions](session/index.md).
 !!! warning
     Changing a flow's name breaks its existing sessions.
 
+<<property("title", "Plain text", default="")>>
+Optional display title, limited to 255 UTF-8 bytes without control or formatting
+characters. `GetTitle()` returns the trimmed title, or `name` when it is empty.
+This changes no flow identifiers, authorization selectors, sessions or audit
+references. Browser shell tabs use this title initially and whenever the shell
+supplies an empty terminal title. A nonempty shell title overrides it only in
+that shell's tab; Bifröst does not change the shell's prompt configuration.
+
 <<property("auditlog", "Audit log Name", "auditlog/index.md")>>
 Name of an entry in the root `auditlogs` map. Omitted, `null` and `''` select
 `auditlogs.default` only if it is defined; otherwise this flow has no audit

@@ -11,6 +11,7 @@ import { type ConnectionView, TerminalWorkspace } from '../src/terminal/Terminal
 import { accessMessages } from '../src/ui/access-messages';
 import { t } from '../src/ui/messages';
 import { required } from './required';
+import { openSessionTarget, sessionTargetAction } from './session-target-ui';
 
 const panels = vi.hoisted(() => ({
   terminals: new Map<number, AbortSignal>(),
@@ -375,10 +376,12 @@ describe('standalone management grant expiry without an admitted channel', () =>
       ),
     );
     const workspace = await mountWorkspace(owner.access);
-    await click(document.querySelector('.advanced-action summary'));
+    await click(button(t('workspaceSessions')));
+    const targetForm = await openSessionTarget(workspace.container);
     await fill(t('managementActionFlow'), target.flow);
     await fill(t('managementActionID'), target.id);
-    await click(button(t('managementPrepareAction')));
+    await sessionTargetAction(targetForm, 'Disconnect connections');
+    await click(button('Go'));
     await fill(t('managementConfirmTarget'), `${target.flow}/${target.id}`);
     await click(button(t('managementConfirmAction')));
     expect(workspace.onActionLock).toHaveBeenLastCalledWith(true);

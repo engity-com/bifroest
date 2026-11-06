@@ -2,6 +2,9 @@ package configuration
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -23,6 +26,8 @@ import (
 type Flow struct {
 	// Name unique name within the while configuration which identifies the Flow.
 	Name FlowName `yaml:"name"`
+	// Title is an optional display label, never an identifier or selector.
+	Title string `yaml:"title,omitempty"`
 
 	// Auditlog references the audit log used by this flow.
 	Auditlog         AuditlogName `yaml:"auditlog,omitempty"`
@@ -47,6 +52,7 @@ func (this *Flow) SetDefaults() error {
 	this.auditlogResolved, this.resolvedAuditlog = false, ""
 	return setDefaults(this,
 		noopSetDefault[Flow]("name"),
+		noopSetDefault[Flow]("title"),
 		fixedDefault("auditlog", func(v *Flow) *AuditlogName { return &v.Auditlog }, ""),
 		func(v *Flow) (string, defaulter) { return "ssh", &v.Ssh },
 		func(v *Flow) (string, defaulter) { return "http", &v.Http },
@@ -98,6 +104,14 @@ func (this *Flow) validate(requireResolved bool) error {
 	if err := validate(this,
 		notZeroValidate("name", func(v *Flow) *FlowName { return &v.Name }),
 		func(v *Flow) (string, validator) {
+			return "title", validatorFunc(func() error {
+				if len(v.Title) > 255 || !utf8.ValidString(v.Title) || strings.IndexFunc(v.Title, func(r rune) bool { return unicode.IsControl(r) || unicode.In(r, unicode.Cf) }) >= 0 {
+					return fmt.Errorf("must be plain text of at most 255 bytes")
+				}
+				return nil
+			})
+		},
+		func(v *Flow) (string, validator) {
 			if v.Auditlog == "" {
 				return "auditlog", &noopT{}
 			}
@@ -144,6 +158,9 @@ func (this *Flow) UnmarshalYAML(node *yaml.Node) error {
 		}
 		if value, exists := fields["auditlog"]; exists && value.Tag != "!!str" && value.Tag != "!!null" {
 			return reportYamlRelatedErrf(&value, "[auditlog] must be a string reference")
+		}
+		if value, exists := fields["title"]; exists && value.Tag != "!!str" && value.Tag != "!!null" {
+			return reportYamlRelatedErrf(&value, "[title] must be a string")
 		}
 		for _, key := range []string{"ssh", "http"} {
 			value, exists := fields[key]
@@ -203,6 +220,7 @@ func (this Flow) isEqualTo(other *Flow) bool {
 		return flow.Auditlog
 	}
 	return isEqual(&this.Name, &other.Name) &&
+		this.Title == other.Title &&
 		isEqual(&this.Auditlog, &other.Auditlog) &&
 		configuredAuditlog(this) == configuredAuditlog(*other) &&
 		this.Ssh.IsEqualTo(other.Ssh) && this.Http.IsEqualTo(other.Http) &&
@@ -210,6 +228,15 @@ func (this Flow) isEqualTo(other *Flow) bool {
 		isEqual(&this.Requirement, &other.Requirement) &&
 		isEqual(&this.Authorization, &other.Authorization) &&
 		isEqual(&this.Environment, &other.Environment)
+}
+
+// GetTitle is non-empty for every successfully validated/resolved flow. Keep
+// Name unchanged for authorization, session bindings and audit selectors.
+func (this Flow) GetTitle() string {
+	if title := strings.TrimSpace(this.Title); title != "" {
+		return title
+	}
+	return this.Name.String()
 }
 
 // Flows defines a set of Flow instances.

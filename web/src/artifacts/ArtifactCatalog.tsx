@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { ColumnFilter, RecordingOptions } from '../management/protocol';
 import type { AuditlogSummary, Page, RecordingSummary, WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useDetailRefresh } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
+import { exactFlow } from '../ui/management-location';
+import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, Select } from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
@@ -35,6 +37,7 @@ export function ArtifactCatalog({
   active = true,
   onSelect,
   openByID,
+  onSource,
 }: {
   access: WebAccess;
   disabled: boolean;
@@ -42,7 +45,25 @@ export function ArtifactCatalog({
   selected?: ArtifactRequest | null;
   onSelect(request: ArtifactRequest, summary?: RecordingSummary): void;
   openByID?: ReactNode;
+  onSource?: (name: string) => void;
 }) {
+  const navigation = useManagementNavigation();
+  const route = navigation?.location.page === 'recordings' ? navigation.location : null;
+  const routeKey = JSON.stringify([
+    route?.flow,
+    route?.auditlogHint,
+    route?.id,
+    route?.recordingHint,
+  ]);
+  const currentRoute = useRef(routeKey);
+  currentRoute.current = routeKey;
+  const consumedRoute = useRef<string | null>(null);
+  const loadedScope = useRef<string | null>(null);
+  const nativeFilterIntent = useRef<{
+    key: string;
+    query: string;
+    filter: ColumnFilter | null;
+  } | null>(null);
   const [sources, setSources] = useState<Page<AuditlogSummary> | null>(null);
   const [source, setSource] = useState('');
   const [rows, setRows] = useState<Page<RecordingSummary> | null>(null);
@@ -62,6 +83,9 @@ export function ArtifactCatalog({
   useEffect(() => {
     generation.current++;
     attempted.current = false;
+    consumedRoute.current = null;
+    loadedScope.current = null;
+    nativeFilterIntent.current = null;
     cursors.current = [''];
     setSources(null);
     setSource('');
@@ -125,6 +149,7 @@ export function ArtifactCatalog({
       query: search,
       sort: direction === 'asc' ? 'started-asc' : 'started-desc',
       filter: predicate,
+      ...(route?.flow ? { flow: route.flow } : {}),
     };
   }
   async function load(
@@ -140,7 +165,10 @@ export function ArtifactCatalog({
         options(index, search, direction, predicate),
         signal,
       );
-      if (current !== generation.current || signal.aborted) {
+      if (current !== generation.current || signal.aborted || routeKey !== currentRoute.current) {
+        if (routeKey !== currentRoute.current && consumedRoute.current === routeKey) {
+          consumedRoute.current = null;
+        }
         return;
       }
       if (index === 0) {
@@ -148,11 +176,13 @@ export function ArtifactCatalog({
       }
       cursors.current[index + 1] = result.next;
       setSource(name);
+      loadedScope.current = JSON.stringify([route?.flow, name]);
       setRows(result);
       setPage(index);
       setQuery(search);
       setSort(direction);
       setFilter(predicate);
+      consumedRoute.current = routeKey;
     });
   }
   async function loadSources(after = '') {
@@ -164,26 +194,39 @@ export function ArtifactCatalog({
       const items = after === '' ? result.items : [...(sources?.items ?? []), ...result.items];
       setSources({ ...result, items });
       const enabled = items.filter((row) => row.enabled && row.recordingEnabled);
-      if (source === '' && enabled.length === 1 && result.next === '') {
-        const name = enabled[0]?.name;
+      if (source === '' && (route?.auditlogHint || (enabled.length === 1 && result.next === ''))) {
+        const name = route?.auditlogHint ?? enabled[0]?.name;
         if (name === undefined) {
           return;
         }
         setSource(name);
+        if (routeKey !== currentRoute.current) {
+          return;
+        }
+        if (route?.id || route?.recordingHint) {
+          onSource?.(name);
+          return;
+        }
+        const predicate = route?.flow
+          ? { field: 'flow', operator: 'equals', value: route.flow }
+          : null;
+        consumedRoute.current = routeKey;
         const result = await access.managementRecordings(
           name,
-          options(0, '', 'desc', null),
+          options(0, '', 'desc', predicate),
           signal,
         );
-        if (current !== generation.current || signal.aborted) {
+        if (current !== generation.current || signal.aborted || routeKey !== currentRoute.current) {
           return;
         }
         cursors.current = ['', result.next];
+        loadedScope.current = JSON.stringify([route?.flow, name]);
         setRows(result);
         setPage(0);
         setQuery('');
         setSort('desc');
-        setFilter(null);
+        setFilter(predicate);
+        consumedRoute.current = routeKey;
       }
     });
   }
@@ -198,6 +241,47 @@ export function ArtifactCatalog({
       });
     }
   });
+  const readRoute = useEffectEvent(() => {
+    if (
+      !route ||
+      !active ||
+      disabled ||
+      busy ||
+      request.current !== null ||
+      (source === '' && !route.auditlogHint) ||
+      consumedRoute.current === routeKey ||
+      route.id ||
+      route.recordingHint
+    ) {
+      return;
+    }
+    const name = route.auditlogHint ?? source;
+    const native = nativeFilterIntent.current?.key === routeKey ? nativeFilterIntent.current : null;
+    nativeFilterIntent.current = null;
+    consumedRoute.current = routeKey;
+    setRows(null);
+    setPage(0);
+    setSource(name);
+    cursors.current = [''];
+    void load(
+      name,
+      0,
+      native?.query ?? '',
+      sort,
+      native
+        ? native.filter
+        : route.flow
+          ? { field: 'flow', operator: 'equals', value: route.flow }
+          : exactFlow(filter)
+            ? null
+            : filter,
+    );
+  });
+  useEffect(() => {
+    if (active && !disabled && !busy && consumedRoute.current !== routeKey) {
+      readRoute();
+    }
+  }, [active, disabled, busy, routeKey]);
   const locked = disabled || busy;
   const detailed = useDetailRefresh(active, disabled, busy, () => {
     void (source === '' ? loadSources() : load(source, 0, query, sort, null));
@@ -222,10 +306,20 @@ export function ArtifactCatalog({
             value={source}
             placeholder={t('recordingChooseSource')}
             disabled={locked}
-            data={enabled.map((row) => ({ value: row.name, label: row.name }))}
+            data={[
+              ...enabled.map((row) => ({ value: row.name, label: row.name })),
+              ...(source && !enabled.some((row) => row.name === source)
+                ? [{ value: source, label: source }]
+                : []),
+            ]}
             onChange={(name) => {
               if (name !== null) {
-                void load(name, 0, '', 'desc', null);
+                if (navigation && route) {
+                  navigation.navigate({ ...route, auditlogHint: name });
+                  onSource?.(name);
+                } else {
+                  void load(name, 0, '', 'desc', null);
+                }
               }
             }}
           />
@@ -248,7 +342,12 @@ export function ArtifactCatalog({
         active={active}
         actionField="open"
         label={`${t('recordingList')} · ${source}`}
-        rows={rows?.items ?? []}
+        rows={
+          !route ||
+          loadedScope.current === JSON.stringify([route.flow, route.auditlogHint ?? source])
+            ? (rows?.items ?? [])
+            : []
+        }
         onRefresh={() => {
           void (source === '' ? loadSources() : load(source, page));
         }}
@@ -344,6 +443,20 @@ export function ArtifactCatalog({
           void load(source, 0, value);
         }}
         onSearch={(search, predicate) => {
+          const flow = exactFlow(predicate);
+          if (navigation && route && flow !== route.flow) {
+            setQuery(search);
+            setFilter(predicate);
+            const { flow: _flow, id: _id, recordingHint: _recording, ...parent } = route;
+            const next = { ...parent, ...(flow ? { flow } : {}) };
+            nativeFilterIntent.current = {
+              key: JSON.stringify([next.flow, next.auditlogHint, undefined, undefined]),
+              query: search,
+              filter: predicate,
+            };
+            navigation.navigate(next);
+            return;
+          }
           void load(source, 0, search, sort, predicate);
         }}
         onSort={(direction) => {

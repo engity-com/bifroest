@@ -130,7 +130,25 @@ try {
   await logs().getByRole('button', { name: 'Open audit log default', exact: true }).click();
   const opened = async (current) => {
     if (mode === 'catalog-encrypted') {
-      await current.getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
+      try {
+        await current.getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
+      } catch (error) {
+        throw new Error(
+          JSON.stringify({
+            stage: 'encrypted-catalog-open',
+            route: { pathname: new URL(page.url()).pathname, search: new URL(page.url()).search },
+            notices: await current.getByRole('status').allTextContents(),
+            transfers: requests
+              .filter((request) => request.path.includes('/artifacts/'))
+              .map((request) => ({
+                path: request.path.split('/management/')[1],
+                body: request.body,
+              })),
+            headings: await current.getByRole('heading').allTextContents(),
+          }),
+          { cause: error },
+        );
+      }
       assert.equal(
         await current.getByRole('grid', { name: 'Audit events', exact: true }).count(),
         0,

@@ -1,5 +1,6 @@
 import type { Scope } from '../remember';
 import { RememberMeError, validateScope } from '../remember/protocol';
+import { parseManagementLocation } from './management-location';
 
 export type LoginMethod = 'password' | 'keyboard-interactive' | 'public-key' | 'none';
 
@@ -55,7 +56,70 @@ export async function loadLinkMetadata(
   transport: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<LinkMetadata> {
   validateScope(scope);
-  if (scope.origin !== location.origin) {
+  const value = await readMetadataURL(new URL(`/${scope.slug}`, scope.origin), signal, transport);
+  return parseLinkMetadata(value, scope);
+}
+
+// A static SPA entry may be a deep management URL. Fetch only bounded public
+// JSON discovery from that SAME URL; no JS/React rendering occurs on the server.
+export async function loadEntryMetadata(
+  origin: string,
+  current: { pathname: string; search: string; hash: string },
+  signal?: AbortSignal,
+  transport: typeof fetch = globalThis.fetch.bind(globalThis),
+): Promise<LinkMetadata> {
+  if (
+    origin !== location.origin ||
+    current.hash !== '' ||
+    !current.pathname.startsWith('/') ||
+    current.pathname.length > 2048 ||
+    current.pathname.includes('%') ||
+    current.pathname.includes('\\')
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  let valid = false;
+  if (current.search === '') {
+    try {
+      validateScope({ origin, slug: current.pathname === '/' ? '' : current.pathname.slice(1) });
+      valid = true;
+    } catch {}
+  }
+  const segments = current.pathname.slice(1).split('/');
+  for (let count = 0; count <= 2 && count < segments.length; count++) {
+    if (parseManagementLocation({ origin, slug: segments.slice(0, count).join('/') }, current)) {
+      valid = true;
+    }
+  }
+  if (!valid) {
+    throw new RememberMeError('unavailable');
+  }
+  const value = await readMetadataURL(
+    new URL(current.pathname + current.search, origin),
+    signal,
+    transport,
+  );
+  if (value === null || typeof value !== 'object' || !Object.hasOwn(value, 'scope')) {
+    throw new RememberMeError('unavailable');
+  }
+  const scope = (value as { scope: Scope }).scope;
+  validateScope(scope);
+  if (scope.origin !== origin) {
+    throw new RememberMeError('unavailable');
+  }
+  const legacy = current.search === '' && current.pathname === `/${scope.slug}`;
+  if (!legacy && !parseManagementLocation(scope, current)) {
+    throw new RememberMeError('unavailable');
+  }
+  return parseLinkMetadata(value, scope);
+}
+
+async function readMetadataURL(
+  url: URL,
+  signal: AbortSignal | undefined,
+  transport: typeof fetch,
+): Promise<unknown> {
+  if (url.origin !== location.origin) {
     throw new RememberMeError('unavailable');
   }
   const stopped = signal
@@ -64,7 +128,7 @@ export async function loadLinkMetadata(
   if (stopped.aborted) {
     throw new RememberMeError('cancelled');
   }
-  const response = await transport(new URL(`/${scope.slug}`, scope.origin), {
+  const response = await transport(url, {
     headers: { Accept: 'application/json' },
     credentials: 'omit',
     cache: 'no-store',
@@ -121,10 +185,7 @@ export async function loadLinkMetadata(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return parseLinkMetadata(
-    JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)),
-    scope,
-  );
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
 }
 
 export function parseLinkMetadata(value: unknown, scope: Scope): LinkMetadata {

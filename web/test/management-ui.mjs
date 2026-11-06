@@ -43,6 +43,7 @@ export async function exerciseManagement(page, login, logout) {
       JSON.parse(response.request().postData()).long === 'true',
   );
   await workspace(page, 'Version');
+  const versionURL = page.url();
   const versionResponse = await versionReply;
   assert.equal(versionResponse.status(), 200);
   const build = (await versionResponse.json()).versionInfo.build;
@@ -156,6 +157,40 @@ export async function exerciseManagement(page, login, logout) {
   await workspace(page, 'Sessions');
   assert.equal(requests.length, beforeSwitch);
   await logout(page);
+  const cold = await page.context().newPage();
+  const coldErrors = [];
+  cold.on('pageerror', (error) => coldErrors.push(error.name));
+  const coldWire = managementWire(cold);
+  const coldReads = [];
+  coldWire.on('request', (request) =>
+    coldReads.push(new URL(request.url()).pathname.split('/management/')[1]),
+  );
+  let coldLogins = 0;
+  cold.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      /\/(?:login|remember)\//u.test(new URL(request.url()).pathname)
+    ) {
+      coldLogins++;
+    }
+  });
+  try {
+    const entry = await cold.goto(versionURL);
+    assert.equal(entry.status(), 200);
+    await cold.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor();
+    assert.equal(coldLogins, 0);
+    assert.deepEqual(coldReads, []);
+    await login(cold, false);
+    await cold.getByRole('region', { name: 'Build information', exact: true }).waitFor();
+    assert.equal(cold.url(), versionURL);
+    assert.deepEqual(coldReads, ['version/show', 'version/show']);
+    assert.equal((await cold.getByRole('tab', { selected: true }).textContent()).trim(), 'Version');
+    assert.equal(await cold.title(), 'Fixture brand');
+    assert.deepEqual(coldErrors, []);
+    await logout(cold);
+  } finally {
+    await cold.close();
+  }
   for (const request of requests) {
     assert.equal(request.slug, 'Work');
     assert.equal(request.body.slug, undefined);

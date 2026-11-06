@@ -2,7 +2,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import { IconButton } from '@mui/material';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import type { RecordingSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
@@ -10,8 +10,11 @@ import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { useAdminDetail } from '../ui/admin-navigation';
 import { useDetailedView } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
+import type { ManagementLocation } from '../ui/management-location';
+import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, Checkbox, Modal, PasswordInput, Select, TextInput } from '../ui/material';
 import { type Message, t } from '../ui/messages';
+import { profileResetEvent } from '../ui/profile-reset';
 import { readLocalBytes } from '../wasm/local-file';
 import { ArtifactCatalog } from './ArtifactCatalog';
 import { ArtifactOpenByID } from './ArtifactOpenByID';
@@ -72,6 +75,21 @@ export function ArtifactPanel({
   view?: 'recordings' | 'auditlogs';
 }) {
   const secrets = useArtifactSecrets(access);
+  const navigation = useManagementNavigation();
+  const route = navigation?.location.page === view ? navigation.location : null;
+  const routeRef = useRef(route);
+  if (route !== null) {
+    routeRef.current = route;
+  }
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const ownerRef = useRef(access);
+  ownerRef.current = access;
+  const consumedRoute = useRef<string | null>(null);
+  const consumedSelection = useRef<string | null>(null);
+  const returnRoute = useRef<ManagementLocation | null>(null);
+  const routeKey = JSON.stringify(route);
+  const routedSummary = useRef<RecordingSummary | null>(null);
   const detailed = useDetailedView();
   const [recordingFlow, setRecordingFlow] = useState('');
   const [auditEvent, setAuditEvent] = useState<AuditEventRow | null>(null);
@@ -106,6 +124,35 @@ export function ArtifactPanel({
   const operation = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const downloads = useRef(new LocalArtifactDownload());
+  const forgetEvidence = useEffectEvent(() => {
+    generation.current++;
+    operation.current?.abort();
+    operation.current = null;
+    downloads.current.clear();
+    clearInputs();
+    setOpened(null);
+    setSelection(null);
+    setReceived(null);
+    setProtection(null);
+    setVerified(null);
+    setPhase(null);
+    setNotice(null);
+    setDetails(false);
+    setUsed(null);
+    setAuditEvent(null);
+    setRecordingFlow('');
+    setProducer('');
+    setValidateIdentity(false);
+    setSensitive(false);
+    setAuditlog('');
+    setID('');
+    routedSummary.current = null;
+  });
+  useEffect(() => {
+    const forget = () => forgetEvidence();
+    window.addEventListener(profileResetEvent, forget);
+    return () => window.removeEventListener(profileResetEvent, forget);
+  }, []);
   const identity = () => ({ enabled: validateIdentity, producer, source: producerSource });
   const clearInputs = () => {
     if (keyInput.current) {
@@ -127,6 +174,10 @@ export function ArtifactPanel({
     setOpened(null);
     setSelection(null);
     setRecordingFlow('');
+    consumedRoute.current = null;
+    consumedSelection.current = null;
+    returnRoute.current = null;
+    routedSummary.current = null;
     setAuditEvent(null);
     setReceived(null);
     setProtection(null);
@@ -160,7 +211,24 @@ export function ArtifactPanel({
     }
   }, [active]);
   const current = (token: number, signal: AbortSignal) =>
-    token === generation.current && !signal.aborted && access.status() !== 'closed';
+    token === generation.current &&
+    !signal.aborted &&
+    access.status() !== 'closed' &&
+    ownerRef.current === access;
+  function matchesRoute(request: ArtifactRequest): boolean {
+    const target = routeRef.current;
+    if (!target) {
+      return navigation === null;
+    }
+    if (request.kind === 'audit') {
+      return target.page === 'auditlogs' && target.auditlog === request.auditlog;
+    }
+    return (
+      target.page === 'recordings' &&
+      (target.id ?? target.recordingHint) === request.id &&
+      target.auditlogHint === request.auditlog
+    );
+  }
   async function run(
     next: Phase,
     action: (signal: AbortSignal, token: number, stage: (phase: Phase) => void) => Promise<void>,
@@ -242,9 +310,16 @@ export function ArtifactPanel({
     if (!current(token, signal)) {
       return;
     }
+    if (!matchesRoute(image.request)) {
+      throw new EvidenceError('cancelled');
+    }
     const flow = await verifiedRecordingFlow(result);
     if (!current(token, signal)) {
       return;
+    }
+    const target = routeRef.current;
+    if (image.request.kind === 'recording' && target?.flow && flow && target.flow !== flow) {
+      throw new EvidenceError('verification');
     }
     setRecordingFlow(flow);
     if (key !== null) {
@@ -255,6 +330,24 @@ export function ArtifactPanel({
     setVerified(result);
     setUsed(checked);
     clearInputs();
+    if (
+      image.request.kind === 'recording' &&
+      flow &&
+      target?.recordingHint &&
+      navigation &&
+      activeRef.current
+    ) {
+      navigation.navigate(
+        {
+          managementFlow: target.managementFlow,
+          page: 'recordings',
+          flow,
+          id: image.request.id,
+          auditlogHint: image.request.auditlog,
+        },
+        true,
+      );
+    }
   }
   async function open(request: ArtifactRequest, summary?: RecordingSummary) {
     if (remoteDisabled || disabled || operation.current !== null) {
@@ -278,6 +371,9 @@ export function ArtifactPanel({
       const image = await access.downloadArtifact(request, signal);
       if (!current(token, signal)) {
         return;
+      }
+      if (!matchesRoute(request)) {
+        throw new EvidenceError('cancelled');
       }
       setReceived(image);
       stage('inspecting');
@@ -342,9 +438,11 @@ export function ArtifactPanel({
       await check(image, header, key, expected, signal, token);
     });
   }
-  function close() {
+  function closeLocal() {
     generation.current++;
     operation.current?.abort();
+    operation.current = null;
+    setPhase(null);
     resetResult();
     clearInputs();
     setReceived(null);
@@ -353,6 +451,145 @@ export function ArtifactPanel({
     setSelection(null);
     setDetails(false);
   }
+  function close() {
+    if (navigation && route) {
+      if (view === 'recordings') {
+        const { id: _id, recordingHint: _recording, ...parent } = route;
+        navigation.navigate(returnRoute.current ?? parent);
+      } else {
+        navigation.navigate({ managementFlow: route.managementFlow, page: 'auditlogs' });
+      }
+    } else {
+      closeLocal();
+    }
+  }
+  function navigateRecording(auditlog: string, id: string, flow?: string) {
+    if (navigation && route) {
+      navigation.navigate({
+        managementFlow: route.managementFlow,
+        page: 'recordings',
+        ...(flow ? { flow, id } : { recordingHint: id }),
+        auditlogHint: auditlog,
+      });
+    }
+  }
+  function select(request: ArtifactRequest, summary?: RecordingSummary) {
+    routedSummary.current = summary ?? null;
+    if (navigation && route) {
+      returnRoute.current = route.id || route.recordingHint ? null : route;
+      if (request.kind === 'audit') {
+        navigation.navigate({
+          managementFlow: route.managementFlow,
+          page: 'auditlogs',
+          auditlog: request.auditlog,
+        });
+      } else {
+        navigateRecording(request.auditlog, request.id, summary?.flow);
+      }
+    } else {
+      void open(request, summary);
+    }
+  }
+  const openedKey = JSON.stringify(
+    opened === null
+      ? null
+      : opened.kind === 'audit'
+        ? ['audit', opened.auditlog]
+        : ['recording', opened.auditlog, opened.id],
+  );
+  const readRoute = useEffectEvent(() => {
+    if (!route || !active || disabled) {
+      return;
+    }
+    const requested = view === 'recordings' ? (route.id ?? route.recordingHint) : route.auditlog;
+    if (!requested) {
+      if (opened !== null) {
+        closeLocal();
+      }
+      return;
+    }
+    if (view === 'recordings' && !route.auditlogHint) {
+      if (opened !== null) {
+        closeLocal();
+      }
+      setID(requested);
+      return;
+    }
+    const request: ArtifactRequest =
+      view === 'recordings'
+        ? { kind: 'recording', auditlog: route.auditlogHint ?? '', id: requested }
+        : { kind: 'audit', auditlog: requested };
+    const key = JSON.stringify(
+      request.kind === 'audit'
+        ? ['audit', request.auditlog]
+        : ['recording', request.auditlog, request.id],
+    );
+    if (opened !== null && openedKey !== key) {
+      closeLocal();
+      return;
+    }
+    if (phase !== null || operation.current !== null) {
+      return;
+    }
+    if (
+      view === 'recordings' &&
+      route.recordingHint &&
+      verified?.metadata.validation === 'private' &&
+      recordingFlow &&
+      (!route.flow || route.flow === recordingFlow) &&
+      navigation
+    ) {
+      navigation.navigate(
+        {
+          managementFlow: route.managementFlow,
+          page: 'recordings',
+          flow: recordingFlow,
+          id: route.recordingHint,
+          auditlogHint: route.auditlogHint ?? '',
+        },
+        true,
+      );
+      return;
+    }
+    const selectionKey = JSON.stringify([key, route.flow]);
+    if (consumedRoute.current === key && opened !== null) {
+      if (consumedSelection.current !== selectionKey) {
+        consumedSelection.current = selectionKey;
+        if (
+          view === 'recordings' &&
+          received !== null &&
+          !(
+            verified?.metadata.validation === 'private' &&
+            recordingFlow &&
+            recordingFlow === route.flow
+          )
+        ) {
+          void recheck();
+        }
+      }
+      return;
+    }
+    if (remoteDisabled) {
+      return;
+    }
+    consumedSelection.current = selectionKey;
+    consumedRoute.current = key;
+    const summary = routedSummary.current;
+    void open(
+      request,
+      request.kind === 'recording' &&
+        summary?.id === request.id &&
+        summary.auditlog === request.auditlog
+        ? summary
+        : undefined,
+    );
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Phase and opened identity advance serialized route reconciliation, never an automatic retry of a consumed request.
+  useEffect(() => {
+    if (active && !disabled && routeKey !== 'null') {
+      readRoute();
+    }
+  }, [routeKey, active, disabled, remoteDisabled, phase, openedKey]);
   function save(data: Blob, filename: string) {
     try {
       downloads.current.save(data, filename);
@@ -390,7 +627,14 @@ export function ArtifactPanel({
     (protection === null || level === 'outer' || !encrypted || candidate || cached) &&
     pinReady;
   const metadata = verified?.metadata;
-  const success = verified !== null;
+  const flowMismatch = !!(
+    navigation &&
+    route?.flow &&
+    recordingFlow &&
+    verified?.metadata.validation === 'private' &&
+    route.flow !== recordingFlow
+  );
+  const success = verified !== null && !flowMismatch;
   const keyNeeded = level === 'private' && encrypted && !cached && !candidate;
   const openByID = (
     <ArtifactOpenByID
@@ -401,9 +645,25 @@ export function ArtifactPanel({
       onAuditlog={setAuditlog}
       onID={setID}
       onGo={() => {
-        void open(
-          view === 'recordings' ? { kind: 'recording', auditlog, id } : { kind: 'audit', auditlog },
-        );
+        if (navigation && route) {
+          returnRoute.current = route.id || route.recordingHint ? null : route;
+          if (view === 'recordings') {
+            navigateRecording(auditlog, id);
+          } else {
+            navigation.navigate({
+              managementFlow: route.managementFlow,
+              page: 'auditlogs',
+              auditlog,
+              ...(id ? { eventHint: id } : {}),
+            });
+          }
+        } else {
+          void open(
+            view === 'recordings'
+              ? { kind: 'recording', auditlog, id }
+              : { kind: 'audit', auditlog },
+          );
+        }
       }}
     />
   );
@@ -438,7 +698,7 @@ export function ArtifactPanel({
               >
                 {success ? (
                   <CheckCircleIcon color="success" />
-                ) : notice ? (
+                ) : notice || flowMismatch ? (
                   <CancelIcon color="error" />
                 ) : null}
                 {t(
@@ -448,7 +708,7 @@ export function ArtifactPanel({
                       : used?.enabled && used.source === 'user'
                         ? 'artifactVerificationOK'
                         : 'artifactVerificationUnpinned'
-                    : notice
+                    : notice || flowMismatch
                       ? 'artifactVerificationError'
                       : keyNeeded
                         ? 'artifactKeyNeeded'
@@ -467,26 +727,36 @@ export function ArtifactPanel({
           <ArtifactCatalog
             access={access}
             disabled={disabled || remoteDisabled}
-            active={active && opened === null}
+            active={
+              active &&
+              opened === null &&
+              !(route && (route.id || route.recordingHint) && route.auditlogHint)
+            }
             openByID={openByID}
             onSelect={(request, summary) => {
-              void open(request, summary);
+              select(request, summary);
+            }}
+            onSource={(name) => {
+              if (navigation && route && (route.id || route.recordingHint) && !route.auditlogHint) {
+                navigation.navigate({ ...route, auditlogHint: name }, true);
+              }
             }}
           />
         ) : (
           <AuditCatalog
             access={access}
             disabled={disabled || remoteDisabled}
-            active={active && opened === null}
+            active={active && opened === null && !route?.auditlog}
             openByID={openByID}
             onSelect={(request) => {
-              void open(request);
+              select(request);
             }}
           />
         )}
       </div>
       {opened !== null && (
         <>
+          {flowMismatch && <Alert color="red">{t('artifactFlowMismatch')}</Alert>}
           {phase && (
             <div className="actions" role="status">
               <span>
@@ -581,7 +851,8 @@ export function ArtifactPanel({
                   </div>
                 </form>
               )}
-              {verified?.output &&
+              {!flowMismatch &&
+                verified?.output &&
                 metadata?.kind === 'recording' &&
                 metadata.outputFormat === 'cast' && (
                   <RecordingPlayer
@@ -706,7 +977,7 @@ export function ArtifactPanel({
                         {t('artifactForgetKey')}
                       </Button>
                     )}
-                    {verified?.output && (
+                    {!flowMismatch && verified?.output && (
                       <Button
                         variant="default"
                         disabled={locked}
