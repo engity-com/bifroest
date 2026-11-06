@@ -8,6 +8,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
+	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 func managementReadRequest(path string, values map[string]string) (protocol.ReadRequest, error) {
@@ -100,6 +101,13 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 	defer func() { _ = conn.Close(); <-conn.done }()
 	data, err := this.service.executeManagementRead(conn, request)
 	if err != nil {
+		if recording.IsNativeCatalogWarmup(err) {
+			webJSONResponse(w, http.StatusServiceUnavailable, struct {
+				Error string `json:"error"`
+				Code  string `json:"code"`
+			}{"recording catalog verification incomplete; refresh to continue", "recording-catalog-incomplete"})
+			return
+		}
 		webError(w, http.StatusServiceUnavailable, "management operation could not be confirmed")
 		return
 	}

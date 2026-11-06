@@ -4,6 +4,7 @@ import {
   maximumTransferImageBytes,
   transferMediaType,
 } from '../artifacts/protocol';
+import { isCatalogWarmupResponse } from '../remember/catalog-error';
 import type { AccessSnapshot } from '../remember/client';
 import { type ArtifactResponseImage, object } from '../remember/http';
 import { RememberMeError } from '../remember/protocol';
@@ -31,6 +32,7 @@ const allowed = new Set([
   'management/artifacts/audit',
 ]);
 interface Pending {
+  action: string;
   status: number | null;
   media: string;
   buffer: ManagementResponseBuffer;
@@ -239,6 +241,7 @@ export class ManagementConnection {
         }
       }, 25000);
       this.#pending.set(id, {
+        action,
         status: null,
         media: '',
         buffer: new ManagementResponseBuffer(maximum),
@@ -367,6 +370,27 @@ export class ManagementConnection {
       entry.status !== entry.expected ||
       entry.aborted
     ) {
+      let warming = false;
+      if (
+        decoded.type === 'complete' &&
+        !entry.aborted &&
+        entry.action === 'management/recordings/list' &&
+        entry.expected === 200 &&
+        entry.status === 503 &&
+        entry.media === 'application/json; charset=utf-8' &&
+        entry.length <= 256
+      ) {
+        const bytes = entry.buffer.assemble();
+        try {
+          warming = isCatalogWarmupResponse(
+            JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)),
+          );
+        } catch {
+          /* Unknown error bodies remain private and generic. */
+        } finally {
+          new Uint8Array(bytes).fill(0);
+        }
+      }
       this.#pending.delete(decoded.requestId);
       entry.retire();
       entry.buffer.wipe();
@@ -374,11 +398,13 @@ export class ManagementConnection {
         new RememberMeError(
           decoded.type === 'canceled'
             ? 'cancelled'
-            : entry.status === 401 || entry.status === 403
-              ? 'denied'
-              : entry.status === 429
-                ? 'rate-limited'
-                : 'unavailable',
+            : warming
+              ? 'catalog-incomplete'
+              : entry.status === 401 || entry.status === 403
+                ? 'denied'
+                : entry.status === 429
+                  ? 'rate-limited'
+                  : 'unavailable',
         ),
       );
       return;

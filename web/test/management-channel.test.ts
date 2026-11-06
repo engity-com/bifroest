@@ -86,6 +86,40 @@ function fixture() {
   return { scope, access, socket, connection, transport, factory, token };
 }
 describe('admitted actor-owned management connection', () => {
+  it('reports catalog warmup only for its completed correlated read and never retries or falls back', async () => {
+    const { socket, connection, transport } = fixture();
+    socket.ready();
+    const pending = connection.post('management/recordings/list', { auditlog: 'default' }, 200);
+    await Promise.resolve();
+    socket.response(
+      '1',
+      {
+        code: 'recording-catalog-incomplete',
+        error: 'recording catalog verification incomplete; refresh to continue',
+      },
+      503,
+    );
+    await expect(pending).rejects.toMatchObject({ code: 'catalog-incomplete' });
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(socket.sent.filter((value) => value.type === 'request')).toHaveLength(1);
+    expect(transport).not.toHaveBeenCalled();
+    expect(connection.connected()).toBe(true);
+  });
+  it('never exposes an arbitrary 503 body as a public catalog diagnostic', async () => {
+    const { socket, connection } = fixture();
+    socket.ready();
+    const pending = connection.post('management/recordings/list', { auditlog: 'default' }, 200);
+    await Promise.resolve();
+    socket.response(
+      '1',
+      { code: 'recording-catalog-incomplete', error: 'PRIVATE-KEY-OR-PATH' },
+      503,
+    );
+    await expect(pending).rejects.toMatchObject({
+      code: 'unavailable',
+      message: 'Browser RememberMe: unavailable',
+    });
+  });
   it('rejects the still-owned operation and unblocks cleanup when response assembly throws', async () => {
     const { socket, connection } = fixture();
     socket.ready();

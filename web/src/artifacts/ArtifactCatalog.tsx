@@ -128,7 +128,9 @@ export function ArtifactCatalog({
         setFailed(
           error instanceof RememberMeError && error.code === 'denied'
             ? 'recordingReadDenied'
-            : 'recordingReadFailed',
+            : error instanceof RememberMeError && error.code === 'catalog-incomplete'
+              ? 'recordingCatalogWarming'
+              : 'recordingReadFailed',
         );
       }
     } finally {
@@ -292,7 +294,7 @@ export function ArtifactCatalog({
   return (
     <section className="stack" aria-label={t('artifactCatalog')}>
       {failed && (
-        <Alert role="status" color="red">
+        <Alert role="status" color={failed === 'recordingCatalogWarming' ? 'yellow' : 'red'}>
           {t(failed)}
         </Alert>
       )}

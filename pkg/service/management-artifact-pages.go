@@ -83,7 +83,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 	}
 	rows, err := repository.native.CatalogMetadata(ctx)
 	if err != nil {
-		return page, err
+		return page, fmt.Errorf("recording catalog metadata verification failed: %w", err)
 	}
 	from, until, position := time.Time{}, time.Time{}, time.Time{}
 	if request.StartedFrom != "" {
@@ -134,7 +134,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 	remainingContainer, remainingCast := uint64(recording.MaximumNativeCatalogBytes), uint64(recording.MaximumNativeCatalogBytes)
 	for index, row := range selected {
 		if err := ctx.Err(); err != nil {
-			return page, err
+			return page, fmt.Errorf("recording page reverification interrupted: %w", err)
 		}
 		if index == request.Limit {
 			last := page.Items[len(page.Items)-1]
@@ -155,7 +155,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		}
 		current, err := reverifyManagementRecording(ctx, repository.native, row, &remainingContainer, &remainingCast)
 		if err != nil {
-			return page, err
+			return page, fmt.Errorf("recording page reverification failed for %s: %w", row.RecordingId.String(), err)
 		}
 		page.Items = append(page.Items, managementRecordingSummary(request.Auditlog, current))
 	}

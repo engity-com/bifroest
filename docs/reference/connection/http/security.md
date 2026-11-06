@@ -164,6 +164,22 @@ can contain the original requesting name; older or encrypted recordings may not
 expose identity details. Missing names and target accounts are not reconstructed
 from current sessions or authorization.
 
+Cold verification can exceed the four-second query budget in a debugger or an
+instrumented build. A pure deadline may retain only fully verified metadata in
+the existing 30-second in-memory cache; no partial catalog is returned. Select
+**Refresh recordings** explicitly to continue. The remaining container and
+canonical/decoded-Cast verification allowances carry across that warmup, not a
+fresh allowance for each continuation. Expiry starts a new scan; cancellation,
+integrity, I/O and budget failures during scanning discard incomplete state.
+Every output page still independently reopens
+and reverifies its selected artifacts. No decryption keys, permissions or actor
+grants are cached by this mechanism, and no read is retried automatically.
+
+Failed structured management reads are logged on the server with their backend
+cause, operation and connection; WebSocket reads also include channel and request
+IDs. Bearers and request bodies are not logged. The browser receives only a
+fixed public warmup condition or a generic failure, not backend paths or errors.
+
 The native Community filter panel supports one column predicate plus quick
 search. All remote predicates are applied before pagination and remain bound to
 their cursor, actor and scope. Hidden or unavailable metadata cannot match

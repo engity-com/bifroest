@@ -35,9 +35,59 @@ type nativeCatalogEntry struct {
 type nativeRecordingCatalog struct {
 	mutex   localRepositoryMutex
 	entries map[Id]nativeCatalogEntry
+	warmup  *nativeCatalogWarmup
 	keyOnce sync.Once
 	key     [32]byte
 	keyErr  error
+}
+
+type nativeCatalogWarmup struct {
+	started                           time.Time
+	remainingContainer, remainingCast int64
+}
+
+// NativeCatalogWarmupError reports an incomplete, non-published metadata scan.
+// Only fully verified entries survive a pure deadline, for an explicit next read.
+type NativeCatalogWarmupError struct {
+	Cached, Total int
+	cause         error
+}
+
+func (err *NativeCatalogWarmupError) Error() string {
+	return fmt.Sprintf("recording catalog verification incomplete; cached %d/%d entries; refresh to continue: %v", err.Cached, err.Total, err.cause)
+}
+
+func (err *NativeCatalogWarmupError) Unwrap() error { return err.cause }
+
+// IsNativeCatalogWarmup rejects mixed failures: a simultaneous close/audit error
+// must not be presented to the client as ordinary metadata warmup.
+func IsNativeCatalogWarmup(err error) bool {
+	return nativeCatalogErrorOnly(err, func(value error) bool {
+		_, ok := value.(*NativeCatalogWarmupError)
+		return ok
+	})
+}
+
+func nativeCatalogErrorOnly(err error, accept func(error) bool) bool {
+	if err == nil {
+		return false
+	}
+	if accept(err) {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !nativeCatalogErrorOnly(cause, accept) {
+				return false
+			}
+		}
+		return true
+	}
+	return nativeCatalogErrorOnly(errors.Unwrap(err), accept)
 }
 
 // CatalogCursorMAC authenticates cursors for this repository instance only.
@@ -63,6 +113,10 @@ func (r *LocalNativeRecordingRepository) CatalogCursorMAC(payload []byte) ([]byt
 // entries. Selected output is independently reverified by the application.
 // No private decryption identities are accepted, even for encrypted recordings.
 func (r *LocalNativeRecordingRepository) CatalogMetadata(ctx context.Context) ([]NativeRecordingSummary, error) {
+	return r.catalogMetadata(ctx, r.catalogMetadataEntry)
+}
+
+func (r *LocalNativeRecordingRepository) catalogMetadata(ctx context.Context, load func(context.Context, string, Id, int64, int64) (nativeCatalogEntry, error)) ([]NativeRecordingSummary, error) {
 	if r == nil || r.repository == nil {
 		return nil, fmt.Errorf("nil recording catalog")
 	}
@@ -75,26 +129,43 @@ func (r *LocalNativeRecordingRepository) CatalogMetadata(ctx context.Context) ([
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if r.catalog.warmup != nil && time.Since(r.catalog.warmup.started) >= nativeCatalogTTL {
+		r.catalog.entries, r.catalog.warmup = nil, nil
+	}
 	entries := make(map[Id]nativeCatalogEntry)
 	var result []NativeRecordingSummary
-	remainingContainer, remainingCast := int64(MaximumNativeCatalogBytes), int64(MaximumNativeCatalogBytes)
+	budget := nativeCatalogWarmup{started: time.Now(), remainingContainer: MaximumNativeCatalogBytes, remainingCast: MaximumNativeCatalogBytes}
+	if r.catalog.warmup != nil {
+		budget = *r.catalog.warmup
+	}
+	inventoried, total := false, 0
 	err := r.repository.withSealedDirectory(ctx, func(directory *os.File) error {
 		files, err := readNativeCatalogInventory(ctx, directory, r.repository.format.sealedSuffix())
 		if err != nil {
 			return err
+		}
+		inventoried, total = true, len(files)
+		// Retain only current inventory members inside the existing cache TTL.
+		// Every member is still reopened/stamp-checked before a complete result;
+		// this map is never authority to publish even a single partial row.
+		for _, file := range files {
+			if cached, ok := r.catalog.entries[file.ID]; ok && time.Since(cached.verified) < nativeCatalogTTL {
+				entries[file.ID] = cached
+			}
 		}
 		for _, file := range files {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			path := filepath.Join(r.repository.sealedPath, file.Name)
-			item, err := r.catalogMetadataEntry(ctx, path, file.ID, remainingContainer, remainingCast)
+			delete(entries, file.ID)
+			item, err := load(ctx, path, file.ID, budget.remainingContainer, budget.remainingCast)
 			if err != nil {
-				return err
+				return fmt.Errorf("recording catalog verification failed for %s: %w", file.ID.String(), err)
 			}
 			if old, ok := r.catalog.entries[file.ID]; !ok || old.verified != item.verified {
-				remainingContainer -= int64(item.summary.Bytes)
-				remainingCast -= int64(item.castVerificationBytes)
+				budget.remainingContainer -= int64(item.summary.Bytes)
+				budget.remainingCast -= int64(item.castVerificationBytes)
 			}
 			entries[file.ID] = item
 			result = append(result, item.summary)
@@ -102,12 +173,17 @@ func (r *LocalNativeRecordingRepository) CatalogMetadata(ctx context.Context) ([
 		return ctx.Err()
 	})
 	if err != nil {
+		if inventoried && ctx.Err() == context.DeadlineExceeded && nativeCatalogErrorOnly(err, func(cause error) bool { return cause == context.DeadlineExceeded }) {
+			r.catalog.entries, r.catalog.warmup = entries, &budget
+			return nil, &NativeCatalogWarmupError{Cached: len(entries), Total: total, cause: err}
+		}
 		// A corrupt or over-budget inventory must not leave a partially refreshed
 		// index usable by the next query.
-		r.catalog.entries = nil
+		r.catalog.entries, r.catalog.warmup = nil, nil
 		return nil, err
 	}
 	r.catalog.entries = entries
+	r.catalog.warmup = nil
 	return result, nil
 }
 

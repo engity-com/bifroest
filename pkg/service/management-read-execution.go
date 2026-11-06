@@ -17,11 +17,47 @@ import (
 	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
-func (this *service) executeManagementRead(conn *terminalConnection, request protocol.ReadRequest) ([]byte, error) {
+func (this *service) executeManagementRead(conn *terminalConnection, request protocol.ReadRequest) (result []byte, resultErr error) {
 	request, err := request.Normalize()
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		logger := this.logger().WithError(resultErr).With("operation", request.Operation).With("duration", time.Since(started))
+		if request.Auditlog != "" {
+			logger = logger.With("auditlog", request.Auditlog)
+		}
+		if request.Flow != "" {
+			logger = logger.With("targetFlow", request.Flow)
+		}
+		if conn != nil {
+			if !isNilDependency(conn.terminalTransport) {
+				logger = logger.With("connection", conn.Id().String())
+			}
+			if conn.authorization != nil {
+				logger = logger.With("flow", conn.authorization.Flow().String())
+			}
+			if conn.parent != nil && !isNilDependency(conn.parent.terminalTransport) {
+				logger = logger.With("channel", conn.parent.Id().String())
+			}
+			if ctx := conn.Lifetime(); ctx != nil {
+				if id, ok := ctx.Value(webManagementRequestIDContextKey{}).(string); ok {
+					logger = logger.With("requestId", id)
+				}
+			}
+		}
+		// Keep the actual backend cause on the operator's server console, not in
+		// the public HTTP/WS error. Never log request bodies, bearers or grants.
+		if this.isProblematicError(resultErr) {
+			logger.Error("structured management read failed")
+		} else {
+			logger.Debug("structured management read canceled")
+		}
+	}()
 	if conn == nil {
 		return nil, errManagementPolicy
 	}

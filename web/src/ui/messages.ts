@@ -485,7 +485,9 @@ export const messages = {
   recordingReadDenied:
     'This sign-in cannot list recordings from this source. You can still use an exact ID if your permissions allow it.',
   recordingReadFailed:
-    'Recordings could not be loaded. Refresh the list to try again; large archives may exceed the browser catalog limits.',
+    'Recordings could not be loaded. Check the Bifröst server log for the cause, then refresh the list.',
+  recordingCatalogWarming:
+    'The recording catalog is not fully verified yet. Verified progress was retained; select Refresh recordings to continue. No incomplete list is shown. See the server log for details.',
   artifactDownloadDenied:
     'This sign-in is not permitted to open this recording or audit log. Choose an allowed source or use a different sign-in.',
   recordingNoMatches: 'No recordings match these filters.',

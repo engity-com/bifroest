@@ -13,6 +13,7 @@ import { verifyArtifact } from '../src/artifacts/verify';
 import { SessionActionConfirmation } from '../src/management/action';
 import { ManagementPanel } from '../src/management/ManagementPanel';
 import type { WebAccess } from '../src/remember';
+import { RememberMeError } from '../src/remember';
 import { managementPath, parseManagementLocation } from '../src/ui/management-location';
 import { ManagementNavigationContext } from '../src/ui/management-navigation';
 import { t } from '../src/ui/messages';
@@ -419,6 +420,19 @@ it('does not automatically retry a denied sole-source Recording read after sourc
   const { host } = await mount('/Admin/admin/recordings', 'recordings', access);
   await vi.waitFor(() => expect(host.textContent).toContain(t('recordingReadFailed')));
   expect(api.managementRecordings).toHaveBeenCalledOnce();
+});
+it('shows retained verification progress and reads again only after explicit Refresh', async () => {
+  const { access, api } = fixture();
+  api.managementRecordings.mockRejectedValueOnce(new RememberMeError('catalog-incomplete'));
+  const { host } = await mount('/Admin/admin/recordings', 'recordings', access);
+  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  await vi.waitFor(() => expect(button(host, 'Refresh recordings').disabled).toBe(false));
+  expect(api.managementRecordings).toHaveBeenCalledOnce();
+  expect(host.querySelectorAll('[role="row"][data-id]').length).toBe(0);
+  await click(button(host, 'Refresh recordings'));
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(host.textContent).not.toContain(t('recordingCatalogWarming')));
+  expect(api.downloadArtifact).not.toHaveBeenCalled();
 });
 it('reopens the same encrypted Recording through the router with a fresh owned transfer and a visible local-key form', async () => {
   const { access, api } = fixture();

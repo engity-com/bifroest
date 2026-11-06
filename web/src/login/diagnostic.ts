@@ -30,6 +30,7 @@ const rememberCodes: readonly Code[] = [
   'key-import',
   'artifact-too-large',
   'management-unknown',
+  'catalog-incomplete',
 ];
 const codes: readonly Code[] = [
   'unavailable',

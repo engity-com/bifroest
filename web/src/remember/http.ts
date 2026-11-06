@@ -4,6 +4,7 @@ import {
   maximumTransferImageBytes,
   transferMediaType,
 } from '../artifacts/protocol';
+import { isCatalogWarmupResponse } from './catalog-error';
 import type { Scope } from './protocol';
 import { decode64, RememberMeError, validateScope } from './protocol';
 
@@ -309,7 +310,17 @@ export class Http {
       if (stopped.aborted) {
         throw new RememberMeError('cancelled');
       }
-      if (response.redirected || response.type === 'opaque' || response.status !== status) {
+      const catalogFailure =
+        !response.redirected &&
+        response.type !== 'opaque' &&
+        action === 'management/recordings/list' &&
+        status === 200 &&
+        response.status === 503;
+      if (
+        response.redirected ||
+        response.type === 'opaque' ||
+        (response.status !== status && !catalogFailure)
+      ) {
         throw new RememberMeError(
           response.status === 401 || response.status === 403
             ? 'denied'
@@ -341,7 +352,7 @@ export class Http {
           break;
         }
         length += chunk.value.byteLength;
-        if (length > maximumResponseBytes) {
+        if (length > (catalogFailure ? 256 : maximumResponseBytes)) {
           throw new RememberMeError('unavailable');
         }
         chunks.push(chunk.value);
@@ -352,7 +363,13 @@ export class Http {
         bytes.set(chunk, offset);
         offset += chunk.byteLength;
       }
-      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
+      const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
+      if (catalogFailure) {
+        throw new RememberMeError(
+          isCatalogWarmupResponse(value) ? 'catalog-incomplete' : 'unavailable',
+        );
+      }
+      return value;
     } catch (error) {
       if (stopped.aborted) {
         throw new RememberMeError(signal?.aborted ? 'cancelled' : 'unavailable');

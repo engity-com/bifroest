@@ -187,6 +187,13 @@ saved for the origin; changing it refreshes the affected list when it is active.
 It does not grant access to withheld fields, credentials or decrypted content.
 Returning to an otherwise unchanged loaded view does not repeat its reads.
 
+In debug/instrumented builds, a cold Recording catalog may need more than one
+bounded read. A yellow notice means verified progress was retained, not that a
+partial list is ready: select **Refresh recordings** to continue explicitly.
+Server logs identify the actual backend failure and, for WebSocket operations,
+its request ID. Other failures still require diagnosis; no timeout, byte budget,
+verification or permission limit is bypassed.
+
 **Recordings** and **Audit logs** are separate navigation entries and keep their
 own selections and results. Opening a Recording prepares local playback after
 verification; opening an audit log shows verified events, not an inventory of

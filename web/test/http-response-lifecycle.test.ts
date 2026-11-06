@@ -30,6 +30,60 @@ function reply(bytes = new TextEncoder().encode('{"target":{"flow":"Worker","id"
 }
 
 describe('bounded JSON response lifecycle (transport fixtures, not mutation authorization)', () => {
+  it('recognizes only the bounded fixed catalog warmup condition without replaying the read', async () => {
+    const body = {
+      code: 'recording-catalog-incomplete',
+      error: 'recording catalog verification incomplete; refresh to continue',
+    };
+    const transport = vi.fn(
+      async () =>
+        new Response(JSON.stringify(body), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        }),
+    );
+    await expect(
+      new Http(scope, transport).post(
+        'management/recordings/list',
+        { auditlog: 'default' },
+        token,
+        200,
+      ),
+    ).rejects.toMatchObject({ code: 'catalog-incomplete' });
+    expect(transport).toHaveBeenCalledOnce();
+  });
+  it('keeps unknown, oversized and unrelated 503 bodies private and generic', async () => {
+    for (const [action, body] of [
+      [
+        'management/recordings/list',
+        { code: 'recording-catalog-incomplete', error: 'PRIVATE-BACKEND-PATH' },
+      ],
+      [
+        'management/recordings/list',
+        { code: 'recording-catalog-incomplete', error: 'x'.repeat(257) },
+      ],
+      [
+        'management/flows/list',
+        {
+          code: 'recording-catalog-incomplete',
+          error: 'recording catalog verification incomplete; refresh to continue',
+        },
+      ],
+    ] as const) {
+      const transport = vi.fn(
+        async () =>
+          new Response(JSON.stringify(body), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      );
+      await expect(new Http(scope, transport).post(action, {}, token, 200)).rejects.toMatchObject({
+        code: 'unavailable',
+        message: 'Browser RememberMe: unavailable',
+      });
+      expect(transport).toHaveBeenCalledOnce();
+    }
+  });
   it('releases a consumed response without cancel after EOF or later operation retirement', async () => {
     const { reader, response } = reply();
     let transportSignal!: AbortSignal;

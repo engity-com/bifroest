@@ -22,6 +22,7 @@ import (
 const webManagementProtocol = "bifroest-management.v1"
 
 type webManagementContextKey struct{}
+type webManagementRequestIDContextKey struct{}
 type webManagementChannel struct {
 	stream  *webTerminalStream
 	conn    *terminalConnection
@@ -314,6 +315,7 @@ func (this *webManagementChannel) serve(service *webService, job webManagementJo
 		return
 	}
 	ctx := context.WithValue(job.ctx, webManagementContextKey{}, this)
+	ctx = context.WithValue(ctx, webManagementRequestIDContextKey{}, job.id)
 	request := this.request.Clone(ctx)
 	request.Method = http.MethodPost
 	request.URL.Path = webAPI + job.action
