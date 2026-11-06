@@ -1,0 +1,306 @@
+import { act, createElement, type ReactNode, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ArtifactCatalog } from '../src/artifacts/ArtifactCatalog';
+import { ArtifactPanel } from '../src/artifacts/ArtifactPanel';
+import type { AuditOverviewPage } from '../src/management/audit-overview';
+import type { RecordingSummary } from '../src/management/protocol';
+import { WebAccess } from '../src/remember/client';
+import { Http } from '../src/remember/http';
+import { RememberMeError } from '../src/remember/protocol';
+import { ManagementNavigationContext } from '../src/ui/management-navigation';
+import { t } from '../src/ui/messages';
+import { profileResetEvent } from '../src/ui/profile-reset';
+import '../src/ui/app.css';
+
+const id = '34e34ab8-7457-4d88-a5e4-c57791775c3a';
+const source = { name: 'default', enabled: true, recordingEnabled: true, encrypted: false };
+const event = {
+  key: `1:0:${id}`,
+  id,
+  recordedAt: '2026-11-05T00:00:00Z',
+  event: { name: 'session.task.completed', outcome: 'success' },
+};
+const overview: AuditOverviewPage = {
+  items: [event],
+  next: '',
+  skipped: 0,
+  total: 1,
+  source: {
+    auditlog: 'default',
+    encrypted: false,
+    sensitive: false,
+    verification: 'server-overview',
+  },
+};
+const recording: RecordingSummary = {
+  auditlog: 'default',
+  id,
+  producerId: 'a'.repeat(64),
+  format: 'bcast/v1',
+  status: 'completed',
+  startedAt: '2026-11-05T00:00:00Z',
+  endedAt: '2026-11-05T00:00:01Z',
+  containerBytes: 1024,
+  chunkCount: 1,
+  encrypted: false,
+  verificationScope: 'full',
+  flow: 'docker',
+};
+const cleanups: (() => void)[] = [];
+beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.spyOn(WebAccess.prototype, 'managementAuditlogs').mockResolvedValue({
+    items: [source],
+    next: '',
+    skipped: 0,
+  });
+  vi.spyOn(WebAccess.prototype, 'managementAuditEvents').mockResolvedValue(overview);
+  vi.spyOn(WebAccess.prototype, 'managementRecordings').mockResolvedValue({
+    items: [recording],
+    next: '',
+    skipped: 0,
+    total: 1,
+  });
+  vi.spyOn(WebAccess.prototype, 'downloadArtifact');
+  vi.spyOn(WebAccess.prototype, 'managementVerifyRecordings');
+});
+afterEach(async () => {
+  await act(async () => {
+    for (const cleanup of cleanups.splice(0)) {
+      cleanup();
+    }
+  });
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+function access() {
+  const scope = { origin: 'https://app.example.org', slug: 'Work' };
+  return new WebAccess(
+    new Http(scope, vi.fn()),
+    {
+      scope,
+      principal: 'alice',
+      expiresAt: '2100-01-01T00:00:00Z',
+      environment: 'management',
+      terminalAvailable: false,
+      accessToken: `bwa1.${'A'.repeat(43)}`,
+    },
+    null,
+  );
+}
+async function mount(node: ReactNode) {
+  const host = document.createElement('div');
+  host.style.width = '1300px';
+  document.body.append(host);
+  const root = createRoot(host);
+  cleanups.push(() => {
+    root.unmount();
+    host.remove();
+  });
+  await act(async () => root.render(node));
+  return host;
+}
+function button(host: ParentNode, name: string) {
+  const result = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
+    (node) => node.textContent === name || node.getAttribute('aria-label') === name,
+  );
+  if (!result) {
+    throw new Error(`Missing ${name}`);
+  }
+  return result;
+}
+const click = async (node: HTMLElement) => act(async () => node.click());
+const eventRows = (host: HTMLElement) =>
+  host.querySelectorAll(`[role="grid"][aria-label="${t('auditEvents')}"] [role="row"][data-id]`);
+async function confirmVerify(host: HTMLElement) {
+  await click(button(host, t('verifyAll')));
+  const dialog = document.querySelector('[role="dialog"]');
+  if (!dialog) {
+    throw new Error('Missing scope confirmation');
+  }
+  expect(dialog.textContent).toContain('default');
+  await click(button(dialog, t('verifyAll')));
+}
+
+it('opens audit events as a server overview without downloading or automatically verifying the journal', async () => {
+  const host = await mount(
+    createElement(ArtifactPanel, {
+      access: access(),
+      view: 'auditlogs',
+      active: true,
+      disabled: false,
+    }),
+  );
+  await vi.waitFor(() => expect(button(host, 'Open audit log default').disabled).toBe(false));
+  await click(button(host, 'Open audit log default'));
+  await vi.waitFor(() => expect(eventRows(host)).toHaveLength(1));
+  expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledOnce();
+  expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
+  expect(WebAccess.prototype.managementVerifyRecordings).not.toHaveBeenCalled();
+  expect(host.textContent).toContain(t('auditOverviewWarning'));
+  expect(host.textContent).not.toContain('Integrity OK');
+  await click(button(host, `${t('auditEventDetails')} ${id}`));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('auditOverviewDetails')));
+  expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(WebAccess.prototype.managementAuditEvents).mock.calls[1]?.[1]).toMatchObject({
+    id,
+  });
+  expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
+  await click(button(host, t('auditOverviewBack')));
+  await vi.waitFor(() => expect(eventRows(host)).toHaveLength(1));
+  expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledTimes(2);
+});
+
+it('starts a local full audit check only after confirmation and keeps the operational overview usable while it runs', async () => {
+  let artifactSignal: AbortSignal | undefined;
+  vi.mocked(WebAccess.prototype.downloadArtifact).mockImplementation((_request, signal) => {
+    artifactSignal = signal;
+    return new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new RememberMeError('cancelled')), {
+        once: true,
+      });
+    });
+  });
+  const host = await mount(
+    createElement(ArtifactPanel, {
+      access: access(),
+      view: 'auditlogs',
+      active: true,
+      disabled: false,
+    }),
+  );
+  await click(button(host, 'Open audit log default'));
+  await vi.waitFor(() => expect(eventRows(host)).toHaveLength(1));
+  await confirmVerify(host);
+  await vi.waitFor(() => expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledOnce());
+  expect(vi.mocked(WebAccess.prototype.downloadArtifact).mock.calls[0]?.[0]).toEqual({
+    kind: 'audit',
+    auditlog: 'default',
+  });
+  await click(button(host, t('auditOverviewMode')));
+  expect(artifactSignal?.aborted).toBe(false);
+  const before = vi.mocked(WebAccess.prototype.managementAuditEvents).mock.calls.length;
+  await click(button(host, t('auditRefreshEvents')));
+  await vi.waitFor(() =>
+    expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledTimes(before + 1),
+  );
+  expect(artifactSignal?.aborted).toBe(false);
+  await click(button(host, t('verifyAllCancel')));
+  await vi.waitFor(() => expect(artifactSignal?.aborted).toBe(true));
+  expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledOnce();
+});
+
+it('keeps recording paging independent of its explicit whole-source verification job', async () => {
+  vi.mocked(WebAccess.prototype.managementRecordings)
+    .mockResolvedValueOnce({ items: [recording], next: 'bmp1.next', skipped: 0, total: 21 })
+    .mockResolvedValue({ items: [recording], next: '', skipped: 0, total: 21 });
+  let signal: AbortSignal | undefined;
+  vi.mocked(WebAccess.prototype.managementVerifyRecordings).mockImplementation(
+    (_source, stopped) => {
+      signal = stopped;
+      return new Promise((_resolve, reject) => {
+        stopped?.addEventListener('abort', () => reject(new RememberMeError('cancelled')), {
+          once: true,
+        });
+      });
+    },
+  );
+  const host = await mount(
+    createElement(ArtifactCatalog, {
+      access: access(),
+      active: true,
+      disabled: false,
+      onSelect: vi.fn(),
+    }),
+  );
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+  expect(WebAccess.prototype.managementVerifyRecordings).not.toHaveBeenCalled();
+  await confirmVerify(host);
+  await vi.waitFor(() =>
+    expect(WebAccess.prototype.managementVerifyRecordings).toHaveBeenCalledOnce(),
+  );
+  expect(vi.mocked(WebAccess.prototype.managementVerifyRecordings).mock.calls[0]?.[0]).toBe(
+    'default',
+  );
+  await click(button(host, 'Go to next page'));
+  await vi.waitFor(() => expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(WebAccess.prototype.managementRecordings).mock.calls[1]?.[1]).toMatchObject({
+    after: 'bmp1.next',
+  });
+  expect(signal?.aborted).toBe(false);
+  await click(button(host, t('verifyAllCancel')));
+  await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+});
+
+it('keeps encrypted overview fields private and erases the owned view on profile reset without starting a new read', async () => {
+  vi.mocked(WebAccess.prototype.managementAuditEvents).mockResolvedValue({
+    ...overview,
+    source: { ...overview.source, encrypted: true },
+  });
+  const host = await mount(
+    createElement(ArtifactPanel, {
+      access: access(),
+      view: 'auditlogs',
+      active: true,
+      disabled: false,
+    }),
+  );
+  await click(button(host, 'Open audit log default'));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('auditOverviewEncrypted')));
+  expect(host.querySelector<HTMLInputElement>('input[type="checkbox"]')?.disabled).toBe(true);
+  expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
+  await act(async () => window.dispatchEvent(new Event(profileResetEvent)));
+  expect(host.textContent).toContain(t('auditOverviewForgotten'));
+  expect(host.textContent).not.toContain(event.event.name);
+  expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledOnce();
+});
+
+function ReauthenticationHarness({
+  owned,
+  controls,
+}: {
+  owned: WebAccess;
+  controls: { deactivate(): void; reactivate(): void };
+}) {
+  const [active, setActive] = useState(true);
+  controls.deactivate = () => setActive(false);
+  controls.reactivate = () => setActive(true);
+  return createElement(
+    ManagementNavigationContext.Provider,
+    {
+      value: active
+        ? {
+            location: { managementFlow: 'management', page: 'auditlogs', auditlog: 'default' },
+            navigate: vi.fn(),
+          }
+        : null,
+    },
+    createElement(ArtifactPanel, { access: owned, view: 'auditlogs', active, disabled: false }),
+  );
+}
+
+it('retains the actor-owned audit route and local view when reauthentication temporarily removes navigation context', async () => {
+  const owned = access();
+  const controls = { deactivate: () => {}, reactivate: () => {} };
+  let signal: AbortSignal | undefined;
+  vi.mocked(WebAccess.prototype.downloadArtifact).mockImplementation((_request, stopped) => {
+    signal = stopped;
+    return new Promise((_resolve, reject) =>
+      stopped?.addEventListener('abort', () => reject(new RememberMeError('cancelled')), {
+        once: true,
+      }),
+    );
+  });
+  const host = await mount(createElement(ReauthenticationHarness, { owned, controls }));
+  await confirmVerify(host);
+  await vi.waitFor(() => expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledOnce());
+  const local = host.querySelector(`[aria-label="${t('auditLocalRegion')}"]`);
+  expect(local).not.toBeNull();
+  await act(async () => controls.deactivate());
+  await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+  expect(local?.isConnected).toBe(true);
+  await act(async () => controls.reactivate());
+  expect(host.querySelector(`[aria-label="${t('auditLocalRegion')}"]`)).toBe(local);
+  expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledOnce();
+});

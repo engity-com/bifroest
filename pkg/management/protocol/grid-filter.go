@@ -31,6 +31,9 @@ func (f GridFilter) Kind(operation ReadOperation) string {
 		dates = []string{"startedAt", "endedAt"}
 		numbers = []string{"duration", "containerBytes"}
 		booleans = []string{"encrypted"}
+	case ListAuditEvents:
+		texts = []string{"id", "name", "domain", "outcome", "flow", "reason", "sessionId"}
+		dates = []string{"recordedAt"}
 	}
 	for kind, fields := range map[string][]string{"string": texts, "dateTime": dates, "number": numbers, "boolean": booleans} {
 		for _, field := range fields {

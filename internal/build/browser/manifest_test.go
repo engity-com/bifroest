@@ -2,6 +2,8 @@ package browser
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"testing"
@@ -59,5 +61,35 @@ func TestBrowserManifestRejectsUnsupportedAndAmbiguousComponents(t *testing.T) {
 		require.NoError(t, err)
 		_, err = Decode(raw)
 		require.Error(t, err)
+	}
+}
+
+func TestVendoredSvgKeepsStrictReviewedProvenanceAndExactSourceBinding(t *testing.T) {
+	for _, mutate := range []func(*Manifest, *Component){
+		nil,
+		func(_ *Manifest, c *Component) { c.Source = "https://unreviewed.invalid/icon" },
+		func(_ *Manifest, c *Component) { c.UpstreamPathSHA256 = "a" + c.UpstreamPathSHA256[1:] },
+		func(_ *Manifest, c *Component) { c.Name = "Other icon" },
+		func(_ *Manifest, c *Component) { c.Version = "invented-version" },
+		func(_ *Manifest, c *Component) { c.Integrity = "sha256-invalid" },
+		func(m *Manifest, _ *Component) { m.Inputs = m.Inputs[:len(m.Inputs)-1] },
+		func(_ *Manifest, c *Component) { c.Ecosystem = "npm"; c.Version = "1.0.0" },
+	} {
+		m, _ := fixture(t)
+		digest := bytes.Repeat([]byte{3}, 32)
+		m.Inputs = append(m.Inputs, File{Name: "web/src/ui/LeftPanelCloseIcon.tsx", Bytes: 1024, SHA256: hex.EncodeToString(digest)})
+		c := Component{Ecosystem: "vendored-svg", Name: "Google Material Symbols / left_panel_close", Version: "24px outlined", License: "Apache-2.0", Integrity: "sha256-" + base64.StdEncoding.EncodeToString(digest), LicenseTextSource: "vendored SVG", Artifacts: []string{"browser-ui"}, Source: "https://github.com/google/material-design-icons/tree/master/symbols/web/left_panel_close", UpstreamPathSHA256: "909577477a457f6902f6000398429358f32e11333146c050e80bb8abd9e4946f"}
+		if mutate != nil {
+			mutate(m, &c)
+		}
+		m.Components = append(m.Components, c)
+		raw, err := json.Marshal(m)
+		require.NoError(t, err)
+		_, err = Decode(raw)
+		if mutate == nil {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+		}
 	}
 }

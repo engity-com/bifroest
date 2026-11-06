@@ -20,6 +20,8 @@ const phases = new Set([
   'exporting',
   'indexing',
   'filtering',
+  'metadata',
+  'searching',
 ]);
 export function readProgress(value: unknown): ReadProgress {
   if (
@@ -47,6 +49,8 @@ export function streamingManagementAction(action: string): boolean {
   return [
     'management/auditlogs/list',
     'management/recordings/list',
+    'management/recordings/verify',
+    'management/audit-events/list',
     'management/artifacts/audit',
     'management/artifacts/recording',
   ].includes(action);
@@ -57,7 +61,15 @@ export function remoteReadProgress(value: unknown): ReadProgress {
   // A server may describe its own work, never claim that a local key,
   // decryption, signature check or audit index has been processed in the tab.
   if (
-    !['waiting', 'inventory', 'verifying', 'reverifying', 'finalizing'].includes(progress.phase)
+    ![
+      'waiting',
+      'inventory',
+      'metadata',
+      'searching',
+      'verifying',
+      'reverifying',
+      'finalizing',
+    ].includes(progress.phase)
   ) {
     throw new Error('invalid remote progress');
   }

@@ -28,21 +28,16 @@ func (r *LocalNativeRecordingRepository) WalkCatalog(ctx context.Context, consum
 	return r.walkCatalog(ctx, r.catalogMetadataEntry, consume, progress)
 }
 
+// VerifyCatalog is an explicit full read, never a cache/stamp-only success.
+func (r *LocalNativeRecordingRepository) VerifyCatalog(ctx context.Context, consume func(NativeRecordingSummary) error, progress func(NativeCatalogProgress) error) error {
+	return r.walkCatalog(ctx, func(ctx context.Context, path string, id Id, container, cast int64) (nativeCatalogEntry, error) {
+		return r.readCatalogEntry(ctx, path, id, container, cast, false)
+	}, consume, progress)
+}
+
 func (r *LocalNativeRecordingRepository) walkCatalog(ctx context.Context, load func(context.Context, string, Id, int64, int64) (nativeCatalogEntry, error), consume func(NativeRecordingSummary) error, progress func(NativeCatalogProgress) error) (resultErr error) {
 	if r == nil || r.repository == nil || consume == nil {
 		return fmt.Errorf("invalid recording catalog scan")
-	}
-	report := func(phase string, completed, total int64) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if progress != nil {
-			return progress(NativeCatalogProgress{phase, completed, total})
-		}
-		return nil
-	}
-	if err := report("waiting", 0, -1); err != nil {
-		return err
 	}
 	if err := r.catalog.mutex.LockContext(ctx); err != nil {
 		return err
@@ -55,6 +50,49 @@ func (r *LocalNativeRecordingRepository) walkCatalog(ctx context.Context, load f
 			r.catalog.entries = nil
 		}
 	}()
+	entries := make(map[Id]nativeCatalogEntry)
+	err := r.walkInventory(ctx, "verifying", func(path string, id Id) error {
+		item, err := load(ctx, path, id, MaximumNativeCatalogBytes, MaximumNativeCatalogBytes)
+		if err != nil {
+			return fmt.Errorf("recording catalog verification failed for %s: %w", id.String(), err)
+		}
+		if len(entries) < MaximumNativeCatalogEntries {
+			entries[id] = item
+		}
+		return consume(item.summary)
+	}, progress)
+	if err == nil {
+		r.catalog.entries = entries
+	}
+	return err
+}
+
+// WalkMetadata reads reusable selection metadata, not recording contents. Unlike
+// WalkCatalog it neither acquires the full-verification lock nor populates its
+// verified cache. Only the chosen page is subsequently fully checked.
+func (r *LocalNativeRecordingRepository) WalkMetadata(ctx context.Context, consume func(NativeRecordingSummary) error, progress func(NativeCatalogProgress) error) error {
+	if r == nil || r.repository == nil || r.metadata == nil || consume == nil {
+		return fmt.Errorf("invalid recording metadata catalog")
+	}
+	return r.walkInventory(ctx, "metadata", func(path string, id Id) error {
+		summary, err := r.indexedMetadata(ctx, path, id)
+		if err != nil {
+			return fmt.Errorf("recording metadata unavailable for %s: %w", id.String(), err)
+		}
+		return consume(summary)
+	}, progress)
+}
+
+func (r *LocalNativeRecordingRepository) walkInventory(ctx context.Context, phase string, consume func(string, Id) error, progress func(NativeCatalogProgress) error) (resultErr error) {
+	report := func(phase string, completed, total int64) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if progress != nil {
+			return progress(NativeCatalogProgress{phase, completed, total})
+		}
+		return nil
+	}
 	// Disk holds only canonical binary IDs, not metadata, keys or plaintext.
 	// No archive file is opened for repair/recovery or modified by this scan.
 	snapshot, err := os.CreateTemp("", "bifroest-recording-inventory-*")
@@ -78,10 +116,9 @@ func (r *LocalNativeRecordingRepository) walkCatalog(ctx context.Context, load f
 		if _, err := snapshot.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		if err := report("verifying", 0, total); err != nil {
+		if err := report(phase, 0, total); err != nil {
 			return err
 		}
-		entries := make(map[Id]nativeCatalogEntry)
 		replayed := sha256.New()
 		inventory := io.TeeReader(snapshot, replayed)
 		for index := int64(0); index < total; index++ {
@@ -93,18 +130,10 @@ func (r *LocalNativeRecordingRepository) walkCatalog(ctx context.Context, load f
 				return err
 			}
 			path := filepath.Join(r.repository.sealedPath, id.String()+r.repository.format.sealedSuffix())
-			item, err := load(ctx, path, id, MaximumNativeCatalogBytes, MaximumNativeCatalogBytes)
-			if err != nil {
-				return fmt.Errorf("recording catalog verification failed for %s: %w", id.String(), err)
-			}
-			// Bound the acceleration cache, not the number of inventory members.
-			if len(entries) < MaximumNativeCatalogEntries {
-				entries[id] = item
-			}
-			if err := consume(item.summary); err != nil {
+			if err := consume(path, id); err != nil {
 				return err
 			}
-			if err := report("verifying", index+1, total); err != nil {
+			if err := report(phase, index+1, total); err != nil {
 				return err
 			}
 		}
@@ -118,7 +147,6 @@ func (r *LocalNativeRecordingRepository) walkCatalog(ctx context.Context, load f
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		r.catalog.entries = entries
 		return nil
 	})
 }

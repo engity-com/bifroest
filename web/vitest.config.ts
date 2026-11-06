@@ -19,6 +19,8 @@ export default defineConfig({
         'DarkModeOutlined',
         'LightModeOutlined',
         'FactCheckOutlined',
+        'FactCheck',
+        'ScreenshotMonitor',
         'DeleteForeverOutlined',
         'ClearAllOutlined',
         'Cancel',

@@ -220,6 +220,10 @@ func readNativeCatalogInventory(ctx context.Context, directory sealedDirectoryRe
 }
 
 func (r *LocalNativeRecordingRepository) catalogMetadataEntry(ctx context.Context, path string, id Id, remainingContainer, remainingCast int64) (result nativeCatalogEntry, resultErr error) {
+	return r.readCatalogEntry(ctx, path, id, remainingContainer, remainingCast, true)
+}
+
+func (r *LocalNativeRecordingRepository) readCatalogEntry(ctx context.Context, path string, id Id, remainingContainer, remainingCast int64, cachedAllowed bool) (result nativeCatalogEntry, resultErr error) {
 	file, err := openSealedLocalFile(path)
 	if err != nil {
 		return result, err
@@ -233,7 +237,7 @@ func (r *LocalNativeRecordingRepository) catalogMetadataEntry(ctx context.Contex
 	if err != nil {
 		return result, err
 	}
-	if cached, ok := r.catalog.entries[id]; ok && time.Since(cached.verified) < nativeCatalogTTL &&
+	if cached, ok := r.catalog.entries[id]; cachedAllowed && ok && time.Since(cached.verified) < nativeCatalogTTL &&
 		os.SameFile(cached.info, info) && cached.info.Size() == info.Size() &&
 		cached.info.ModTime().Equal(info.ModTime()) && reflect.DeepEqual(cached.change, change) {
 		return cached, nil

@@ -23,6 +23,7 @@ import { ArtifactOpenByID } from './ArtifactOpenByID';
 import { ArtifactSourceDetails } from './ArtifactSourceDetails';
 import { AuditCatalog } from './AuditCatalog';
 import { AuditEvents } from './AuditEvents';
+import { AuditWorkspace } from './AuditWorkspace';
 import type { AuditEventRow } from './audit-events';
 import {
   EvidenceError,
@@ -39,6 +40,20 @@ import { useArtifactSecrets } from './session-secrets';
 import { type EvidenceKey, verifyArtifact } from './verify';
 
 type Phase = 'downloading' | 'inspecting' | 'verifying';
+export interface ArtifactPanelProps {
+  access: WebAccess;
+  disabled: boolean;
+  remoteDisabled?: boolean;
+  active?: boolean;
+  view?: 'recordings' | 'auditlogs';
+}
+export interface ArtifactEvidencePanelProps extends ArtifactPanelProps {
+  backgroundAllowed?: boolean;
+  verificationCancel?: number;
+  onPhaseChange?: (phase: Phase | null) => void;
+  regionLabel?: string;
+  hideBreadcrumbs?: boolean;
+}
 type UsedExpectation = { enabled: boolean; producer: string; source: 'reported' | 'user' };
 function failure(error: unknown): Message {
   if (error instanceof EvidenceError) {
@@ -63,19 +78,26 @@ function failure(error: unknown): Message {
 
 // Both pages use the same actor-owned, volatile key cache, never each other's
 // selection, workers, verification result or plaintext. No form uploads secrets.
-export function ArtifactPanel({
+export function ArtifactPanel(props: ArtifactPanelProps) {
+  return props.view === 'auditlogs' ? (
+    <AuditWorkspace {...props} Evidence={ArtifactEvidencePanel} />
+  ) : (
+    <ArtifactEvidencePanel {...props} />
+  );
+}
+
+export function ArtifactEvidencePanel({
   access,
   disabled,
   remoteDisabled = false,
   active = true,
   view = 'recordings',
-}: {
-  access: WebAccess;
-  disabled: boolean;
-  remoteDisabled?: boolean;
-  active?: boolean;
-  view?: 'recordings' | 'auditlogs';
-}) {
+  backgroundAllowed = false,
+  verificationCancel = 0,
+  onPhaseChange,
+  regionLabel,
+  hideBreadcrumbs = false,
+}: ArtifactEvidencePanelProps) {
   const secrets = useArtifactSecrets(access);
   const navigation = useManagementNavigation();
   const route = navigation?.location.page === view ? navigation.location : null;
@@ -104,6 +126,9 @@ export function ArtifactPanel({
   const [verified, setVerified] = useState<VerifiedArtifact | null>(null);
   const [phase, setPhase] = useState<Phase | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
+  useEffect(() => {
+    onPhaseChange?.(phase);
+  }, [onPhaseChange, phase]);
   const [notice, setNotice] = useState<Message | null>(null);
   const [errorCode, setErrorCode] = useState('');
   const [failedStage, setFailedStage] = useState<Phase | null>(null);
@@ -168,6 +193,20 @@ export function ArtifactPanel({
     setCandidate(false);
     setKeyRevision((value) => value + 1);
   };
+  const cancelFromOutside = useEffectEvent(() => {
+    operation.current?.abort();
+    clearInputs();
+    if (operation.current !== null) {
+      setNotice('artifactCancelled');
+    }
+  });
+  const consumedCancel = useRef(verificationCancel);
+  useEffect(() => {
+    if (consumedCancel.current !== verificationCancel) {
+      consumedCancel.current = verificationCancel;
+      cancelFromOutside();
+    }
+  }, [verificationCancel]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Actor/page/availability boundaries retire local output and unvalidated input, never a replacement login.
   useEffect(() => {
     generation.current++;
@@ -208,11 +247,13 @@ export function ArtifactPanel({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Hide portals and clear unvalidated inputs on deactivation; retain the explicitly approved tab key cache.
   useEffect(() => {
     if (!active) {
-      operation.current?.abort();
+      if (!backgroundAllowed) {
+        operation.current?.abort();
+      }
       clearInputs();
       setDetails(false);
     }
-  }, [active]);
+  }, [active, backgroundAllowed]);
   const current = (token: number, signal: AbortSignal) =>
     token === generation.current &&
     !signal.aborted &&
@@ -406,7 +447,9 @@ export function ArtifactPanel({
         stage('verifying');
         await check(image, header, key, expected, signal, token, false);
       }
-      heading.current?.focus({ preventScroll: true });
+      if (activeRef.current) {
+        heading.current?.focus({ preventScroll: true });
+      }
     });
   }
   async function recheck() {
@@ -689,10 +732,10 @@ export function ArtifactPanel({
   return (
     <section
       className="stack artifact-panel"
-      aria-label={title}
+      aria-label={regionLabel ?? title}
       data-key-cache-revision={cacheRevision}
     >
-      {!integrated && (
+      {!integrated && !hideBreadcrumbs && (
         <AdminBreadcrumbs
           items={[
             { label: t('workspaceBifroest') },

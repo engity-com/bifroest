@@ -187,14 +187,33 @@ saved for the origin; changing it refreshes the affected list when it is active.
 It does not grant access to withheld fields, credentials or decrypted content.
 Returning to an otherwise unchanged loaded view does not repeat its reads.
 
-Recording and auditlog-source lists show live scan phases and counts with
-**Cancel catalog request**. A cold Recording scan is one continuous operation,
-including in debug/instrumented builds: there is no four-second overall deadline
-or manual continuation/cache-expiry window. It captures a fixed inventory and
-processes recordings individually, keeping only a bounded metadata cache and the
-requested sorted page in memory. Archives are not rejected merely for exceeding
-1,024 entries or an aggregate 128 MiB of verification work. Individual artifacts
-still have verification limits; see [HTTP limits](../reference/connection/http/security.md#practical-limits).
+The normal pages are operational admin overviews, not automatically started
+archive verification. Recording lists use an index of authenticated metadata
+(signed header, seal and clear setup context), without verifying intervening
+recording contents. Only the selected page, at most 20 recordings, is fully
+checked before display. Stable metadata is reused across page changes; a cold
+index or broader search may inspect metadata throughout the selected source.
+Progress distinguishes **Reading catalog metadata**, **Searching catalog
+metadata**, and verification of the selected page. There is no four-second
+overall deadline or manual continuation/cache-expiry window.
+
+**Verify all** is separate and requires confirmation of the entire selected
+source; the current page and filters do not narrow that job. Recording full
+verification reads all contents afresh, not a stamp-only cache. Its result is a
+server report, not independent browser evidence; encrypted recordings can have
+their envelopes checked without claiming private-content verification. The normal
+list remains usable while this runs. Per-artifact limits still apply; use the
+[CLI](../reference/cli/verification.md) for larger or independent forensic checks.
+
+Opening an auditlog normally loads a small, server-reported event page, **not** a
+download or complete verification of the journal. The overview is explicitly
+labelled as such. **Show private fields in the overview** is a separate opt-in
+for clear journals; it is not enabled by the eye/full-detail preference. Encrypted
+private fields stay unavailable to the server and cannot be treated as absent
+flow assignments. For local decryption or complete verification select **Verify
+all**, confirm the source, and use **Local verification**. **Overview** remains
+available while that explicit operation runs; returning to a completed local
+result never silently starts a new transfer.
 
 Audit downloads show transfer progress, followed by local integrity/private-event
 verification and local indexing/filtering progress. Decryption keys remain local;
@@ -206,22 +225,26 @@ its page or losing access also cancels unfinished work. No operation is retried
 or reauthenticated automatically.
 
 Counts are provisional status, not a partial result or successful completion.
-The grid stays loading until its complete, authoritative page is ready; audit
-events additionally require completed local verification. Failures and
+The grid stays loading until its complete, policy-projected page is ready. Only
+the explicitly selected local audit view claims completed local verification.
+Failures and
 cancellation clear old rows/paging rather than presenting an earlier result as
 current. Server logs retain the actual failure and, for WebSocket operations,
 its correlated request ID without exposing private causes in the browser.
 
 **Recordings** and **Audit logs** are separate navigation entries and keep their
 own selections and results. Opening a Recording prepares local playback after
-verification; opening an audit log shows verified events, not an inventory of
-raw files. Both use the same tab-local decryption-key cache described in
+verification; opening an audit log shows the operational event overview, not an
+inventory of raw files. Explicit local verification on both pages uses the same
+tab-local decryption-key cache described in
 [HTTP security and limits](../reference/connection/http/security.md#management-and-evidence).
 The grid's pin opens a popover for an exact ID; it does not replace filters or
 issue a transfer until **Go** is selected. The audit-log pin requires **Auditlog
 Name** and optionally accepts an **Event ID**; the verified event grid has its own
 event-ID pin. Audit-event details open as an owned
-page, not a modal. Close icons return to the retained list.
+page, not a modal. Close icons return to the retained list. The monitor and
+checklist icons identify Recordings and Audit logs in navigation and Overview
+actions. The left-panel-close icon only collapses navigation; it is not Back.
 
 ### Direct management links
 

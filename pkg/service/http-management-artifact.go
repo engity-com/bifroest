@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/management/wire"
@@ -49,10 +50,12 @@ func (this *webService) handleManagementArtifact(w http.ResponseWriter, r *http.
 		return
 	}
 	defer func() { transport.writing.Store(false); _ = conn.Close(); <-conn.done }()
+	_ = transport.controller.SetWriteDeadline(time.Time{})
 	bindManagementProgress(conn, w)
 	output := &managementArtifactHTTPWriter{writer: w, conn: conn, transport: transport}
 	framed, err := wire.NewTransferWriter(output, request)
 	if err != nil {
+		_ = transport.controller.SetWriteDeadline(time.Now().Add(20 * time.Second))
 		webError(w, 400, "invalid artifact request")
 		return
 	}
@@ -62,6 +65,7 @@ func (this *webService) handleManagementArtifact(w http.ResponseWriter, r *http.
 		}
 		return transport.controller.Flush()
 	})
+	_ = transport.controller.SetWriteDeadline(time.Now().Add(20 * time.Second))
 	if err == nil && status == 0 && conn.check(false) == nil && !conn.IsClosed() && conn.Lifetime().Err() == nil {
 		err = framed.Complete()
 		if err == nil {
@@ -96,6 +100,10 @@ func (this *managementArtifactHTTPWriter) Write(data []byte) (int, error) {
 		this.writer.Header().Set("Content-Type", wire.TransferMediaType)
 		this.writer.Header().Set("X-Bifroest-Connection-Id", this.conn.Id().String())
 		this.writer.WriteHeader(200)
+	}
+	_ = this.transport.controller.SetWriteDeadline(time.Now().Add(20 * time.Second))
+	if this.conn.IsClosed() || this.conn.Lifetime().Err() != nil {
+		return 0, fmt.Errorf("artifact access ended")
 	}
 	return this.writer.Write(data)
 }

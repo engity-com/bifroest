@@ -856,6 +856,11 @@ type service struct {
 	flowAuditlogs            map[configuration.FlowName]configuration.AuditlogName
 	enabledAuditlogs         map[configuration.AuditlogName]bool
 	auditlogStates           map[configuration.AuditlogName]*auditlogRuntimeState
+	auditOverviewOnce        sync.Once
+	auditOverview            *audit.OverviewReader
+	managementCursorOnce     sync.Once
+	managementCursorKey      [32]byte
+	managementCursorErr      error
 	unauthenticatedAudit     *unauthenticatedAuditLimiter
 	sessions                 session.CloseableRepository
 	authorizer               authorization.CloseableAuthorizer
@@ -960,6 +965,9 @@ func (this *service) close(flush bool) (rErr error) {
 	}
 	if this.executions != nil {
 		this.executions.waitUntilDrained()
+	}
+	if this.auditOverview != nil {
+		rErr = goerrors.Join(rErr, this.auditOverview.Close())
 	}
 	if this.managementApplication != nil {
 		defer common.KeepCloseError(&rErr, this.managementApplication)

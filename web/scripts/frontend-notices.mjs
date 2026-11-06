@@ -123,6 +123,7 @@ export function writeFrontendNotices(
   const supplements = JSON.parse(readFileSync(join(root, 'licenses/supplements.json'), 'utf8'));
   const components = [];
   const sections = [];
+  const vendoredAssets = [];
   for (const [, { directory, metadata, integrity }] of productionDependencies(root)) {
     const files = readdirSync(directory)
       .filter((name) => /^(?:licen[sc]e|copying)(?:$|[._-])/i.test(name))
@@ -156,6 +157,32 @@ export function writeFrontendNotices(
       licenseTextSource: source,
     });
   }
+  const symbolFile = join(root, 'src/ui/LeftPanelCloseIcon.tsx');
+  if (existsSync(symbolFile)) {
+    const bytes = readFileSync(symbolFile);
+    const path = bytes.toString('utf8').match(/<path\s+d="([^"]+)"/u)?.[1];
+    const upstreamPathSHA256 = '909577477a457f6902f6000398429358f32e11333146c050e80bb8abd9e4946f';
+    if (
+      path === undefined ||
+      createHash('sha256').update(path).digest('hex') !== upstreamPathSHA256
+    ) {
+      throw new Error('Unreviewed Material Symbols SVG path');
+    }
+    const source =
+      'https://github.com/google/material-design-icons/tree/master/symbols/web/left_panel_close';
+    vendoredAssets.push({
+      name: 'Google Material Symbols / left_panel_close',
+      version: '24px outlined',
+      license: 'Apache-2.0',
+      integrity: `sha256-${createHash('sha256').update(bytes).digest('base64')}`,
+      licenseTextSource: 'vendored SVG path; upstream content hash recorded separately',
+      source,
+      upstreamPathSHA256,
+    });
+    sections.push(
+      `Google Material Symbols / left_panel_close (24px outlined)\nCopyright Google LLC; MUI adapter Copyright 2026 Engity GmbH\nLicense: Apache-2.0\nSource: ${source}\nSVG path SHA256: ${upstreamPathSHA256}\n${readFileSync(new URL('../../LICENSE', import.meta.url), 'utf8')}`,
+    );
+  }
   writeFileSync(
     new URL('third-party-licenses.txt', output),
     `Browser UI production dependency notices\n\n${sections.join('\n\n====================\n\n')}`,
@@ -166,6 +193,7 @@ export function writeFrontendNotices(
       {
         schema: 'bifroest-frontend-components-v1',
         components,
+        vendoredAssets,
         localBundlingPatches: [
           {
             component: '@xterm/xterm@6.0.0',

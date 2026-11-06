@@ -5,6 +5,7 @@ import {
   activeAccess,
   assertUiPreferences,
   chooseLoginMethod,
+  confirmFullVerification,
   exactArtifactSelection,
   workspace,
 } from './workspace-ui.mjs';
@@ -277,6 +278,23 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
   );
   await table.getByRole('button', { name: 'Open audit log default', exact: true }).click();
   await artifacts
+    .getByText('This sign-in is not permitted to open this recording or audit log.', {
+      exact: false,
+    })
+    .waitFor();
+  assert.equal(
+    calls.filter((path) => path.endsWith('/audit-events/list')).length,
+    1,
+    'content-read ceilings also apply to the operational overview',
+  );
+  assert.equal(
+    calls.filter((path) => path.endsWith('/artifacts/audit')).length,
+    0,
+    'opening the source never implicitly transfers its journal',
+  );
+  await confirmFullVerification(page, artifacts, 'default');
+  await artifacts
+    .getByRole('region', { name: 'Local audit verification', exact: true })
     .getByText('This sign-in is not permitted to open this recording or audit log.', {
       exact: false,
     })

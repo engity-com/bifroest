@@ -26,6 +26,8 @@ const allowed = new Set([
   'management/sessions/show',
   'management/auditlogs/list',
   'management/recordings/list',
+  'management/recordings/verify',
+  'management/audit-events/list',
   'management/sessions/prepare',
   'management/sessions/confirm',
   'management/sessions/cancel',

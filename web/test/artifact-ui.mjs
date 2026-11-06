@@ -8,6 +8,7 @@ import {
   activeAccess,
   assertUiPreferences,
   captureLayout,
+  confirmFullVerification,
   logoutAccess,
   notification,
   reauthenticate,
@@ -455,6 +456,18 @@ try {
       .waitFor();
     const before = transfers.length;
     await auditPanel().getByRole('button', { name: 'Open audit log default', exact: true }).click();
+    await auditPanel()
+      .getByRole('region', { name: 'Audit overview (server-reported)', exact: true })
+      .getByRole('grid', { name: 'Audit events', exact: true })
+      .locator('[role="row"][data-id]')
+      .first()
+      .waitFor();
+    assert.equal(
+      transfers.length,
+      before,
+      'audit browsing must not download or verify the full journal',
+    );
+    await confirmFullVerification(page, auditPanel(), 'default');
     await successful(auditPanel());
     assert.equal(transfers.length, before + 1);
     assert.equal(
@@ -564,10 +577,17 @@ try {
     await auditPanel()
       .getByRole('button', { name: 'Open audit log default', exact: true })
       .waitFor();
+    await auditPanel().getByRole('button', { name: 'Open audit log default', exact: true }).click();
+    await auditPanel()
+      .getByRole('region', { name: 'Audit overview (server-reported)', exact: true })
+      .getByRole('grid', { name: 'Audit events', exact: true })
+      .locator('[role="row"][data-id]')
+      .first()
+      .waitFor();
     await page.evaluate(() =>
       fetch('/_bifroest/test/artifact-arm', { method: 'POST', credentials: 'omit' }),
     );
-    await auditPanel().getByRole('button', { name: 'Open audit log default', exact: true }).click();
+    await confirmFullVerification(page, auditPanel(), 'default');
     await page.evaluate(() => fetch('/_bifroest/test/artifact-entered', { credentials: 'omit' }));
     assert.equal(
       await auditPanel().getByRole('grid', { name: 'Audit events', exact: true }).count(),

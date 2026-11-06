@@ -132,6 +132,17 @@ export function writeBrowserRelease(
     licenseTextSource: component.licenseTextSource,
     artifacts: ['browser-ui'],
   }));
+  for (const asset of frontend.vendoredAssets ?? []) {
+    if (
+      asset.license !== 'Apache-2.0' ||
+      typeof asset.integrity !== 'string' ||
+      !/^sha256-[A-Za-z0-9+/]{43}=$/u.test(asset.integrity) ||
+      !/^[0-9a-f]{64}$/u.test(asset.upstreamPathSHA256)
+    ) {
+      throw new Error('Invalid vendored browser asset provenance');
+    }
+    components.push({ ecosystem: 'vendored-svg', ...asset, artifacts: ['browser-ui'] });
+  }
   const modules = new Map();
   function add(module, license, artifact) {
     const value = modules.get(module);

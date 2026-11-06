@@ -20,7 +20,7 @@ func browserComponentID(component browser.Component) string {
 }
 
 func browserPurl(component browser.Component) string {
-	if component.Ecosystem == "go-runtime" {
+	if component.Ecosystem == "go-runtime" || component.Ecosystem == "vendored-svg" {
 		return ""
 	}
 	parts := strings.Split(component.Name, "/")
@@ -92,6 +92,9 @@ func enrichBrowserSbom(document map[string]any, format, subjectName string, inve
 		for _, component := range m.Components {
 			id := "SPDXRef-BifroestBrowser-" + browserComponentID(component)
 			pkg := map[string]any{"SPDXID": id, "name": component.Name, "versionInfo": component.Version, "downloadLocation": spdxNoAssertion, "filesAnalyzed": false, "licenseConcluded": spdxNoAssertion, "licenseDeclared": component.License, "copyrightText": spdxNoAssertion, "licenseComments": "license text source: " + component.LicenseTextSource, "sourceInfo": browserSbomSource + "; artifacts: " + strings.Join(component.Artifacts, ", ") + "; source archive integrity: " + component.Integrity}
+			if component.Ecosystem == "vendored-svg" {
+				pkg["sourceInfo"] = browserSbomSource + "; artifacts: browser-ui; vendored adapter integrity: " + component.Integrity + "; upstream SVG: " + component.Source + "; upstream path SHA256: " + component.UpstreamPathSHA256
+			}
 			if purl := browserPurl(component); purl != "" {
 				pkg["externalRefs"] = []any{map[string]any{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": purl}}
 			}
@@ -121,6 +124,9 @@ func enrichBrowserSbom(document map[string]any, format, subjectName string, inve
 		for _, component := range m.Components {
 			id := "urn:bifroest:browser:" + browserComponentID(component)
 			item := map[string]any{"bom-ref": id, "type": "library", "name": component.Name, "version": component.Version, "licenses": cycloneDxLicenses(component.License), "properties": []any{map[string]any{"name": "bifroest:browser:artifacts", "value": strings.Join(component.Artifacts, ", ")}, map[string]any{"name": "bifroest:browser:license-text-source", "value": component.LicenseTextSource}, map[string]any{"name": "bifroest:browser:source-archive-integrity", "value": component.Integrity}}}
+			if component.Ecosystem == "vendored-svg" {
+				item["properties"] = []any{map[string]any{"name": "bifroest:browser:artifacts", "value": "browser-ui"}, map[string]any{"name": "bifroest:browser:license-text-source", "value": component.LicenseTextSource}, map[string]any{"name": "bifroest:browser:vendored-adapter-integrity", "value": component.Integrity}, map[string]any{"name": "bifroest:browser:upstream-svg", "value": component.Source}, map[string]any{"name": "bifroest:browser:upstream-path-sha256", "value": component.UpstreamPathSHA256}}
+			}
 			if purl := browserPurl(component); purl != "" {
 				item["purl"] = purl
 			}

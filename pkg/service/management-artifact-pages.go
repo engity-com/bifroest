@@ -100,7 +100,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 	var total int64
 	filter := managementGridPredicate(request.GridFilter, request.Operation)
 	ascending := request.Sort == "started-asc"
-	err := repository.native.WalkCatalog(ctx, func(row recording.NativeRecordingSummary) error {
+	err := repository.native.WalkMetadata(ctx, func(row recording.NativeRecordingSummary) error {
 		// Older recordings lack the requesting user; target accounts remain
 		// unknown. Encrypted private context never enters this index. Unknown
 		// values cannot match concrete filters; never enrich from live sessions
@@ -129,10 +129,14 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		}
 		return nil
 	}, func(progress recording.NativeCatalogProgress) error {
-		return reportManagementProgress(ctx, progress.Phase, progress.Completed, progress.Total)
+		phase := progress.Phase
+		if phase == "metadata" && (request.Query != "" || request.Flow != "" || request.User != "" || request.StartedFrom != "" || request.StartedUntil != "" || request.Status != "all" || request.GridFilter != nil) {
+			phase = "searching"
+		}
+		return reportManagementProgress(ctx, phase, progress.Completed, progress.Total)
 	})
 	if err != nil {
-		return page, fmt.Errorf("recording catalog metadata verification failed: %w", err)
+		return page, fmt.Errorf("recording catalog metadata read failed: %w", err)
 	}
 	for index, slot := range selected {
 		row := slot.value

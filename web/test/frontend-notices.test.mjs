@@ -10,6 +10,27 @@ import { writeFrontendNotices } from '../scripts/frontend-notices.mjs';
 
 const integrity = `sha512-${Buffer.alloc(64, 1).toString('base64')}`;
 
+test('vendored Material Symbols retain separate source/hash/Apache notices instead of claiming npm provenance', (t) => {
+  const f = fixture(t);
+  mkdirSync(join(f.root, 'src/ui'), { recursive: true });
+  writeFileSync(
+    join(f.root, 'src/ui/LeftPanelCloseIcon.tsx'),
+    readFileSync(new URL('../src/ui/LeftPanelCloseIcon.tsx', import.meta.url)),
+  );
+  f.save();
+  f.run();
+  const inventory = JSON.parse(readFileSync(join(f.output, 'frontend-components.json'), 'utf8'));
+  assert.equal(inventory.vendoredAssets.length, 1);
+  assert.equal(inventory.vendoredAssets[0].license, 'Apache-2.0');
+  assert.match(inventory.vendoredAssets[0].integrity, /^sha256-/u);
+  assert.match(
+    readFileSync(join(f.output, 'third-party-licenses.txt'), 'utf8'),
+    /Copyright Google LLC/u,
+  );
+  writeFileSync(join(f.root, 'src/ui/LeftPanelCloseIcon.tsx'), '<path d="unreviewed"/>');
+  assert.throws(f.run, /Unreviewed Material Symbols/u);
+});
+
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'bifroest-notices-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

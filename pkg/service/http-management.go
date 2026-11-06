@@ -43,6 +43,16 @@ func managementReadRequest(path string, values map[string]string) (protocol.Read
 		request.Operation = protocol.ShowSession
 	case webAPI + "management/auditlogs/list":
 		request.Operation = protocol.ListAuditlogs
+	case webAPI + "management/audit-events/list":
+		request.Operation = protocol.ListAuditEvents
+		if value, present := values["sensitive"]; present {
+			if value != "true" && value != "false" {
+				return request, protocol.ErrRequest
+			}
+			request.Sensitive = value == "true"
+		}
+	case webAPI + "management/recordings/verify":
+		request.Operation = protocol.VerifyRecordings
 	case webAPI + "management/recordings/list":
 		request.Operation = protocol.ListRecordings
 		request.Target, request.StartedFrom, request.StartedUntil = values["target"], values["startedFrom"], values["startedUntil"]
@@ -93,14 +103,24 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 		webError(w, http.StatusForbidden, "structured management is not available for this authorization")
 		return
 	}
+	if request.Operation == protocol.ListAuditEvents && !this.service.managementArtifactAllowed(access.auth) {
+		webError(w, http.StatusForbidden, "audit event overview is not permitted")
+		return
+	}
 	conn, transport, err := this.managementConnection(w, r, scope, access)
 	if err != nil {
 		webError(w, http.StatusForbidden, "management connection denied")
 		return
 	}
 	defer func() { _ = conn.Close(); <-conn.done }()
+	if managementLongRead(r.URL.Path) {
+		_ = transport.controller.SetWriteDeadline(time.Time{})
+	}
 	bindManagementProgress(conn, w)
 	data, err := this.service.executeManagementRead(conn, request)
+	// Removing an overall work deadline must not remove the bounded network
+	// write budget, including generic errors after a failed/canceled read.
+	_ = transport.controller.SetWriteDeadline(time.Now().Add(20 * time.Second))
 	if err != nil {
 		if recording.IsNativeCatalogWarmup(err) {
 			webJSONResponse(w, http.StatusServiceUnavailable, struct {
@@ -121,6 +141,7 @@ func (this *webService) deliverManagement(w http.ResponseWriter, conn *terminalC
 		return
 	}
 	transport.writing.Store(true)
+	_ = transport.controller.SetWriteDeadline(time.Now().Add(20 * time.Second))
 	if conn.IsClosed() || conn.Lifetime().Err() != nil {
 		transport.writing.Store(false)
 		webError(w, http.StatusForbidden, "management access ended")

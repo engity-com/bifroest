@@ -28,13 +28,15 @@ type File struct {
 }
 
 type Component struct {
-	Ecosystem         string   `json:"ecosystem"`
-	Name              string   `json:"name"`
-	Version           string   `json:"version"`
-	License           string   `json:"license"`
-	Integrity         string   `json:"integrity"`
-	LicenseTextSource string   `json:"licenseTextSource"`
-	Artifacts         []string `json:"artifacts"`
+	Ecosystem          string   `json:"ecosystem"`
+	Name               string   `json:"name"`
+	Version            string   `json:"version"`
+	License            string   `json:"license"`
+	Integrity          string   `json:"integrity"`
+	LicenseTextSource  string   `json:"licenseTextSource"`
+	Artifacts          []string `json:"artifacts"`
+	Source             string   `json:"source,omitempty"`
+	UpstreamPathSHA256 string   `json:"upstreamPathSHA256,omitempty"`
 }
 
 type Patch struct {
@@ -154,11 +156,29 @@ func (m *Manifest) Validate() error {
 	seen := map[string]bool{}
 	for _, component := range m.Components {
 		key := component.Ecosystem + "/" + component.Name + "@" + component.Version
-		if seen[key] || !versionPattern.MatchString(component.Version) || component.Name == "" || len(component.Name) > 256 || strings.ContainsAny(component.Name, "\x00\r\n") || !slices.Contains([]string{"MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "0BSD", "(MIT OR CC0-1.0)", "Apache-2.0 AND BSD-3-Clause AND MIT"}, component.License) || component.LicenseTextSource == "" || len(component.LicenseTextSource) > 1024 || len(component.Artifacts) == 0 {
+		if seen[key] || (component.Ecosystem != "vendored-svg" && !versionPattern.MatchString(component.Version)) || component.Name == "" || len(component.Name) > 256 || strings.ContainsAny(component.Name, "\x00\r\n") || !slices.Contains([]string{"MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "0BSD", "(MIT OR CC0-1.0)", "Apache-2.0 AND BSD-3-Clause AND MIT"}, component.License) || component.LicenseTextSource == "" || len(component.LicenseTextSource) > 1024 || len(component.Artifacts) == 0 {
 			return fmt.Errorf("invalid browser component %q", key)
 		}
 		seen[key] = true
+		if component.Ecosystem != "vendored-svg" && (component.Source != "" || component.UpstreamPathSHA256 != "") {
+			return fmt.Errorf("unexpected vendored provenance on %q", key)
+		}
 		switch component.Ecosystem {
+		case "vendored-svg":
+			encoded, ok := strings.CutPrefix(component.Integrity, "sha256-")
+			decoded, err := base64.StdEncoding.DecodeString(encoded)
+			if component.Name != "Google Material Symbols / left_panel_close" || component.Version != "24px outlined" || component.License != "Apache-2.0" || component.Source != "https://github.com/google/material-design-icons/tree/master/symbols/web/left_panel_close" || component.UpstreamPathSHA256 != "909577477a457f6902f6000398429358f32e11333146c050e80bb8abd9e4946f" || !ok || err != nil || len(decoded) != sha256.Size || base64.StdEncoding.EncodeToString(decoded) != encoded || !slices.Equal(component.Artifacts, []string{"browser-ui"}) {
+				return fmt.Errorf("unreviewed vendored browser SVG")
+			}
+			found := false
+			for _, input := range m.Inputs {
+				if input.Name == "web/src/ui/LeftPanelCloseIcon.tsx" && input.SHA256 == hex.EncodeToString(decoded) {
+					found = true
+				}
+			}
+			if !found {
+				return fmt.Errorf("vendored browser SVG lacks its exact source input")
+			}
 		case "npm":
 			encoded, ok := strings.CutPrefix(component.Integrity, "sha512-")
 			decoded, err := base64.StdEncoding.DecodeString(encoded)

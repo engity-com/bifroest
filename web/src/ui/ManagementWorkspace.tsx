@@ -1,9 +1,9 @@
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import DescriptionIcon from '@mui/icons-material/Description';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import MenuIcon from '@mui/icons-material/Menu';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutlineOutlined';
+import ScreenshotMonitorIcon from '@mui/icons-material/ScreenshotMonitor';
 import {
   Box,
   Drawer,
@@ -31,6 +31,7 @@ import { AdminBreadcrumbs } from './AdminBreadcrumbs';
 import { accessMessages } from './access-messages';
 import { type AdminDetail, AdminDetailContext, type AdminSection } from './admin-navigation';
 import { reportUiError } from './error-report';
+import { LeftPanelCloseIcon } from './LeftPanelCloseIcon';
 import type { ManagementLocation } from './management-location';
 import { ManagementNavigationContext } from './management-navigation';
 import { Alert, Button } from './material';
@@ -363,8 +364,10 @@ export function ManagementWorkspace({
                             <InfoOutlinedIcon />
                           ) : section === 'sessions' ? (
                             <PeopleOutlineIcon />
+                          ) : section === 'recordings' ? (
+                            <ScreenshotMonitorIcon />
                           ) : (
-                            <DescriptionIcon />
+                            <FactCheckIcon />
                           )}
                         </ListItemIcon>
                         <ListItemText
@@ -406,7 +409,7 @@ export function ManagementWorkspace({
             <div className="admin-main">
               <header className="admin-page-heading" ref={header}>
                 <IconButton
-                  aria-label={t('adminNavigationOpen')}
+                  aria-label={t(drawerOpen ? 'adminNavigationCollapse' : 'adminNavigationOpen')}
                   aria-expanded={drawerOpen}
                   aria-controls={`${navigationID}-navigation`}
                   disabled={disabled || locked}
@@ -414,7 +417,7 @@ export function ManagementWorkspace({
                     wide ? setCollapsed((value) => !value) : setTemporaryOpen((value) => !value)
                   }
                 >
-                  {drawerOpen ? <ArrowBackIcon /> : <MenuIcon />}
+                  {drawerOpen ? <LeftPanelCloseIcon /> : <MenuIcon />}
                 </IconButton>
                 <AdminBreadcrumbs items={crumbs} />
               </header>

@@ -24,16 +24,17 @@ const webManagementProtocol = "bifroest-management.v1"
 type webManagementContextKey struct{}
 type webManagementRequestIDContextKey struct{}
 type webManagementChannel struct {
-	stream   *webTerminalStream
-	conn     *terminalConnection
-	access   *webAccess
-	scope    webScope
-	request  *http.Request
-	jobs     chan webManagementJob
-	mutex    sync.Mutex
-	pending  map[string]context.CancelFunc
-	last     uint64
-	progress bool
+	stream           *webTerminalStream
+	conn             *terminalConnection
+	access           *webAccess
+	scope            webScope
+	request          *http.Request
+	jobs             chan webManagementJob
+	verificationJobs chan webManagementJob
+	mutex            sync.Mutex
+	pending          map[string]context.CancelFunc
+	last             uint64
+	progress         bool
 }
 type webManagementJob struct {
 	id, action string
@@ -164,7 +165,7 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 		return
 	}
 	defer func() { _ = conn.Close(); <-conn.done }()
-	channel := &webManagementChannel{stream: stream, conn: conn, access: access, scope: scope, request: r, jobs: make(chan webManagementJob, 4), pending: make(map[string]context.CancelFunc), progress: progress}
+	channel := &webManagementChannel{stream: stream, conn: conn, access: access, scope: scope, request: r, jobs: make(chan webManagementJob, 4), verificationJobs: make(chan webManagementJob, 4), pending: make(map[string]context.CancelFunc), progress: progress}
 	defer func() {
 		this.mutex.Lock()
 		for key, value := range this.confirmations {
@@ -206,23 +207,42 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 	}
 	close(stream.settingsReady)
 	release()
+	// A single bounded verification/transfer worker is independent of normal
+	// reads and borrows this same actor/admission, never a new bearer or socket.
+	verificationDone := make(chan struct{})
+	go func() {
+		defer close(verificationDone)
+		for {
+			select {
+			case <-conn.Lifetime().Done():
+				return
+			case job := <-channel.verificationJobs:
+				channel.run(this, job)
+			}
+		}
+	}()
+	defer func() { _ = conn.Close(); <-verificationDone }()
 	for {
 		select {
 		case <-conn.Lifetime().Done():
 			return
 		case job := <-channel.jobs:
-			channel.serve(this, job)
-			channel.mutex.Lock()
-			delete(channel.pending, job.id)
-			channel.mutex.Unlock()
-			job.cancel()
+			channel.run(this, job)
 		}
 	}
+}
+
+func (this *webManagementChannel) run(service *webService, job webManagementJob) {
+	defer job.cancel()
+	defer func() { this.mutex.Lock(); delete(this.pending, job.id); this.mutex.Unlock() }()
+	this.serve(service, job)
 }
 
 func managementChannelAction(action string) bool {
 	switch action {
 	case "management/flows/list", "management/version/show", "management/sessions/list", "management/sessions/show", "management/auditlogs/list", "management/recordings/list", "management/sessions/prepare", "management/sessions/confirm", "management/sessions/cancel", "management/artifacts/recording", "management/artifacts/audit":
+		return true
+	case "management/audit-events/list", "management/recordings/verify":
 		return true
 	}
 	return false
@@ -302,8 +322,12 @@ func (this *webManagementChannel) readLoop() {
 				cancel()
 				return
 			}
+			queue := this.jobs
+			if action == "management/recordings/verify" || action == "management/artifacts/audit" {
+				queue = this.verificationJobs
+			}
 			select {
-			case this.jobs <- webManagementJob{id: id, action: action, fields: fields, ctx: ctx, cancel: cancel}:
+			case queue <- webManagementJob{id: id, action: action, fields: fields, ctx: ctx, cancel: cancel}:
 			case <-ctx.Done():
 				cancel()
 				return

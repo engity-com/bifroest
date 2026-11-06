@@ -119,6 +119,19 @@ it('starts at Bifröst with a persistent tab-local drawer and keeps the entire b
     ),
   );
   expect(container.querySelector('[role="tablist"]')).toBeNull();
+  expect(
+    button(container, t('workspaceRecordings')).querySelector(
+      '[data-testid="ScreenshotMonitorIcon"]',
+    ),
+  ).not.toBeNull();
+  expect(
+    button(container, t('workspaceAuditlogs')).querySelector('[data-testid="FactCheckIcon"]'),
+  ).not.toBeNull();
+  expect(
+    button(container, t('adminNavigationCollapse')).querySelector(
+      '[data-testid="LeftPanelCloseIcon"]',
+    ),
+  ).not.toBeNull();
   const breadcrumb = () => container.querySelector(`nav[aria-label="${t('adminBreadcrumbs')}"]`);
   await vi.waitFor(() => expect(breadcrumb()?.textContent).toBe('Bifröst/Overview'));
   expect(
@@ -141,10 +154,12 @@ it('starts at Bifröst with a persistent tab-local drawer and keeps the entire b
   }
   await click(back);
   await vi.waitFor(() => expect(breadcrumb()?.textContent).not.toContain('fixture-session-id'));
-  await click(button(container, t('adminNavigationOpen')));
+  await click(button(container, t('adminNavigationCollapse')));
   expect(button(container, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('false');
   await click(button(container, t('adminNavigationOpen')));
-  expect(button(container, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('true');
+  expect(button(container, t('adminNavigationCollapse')).getAttribute('aria-expanded')).toBe(
+    'true',
+  );
 });
 
 it('contains a temporary drawer and backdrop inside only its own management pane', async () => {
@@ -163,6 +178,11 @@ it('contains a temporary drawer and backdrop inside only its own management pane
   expect(backdrop.bottom).toBeLessThanOrEqual(pane.bottom + 1);
   expect(button(second, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('false');
   expect(second.getAttribute('aria-hidden')).not.toBe('true');
-  await click(button(first, t('adminNavigationOpen')));
+  const close = first.querySelector<HTMLButtonElement>('.admin-page-heading button');
+  expect(close?.querySelector('[data-testid="LeftPanelCloseIcon"]')).not.toBeNull();
+  if (!close) {
+    throw new Error('Missing panel-close control');
+  }
+  await click(close);
   expect(button(first, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('false');
 });

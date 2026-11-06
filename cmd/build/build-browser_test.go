@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	gos "os"
@@ -94,6 +96,11 @@ func TestBrowserSbomEnrichmentHasExactAssetHashesAndSeparateSourceClaims(t *test
 	binary := testReleaseManifestFile(t, bc, &testSbomPlatform, buildArtifactTypeBinary, "binary", "binary", nil)
 	binary.thirdPartyLicenseInventory = testThirdPartyLicenseInventory()
 	testBrowserManifest(t, binary)
+	m := binary.thirdPartyLicenseInventory.browser
+	digest, err := hex.DecodeString("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	require.NoError(t, err)
+	m.Inputs = append(m.Inputs, browser.File{Name: "web/src/ui/LeftPanelCloseIcon.tsx", SHA256: hex.EncodeToString(digest)})
+	m.Components = append(m.Components, browser.Component{Ecosystem: "vendored-svg", Name: "Google Material Symbols / left_panel_close", Version: "24px outlined", License: "Apache-2.0", Integrity: "sha256-" + base64.StdEncoding.EncodeToString(digest), LicenseTextSource: "vendored SVG fixture", Artifacts: []string{"browser-ui"}, Source: "https://github.com/google/material-design-icons/tree/master/symbols/web/left_panel_close", UpstreamPathSHA256: "909577477a457f6902f6000398429358f32e11333146c050e80bb8abd9e4946f"})
 	for _, format := range []string{"spdx-json@2.3", "cyclonedx-json@1.6"} {
 		document := map[string]any{"packages": []any{map[string]any{"name": "artifact", "SPDXID": "SPDXRef-Root"}}, "components": []any{}, "metadata": map[string]any{"component": map[string]any{"name": "artifact", "bom-ref": "root"}}}
 		require.NoError(t, enrichBrowserSbom(document, format, "artifact", binary.thirdPartyLicenseInventory))
@@ -108,6 +115,9 @@ func TestBrowserSbomEnrichmentHasExactAssetHashesAndSeparateSourceClaims(t *test
 		require.Contains(t, string(second), "pkg:npm/%40fixture/library@1.2.3")
 		require.Contains(t, string(second), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 		require.Contains(t, string(second), browserManifestDigest(binary.browserManifestRaw))
+		require.Contains(t, string(second), "left_panel_close")
+		require.Contains(t, string(second), m.Components[len(m.Components)-1].UpstreamPathSHA256)
+		require.NotContains(t, string(second), "pkg:vendored-svg/", "a checked-in SVG must not claim an invented package-manager identity")
 	}
 }
 
@@ -187,7 +197,7 @@ func TestBuiltBrowserReleaseInventoryMatchesActualSources(t *testing.T) {
 		}
 		require.True(t, found, name)
 	}
-	for _, ecosystem := range []string{"npm", "golang", "go-runtime"} {
+	for _, ecosystem := range []string{"npm", "golang", "go-runtime", "vendored-svg"} {
 		found := false
 		for _, component := range m.Components {
 			if component.Ecosystem == ecosystem {

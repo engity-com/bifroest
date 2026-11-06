@@ -123,19 +123,33 @@ passphrase bytes are wiped; JavaScript strings/immutable Blobs remain subject to
 browser garbage collection, so this is not a physical-memory-erasure guarantee.
 The cache is never stored in IndexedDB, localStorage, URLs or RememberMe.
 
-Audit events are displayed only from successfully verified local export bytes.
-The view keeps a bounded offset/time index and materializes only a page of rows,
-not one retained JavaScript object for every event. Column predicates use the
-native grid operators. Viewing, filtering and paging those events do not issue
-additional server requests.
-Selecting an event opens a detail page inside its owning management tab. Closing
-it retains the local grid and does not fetch or replay the audit transfer.
+The default audit-event overview is operational **server-reported data**, not
+independent producer/journal evidence. It loads at most 20 records per page;
+source access still requires `allowArtifactTransfer`, and forced-command metadata
+ceilings cannot acquire this content capability. The native reader indexes only
+public record metadata in bounded private temporary files, pins selected source
+handles, and authenticates only selected records. It does not verify the complete
+producer chain or download it to the browser. Source/cursor/filter/actor binding
+and final audit/capture completion still govern publication. Unverified event
+shortcuts are not canonicalized from server-reported flow metadata.
+
+Private output remains a separate opt-in and encrypted private context is never
+decrypted server-side. An exact clear-flow selector can narrow a public overview
+without enabling a private export; unknown encrypted context cannot match that
+selector. Hidden fields are not empty values for negative/empty predicates.
+
+**Verify all** explicitly starts the existing whole-audit transfer and independent
+local verifier. Only its local event view is built from successfully verified
+local export bytes. That view keeps a bounded offset/time index and materializes
+one page, not one JavaScript object for every event. Its filtering/paging remain
+local to those bytes. Closing a verified event detail retains the local grid and
+does not replay the transfer. Producer identity still needs an independent pin.
 
 The detail-visibility eye is an origin-scoped presentation preference, not an
 authorization or encryption switch. Compact mode hides supplemental columns and
 metadata; full mode displays only information already available under the same
-actor and policy. A toggle refreshes the affected active list (locally for audit
-events) but never upgrades credentials, uploads keys or enables sensitive audit
+actor and policy. A toggle refreshes the affected active list (locally for the
+verified audit view, remotely for its server overview) but never upgrades credentials, uploads keys or enables sensitive audit
 exports. Unavailable detail controls remain disabled.
 
 Live shell titles are bounded, control-/bidi-formatting-free text attached only
@@ -164,17 +178,32 @@ can contain the original requesting name; older or encrypted recordings may not
 expose identity details. Missing names and target accounts are not reconstructed
 from current sessions or authorization.
 
-Cold Recording queries run as one cancellable scan without an overall wall-clock
-deadline. A private temporary file captures only canonical binary Recording IDs
-from the initial inventory; it is closed and removed on success, failure or
-cancellation. Verification uses bounded directory batches and per-recording
-container/canonical-Cast limits, not an aggregate archive-size allowance. The
-resident metadata acceleration cache holds at most 1,024 entries; its 30-second
-entry TTL does not expire or restart an active scan. Only the requested page plus
-one lookahead candidate is retained for sorting/filtering. Every output page
-still independently reopens and reverifies its selected artifacts. A failed or
-cancelled scan discards provisional cache state. No keys, rights or actor grants
-are cached, and no read is retried automatically.
+Recording listing, searching and complete verification are separate operations.
+Normal listing indexes authenticated header/seal/setup metadata without hashing,
+decoding or verifying intervening contents. The metadata type is not a full
+verification result, and its cache never populates the content-verification cache.
+Only the selected page is independently reopened and fully checked before
+publication; a corrupt unselected body is the concern of an explicit full check,
+not an implicit prerequisite for every other page.
+
+Private metadata caches live outside evidence directories, bind inode/file ID,
+size, mode, mtime and change stamps, and verify their cached images' digests. They
+are bounded and removed on owner shutdown, store no credentials/decryption keys
+or decrypted encrypted context, and never authorize a row. Recording metadata
+entries may contain setup context already clear in that source; audit indexes
+contain only public fields/positions, never private payloads. A cache miss or
+eviction rebuilds metadata only, not complete recording contents. A private
+temporary binary-ID inventory fixes each Recording query's member set and is
+digest-checked and removed on every outcome. Only a page plus lookahead is kept
+for sorting/filtering; no whole inventory is materialized in RAM.
+
+Explicit Recording **Verify all** bypasses the verified cache and reads every
+container again. Its full/outer counters distinguish clear private-content checks
+from encrypted envelope-only checks. It establishes no independent browser trust.
+An independent, single bounded verification/transfer worker shares the existing
+channel admission and four-pending-request limit, so it does not block operational
+reads or acquire a new bearer/socket/connection quota. Cancellation and native
+session policies cover both workers. No read is retried automatically.
 
 Clients opt into count-only progress with `"progress":"counts-v1"` in the
 `bifroest-management.v1` open frame. Correlated progress frames contain only
@@ -218,7 +247,8 @@ or verification budgets.
 | Private-key import | One PEM/OpenSSH key, at most 64 KiB; optional matching OpenSSH certificate at most 12 KiB |
 | Key algorithms | Ed25519, RSA 2048–8192, NIST P-256/P-384/P-521; no DSA or hardware/security-key formats |
 | Artifact payload | 64 MiB in tab memory; use native tools for larger artifacts |
-| Recording catalog | No aggregate count, verification-volume or execution-time limit. Directory batches of 128; cache at most 1,024 entries; at most one page plus lookahead in selection memory. Each individual container and canonical/decoded Cast verification remains bounded to 128 MiB. Private temporary inventory storage grows by 16 bytes per Recording ID; filesystem/I/O failures fail closed. |
+| Recording catalog | Metadata-index listing/search; at most 20 selected contents checked per page, one lookahead metadata candidate. Directory batches of 128; process-local disk metadata cache at most 128 MiB / 16,384 entries per repository (4 KiB per entry); no aggregate archive count/execution deadline. Each individual content check remains bounded to 128 MiB container and canonical/decoded Cast. Private temporary inventory uses 16 bytes per Recording ID. |
+| Audit overview | At most 20 selected records, up to 21 retained source leases; each segment at most 17 MiB. Public-metadata cache at most 128 MiB / 128 entries plus one in-progress index build bounded to 64 MiB; no private payloads or whole-journal browser download. Cache eviction may rebuild public metadata. |
 | Recording playback | 100,000 events, at most 512 columns, 256 rows and 32,768 cells |
 | Local audit-event view | At most 250,000 records / 64 MiB of verified JSONL; bounded typed index, at most 1 MiB per event line and 20 displayed rows per page |
 

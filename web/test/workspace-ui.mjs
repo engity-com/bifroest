@@ -175,6 +175,16 @@ export async function logoutAccess(page) {
   }
 }
 
+export async function confirmFullVerification(page, panel, source) {
+  await panel.getByRole('button', { name: 'Verify all', exact: true }).click();
+  const dialog = page.getByRole('dialog', {
+    name: 'Verify the entire selected source?',
+    exact: true,
+  });
+  await dialog.getByText(source, { exact: true }).waitFor();
+  await dialog.getByRole('button', { name: 'Verify all', exact: true }).click();
+}
+
 export async function notification(page, text) {
   const dialog = page.getByRole('dialog', { name: 'Notification details', exact: true });
   if (!(await dialog.isVisible())) {
@@ -379,12 +389,9 @@ export async function workspace(page, name) {
             : name,
       exact: true,
     });
-  if (
-    (await pane
-      .getByRole('button', { name: 'Open management navigation', exact: true })
-      .getAttribute('aria-expanded')) !== 'true'
-  ) {
-    await pane.getByRole('button', { name: 'Open management navigation', exact: true }).click();
+  const toggle = pane.locator('.admin-page-heading button[aria-expanded]');
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+    await toggle.click();
   }
   await button.click();
   // React Router commits navigation asynchronously; assert the committed page,

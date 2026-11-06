@@ -341,6 +341,40 @@ export const messages = {
     'Catalog request cancelled. No late or partial page was adopted; no server logout/disposal was requested.',
   artifactCatalogCancel: 'Cancel catalog request',
   scanWaiting: 'Waiting for the catalog scan…',
+  scanMetadata: 'Reading catalog metadata…',
+  scanSearching: 'Searching catalog metadata…',
+  verifyAll: 'Verify all',
+  verifyAllTitle: 'Verify the entire selected source?',
+  verifyAllRecordingsScope:
+    'This reads every sealed recording in the selected source, not only this page or its filters. It does not change recordings or dispose workloads. Large artifacts may require the CLI.',
+  verifyAllAuditScope:
+    'This downloads the selected auditlog snapshot and verifies it locally. It does not change the journal or upload decryption keys. The overview remains available while this runs; use the CLI for larger journals or independent forensic checks.',
+  verifyAllCancel: 'Cancel full verification',
+  verifyAllServerDone:
+    'Server verification completed. This is not independent browser verification.',
+  verifyAllFull: 'Full content',
+  verifyAllOuter: 'Encrypted outer envelopes',
+  verifyAllServerFailed:
+    'Full server verification could not be completed. See the server log for details.',
+  verifyAllServerCancelled:
+    'Full verification was cancelled locally; no complete verification result was adopted.',
+  verifyAllSource: 'Verification source',
+  auditOverview: 'Audit overview (server-reported)',
+  auditOverviewWarning:
+    'Operational server-reported data. Only selected records are checked on the server; this view is not an independent verification of the complete journal.',
+  auditOverviewPrivate: 'Show private fields in the overview (clear journals only)',
+  auditOverviewEncrypted:
+    'Private fields are encrypted. Open local verification to decrypt them without uploading keys. Unknown private context cannot match a concrete flow filter.',
+  auditOverviewMode: 'Overview',
+  auditLocalMode: 'Local verification',
+  auditLocalRegion: 'Local audit verification',
+  auditLocalRunning: 'Local verification is running.',
+  auditOverviewFailed:
+    'The audit overview could not be loaded. Check the server log and refresh explicitly.',
+  auditOverviewForgotten:
+    'Local profile data was forgotten. Sign in again to load an audit overview.',
+  auditOverviewDetails: 'Server-reported event details',
+  auditOverviewBack: 'Back to audit overview',
   scanNoResult: 'No completed result loaded.',
   scanInventory: 'Capturing the catalog inventory…',
   scanVerifying: 'Verifying recordings…',

@@ -77,3 +77,9 @@ path = "test/e2e/testdata/busybox/read-key-cursor.patch"
 precedence = "override"
 SPDX-FileCopyrightText = ["2008 Rob Landley", "2008 Denys Vlasenko", "2026 Engity GmbH"]
 SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = "web/src/ui/LeftPanelCloseIcon.tsx"
+precedence = "override"
+SPDX-FileCopyrightText = ["Google LLC", "2026 Engity GmbH"]
+SPDX-License-Identifier = "Apache-2.0"

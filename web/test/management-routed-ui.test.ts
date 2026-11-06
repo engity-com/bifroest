@@ -62,7 +62,11 @@ function fixture() {
       skipped: 0,
     })),
     managementSession: vi.fn(async (_flow: string, _id: string, _signal?: AbortSignal) => session),
-    managementFlows: vi.fn(async () => ({ items: [], next: '', skipped: 0 })),
+    managementFlows: vi.fn<WebAccess['managementFlows']>(async () => ({
+      items: [],
+      next: '',
+      skipped: 0,
+    })),
     managementVersion: vi.fn(),
     managementAuditlogs: vi.fn(async () => ({
       items: [{ name: 'default', enabled: true, recordingEnabled: true, encrypted: false }],
@@ -195,6 +199,29 @@ function button(host: ParentNode, label: string) {
   return result;
 }
 const click = async (node: HTMLElement) => act(async () => node.click());
+
+it('uses screenshot_monitor and fact_check consistently for Overview actions and side navigation', async () => {
+  const { access, api } = fixture();
+  api.managementFlows.mockResolvedValue({
+    items: [
+      { name: 'docker', auditlog: 'default', authorization: 'simple', environment: 'docker' },
+    ],
+    next: '',
+    skipped: 0,
+  });
+  const { host } = await mount('/Admin/admin', 'workspace', access);
+  await vi.waitFor(() => expect(button(host, 'Recordings docker').disabled).toBe(false));
+  expect(
+    button(host, 'Recordings docker').querySelector('[data-testid="ScreenshotMonitorIcon"]'),
+  ).not.toBeNull();
+  expect(
+    button(host, 'Audit logs docker').querySelector('[data-testid="FactCheckIcon"]'),
+  ).not.toBeNull();
+  expect(
+    button(host, 'Recordings').querySelector('[data-testid="ScreenshotMonitorIcon"]'),
+  ).not.toBeNull();
+  expect(button(host, 'Audit logs').querySelector('[data-testid="FactCheckIcon"]')).not.toBeNull();
+});
 
 it('shows local audit indexing as cancellable work and releases no events from an unfinished index', async () => {
   const { access, api } = fixture();

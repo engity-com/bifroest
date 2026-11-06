@@ -6,6 +6,8 @@ import { type Message, t } from './messages';
 const labels: Record<string, Message> = {
   waiting: 'scanWaiting',
   inventory: 'scanInventory',
+  metadata: 'scanMetadata',
+  searching: 'scanSearching',
   verifying: 'scanVerifying',
   reverifying: 'scanReverifying',
   finalizing: 'scanFinalizing',

@@ -1,7 +1,7 @@
 import { act, createElement, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ArtifactPanel } from '../src/artifacts/ArtifactPanel';
+import { ArtifactEvidencePanel as ArtifactPanel } from '../src/artifacts/ArtifactPanel';
 import type {
   EvidenceMetadata,
   EvidenceOptions,

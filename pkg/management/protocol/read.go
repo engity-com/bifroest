@@ -23,12 +23,14 @@ var ErrRequest = errors.New("invalid structured management request")
 type ReadOperation string
 
 const (
-	ListFlows      ReadOperation = "flows.list"
-	ListSessions   ReadOperation = "sessions.list"
-	ShowSession    ReadOperation = "sessions.show"
-	ListAuditlogs  ReadOperation = "auditlogs.list"
-	ListRecordings ReadOperation = "recordings.list"
-	ShowVersion    ReadOperation = "version.show"
+	ListFlows        ReadOperation = "flows.list"
+	ListSessions     ReadOperation = "sessions.list"
+	ShowSession      ReadOperation = "sessions.show"
+	ListAuditlogs    ReadOperation = "auditlogs.list"
+	ListRecordings   ReadOperation = "recordings.list"
+	ListAuditEvents  ReadOperation = "audit-events.list"
+	VerifyRecordings ReadOperation = "recordings.verify"
+	ShowVersion      ReadOperation = "version.show"
 )
 
 type ReadRequest struct {
@@ -48,6 +50,7 @@ type ReadRequest struct {
 	Sort          string        `json:"sort,omitempty"`
 	Query         string        `json:"query,omitempty"`
 	GridFilter    *GridFilter   `json:"gridFilter,omitempty"`
+	Sensitive     bool          `json:"sensitive,omitempty"`
 }
 
 func text(value string, maximum int) bool {
@@ -64,7 +67,10 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 	if !text(this.Flow, 255) || !text(this.User, 256) || !text(this.Query, 256) || len(this.After) > MaximumCursorBytes {
 		return this, ErrRequest
 	}
-	if this.Auditlog != "" && this.Operation != ListRecordings {
+	if this.Sensitive && this.Operation != ListAuditEvents {
+		return this, ErrRequest
+	}
+	if this.Auditlog != "" && this.Operation != ListRecordings && this.Operation != ListAuditEvents && this.Operation != VerifyRecordings {
 		return this, ErrRequest
 	}
 	if this.VersionDetail != "" && this.Operation != ShowVersion {
@@ -74,6 +80,21 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 		return this, ErrRequest
 	}
 	switch this.Operation {
+	case VerifyRecordings:
+		if !ValidAuditlogName(this.Auditlog) || this.Limit != 0 || this.After != "" || this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" || this.Query != "" || this.Sort != "" || this.GridFilter != nil {
+			return this, ErrRequest
+		}
+		return this, nil
+	case ListAuditEvents:
+		if !ValidAuditlogName(this.Auditlog) || this.User != "" || this.State != "" || this.ID != "" && !ValidID(this.ID) || this.ID != "" && this.After != "" {
+			return this, ErrRequest
+		}
+		if this.Sort == "" {
+			this.Sort = "recorded-desc"
+		}
+		if this.Sort != "recorded-desc" && this.Sort != "recorded-asc" {
+			return this, ErrRequest
+		}
 	case ShowVersion:
 		if this.Limit != 0 || this.After != "" || this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" || this.Query != "" || this.Sort != "" {
 			return this, ErrRequest
@@ -221,6 +242,10 @@ func (this ReadRequest) Cursor() (string, string, error) {
 		selected, err := this.RecordingCursor()
 		return selected.Auditlog, selected.ID, err
 	}
+	if this.Operation == ListAuditEvents {
+		selected, err := this.AuditEventCursor()
+		return selected.Auditlog, selected.ID, err
+	}
 	if len(this.After) > MaximumCursorBytes || !strings.HasPrefix(this.After, "bmp1.") {
 		return "", "", ErrRequest
 	}
@@ -290,14 +315,17 @@ type Page[T any] struct {
 	Skipped int    `json:"skipped"`
 }
 type ReadResult struct {
-	Version     int                     `json:"version"`
-	Operation   ReadOperation           `json:"operation"`
-	Flows       *Page[FlowSummary]      `json:"flows,omitempty"`
-	Sessions    *Page[SessionItem]      `json:"sessions,omitempty"`
-	Session     *SessionItem            `json:"session,omitempty"`
-	Auditlogs   *Page[AuditlogSummary]  `json:"auditlogs,omitempty"`
-	Recordings  *Page[RecordingSummary] `json:"recordings,omitempty"`
-	VersionInfo *VersionInfo            `json:"versionInfo,omitempty"`
+	Version          int                      `json:"version"`
+	Operation        ReadOperation            `json:"operation"`
+	Flows            *Page[FlowSummary]       `json:"flows,omitempty"`
+	Sessions         *Page[SessionItem]       `json:"sessions,omitempty"`
+	Session          *SessionItem             `json:"session,omitempty"`
+	Auditlogs        *Page[AuditlogSummary]   `json:"auditlogs,omitempty"`
+	Recordings       *Page[RecordingSummary]  `json:"recordings,omitempty"`
+	VersionInfo      *VersionInfo             `json:"versionInfo,omitempty"`
+	AuditEvents      *Page[AuditEventSummary] `json:"auditEvents,omitempty"`
+	AuditEventSource *AuditEventSource        `json:"auditEventSource,omitempty"`
+	Verification     *CatalogVerification     `json:"verification,omitempty"`
 }
 
 // VersionInfo is the exact native formatter output, not an independent build or

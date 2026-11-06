@@ -1,7 +1,7 @@
 import CloseIcon from '@mui/icons-material/Close';
-import DescriptionIcon from '@mui/icons-material/Description';
-import FactCheckIcon from '@mui/icons-material/FactCheckOutlined';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutlineOutlined';
+import ScreenshotMonitorIcon from '@mui/icons-material/ScreenshotMonitor';
 import { CircularProgress, IconButton, Link, Tooltip } from '@mui/material';
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
@@ -782,7 +782,7 @@ export function ManagementPanel({
                     });
                   }}
                 >
-                  <DescriptionIcon fontSize="small" />
+                  <ScreenshotMonitorIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
               <Tooltip title={t('workspaceAuditlogs')}>

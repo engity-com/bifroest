@@ -162,7 +162,7 @@ export interface RecordingOptions extends PageOptions {
   readonly sort?: 'started-desc' | 'started-asc';
 }
 
-function recordingTime(value: unknown): string {
+export function recordingTime(value: unknown): string {
   if (typeof value !== 'string') {
     throw new RememberMeError('unavailable');
   }

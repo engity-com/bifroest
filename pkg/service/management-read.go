@@ -58,7 +58,7 @@ func managementActionPolicy(auth authorization.Authorization, request protocol.S
 
 // This is the shared environment capability, not a CLI command adapter. These
 // operations intentionally expose no credentials or artifact content transfers.
-func (this *service) RunManagementRead(task environment.TaskContext, request protocol.ReadRequest, output io.Writer, _ bool, _ bool) (int, error) {
+func (this *service) RunManagementRead(task environment.TaskContext, request protocol.ReadRequest, output io.Writer, _ bool, allowArtifactTransfer bool) (int, error) {
 	if task == nil || task.Authorization() == nil || !task.Authorization().IsAuthorized() || task.Authorization().FindSession() == nil || task.Authorization().FindSession().Flow() != task.Authorization().Flow() || !this.isManagementFlow(task.Authorization().Flow()) {
 		return -1, errManagementPolicy
 	}
@@ -68,6 +68,9 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 	request, err := request.Normalize()
 	if err != nil {
 		return -1, err
+	}
+	if request.Operation == protocol.ListAuditEvents && (!allowArtifactTransfer || !this.managementArtifactAllowed(task.Authorization())) {
+		return -1, errManagementPolicy
 	}
 	ceiling, err := managementReadCeiling(task.Authorization(), request)
 	if err != nil {
@@ -122,6 +125,18 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 			return -1, err
 		}
 		result.Recordings = &page
+	case protocol.ListAuditEvents:
+		page, source, err := this.managementAuditEventPage(ctx, request, task.Authorization())
+		if err != nil {
+			return -1, err
+		}
+		result.AuditEvents, result.AuditEventSource = &page, &source
+	case protocol.VerifyRecordings:
+		verification, err := this.managementVerifyRecordings(ctx, request)
+		if err != nil {
+			return -1, err
+		}
+		result.Verification = &verification
 	case protocol.ShowSession:
 		var id session.Id
 		if err := id.UnmarshalText([]byte(request.ID)); err != nil {

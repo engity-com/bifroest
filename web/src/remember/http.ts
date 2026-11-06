@@ -259,6 +259,7 @@ export class Http {
     ];
     allowed.push('management/flows/list', 'management/sessions/list', 'management/sessions/show');
     allowed.push('management/auditlogs/list', 'management/recordings/list');
+    allowed.push('management/audit-events/list', 'management/recordings/verify');
     allowed.push('management/version/show');
     allowed.push(
       'management/sessions/prepare',

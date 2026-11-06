@@ -11,6 +11,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/metadatacache"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
@@ -19,6 +20,7 @@ const localNativeHeadFileName = "head.cbor"
 type LocalNativeRecordingRepository struct {
 	repository *localRepository[[]byte, NativeRecordingSummary]
 	catalog    nativeRecordingCatalog
+	metadata   *metadatacache.Cache
 }
 
 type RecoveredNativeRecording struct {
@@ -59,6 +61,7 @@ func NewLocalNativeRecordingRepositoryWithArtifactPreparer(ctx context.Context, 
 	return &LocalNativeRecordingRepository{
 		repository: repository,
 		catalog:    nativeRecordingCatalog{mutex: newLocalRepositoryMutex()},
+		metadata:   metadatacache.New(128<<20, 16384, repository.directory),
 	}, nil
 }
 
@@ -125,14 +128,14 @@ func (r *LocalNativeRecordingRepository) Close() error {
 	if r == nil {
 		return nil
 	}
-	return r.repository.close(false)
+	return stderrors.Join(r.repository.close(false), r.metadata.Close())
 }
 
 func (r *LocalNativeRecordingRepository) CloseAfterAcceptedFailure() error {
 	if r == nil {
 		return nil
 	}
-	return r.repository.close(true)
+	return stderrors.Join(r.repository.close(true), r.metadata.Close())
 }
 
 func (a *ActiveNativeRecording) local() *localActive[[]byte, NativeRecordingSummary] {

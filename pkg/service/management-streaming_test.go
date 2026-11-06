@@ -188,7 +188,7 @@ func TestManagementRecordingStreamingSelectsAuthoritativePagesBeyond1024Entries(
 	actor := webTestAccess(t, svc, token, "Work").auth
 	var scanned, matched int64
 	ctx := context.WithValue(t.Context(), managementProgressContextKey{}, func(progress managementReadProgress) error {
-		if progress.Phase == "verifying" {
+		if progress.Phase == "metadata" || progress.Phase == "searching" {
 			scanned = progress.Completed
 		}
 		if progress.Phase == "finalizing" {
@@ -196,11 +196,14 @@ func TestManagementRecordingStreamingSelectsAuthoritativePagesBeyond1024Entries(
 		}
 		return nil
 	})
+	stats := &recording.CatalogReadStats{}
+	ctx = recording.WithCatalogReadStats(ctx, stats)
 	page, err := svc.managementRecordingPage(ctx, request, actor)
 	require.NoError(t, err)
 	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, scanned)
 	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, matched)
 	require.Len(t, page.Items, 20)
+	require.EqualValues(t, 20, stats.ContentReads.Load(), "listing must not fully verify the 1,025-recording archive")
 	require.NotEmpty(t, page.Next)
 	for index, row := range page.Items {
 		require.Equal(t, fmt.Sprintf("%08x-0000-4000-8000-000000000000", index+1), row.ID)
@@ -213,4 +216,6 @@ func TestManagementRecordingStreamingSelectsAuthoritativePagesBeyond1024Entries(
 	require.NotEmpty(t, next.Next)
 	require.Equal(t, "00000015-0000-4000-8000-000000000000", next.Items[0].ID)
 	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, matched, "cursor position must not turn the full matching total into a remaining-row count")
+	require.EqualValues(t, 40, stats.ContentReads.Load())
+	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, stats.MetadataReads.Load(), "unchanged metadata is indexed once, not decoded on each page")
 }

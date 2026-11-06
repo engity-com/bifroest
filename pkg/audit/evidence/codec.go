@@ -74,6 +74,12 @@ func AuditPrivateFromEvent(value Event) NativeAuditPrivateEvent {
 	return nativeAuditPrivateFromEvent(value)
 }
 
+// AuditEventFromPrivate is a structural codec, not signature verification or
+// permission to expose private fields. Callers must separately enforce both.
+func AuditEventFromPrivate(event Event, value NativeAuditPrivateEvent) (Event, error) {
+	return nativeAuditEventFromPrivate(event, value)
+}
+
 func DecodeAuditHeader(payload []byte, identity JournalIdentity, sequence uint64, previousSegment, previousRecord Hash, recipient string) (NativeAuditHeader, error) {
 	return decodeNativeAuditHeader(payload, identity, sequence, previousSegment, previousRecord, recipient)
 }

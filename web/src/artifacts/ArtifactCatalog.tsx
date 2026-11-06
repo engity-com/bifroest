@@ -14,6 +14,7 @@ import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import { ReadProgress } from '../ui/ReadProgress';
 import type { ArtifactRequest } from './protocol';
+import { RecordingVerification } from './RecordingVerification';
 
 const when = (value: Date) =>
   new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(value);
@@ -361,6 +362,7 @@ export function ArtifactCatalog({
   const visibleFailure = failedRoute.current === routeKey ? failed : null;
   return (
     <section className="stack" aria-label={t('artifactCatalog')}>
+      <RecordingVerification access={access} source={source} active={active} disabled={disabled} />
       {busy && <ReadProgress value={progress} onCancel={() => request.current?.abort()} />}
       {visibleFailure && (
         <Alert role="status" color="red">

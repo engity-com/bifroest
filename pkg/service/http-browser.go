@@ -205,6 +205,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
 	case webAPI + "management/flows/list", webAPI + "management/sessions/list", webAPI + "management/sessions/show":
 	case webAPI + "management/auditlogs/list", webAPI + "management/recordings/list":
+	case webAPI + "management/audit-events/list", webAPI + "management/recordings/verify":
 	case webAPI + "management/version/show":
 	case webAPI + "management/sessions/prepare", webAPI + "management/sessions/confirm", webAPI + "management/sessions/cancel":
 	case webAPI + "management/artifacts/recording", webAPI + "management/artifacts/audit":
@@ -228,7 +229,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isLogin = isLogin || r.URL.Path == webAPI+"management/artifacts/recording" || r.URL.Path == webAPI+"management/artifacts/audit"
 	// Recording metadata inspection can traverse large signed artifacts. Share
 	// the existing bounded heavy-operation admission budget, not only read RPS.
-	isLogin = isLogin || r.URL.Path == webAPI+"management/recordings/list"
+	isLogin = isLogin || r.URL.Path == webAPI+"management/recordings/list" || r.URL.Path == webAPI+"management/recordings/verify" || r.URL.Path == webAPI+"management/audit-events/list"
 	release, ok := this.admit(peer, isLogin)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
@@ -236,7 +237,11 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithCancel(r.Context())
+	if !managementLongRead(r.URL.Path) {
+		cancel()
+		ctx, cancel = context.WithTimeout(r.Context(), 20*time.Second)
+	}
 	defer cancel()
 	stop := context.AfterFunc(this.ctx, cancel)
 	defer stop()
@@ -610,6 +615,10 @@ func webRequestFields(path string) []string {
 		return []string{"limit", "after", "sort", "query", "filterField", "filterOperator", "filterValue"}
 	case webAPI + "management/recordings/list":
 		return []string{"auditlog", "limit", "after", "flow", "user", "target", "startedFrom", "startedUntil", "status", "sort", "query", "filterField", "filterOperator", "filterValue"}
+	case webAPI + "management/recordings/verify":
+		return []string{"auditlog"}
+	case webAPI + "management/audit-events/list":
+		return []string{"auditlog", "limit", "after", "flow", "id", "sensitive", "sort", "query", "filterField", "filterOperator", "filterValue"}
 	case webAPI + "management/sessions/list":
 		return []string{"limit", "after", "flow", "user", "state", "sort", "query", "filterField", "filterOperator", "filterValue"}
 	case webAPI + "management/sessions/show":

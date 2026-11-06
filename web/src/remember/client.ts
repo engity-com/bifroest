@@ -7,6 +7,14 @@ import type { LoginKey } from '../login/key';
 import { publicKeyLogin } from '../login/key';
 import type { SessionAction } from '../management/action';
 import { actionPreparation, actionResult, SessionActionConfirmation } from '../management/action';
+import {
+  type AuditEventOptions,
+  type AuditOverviewPage,
+  auditEventFields,
+  auditOverviewPage,
+  type CatalogVerification,
+  catalogVerification,
+} from '../management/audit-overview';
 import { ManagementConnection } from '../management/channel';
 import type { ProgressListener, ReadProgress } from '../management/progress';
 import type {
@@ -543,6 +551,60 @@ export class WebAccess {
       throw new RememberMeError('unavailable');
     }
     return completedPage(result, total, fields.after);
+  }
+  async managementAuditEvents(
+    auditlog: string,
+    options: AuditEventOptions = {},
+    signal?: AbortSignal,
+    progress?: ProgressListener,
+  ): Promise<AuditOverviewPage> {
+    this.#managementAllowed();
+    const fields = auditEventFields(auditlog, options);
+    let total: number | undefined;
+    const report = (value: ReadProgress) => {
+      if (value.phase === 'finalizing' && value.total >= 0) {
+        total = value.total;
+      }
+      progress?.(value);
+    };
+    const result = auditOverviewPage(
+      await this.#managementHttp.post(
+        'management/audit-events/list',
+        fields,
+        this.#response.accessToken,
+        200,
+        signal,
+        report,
+      ),
+      fields,
+    );
+    if (this.#closed) {
+      throw new RememberMeError('denied');
+    }
+    return Object.freeze({ ...completedPage(result, total, fields.after), source: result.source });
+  }
+  async managementVerifyRecordings(
+    auditlog: string,
+    signal?: AbortSignal,
+    progress?: ProgressListener,
+  ): Promise<CatalogVerification> {
+    this.#managementAllowed();
+    const source = auditlogName(auditlog);
+    const result = catalogVerification(
+      await this.#managementHttp.post(
+        'management/recordings/verify',
+        { auditlog: source },
+        this.#response.accessToken,
+        200,
+        signal,
+        progress,
+      ),
+      source,
+    );
+    if (this.#closed) {
+      throw new RememberMeError('denied');
+    }
+    return result;
   }
   async managementSession(flow: string, id: string, signal?: AbortSignal): Promise<SessionItem> {
     this.#managementAllowed();

@@ -71,6 +71,7 @@ func (r *LocalNativeRecordingRepository) verifyCatalogFile(ctx context.Context, 
 	if size < 1 || uint64(size) > limits.MaximumContainerBytes {
 		return NativeRecordingSummary{}, 0, fmt.Errorf("%w: actual container size", ErrCatalogVerificationBudget)
 	}
+	catalogReadWork(ctx, true)
 	format, ok := r.repository.format.(*localNativeRecordingFormat)
 	if !ok {
 		return NativeRecordingSummary{}, 0, fmt.Errorf("recording catalog requires native format")

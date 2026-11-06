@@ -5,6 +5,7 @@ import { assertCatalogRequestPrivacy, captureJsonResponse } from './response-cap
 import {
   activeAccess,
   assertUiPreferences,
+  confirmFullVerification,
   logoutAccess,
   notification,
   reauthenticate,
@@ -37,7 +38,15 @@ try {
   page.on('pageerror', (error) => errors.push(error.message));
   wire.on('progress', (value) => {
     assert(
-      ['waiting', 'inventory', 'verifying', 'reverifying', 'finalizing'].includes(value.phase),
+      [
+        'waiting',
+        'inventory',
+        'metadata',
+        'searching',
+        'verifying',
+        'reverifying',
+        'finalizing',
+      ].includes(value.phase),
     );
     assert(Number.isSafeInteger(value.completed) && value.completed >= 0);
     assert(Number.isSafeInteger(value.total) && value.total >= -1);
@@ -144,7 +153,19 @@ try {
   assert.equal(await logs().locator('[role="row"][data-id]').count(), 2);
   assert.equal(requests.filter((request) => request.path.includes('/artifacts/')).length, 0);
   const beforeAudit = requests.length;
+  const previewReply = captureJsonResponse(page, '/_bifroest/api/v1/management/audit-events/list');
   await logs().getByRole('button', { name: 'Open audit log default', exact: true }).click();
+  const preview = await previewReply;
+  assert.equal(preview.error, undefined);
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.operation, 'audit-events.list');
+  assert.equal(preview.body.auditEventSource.verification, 'server-overview');
+  assert.equal(
+    requests.filter((request) => request.path.includes('/artifacts/')).length,
+    0,
+    'opening an auditlog is metadata-only until explicit verification',
+  );
+  await confirmFullVerification(page, auditPanel(), 'default');
   const opened = async (current) => {
     if (mode === 'catalog-encrypted') {
       try {
@@ -186,8 +207,14 @@ try {
     requests
       .slice(beforeAudit)
       .map((request) => [request.path.split('/management/')[1], request.body]),
-    [['artifacts/audit', { auditlog: 'default' }]],
-    'opening an audit row is exactly one transfer, followed by local processing',
+    [
+      [
+        'audit-events/list',
+        { limit: '20', after: '', sort: 'recorded-desc', auditlog: 'default', sensitive: 'false' },
+      ],
+      ['artifacts/audit', { auditlog: 'default' }],
+    ],
+    'overview is a page read; explicit local verification is exactly one separate transfer',
   );
   assert.equal(
     await auditPanel()
@@ -198,6 +225,13 @@ try {
   );
   const beforeBack = requests.length;
   await auditPanel().getByRole('button', { name: 'Back to list', exact: true }).click();
+  await auditPanel()
+    .getByRole('region', { name: 'Audit overview (server-reported)', exact: true })
+    .waitFor();
+  await page
+    .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+    .getByRole('button', { name: 'Audit logs', exact: true })
+    .click();
   await logs().getByRole('gridcell', { name: 'catalog20', exact: true }).waitFor();
   assert.equal(requests.length, beforeBack, 'Back retains the native audit page without replay');
   await workspace(page, 'Recordings');
@@ -209,11 +243,19 @@ try {
     progress.some(
       (value) =>
         new URL(value.request.url()).pathname.endsWith('/recordings/list') &&
-        value.phase === 'verifying' &&
+        value.phase === 'metadata' &&
         value.completed === 21 &&
         value.total === 21,
     ),
-    'the actual Go scan streams completion counts independently of its final page',
+    'normal listing reads metadata, not a whole-source verification',
+  );
+  assert.equal(
+    progress.some(
+      (value) =>
+        new URL(value.request.url()).pathname.endsWith('/recordings/list') &&
+        value.phase === 'verifying',
+    ),
+    false,
   );
   assert.equal(first.items.length, 20);
   assert.match(first.next, /^bmp1\./u);
@@ -261,10 +303,31 @@ try {
     }
   }
   const id = last.items[0].id;
+  const pagesBeforeFull = requests.filter((request) =>
+    request.path.endsWith('/recordings/list'),
+  ).length;
+  const fullReply = captureJsonResponse(page, '/_bifroest/api/v1/management/recordings/verify');
+  await confirmFullVerification(page, catalog(), 'catalog00');
+  const full = await fullReply;
+  assert.equal(full.error, undefined);
+  assert.equal(full.status, 200);
+  assert.equal(full.body.operation, 'recordings.verify');
+  assert.deepEqual(full.body.verification, {
+    auditlog: 'catalog00',
+    checked: 21,
+    full: mode === 'catalog-encrypted' ? 0 : 21,
+    outer: mode === 'catalog-encrypted' ? 21 : 0,
+    independent: false,
+  });
   await recordings()
     .getByRole('button', { name: `Open recording ${id}`, exact: true })
     .waitFor();
   assert.equal(await recordings().locator('[role="row"][data-id]').count(), 1);
+  assert.equal(
+    requests.filter((request) => request.path.endsWith('/recordings/list')).length,
+    pagesBeforeFull,
+    'full verification must not reset/reload the displayed page',
+  );
   await recordings()
     .getByRole('button', { name: `Open recording ${id}`, exact: true })
     .click();
