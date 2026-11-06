@@ -113,6 +113,28 @@ async function process(event: MessageEvent) {
     const passphrase = new Uint8Array(body.passphrase);
     buffers.push(privateKey, passphrase);
     const files = [];
+    const inputTotal = body.files.reduce((size: number, value: unknown) => {
+      const file = object(value, ['name', 'data']);
+      if (
+        !(file.data instanceof Blob) ||
+        file.data.size < 1 ||
+        size + file.data.size > maximumBufferedArtifactBytes
+      ) {
+        throw new EvidenceError('limit');
+      }
+      return size + file.data.size;
+    }, 0);
+    let reportedAt = 0;
+    let reportedPhase = '';
+    const progress = (phase: string, completed: number, total: number) => {
+      const now = performance.now();
+      if (phase === reportedPhase && now - reportedAt < 100 && completed !== total) {
+        return;
+      }
+      reportedAt = now;
+      reportedPhase = phase;
+      worker.postMessage({ kind: 'progress', phase, completed, total });
+    };
     let total = 0;
     for (const item of body.files) {
       const file = object(item, ['name', 'data']);
@@ -129,6 +151,7 @@ async function process(event: MessageEvent) {
       const data = new Uint8Array(await file.data.arrayBuffer());
       buffers.push(data);
       files.push({ name: file.name, data });
+      progress('reading', total, inputTotal);
     }
     const raw = runtime.bifroestEvidenceVerify(
       request.kind,
@@ -138,6 +161,7 @@ async function process(event: MessageEvent) {
       files,
       privateKey,
       passphrase,
+      progress,
     );
     if (raw === null || typeof raw !== 'object') {
       throw new Error();

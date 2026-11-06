@@ -1,3 +1,4 @@
+import type { ProgressListener } from '../management/progress';
 import type { ArtifactResponseImage } from '../remember/http';
 import { object } from '../remember/http';
 import { RememberMeError } from '../remember/protocol';
@@ -13,7 +14,8 @@ function message(
   transfer: Transferable[] = [],
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const stopped = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+    const stopped =
+      kind === 'ready' ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : signal;
     const cleanup = () => {
       worker.removeEventListener('message', received);
       worker.removeEventListener('error', failed);
@@ -76,10 +78,11 @@ export async function receiveArtifact(
   request: ArtifactRequest,
   open: (signal: AbortSignal) => Promise<ArtifactResponseImage>,
   signal: AbortSignal,
+  progress?: ProgressListener,
 ): Promise<ReceivedArtifact> {
   const selected = Object.freeze({ ...request }) as ArtifactRequest;
   artifactFields(selected);
-  const stopped = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
+  const stopped = signal;
   if (stopped.aborted) {
     throw new RememberMeError('cancelled');
   }
@@ -100,6 +103,7 @@ export async function receiveArtifact(
     if (stopped.aborted) {
       throw new RememberMeError('cancelled');
     }
+    progress?.({ phase: 'validating', completed: 0, total: 1 });
     const result = await message(
       worker,
       'received',
@@ -128,6 +132,7 @@ export async function receiveArtifact(
     if (stopped.aborted) {
       throw new RememberMeError('cancelled');
     }
+    progress?.({ phase: 'validating', completed: 1, total: 1 });
     return Object.freeze({
       request: selected,
       transport: 'complete',

@@ -51,6 +51,7 @@ it('does not let a late old-source index poison a reactivated new-source view', 
     ],
     next: '',
     skipped: 0,
+    total: 1,
   }));
   const host = document.createElement('div');
   host.style.width = '1200px';

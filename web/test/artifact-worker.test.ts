@@ -214,7 +214,7 @@ describe('owned artifact worker RPC lifecycle (not framing/evidence verification
     expect(required(ArtifactWorker.instances[0]).terminated).toBe(true);
   });
 
-  it('bounds a non-answering decoder RPC without any automatic replay', async () => {
+  it('keeps a slow decoder alive beyond the former total deadline and cancels it explicitly without replay or partial output', async () => {
     install();
     ArtifactWorker.hold = true;
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -228,10 +228,19 @@ describe('owned artifact worker RPC lifecycle (not framing/evidence verification
       mediaType: transferMediaType,
       status: 200,
     }));
-    const operation = receiveArtifact(request, open, new AbortController().signal);
-    const observed = expect(operation).rejects.toMatchObject({ code: 'unavailable' });
+    const controller = new AbortController();
+    let settled = false;
+    const operation = receiveArtifact(request, open, controller.signal);
+    const observed = expect(
+      operation.finally(() => {
+        settled = true;
+      }),
+    ).rejects.toMatchObject({ code: 'cancelled' });
     await vi.waitFor(() => expect(ArtifactWorker.instances[0]?.requests.length).toBe(1));
-    await vi.advanceTimersByTimeAsync(20_001);
+    await vi.advanceTimersByTimeAsync(120_001);
+    expect(settled).toBe(false);
+    expect(required(ArtifactWorker.instances[0]).terminated).toBe(false);
+    controller.abort();
     await observed;
     expect(open).toHaveBeenCalledTimes(1);
     expect(required(ArtifactWorker.instances[0]).requests).toHaveLength(1);

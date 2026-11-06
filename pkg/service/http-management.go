@@ -99,6 +99,7 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	defer func() { _ = conn.Close(); <-conn.done }()
+	bindManagementProgress(conn, w)
 	data, err := this.service.executeManagementRead(conn, request)
 	if err != nil {
 		if recording.IsNativeCatalogWarmup(err) {

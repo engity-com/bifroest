@@ -26,6 +26,8 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   disabled,
   page,
   hasNext,
+  total,
+  resultAvailable = true,
   query,
   sortField,
   sortDirection,
@@ -55,6 +57,8 @@ export function AdminDataGrid<R extends GridValidRowModel>({
   disabled: boolean;
   page: number;
   hasNext: boolean;
+  total?: number | undefined;
+  resultAvailable?: boolean;
   query: string;
   sortField: string;
   sortDirection: 'asc' | 'desc';
@@ -190,6 +194,8 @@ export function AdminDataGrid<R extends GridValidRowModel>({
           }))}
           {...(getRowId ? { getRowId } : {})}
           loading={busy}
+          localeText={resultAvailable ? {} : { noRowsLabel: t('scanNoResult') }}
+          hideFooterPagination={!resultAvailable}
           onRowClick={(params, event) => {
             if (
               !disabled &&
@@ -244,13 +250,17 @@ export function AdminDataGrid<R extends GridValidRowModel>({
           filterMode="server"
           filterDebounceMs={350}
           paginationModel={paginationModel}
-          // Supply an exact count only once the server cursor ends. Combining a
+          // Streaming counts become authority for this view only with a
+          // completed matching page. Legacy cursors still infer an exact count
+          // only when they end. Combining a
           // newly closed cursor with paginationMeta lets x-data-grid infer the
           // count from the PREVIOUS controlled page before applying the new one.
-          rowCount={hasNext || busy ? -1 : page * 20 + rows.length}
+          rowCount={
+            busy || !resultAvailable ? -1 : (total ?? (hasNext ? -1 : page * 20 + rows.length))
+          }
           pageSizeOptions={[20]}
           onPaginationModelChange={(model) => {
-            if (active && !disabled && !busy && model.page !== page) {
+            if (active && !disabled && !busy && resultAvailable && model.page !== page) {
               onPage(model.page);
             }
           }}

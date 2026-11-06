@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"encoding/base64"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -23,23 +22,33 @@ func (this *service) managementAuditlogPage(ctx context.Context, request protoco
 		return page, err
 	}
 	var items []readSlot[protocol.AuditlogSummary]
+	var total int64
 	descending := request.Sort == "name-desc"
 	position := ""
 	if after != "" {
 		position = managementGridKey(after, descending)
 	}
-	for _, conf := range this.Configuration.Auditlogs {
+	for index, conf := range this.Configuration.Auditlogs {
+		if err := reportManagementProgress(ctx, "inventory", int64(index), int64(len(this.Configuration.Auditlogs))); err != nil {
+			return page, err
+		}
 		if err := ctx.Err(); err != nil {
 			return page, err
 		}
 		name := conf.Name.String()
-		if managementGridKey(name, descending) <= position || !managementSearch(request.Query, name) {
+		if !managementSearch(request.Query, name) {
 			continue
 		}
 		item := managementview.Auditlog(conf)
 		if filter(map[string]protocol.GridValue{"name": protocol.GridText(item.Name), "enabled": protocol.GridBoolean(item.Enabled), "recordingEnabled": protocol.GridBoolean(item.RecordingEnabled), "encrypted": protocol.GridBoolean(item.Encrypted)}) {
-			items = insertRead(items, managementGridKey(name, descending), item, request.Limit+1)
+			total++
+			if managementGridKey(name, descending) > position {
+				items = insertRead(items, managementGridKey(name, descending), item, request.Limit+1)
+			}
 		}
+	}
+	if err := reportManagementProgress(ctx, "finalizing", total, total); err != nil {
+		return page, err
 	}
 	for i, item := range items {
 		if i == request.Limit {
@@ -53,8 +62,6 @@ func (this *service) managementAuditlogPage(ctx context.Context, request protoco
 
 func (this *service) managementRecordingPage(ctx context.Context, request protocol.ReadRequest, actor authorization.Authorization) (protocol.Page[protocol.RecordingSummary], error) {
 	page := protocol.Page[protocol.RecordingSummary]{Items: make([]protocol.RecordingSummary, 0)}
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
 	if actor == nil || !actor.IsAuthorized() || actor.FindSession() == nil || actor.FindSession().Flow() != actor.Flow() || !this.isManagementFlow(actor.Flow()) {
 		return page, errManagementPolicy
 	}
@@ -66,7 +73,6 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 	if repository == nil || repository.native == nil {
 		return page, fmt.Errorf("no active recording repository")
 	}
-	expires := time.Now().Add(5 * time.Minute).Unix()
 	var after protocol.RecordingPageCursor
 	if request.After != "" {
 		var err error
@@ -79,11 +85,6 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		if err != nil || decodeErr != nil || !hmac.Equal(mac, provided) || after.ActorFlow != actor.Flow().String() || after.ActorSession != actor.FindSession().Id().String() || after.Expires <= time.Now().Unix() {
 			return page, protocol.ErrRequest
 		}
-		expires = after.Expires
-	}
-	rows, err := repository.native.CatalogMetadata(ctx)
-	if err != nil {
-		return page, fmt.Errorf("recording catalog metadata verification failed: %w", err)
 	}
 	from, until, position := time.Time{}, time.Time{}, time.Time{}
 	if request.StartedFrom != "" {
@@ -95,10 +96,11 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 	if after.ID != "" {
 		position, _ = protocol.RecordingTime(after.StartedAt)
 	}
-	selected := rows[:0]
+	var selected []readSlot[recording.NativeRecordingSummary]
+	var total int64
 	filter := managementGridPredicate(request.GridFilter, request.Operation)
 	ascending := request.Sort == "started-asc"
-	for _, row := range rows {
+	err := repository.native.WalkCatalog(ctx, func(row recording.NativeRecordingSummary) error {
 		// Older recordings lack the requesting user; target accounts remain
 		// unknown. Encrypted private context never enters this index. Unknown
 		// values cannot match concrete filters; never enrich from live sessions
@@ -106,9 +108,8 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		if request.User != "" && request.User != row.User || request.Target != "" || request.Flow != "" && request.Flow != row.Flow ||
 			request.Status != "all" && request.Status != string(row.Status) ||
 			!from.IsZero() && row.StartedAt.Before(from) || !until.IsZero() && row.StartedAt.After(until) ||
-			!managementSearch(request.Query, row.RecordingId.String(), row.User, row.Flow, string(row.Status)) ||
-			!position.IsZero() && ((!ascending && row.StartedAt.After(position)) || (ascending && row.StartedAt.Before(position)) || row.StartedAt.Equal(position) && row.RecordingId.String() <= after.ID) {
-			continue
+			!managementSearch(request.Query, row.RecordingId.String(), row.User, row.Flow, string(row.Status)) {
+			return nil
 		}
 		public := managementRecordingSummary(request.Auditlog, row)
 		fields := map[string]protocol.GridValue{"id": protocol.GridText(row.RecordingId.String()), "status": protocol.GridText(string(row.Status)), "format": protocol.GridText(public.Format), "startedAt": protocol.GridTime(row.StartedAt), "endedAt": protocol.GridTime(row.EndedAt), "containerBytes": protocol.GridNumber(float64(row.Bytes)), "duration": protocol.GridNumber(max(0, row.EndedAt.Sub(row.StartedAt).Seconds())), "encrypted": protocol.GridBoolean(public.Encrypted)}
@@ -119,20 +120,25 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 			fields["flow"] = protocol.GridText(public.Flow)
 		}
 		if filter(fields) {
-			selected = append(selected, row)
+			total++
+			if !position.IsZero() && ((!ascending && row.StartedAt.After(position)) || (ascending && row.StartedAt.Before(position)) || row.StartedAt.Equal(position) && row.RecordingId.String() <= after.ID) {
+				return nil
+			}
+			key := managementGridKey(row.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z"), !ascending) + row.RecordingId.String()
+			selected = insertRead(selected, key, row, request.Limit+1)
 		}
-	}
-	sort.Slice(selected, func(i, j int) bool {
-		if selected[i].StartedAt.Equal(selected[j].StartedAt) {
-			return selected[i].RecordingId.String() < selected[j].RecordingId.String()
-		}
-		if ascending {
-			return selected[i].StartedAt.Before(selected[j].StartedAt)
-		}
-		return selected[i].StartedAt.After(selected[j].StartedAt)
+		return nil
+	}, func(progress recording.NativeCatalogProgress) error {
+		return reportManagementProgress(ctx, progress.Phase, progress.Completed, progress.Total)
 	})
-	remainingContainer, remainingCast := uint64(recording.MaximumNativeCatalogBytes), uint64(recording.MaximumNativeCatalogBytes)
-	for index, row := range selected {
+	if err != nil {
+		return page, fmt.Errorf("recording catalog metadata verification failed: %w", err)
+	}
+	for index, slot := range selected {
+		row := slot.value
+		if err := reportManagementProgress(ctx, "reverifying", int64(index), int64(min(len(selected), request.Limit))); err != nil {
+			return page, err
+		}
 		if err := ctx.Err(); err != nil {
 			return page, fmt.Errorf("recording page reverification interrupted: %w", err)
 		}
@@ -140,7 +146,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 			last := page.Items[len(page.Items)-1]
 			cursor := protocol.RecordingPageCursor{Auditlog: request.Auditlog, Filter: request.RecordingFilter(),
 				ActorFlow: actor.Flow().String(), ActorSession: actor.FindSession().Id().String(),
-				StartedAt: last.StartedAt.Format(time.RFC3339Nano), ID: last.ID, Expires: expires}
+				StartedAt: last.StartedAt.Format(time.RFC3339Nano), ID: last.ID, Expires: time.Now().Add(5 * time.Minute).Unix()}
 			mac, err := repository.native.CatalogCursorMAC(cursor.Payload())
 			if err != nil {
 				return page, err
@@ -150,6 +156,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 			break
 		}
 		// A cache entry is selection metadata, never authority to publish a row.
+		remainingContainer, remainingCast := uint64(recording.MaximumNativeCatalogBytes), uint64(recording.MaximumNativeCatalogBytes)
 		if row.Bytes > remainingContainer || row.CastBytes > remainingCast {
 			return page, fmt.Errorf("recording page exceeds bounded reverification budget")
 		}
@@ -159,12 +166,15 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		}
 		page.Items = append(page.Items, managementRecordingSummary(request.Auditlog, current))
 	}
+	if err := reportManagementProgress(ctx, "finalizing", total, total); err != nil {
+		return page, err
+	}
 	return page, nil
 }
 
 // Called only inside the authenticated/policy-checked catalog path. Keeping the
 // selected snapshot separate from actual open-file costs makes replacements and
-// page-wide budget exhaustion fail before publication, never after extra decode.
+// per-recording budget exhaustion fail before publication, never after extra decode.
 func reverifyManagementRecording(ctx context.Context, repository *recording.LocalNativeRecordingRepository, selected recording.NativeRecordingSummary, remainingContainer, remainingCast *uint64) (recording.NativeRecordingSummary, error) {
 	artifact, err := repository.OpenCatalogSealed(ctx, selected.RecordingId, recording.CatalogVerifyLimits{
 		MaximumContainerBytes: *remainingContainer, MaximumCastBytes: *remainingCast,

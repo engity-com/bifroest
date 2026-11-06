@@ -208,6 +208,9 @@ describe('real console inside the recording video', () => {
       userEvent.click(page.getByRole('button', { name: t('playbackFullscreen'), exact: true })),
     );
     await vi.waitFor(() => expect(document.fullscreenElement).toBe(stage));
+    await expect
+      .element(page.getByRole('button', { name: t('playbackExitFullscreen'), exact: true }))
+      .toBeVisible();
     await vi.waitFor(() => {
       expect(Math.abs(stage.getBoundingClientRect().width - window.innerWidth)).toBeLessThan(2);
       expect(Math.abs(stage.getBoundingClientRect().height - window.innerHeight)).toBeLessThan(2);

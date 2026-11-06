@@ -133,14 +133,38 @@ export async function exerciseAdminShell(page, login, logout) {
   });
   await page.clock.setFixedTime(new Date(expiry.advanceTo));
   await workspace(page, 'Sessions');
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('[data-connection-active="true"] button')].some(
+      (node) => node.getAttribute('aria-label') === 'Refresh sessions' && !node.disabled,
+    ),
+  );
   const before = sent.length;
+  const lastIssued = Math.max(
+    0,
+    ...sent.filter((value) => value.type === 'request').map((value) => Number(value.requestId)),
+  );
+  const refreshed = managementWire(page).waitForResponse(
+    (response) =>
+      response.url().endsWith('/management/sessions/list') &&
+      Number(response.request().requestId()) > lastIssued,
+  );
   await pane.getByRole('button', { name: 'Refresh sessions', exact: true }).click();
+  const reply = await refreshed;
+  await reply.finished();
+  const result = await reply.json();
+  assert.equal(result.operation, 'sessions.list');
+  assert(result.sessions.items.some((row) => row.user === 'alice'));
   await grid.getByText('alice', { exact: true }).waitFor();
   assert(
     sent.length > before,
     'an explicit read after real server and browser expiry uses the existing channel',
   );
-  const request = sent.at(-1);
+  // Other catalog requests/progress may still be completing. Assert this exact
+  // explicit read and receipt, never the unrelated globally last socket frame.
+  const request = sent.find(
+    (value) => value.type === 'request' && value.requestId === reply.request().requestId(),
+  );
+  assert(sent.indexOf(request) >= before);
   assert.equal(request.action, 'management/sessions/list');
   await page.waitForFunction(
     () =>
@@ -148,7 +172,10 @@ export async function exerciseAdminShell(page, login, logout) {
         null ||
       document.querySelector('[data-access-status="active"][aria-selected="true"]') !== null,
   );
-  assert.equal(received.filter((value) => value.type === 'response').at(-1).status, 200);
+  assert.equal(reply.status(), 200);
+  assert(
+    received.some((value) => value.type === 'complete' && value.requestId === request.requestId),
+  );
   assert.deepEqual(sockets, ['/_bifroest/api/v1/management/channel']);
   assert.equal(
     sent.some((value) => value.task !== undefined || value.command !== undefined),

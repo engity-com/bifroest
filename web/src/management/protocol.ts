@@ -227,6 +227,8 @@ export interface Page<T> {
   readonly items: readonly T[];
   readonly next: string;
   readonly skipped: number;
+  // Present only after a correlated scan count AND its completed page receipt.
+  readonly total?: number;
 }
 
 function text(value: unknown, maximum: number): string {

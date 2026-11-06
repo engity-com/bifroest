@@ -196,6 +196,42 @@ function button(host: ParentNode, label: string) {
 }
 const click = async (node: HTMLElement) => act(async () => node.click());
 
+it('shows local audit indexing as cancellable work and releases no events from an unfinished index', async () => {
+  const { access, api } = fixture();
+  const bytes = new TextEncoder().encode(
+    `${JSON.stringify({ id, recordedAt: '2026-11-05T00:00:00Z', event: { name: 'session.task.completed', flow: 'docker' } })}\n`,
+  );
+  const cancelled = vi.fn();
+  let reads = 0;
+  class SlowAudit extends Blob {
+    override stream(): ReadableStream<Uint8Array<ArrayBuffer>> {
+      reads++;
+      return reads === 1
+        ? new ReadableStream({
+            start(controller) {
+              controller.enqueue(bytes);
+            },
+            cancel: cancelled,
+          })
+        : super.stream();
+    }
+  }
+  const source = new SlowAudit([bytes]);
+  const { host } = await mount('/Admin/admin/auditlogs/default', 'audit', access, source);
+  await vi.waitFor(() => expect(host.textContent).toContain(t('scanIndexing')));
+  expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
+  await click(button(host, t('artifactCatalogCancel')));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('artifactCatalogCancelled')));
+  expect(cancelled).toHaveBeenCalledOnce();
+  expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
+  expect(reads).toBe(1);
+  await click(button(host, t('auditRefreshEvents')));
+  await vi.waitFor(() => expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(1));
+  expect(reads).toBe(2);
+  expect(api.downloadArtifact).not.toHaveBeenCalled();
+  expect(api.managementRecordings).not.toHaveBeenCalled();
+});
+
 function recordingCatalogFixture() {
   const { api, access } = fixture();
   const row: RecordingSummary = {
@@ -271,13 +307,13 @@ it('returns through the real flow breadcrumb to the retained dataset when the so
   await vi.waitFor(() => expect(button(host, 'Refresh recordings').disabled).toBe(false));
   expect(router.state.location.search).toBe('?auditlog=default');
   expect(api.managementRecordings).toHaveBeenCalledOnce();
-  expect(host.textContent).not.toContain(t('recordingCatalogWarming'));
+  expect(host.textContent).not.toContain('Catalog verification needs another read.');
   expect(button(host, `Open recording ${id}`).disabled).toBe(false);
   expect(host.querySelector('[role="grid"][aria-label="Recordings · default"]')).toBe(grid);
   expect(api.downloadArtifact).toHaveBeenCalledOnce();
 });
 
-it('loads a genuinely new breadcrumb flow and exposes no earlier rows when that read needs continuation', async () => {
+it('loads a genuinely new breadcrumb flow and exposes no earlier rows when that read fails', async () => {
   const { api, access, page } = recordingCatalogFixture();
   api.managementRecordings
     .mockReset()
@@ -289,14 +325,14 @@ it('loads a genuinely new breadcrumb flow and exposes no earlier rows when that 
   await click(button(host, `Open recording ${id}`));
   await vi.waitFor(() => expect(host.querySelector('[aria-label="Routed player"]')).not.toBeNull());
   await click(button(host, 'docker'));
-  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingReadFailed')));
   expect(router.state.location.pathname).toBe('/Admin/admin/recordings/docker');
   expect(api.managementRecordings).toHaveBeenCalledTimes(2);
   expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
-  await click(button(host, 'Continue verification'));
+  await click(button(host, 'Refresh recordings'));
   await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(3));
   await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
-  expect(host.textContent).not.toContain(t('recordingCatalogWarming'));
+  expect(host.textContent).not.toContain('Catalog verification needs another read.');
   expect(api.managementRecordings.mock.calls[2]?.[1]).toMatchObject({
     flow: 'docker',
     filter: { field: 'flow', operator: 'equals', value: 'docker' },
@@ -318,18 +354,18 @@ it('invalidates rows and paging after a failed same-scope refresh instead of dis
   await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
   const grid = host.querySelector('[role="grid"]');
   await click(button(host, 'Refresh recordings'));
-  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingReadFailed')));
   expect(api.managementRecordings).toHaveBeenCalledTimes(2);
   expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
-  expect(button(host, 'Go to next page').disabled).toBe(true);
+  expect(host.querySelector('[aria-label="Go to next page"]')).toBeNull();
   expect(host.querySelector('[role="grid"]')).toBe(grid);
-  await click(button(host, 'Continue verification'));
+  await click(button(host, 'Refresh recordings'));
   await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
   expect(api.managementRecordings).toHaveBeenCalledTimes(3);
   expect(api.managementRecordings.mock.calls[2]?.[1]).toMatchObject({ after: '', flow: 'docker' });
 });
 
-it('repeats only the explicit failed native-filter intent when verification is continued', async () => {
+it('repeats only the explicit failed native-filter intent when refreshed after a failure', async () => {
   const { api, access, page } = recordingCatalogFixture();
   api.managementRecordings
     .mockReset()
@@ -339,9 +375,9 @@ it('repeats only the explicit failed native-filter intent when verification is c
   const { host } = await mount('/Admin/admin/recordings?auditlog=default', 'recordings', access);
   await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
   await nativeColumnFilter(host, 'User', 'alice', 'contains');
-  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingReadFailed')));
   expect(api.managementRecordings).toHaveBeenCalledTimes(2);
-  await click(button(host, 'Continue verification'));
+  await click(button(host, 'Refresh recordings'));
   await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(3));
   expect(api.managementRecordings.mock.calls[2]?.[1]).toMatchObject({
     filter: { field: 'user', operator: 'contains', value: 'alice' },
@@ -366,7 +402,7 @@ it('does not publish a late warmup failure from an earlier breadcrumb flow into 
   await act(async () => router.navigate('/Admin/admin/recordings/other?auditlog=default'));
   await act(async () => first.reject(new RememberMeError('catalog-incomplete')));
   await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(2));
-  expect(host.textContent).not.toContain(t('recordingCatalogWarming'));
+  expect(host.textContent).not.toContain('Catalog verification needs another read.');
   expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
   const other = {
     ...page.items[0],
@@ -375,12 +411,12 @@ it('does not publish a late warmup failure from an earlier breadcrumb flow into 
   } as RecordingSummary;
   await act(async () => second.resolve({ items: [other], next: '', skipped: 0 }));
   await vi.waitFor(() => expect(button(host, `Open recording ${other.id}`).disabled).toBe(false));
-  expect(host.textContent).not.toContain(t('recordingCatalogWarming'));
+  expect(host.textContent).not.toContain('Catalog verification needs another read.');
   expect(api.managementRecordings.mock.calls[1]?.[1]).toMatchObject({ flow: 'other' });
   expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(1);
 });
 
-it('retains an unfinished read warning for its owned page without an automatic retry when returning from another main page', async () => {
+it('retains a cancelled read notice for its owned page without an automatic retry when returning from another main page', async () => {
   const { api, access, page } = recordingCatalogFixture();
   type RecordingPage = Awaited<ReturnType<WebAccess['managementRecordings']>>;
   const pending = Promise.withResolvers<RecordingPage>();
@@ -401,10 +437,10 @@ it('retains an unfinished read warning for its owned page without an automatic r
   await vi.waitFor(() =>
     expect(router.state.location.pathname).toBe('/Admin/admin/recordings/docker'),
   );
-  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
+  await vi.waitFor(() => expect(host.textContent).toContain(t('artifactCatalogCancelled')));
   expect(api.managementRecordings).toHaveBeenCalledOnce();
   expect(host.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
-  await click(button(host, 'Continue verification'));
+  await click(button(host, 'Refresh recordings'));
   await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(2));
   await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
 });
@@ -584,6 +620,7 @@ it('opens a qualified Recording URI as one explicit transfer and validates the v
   expect(api.downloadArtifact).toHaveBeenCalledExactlyOnceWith(
     image.request,
     expect.any(AbortSignal),
+    expect.any(Function),
   );
   expect(api.managementAuditlogs).not.toHaveBeenCalled();
   expect(api.managementRecordings).not.toHaveBeenCalled();
@@ -643,6 +680,7 @@ it('loads a newly selected explicit source even when no source was previously se
       'other',
       expect.objectContaining({ query: '', filter: null }),
       expect.any(AbortSignal),
+      expect.any(Function),
     ),
   );
   expect(api.downloadArtifact).not.toHaveBeenCalled();
@@ -654,17 +692,27 @@ it('does not automatically retry a denied sole-source Recording read after sourc
   await vi.waitFor(() => expect(host.textContent).toContain(t('recordingReadFailed')));
   expect(api.managementRecordings).toHaveBeenCalledOnce();
 });
-it('shows retained verification progress and reads again only after explicit Refresh', async () => {
-  const { access, api } = fixture();
-  api.managementRecordings.mockRejectedValueOnce(new RememberMeError('catalog-incomplete'));
+it('shows live verification progress in one request and adopts only its completed page without a continuation click', async () => {
+  const { access, api, page } = recordingCatalogFixture();
+  const pending = Promise.withResolvers<Awaited<ReturnType<WebAccess['managementRecordings']>>>();
+  api.managementRecordings.mockReset().mockImplementationOnce(() => pending.promise);
   const { host } = await mount('/Admin/admin/recordings', 'recordings', access);
-  await vi.waitFor(() => expect(host.textContent).toContain(t('recordingCatalogWarming')));
-  await vi.waitFor(() => expect(button(host, 'Refresh recordings').disabled).toBe(false));
+  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledOnce());
+  const report = api.managementRecordings.mock.calls[0]?.[3];
+  expect(report).toBeTypeOf('function');
+  await act(async () => report?.({ phase: 'verifying', completed: 230, total: 284 }));
+  expect(host.textContent).toContain(t('scanVerifying'));
+  expect(host.textContent).toContain('230 / 284');
+  expect(button(host, 'Refresh recordings').disabled).toBe(true);
+  expect(button(host, t('artifactCatalogCancel')).disabled).toBe(false);
   expect(api.managementRecordings).toHaveBeenCalledOnce();
   expect(host.querySelectorAll('[role="row"][data-id]').length).toBe(0);
-  await click(button(host, 'Refresh recordings'));
-  await vi.waitFor(() => expect(api.managementRecordings).toHaveBeenCalledTimes(2));
-  await vi.waitFor(() => expect(host.textContent).not.toContain(t('recordingCatalogWarming')));
+  expect(host.textContent).not.toContain('Catalog verification needs another read.');
+  expect(host.textContent).not.toContain('Continue verification');
+  await act(async () => pending.resolve(page));
+  await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
+  expect(api.managementRecordings).toHaveBeenCalledOnce();
+  expect(host.textContent).not.toContain(t('scanVerifying'));
   expect(api.downloadArtifact).not.toHaveBeenCalled();
 });
 it('reopens the same encrypted Recording through the router with a fresh owned transfer and a visible local-key form', async () => {

@@ -49,6 +49,7 @@ func (this *webService) handleManagementArtifact(w http.ResponseWriter, r *http.
 		return
 	}
 	defer func() { transport.writing.Store(false); _ = conn.Close(); <-conn.done }()
+	bindManagementProgress(conn, w)
 	output := &managementArtifactHTTPWriter{writer: w, conn: conn, transport: transport}
 	framed, err := wire.NewTransferWriter(output, request)
 	if err != nil {

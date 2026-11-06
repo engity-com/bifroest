@@ -3,6 +3,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import { IconButton } from '@mui/material';
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
+import type { ReadProgress as Progress } from '../management/progress';
 import type { RecordingSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
@@ -15,6 +16,7 @@ import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, Checkbox, Modal, PasswordInput, Select, TextInput } from '../ui/material';
 import { type Message, t } from '../ui/messages';
 import { profileResetEvent } from '../ui/profile-reset';
+import { ReadProgress } from '../ui/ReadProgress';
 import { readLocalBytes } from '../wasm/local-file';
 import { ArtifactCatalog } from './ArtifactCatalog';
 import { ArtifactOpenByID } from './ArtifactOpenByID';
@@ -101,6 +103,7 @@ export function ArtifactPanel({
   const [protection, setProtection] = useState<EvidenceMetadata | null>(null);
   const [verified, setVerified] = useState<VerifiedArtifact | null>(null);
   const [phase, setPhase] = useState<Phase | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [notice, setNotice] = useState<Message | null>(null);
   const [errorCode, setErrorCode] = useState('');
   const [failedStage, setFailedStage] = useState<Phase | null>(null);
@@ -241,6 +244,7 @@ export function ArtifactPanel({
     operation.current = controller;
     let stage = next;
     setPhase(next);
+    setProgress(null);
     setNotice(null);
     setErrorCode('');
     setFailedStage(null);
@@ -306,7 +310,11 @@ export function ArtifactPanel({
       sensitive: level === 'private' && image.request.kind === 'audit' && includeSensitive,
       auditScope: image.request.kind === 'audit' ? scope : '',
     });
-    const result = await verifyArtifact(image, options, key, signal);
+    const result = await verifyArtifact(image, options, key, signal, (value) => {
+      if (current(token, signal)) {
+        setProgress(value);
+      }
+    });
     if (!current(token, signal)) {
       return;
     }
@@ -368,7 +376,12 @@ export function ArtifactPanel({
     const expected = identity();
     await run('downloading', async (signal, token, stage) => {
       artifactFields(request);
-      const image = await access.downloadArtifact(request, signal);
+      const report = (value: Progress) => {
+        if (current(token, signal)) {
+          setProgress(value);
+        }
+      };
+      const image = await access.downloadArtifact(request, signal, report);
       if (!current(token, signal)) {
         return;
       }
@@ -377,7 +390,7 @@ export function ArtifactPanel({
       }
       setReceived(image);
       stage('inspecting');
-      const header = await inspectProtection(image, signal, scope);
+      const header = await inspectProtection(image, signal, scope, report);
       if (!current(token, signal)) {
         return;
       }
@@ -408,7 +421,13 @@ export function ArtifactPanel({
     const expected = identity();
     resetResult();
     await run(previousHeader ? 'verifying' : 'inspecting', async (signal, token, stage) => {
-      const header = previousHeader ?? (await inspectProtection(image, signal, scope));
+      const header =
+        previousHeader ??
+        (await inspectProtection(image, signal, scope, (value) => {
+          if (current(token, signal)) {
+            setProgress(value);
+          }
+        }));
       if (!current(token, signal)) {
         return;
       }
@@ -758,7 +777,7 @@ export function ArtifactPanel({
         <>
           {flowMismatch && <Alert color="red">{t('artifactFlowMismatch')}</Alert>}
           {phase && (
-            <div className="actions" role="status">
+            <div className="stack">
               <span>
                 {t(
                   phase === 'downloading'
@@ -768,9 +787,14 @@ export function ArtifactPanel({
                       : 'recordingVerifying',
                 )}
               </span>
-              <Button variant="default" onClick={() => operation.current?.abort()}>
-                {t('artifactCancel')}
-              </Button>
+              <ReadProgress
+                value={progress}
+                onCancel={() => {
+                  operation.current?.abort();
+                  clearInputs();
+                }}
+                cancelLabel="artifactCancel"
+              />
             </div>
           )}
           {notice && (

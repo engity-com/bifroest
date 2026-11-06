@@ -2,6 +2,7 @@ import { act, createElement, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactCatalog } from '../src/artifacts/ArtifactCatalog';
+import { AuditCatalog } from '../src/artifacts/AuditCatalog';
 import type { ArtifactRequest } from '../src/artifacts/protocol';
 import type { AuditlogSummary, Page, RecordingSummary } from '../src/management/protocol';
 import { WebAccess } from '../src/remember/client';
@@ -71,7 +72,12 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-async function mount(initial = access(), active = true, strict = false) {
+async function mount(
+  initial = access(),
+  active = true,
+  strict = false,
+  view: 'recordings' | 'auditlogs' = 'recordings',
+) {
   const element = document.createElement('div');
   element.style.width = '1200px';
   document.body.append(element);
@@ -86,13 +92,17 @@ async function mount(initial = access(), active = true, strict = false) {
     } = {},
   ) => {
     await act(async () => {
-      const content = createElement(ArtifactCatalog, {
+      const props = {
         access: initial,
         active,
         disabled: false,
         onSelect: selected,
         ...options,
-      });
+      };
+      const content =
+        view === 'recordings'
+          ? createElement(ArtifactCatalog, props)
+          : createElement(AuditCatalog, props);
       root.render(strict ? createElement(StrictMode, null, content) : content);
     });
   };
@@ -124,6 +134,35 @@ function hasNamedCombobox(name: string): boolean {
 }
 
 describe('finding and opening recordings without API choreography', () => {
+  it('streams auditlog-source progress and cancels without adopting a late page or borrowing recording results', async () => {
+    const pending = Promise.withResolvers<Page<AuditlogSummary>>();
+    vi.mocked(WebAccess.prototype.managementAuditlogs).mockImplementationOnce(
+      () => pending.promise,
+    );
+    const app = await mount(access(), true, false, 'auditlogs');
+    const call = vi.mocked(WebAccess.prototype.managementAuditlogs).mock.calls[0];
+    await act(async () => call?.[2]?.({ phase: 'inventory', completed: 12, total: 22 }));
+    expect(app.element.textContent).toContain(t('scanInventory'));
+    expect(app.element.textContent).toContain('12 / 22');
+    expect(app.element.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
+    await click(button(t('artifactCatalogCancel')));
+    expect(call?.[1]?.aborted).toBe(true);
+    await act(async () => pending.resolve({ items: [source], next: '', skipped: 0 }));
+    await vi.waitFor(() =>
+      expect(app.element.textContent).toContain(t('artifactCatalogCancelled')),
+    );
+    expect(app.element.querySelectorAll('[role="row"][data-id]')).toHaveLength(0);
+    expect(WebAccess.prototype.managementAuditlogs).toHaveBeenCalledOnce();
+    expect(WebAccess.prototype.managementRecordings).not.toHaveBeenCalled();
+    expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
+    await click(button(t('auditRefresh')));
+    await vi.waitFor(() =>
+      expect(app.element.querySelectorAll('[role="row"][data-id]')).toHaveLength(1),
+    );
+    expect(WebAccess.prototype.managementAuditlogs).toHaveBeenCalledTimes(2);
+    await act(async () => call?.[2]?.({ phase: 'inventory', completed: 22, total: 22 }));
+    expect(app.element.textContent).not.toContain(t('scanInventory'));
+  });
   it('does not duplicate protected metadata reads during StrictMode effect replay', async () => {
     await mount(access(), true, true);
     expect(WebAccess.prototype.managementAuditlogs).toHaveBeenCalledTimes(1);
@@ -143,6 +182,7 @@ describe('finding and opening recordings without API choreography', () => {
         after: '',
       }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain('alice');
@@ -264,12 +304,13 @@ describe('finding and opening recordings without API choreography', () => {
       'default',
       expect.objectContaining({ sort: 'started-desc', filter: null }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(hasNamedCombobox(t('recordingSource'))).toBe(false);
     expect(button(`${t('recordingOpen')} ${row.id}`)).toBeDefined();
     expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
   });
-  it('retains one skeleton grid through an interrupted read without a cancel control, partial rows or automatic retry', async () => {
+  it('retains one skeleton grid through explicit cancellation without partial rows or automatic retry', async () => {
     let release!: (page: Page<RecordingSummary>) => void;
     vi.mocked(WebAccess.prototype.managementRecordings).mockImplementationOnce(
       () =>
@@ -282,8 +323,9 @@ describe('finding and opening recordings without API choreography', () => {
       `[role="grid"][aria-label="${t('recordingList')} · default"]`,
     );
     expect(grid).not.toBeNull();
-    expect(document.querySelector(`[aria-label="${t('artifactCatalogCancel')}"]`)).toBeNull();
+    expect(button(t('artifactCatalogCancel')).disabled).toBe(false);
     expect(button(t('recordingRefresh')).disabled).toBe(true);
+    await click(button(t('artifactCatalogCancel')));
     await app.render({ disabled: true });
     expect(vi.mocked(WebAccess.prototype.managementRecordings).mock.calls[0]?.[2]?.aborted).toBe(
       true,

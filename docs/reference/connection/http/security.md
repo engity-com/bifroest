@@ -159,26 +159,49 @@ use the [CLI](../../cli/verification.md) in a separately trusted environment whe
 independent verification matters.
 
 The catalog is server-reported metadata, not independent evidence. Its filters
-apply across the bounded inventory, with newest recordings first. New recordings
+apply across the captured inventory, with newest recordings first. New recordings
 can contain the original requesting name; older or encrypted recordings may not
 expose identity details. Missing names and target accounts are not reconstructed
 from current sessions or authorization.
 
-Cold verification can exceed the four-second query budget in a debugger or an
-instrumented build. A pure deadline may retain only fully verified metadata in
-the existing 30-second in-memory cache; no partial catalog is returned. Select
-**Refresh recordings** explicitly to continue. The remaining container and
-canonical/decoded-Cast verification allowances carry across that warmup, not a
-fresh allowance for each continuation. Expiry starts a new scan; cancellation,
-integrity, I/O and budget failures during scanning discard incomplete state.
-Every output page still independently reopens
-and reverifies its selected artifacts. No decryption keys, permissions or actor
-grants are cached by this mechanism, and no read is retried automatically.
+Cold Recording queries run as one cancellable scan without an overall wall-clock
+deadline. A private temporary file captures only canonical binary Recording IDs
+from the initial inventory; it is closed and removed on success, failure or
+cancellation. Verification uses bounded directory batches and per-recording
+container/canonical-Cast limits, not an aggregate archive-size allowance. The
+resident metadata acceleration cache holds at most 1,024 entries; its 30-second
+entry TTL does not expire or restart an active scan. Only the requested page plus
+one lookahead candidate is retained for sorting/filtering. Every output page
+still independently reopens and reverifies its selected artifacts. A failed or
+cancelled scan discards provisional cache state. No keys, rights or actor grants
+are cached, and no read is retried automatically.
+
+Clients opt into count-only progress with `"progress":"counts-v1"` in the
+`bifroest-management.v1` open frame. Correlated progress frames contain only
+`type`, `requestId`, `phase`, `completed` and `total` (`-1` means unknown). Clients
+without this capability receive the existing response/body/completion framing.
+Progress does not release rows or acknowledge final audit/capture/sealing.
+Final matching-row counts reach the grid only with their correlated, successfully
+completed page; scan counts alone never enable paging or opening a result.
+Forced-command read ceilings receive phases without whole-archive counts, so a
+restricted flow/user projection cannot learn other inventory totals this way.
+Remote phases cannot claim local decryption, integrity verification or indexing;
+those statuses originate only in the owned browser pipeline.
+Complete structured results still require the shared driver's successful final
+audit and recording completion. Artifact transfers still require their exact
+Go-verified selectors/data-end/post-driver completion and local evidence checks.
+
+Auditlog-source scans, artifact transfer, local evidence verification and local
+audit indexing/filtering also report owned, cancellable progress. Long scans,
+transfers and local verification do not have aggregate execution deadlines.
+Transport startup, WebSocket liveness, bounded writes/cancellation acknowledgement
+and native session idle/maximum lifetimes remain separate and authoritative.
+No refresh click is required to continue ordinary verification work.
 
 Failed structured management reads are logged on the server with their backend
 cause, operation and connection; WebSocket reads also include channel and request
 IDs. Bearers and request bodies are not logged. The browser receives only a
-fixed public warmup condition or a generic failure, not backend paths or errors.
+generic failure, not backend paths or errors.
 
 The native Community filter panel supports one column predicate plus quick
 search. All remote predicates are applied before pagination and remain bound to
@@ -195,7 +218,7 @@ or verification budgets.
 | Private-key import | One PEM/OpenSSH key, at most 64 KiB; optional matching OpenSSH certificate at most 12 KiB |
 | Key algorithms | Ed25519, RSA 2048–8192, NIST P-256/P-384/P-521; no DSA or hardware/security-key formats |
 | Artifact payload | 64 MiB in tab memory; use native tools for larger artifacts |
-| Recording catalog | At most 1,024 sealed recordings; bounded 128 MiB verification budgets and a four-second query deadline. Filters do not bypass these inventory limits. CLI UUID-paged listing remains available for larger archives. |
+| Recording catalog | No aggregate count, verification-volume or execution-time limit. Directory batches of 128; cache at most 1,024 entries; at most one page plus lookahead in selection memory. Each individual container and canonical/decoded Cast verification remains bounded to 128 MiB. Private temporary inventory storage grows by 16 bytes per Recording ID; filesystem/I/O failures fail closed. |
 | Recording playback | 100,000 events, at most 512 columns, 256 rows and 32,768 cells |
 | Local audit-event view | At most 250,000 records / 64 MiB of verified JSONL; bounded typed index, at most 1 MiB per event line and 20 displayed rows per page |
 

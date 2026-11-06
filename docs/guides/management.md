@@ -187,16 +187,30 @@ saved for the origin; changing it refreshes the affected list when it is active.
 It does not grant access to withheld fields, credentials or decrypted content.
 Returning to an otherwise unchanged loaded view does not repeat its reads.
 
-In debug/instrumented builds, a cold Recording catalog may need more than one
-bounded read. A yellow notice means verified progress was retained, not that a
-partial list is ready: select **Refresh recordings** to continue explicitly.
-The notice also provides **Continue verification**. Cached progress expires
-after 30 seconds; continue promptly rather than treating the notice as a loaded
-list. Failed reads clear old rows and paging, and an explicit continuation keeps
-the requested source, literal flow and native filter/sort intent.
-Server logs identify the actual backend failure and, for WebSocket operations,
-its request ID. Other failures still require diagnosis; no timeout, byte budget,
-verification or permission limit is bypassed.
+Recording and auditlog-source lists show live scan phases and counts with
+**Cancel catalog request**. A cold Recording scan is one continuous operation,
+including in debug/instrumented builds: there is no four-second overall deadline
+or manual continuation/cache-expiry window. It captures a fixed inventory and
+processes recordings individually, keeping only a bounded metadata cache and the
+requested sorted page in memory. Archives are not rejected merely for exceeding
+1,024 entries or an aggregate 128 MiB of verification work. Individual artifacts
+still have verification limits; see [HTTP limits](../reference/connection/http/security.md#practical-limits).
+
+Audit downloads show transfer progress, followed by local integrity/private-event
+verification and local indexing/filtering progress. Decryption keys remain local;
+progress never establishes producer trust. These operations have no aggregate
+execution deadline, but transport startup/liveness, native session lifetimes,
+authorization, quotas and individual resource limits still apply. Aborting ends
+the owned operation without logout or explicit server workload disposal. Leaving
+its page or losing access also cancels unfinished work. No operation is retried
+or reauthenticated automatically.
+
+Counts are provisional status, not a partial result or successful completion.
+The grid stays loading until its complete, authoritative page is ready; audit
+events additionally require completed local verification. Failures and
+cancellation clear old rows/paging rather than presenting an earlier result as
+current. Server logs retain the actual failure and, for WebSocket operations,
+its correlated request ID without exposing private causes in the browser.
 
 **Recordings** and **Audit logs** are separate navigation entries and keep their
 own selections and results. Opening a Recording prepares local playback after

@@ -42,10 +42,11 @@ type Options struct {
 	RecipientFromKey    bool   `json:"recipientFromKey,omitempty"`
 	RecipientFromHeader bool   `json:"recipientFromHeader,omitempty"`
 	identities          *keydata.AgeSshIdentities
-	Level               string `json:"level"` // outer or private
-	Export              bool   `json:"export"`
-	Sensitive           bool   `json:"sensitive"`
-	AuditScope          string `json:"auditScope"` // complete or captured-prefix
+	Level               string                           `json:"level"` // outer or private
+	Export              bool                             `json:"export"`
+	Sensitive           bool                             `json:"sensitive"`
+	AuditScope          string                           `json:"auditScope"` // complete or captured-prefix
+	Progress            func(string, int64, int64) error `json:"-"`
 }
 
 type Result struct {
@@ -313,6 +314,9 @@ func verifyAudit(ctx context.Context, request protocol.ArtifactRequest, files []
 		mode = evidence.AuditProducerCapturedPrefix
 	}
 	verify := evidence.AuditProducerOptions{Auditlog: request.Auditlog, ExpectedProducerId: expected, AllowUntrusted: options.AllowUntrusted, ExpectedEncryptionRecipient: options.Recipient, Mode: mode}
+	if options.Progress != nil {
+		verify.Progress = func(count uint64) error { return options.Progress("integrity", int64(count), -1) }
+	}
 	newSnapshot := func() (*evidence.AuditByteSnapshot, error) {
 		return evidence.NewAuditByteSnapshot(head, published, active)
 	}
@@ -337,6 +341,11 @@ func verifyAudit(ctx context.Context, request protocol.ArtifactRequest, files []
 		return nil, err
 	}
 	verify.WithSensitive = options.Sensitive
+	if options.Progress != nil {
+		verify.Progress = func(count uint64) error {
+			return options.Progress("decrypting", int64(count), int64(outer.RecordCount))
+		}
+	}
 	snapshot, err = newSnapshot()
 	if err != nil {
 		return nil, ErrInput
@@ -349,11 +358,22 @@ func verifyAudit(ctx context.Context, request protocol.ArtifactRequest, files []
 		}
 		summary = verified.Summary
 		var output boundedOutput
+		if options.Progress != nil {
+			if err := options.Progress("exporting", 0, int64(summary.RecordCount)); err != nil {
+				return nil, err
+			}
+		}
 		defer func() { clear(output.Bytes()) }()
 		if err := verified.ExportJSONLines(&output, evidence.RecordOrderChain); err != nil {
 			return nil, verificationError(err)
 		}
 		result.Output, result.OutputFormat = bytes.Clone(output.Bytes()), "jsonl"
+		if options.Progress != nil {
+			if err := options.Progress("exporting", int64(summary.RecordCount), int64(summary.RecordCount)); err != nil {
+				clear(result.Output)
+				return nil, err
+			}
+		}
 	} else {
 		summary, err = evidence.VerifyAuditProducerIntegrity(ctx, snapshot, verify)
 	}

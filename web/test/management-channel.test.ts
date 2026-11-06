@@ -86,6 +86,199 @@ function fixture() {
   return { scope, access, socket, connection, transport, factory, token };
 }
 describe('admitted actor-owned management connection', () => {
+  it('publishes a final filtered total only with its own completed page, not with a provisional progress frame', async () => {
+    const { access, socket } = fixture();
+    socket.ready();
+    let published: unknown;
+    const pending = access.managementAuditlogs().then((value) => {
+      published = value;
+      return value;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    socket.json({ type: 'progress', requestId: '1', phase: 'finalizing', completed: 1, total: 1 });
+    await Promise.resolve();
+    expect(published).toBeUndefined();
+    socket.json({
+      type: 'response',
+      requestId: '1',
+      status: 200,
+      contentType: 'application/json; charset=utf-8',
+    });
+    socket.output(
+      '1',
+      new TextEncoder().encode(
+        JSON.stringify({
+          version: 1,
+          operation: 'auditlogs.list',
+          auditlogs: {
+            items: [{ name: 'default', enabled: true, recordingEnabled: true, encrypted: false }],
+            next: '',
+            skipped: 0,
+          },
+        }),
+      ),
+    );
+    await Promise.resolve();
+    expect(published).toBeUndefined();
+    socket.json({ type: 'complete', requestId: '1' });
+    await expect(pending).resolves.toMatchObject({ total: 1, items: [{ name: 'default' }] });
+  });
+  it('rejects a completed total that contradicts its page rather than manufacturing a successful empty grid', async () => {
+    const { access, socket } = fixture();
+    socket.ready();
+    const pending = access.managementAuditlogs();
+    const observed = expect(pending).rejects.toMatchObject({ code: 'unavailable' });
+    await Promise.resolve();
+    await Promise.resolve();
+    socket.json({ type: 'progress', requestId: '1', phase: 'finalizing', completed: 0, total: 0 });
+    socket.response('1', {
+      version: 1,
+      operation: 'auditlogs.list',
+      auditlogs: {
+        items: [{ name: 'default', enabled: true, recordingEnabled: true, encrypted: false }],
+        next: '',
+        skipped: 0,
+      },
+    });
+    await observed;
+  });
+  it.each(['management/recordings/list', 'management/auditlogs/list'])(
+    'keeps %s alive beyond old deadlines and publishes only its completed result',
+    async (action) => {
+      const { socket, connection, transport, factory } = fixture();
+      socket.ready();
+      const progress = vi.fn();
+      let settled = false;
+      const pending = connection.post(action, {}, 200, undefined, progress).then((value) => {
+        settled = true;
+        return value;
+      });
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(120_001);
+      expect(settled).toBe(false);
+      expect(connection.connected()).toBe(true);
+      expect(socket.sent.filter((frame) => frame.type === 'cancel')).toHaveLength(0);
+      socket.json({
+        type: 'progress',
+        requestId: '1',
+        phase: 'verifying',
+        completed: 230,
+        total: 284,
+      });
+      expect(progress).toHaveBeenCalledExactlyOnceWith({
+        phase: 'verifying',
+        completed: 230,
+        total: 284,
+      });
+      await vi.advanceTimersByTimeAsync(120_001);
+      expect(settled).toBe(false);
+      expect(socket.sent.filter((frame) => frame.type === 'request')).toHaveLength(1);
+      socket.json({
+        type: 'response',
+        requestId: '1',
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+      });
+      socket.output('1', new TextEncoder().encode('{"safe":true}'));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      socket.json({ type: 'complete', requestId: '1' });
+      await expect(pending).resolves.toEqual({ safe: true });
+      expect(factory).toHaveBeenCalledOnce();
+      expect(transport).not.toHaveBeenCalled();
+    },
+  );
+  it('cancels a long scan, ignores its late progress and bytes, and preserves admission after the matching acknowledgement', async () => {
+    const { socket, connection } = fixture();
+    socket.ready();
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const pending = connection.post(
+      'management/recordings/list',
+      {},
+      200,
+      controller.signal,
+      progress,
+    );
+    const observed = expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(120_001);
+    controller.abort();
+    await observed;
+    socket.json({ type: 'progress', requestId: '1', phase: 'verifying', completed: 1, total: 2 });
+    expect(progress).not.toHaveBeenCalled();
+    socket.json({
+      type: 'response',
+      requestId: '1',
+      status: 200,
+      contentType: 'application/json; charset=utf-8',
+    });
+    socket.output('1', new TextEncoder().encode('ignored'));
+    socket.json({ type: 'canceled', requestId: '1' });
+    await vi.advanceTimersByTimeAsync(5001);
+    expect(connection.connected()).toBe(true);
+    const next = connection.post('management/auditlogs/list', {}, 200);
+    await Promise.resolve();
+    socket.response('2', { current: true });
+    await expect(next).resolves.toEqual({ current: true });
+  });
+  it('bounds missing cancellation acknowledgement independently of an unbounded scan lifetime', async () => {
+    const { socket, connection } = fixture();
+    socket.ready();
+    const controller = new AbortController();
+    const pending = connection.post('management/auditlogs/list', {}, 200, controller.signal);
+    const observed = expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(120_001);
+    expect(connection.connected()).toBe(true);
+    controller.abort();
+    await observed;
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(connection.connected()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(connection.state()).toEqual({ phase: 'interrupted', reason: 'timeout' });
+  });
+  it.each([
+    'uncorrelated',
+    'private-field',
+    'bad-count',
+    'wrong-action',
+    'after-response',
+    'local-claim',
+  ])('fails closed on %s progress without exposing a result', async (mode) => {
+    const { socket, connection } = fixture();
+    socket.ready();
+    const progress = vi.fn();
+    const pending = connection.post(
+      mode === 'wrong-action' ? 'management/flows/list' : 'management/recordings/list',
+      {},
+      200,
+      undefined,
+      progress,
+    );
+    const observed = expect(pending).rejects.toMatchObject({ code: 'denied' });
+    await Promise.resolve();
+    if (mode === 'after-response') {
+      socket.json({
+        type: 'response',
+        requestId: '1',
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+      });
+    }
+    socket.json({
+      type: 'progress',
+      requestId: mode === 'uncorrelated' ? '2' : '1',
+      phase: mode === 'local-claim' ? 'decrypting' : 'verifying',
+      completed: mode === 'bad-count' ? 3 : 1,
+      total: 2,
+      ...(mode === 'private-field' ? { body: 'must-not-escape' } : {}),
+    });
+    await observed;
+    expect(progress).not.toHaveBeenCalled();
+    expect(connection.connected()).toBe(false);
+  });
   it('reports catalog warmup only for its completed correlated read and never retries or falls back', async () => {
     const { socket, connection, transport } = fixture();
     socket.ready();
@@ -168,7 +361,12 @@ describe('admitted actor-owned management connection', () => {
       'wss://app.example.org:8443/_bifroest/api/v1/management/channel',
       'bifroest-management.v1',
     );
-    expect(socket.sent[0]).toEqual({ type: 'open', slug: 'Work', accessToken: token });
+    expect(socket.sent[0]).toEqual({
+      type: 'open',
+      slug: 'Work',
+      accessToken: token,
+      progress: 'counts-v1',
+    });
     vi.advanceTimersByTime(1001);
     expect(access.status()).toBe('expired');
     expect(access.managementStatus()).toBe('active');

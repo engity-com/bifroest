@@ -4,6 +4,7 @@ import {
   maximumTransferImageBytes,
   transferMediaType,
 } from '../artifacts/protocol';
+import { type ProgressListener, streamingManagementAction } from '../management/progress';
 import { isCatalogWarmupResponse } from './catalog-error';
 import type { Scope } from './protocol';
 import { decode64, RememberMeError, validateScope } from './protocol';
@@ -75,6 +76,7 @@ export class Http {
     request: ArtifactRequest,
     token: string,
     signal: AbortSignal,
+    progress?: ProgressListener,
   ): Promise<ArtifactResponseImage> {
     const selected = Object.freeze({ ...request }) as ArtifactRequest;
     const fields = artifactFields(selected);
@@ -82,8 +84,7 @@ export class Http {
       throw new RememberMeError('unavailable');
     }
     const controller = new AbortController();
-    const deadline = AbortSignal.timeout(20_000);
-    const stopped = AbortSignal.any([signal, controller.signal, deadline]);
+    const stopped = AbortSignal.any([signal, controller.signal]);
     const url = new URL(
       `/_bifroest/api/v1/management/artifacts/${selected.kind}`,
       this.#scope.origin,
@@ -180,6 +181,11 @@ export class Http {
         }
         // Own the image even when an injected test/host stream reuses a buffer.
         chunks.push(new Uint8Array(part.value));
+        progress?.({
+          phase: 'receiving',
+          completed: length,
+          total: declared === null ? -1 : Number(declared),
+        });
       }
       if (declared !== null && Number(declared) !== length) {
         throw new RememberMeError('unavailable');
@@ -220,7 +226,7 @@ export class Http {
         }
       }
     }
-    if (failure !== undefined || result === undefined || signal.aborted || deadline.aborted) {
+    if (failure !== undefined || result === undefined || signal.aborted) {
       if (result !== undefined) {
         new Uint8Array(result.bytes).fill(0);
       }
@@ -235,6 +241,7 @@ export class Http {
     token: string | undefined,
     status: number,
     signal?: AbortSignal,
+    _progress?: ProgressListener,
   ): Promise<unknown> {
     const allowed = [
       'login/password',
@@ -261,7 +268,9 @@ export class Http {
     if (!allowed.includes(action)) {
       throw new RememberMeError('unavailable');
     }
-    const deadline = AbortSignal.timeout(20_000);
+    const deadline = streamingManagementAction(action)
+      ? new AbortController().signal
+      : AbortSignal.timeout(20_000);
     const stopped = signal === undefined ? deadline : AbortSignal.any([signal, deadline]);
     if (stopped.aborted) {
       throw new RememberMeError('cancelled');

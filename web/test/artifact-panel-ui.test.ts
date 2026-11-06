@@ -308,6 +308,7 @@ describe('usable local evidence without manual protection guesses', () => {
     expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledExactlyOnceWith(
       recording,
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(inspectProtection).toHaveBeenCalledOnce();
     expect(verifyArtifact).toHaveBeenCalledExactlyOnceWith(
@@ -321,6 +322,7 @@ describe('usable local evidence without manual protection guesses', () => {
       }),
       null,
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(document.querySelector<HTMLInputElement>('input[maxlength="64"]')?.value).toBe(signer);
     expect(document.querySelector<HTMLInputElement>('input[maxlength="64"]')?.disabled).toBe(true);

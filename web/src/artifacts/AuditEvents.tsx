@@ -1,6 +1,7 @@
 import CloseIcon from '@mui/icons-material/Close';
 import { IconButton } from '@mui/material';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReadProgress as Progress } from '../management/progress';
 import type { ColumnFilter } from '../management/protocol';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useDetailRefresh } from '../ui/detail-preference';
@@ -8,6 +9,7 @@ import { exactFlow, type ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, TextInput } from '../ui/material';
 import { t } from '../ui/messages';
+import { ReadProgress } from '../ui/ReadProgress';
 import {
   type AuditEventIndex,
   type AuditEventRow,
@@ -46,7 +48,11 @@ export function AuditEvents({
   const [filter, setFilter] = useState<ColumnFilter | null>(null);
   const [sort, setSort] = useState<'asc' | 'desc'>('desc');
   const [next, setNext] = useState(false);
+  const [total, setTotal] = useState<number | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [cancelled, setCancelled] = useState(false);
+  const operation = useRef<AbortController | null>(null);
   const [failed, setFailed] = useState(false);
   const [ownSelected, setOwnSelected] = useState<AuditEventRow | null>(null);
   const [refresh, setRefresh] = useState(0);
@@ -115,14 +121,24 @@ export function AuditEvents({
     if (!active) {
       return;
     }
+    operation.current = controller;
     setBusy(true);
+    setTotal(undefined);
+    setRows([]);
+    setProgress(null);
+    setCancelled(false);
     setFailed(false);
     void (async () => {
+      const report = (value: Progress) => {
+        if (current === generation.current && !controller.signal.aborted) {
+          setProgress(value);
+        }
+      };
       try {
         const ownedIndex =
           index.current?.source === source && indexedRevision.current === refresh
             ? index.current
-            : await indexAuditEvents(source, controller.signal);
+            : await indexAuditEvents(source, controller.signal, report);
         if (current !== generation.current || controller.signal.aborted) {
           return;
         }
@@ -138,7 +154,7 @@ export function AuditEvents({
             return;
           }
           choose(null);
-          const row = await auditEventByID(ownedIndex, id, controller.signal, target.flow);
+          const row = await auditEventByID(ownedIndex, id, controller.signal, target.flow, report);
           if (current !== generation.current || controller.signal.aborted) {
             return;
           }
@@ -193,6 +209,7 @@ export function AuditEvents({
           sort === 'desc',
           controller.signal,
           target?.flow,
+          report,
         );
         if (current === generation.current && !controller.signal.aborted) {
           listScope.current = target?.flow;
@@ -203,15 +220,27 @@ export function AuditEvents({
           nativeFilterIntent.current = null;
           setRows(result.items);
           setNext(result.next !== '');
+          setTotal(result.total);
         }
       } catch {
+        if (current === generation.current && controller.signal.aborted) {
+          setCancelled(true);
+          setRows([]);
+        }
         if (current === generation.current && !controller.signal.aborted) {
           setRows([]);
           setFailed(true);
         }
       } finally {
         if (current === generation.current) {
+          if (controller.signal.aborted) {
+            setCancelled(true);
+            setRows([]);
+          }
           setBusy(false);
+          if (operation.current === controller) {
+            operation.current = null;
+          }
         }
       }
     })();
@@ -248,12 +277,15 @@ export function AuditEvents({
     typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   return (
     <section className="stack" aria-label={t('auditEvents')}>
+      {busy && <ReadProgress value={progress} onCancel={() => operation.current?.abort()} />}
+      {cancelled && <Alert>{t('artifactCatalogCancelled')}</Alert>}
       {failed && <Alert color="red">{t('auditEventsFailed')}</Alert>}
       {busy && detailIntent && selected === null && <p role="status">{t('auditEventLoading')}</p>}
       <div hidden={selected !== null || detailIntent}>
         <AdminDataGrid<AuditEventRow>
           active={active && selected === null && !detailIntent}
           label={t('auditEvents')}
+          resultAvailable={!busy && !failed && !cancelled && index.current?.source === source}
           rows={!route || listScope.current === route.flow ? rows : []}
           onOpen={openRow}
           openByID={
@@ -314,6 +346,7 @@ export function AuditEvents({
           disabled={!active}
           page={page}
           hasNext={next}
+          total={total}
           query={query}
           columnFilter={shownFilter}
           sortField="recordedAt"

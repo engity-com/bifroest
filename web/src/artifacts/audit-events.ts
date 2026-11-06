@@ -3,9 +3,26 @@ import {
   getGridDateOperators,
   getGridStringOperators,
 } from '@mui/x-data-grid';
+import type { ProgressListener } from '../management/progress';
 import type { ColumnFilter } from '../management/protocol';
 import { EvidenceError } from './evidence-protocol';
 import { maximumBufferedArtifactBytes } from './protocol';
+
+function yieldAuditWork(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener('abort', abort);
+      clearTimeout(timer);
+      signal.aborted ? reject(new EvidenceError('cancelled')) : resolve();
+    };
+    const abort = () => finish();
+    const timer = setTimeout(finish, 0);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) {
+      finish();
+    }
+  });
+}
 
 const maximumRecords = 250000;
 const maximumLineBytes = 1 << 20;
@@ -71,6 +88,9 @@ async function* lines(source: Blob, signal: AbortSignal) {
         throw new EvidenceError('cancelled');
       }
       const part = await reader.read();
+      if (signal.aborted) {
+        throw new EvidenceError('cancelled');
+      }
       if (part.done) {
         break;
       }
@@ -118,11 +138,13 @@ async function* lines(source: Blob, signal: AbortSignal) {
 export async function indexAuditEvents(
   source: Blob,
   signal: AbortSignal,
+  progress?: ProgressListener,
 ): Promise<AuditEventIndex> {
   const offsets = new Uint32Array(maximumRecords);
   const lengths = new Uint32Array(maximumRecords);
   const times = new Float64Array(maximumRecords);
   let count = 0;
+  progress?.({ phase: 'indexing', completed: 0, total: -1 });
   for await (const line of lines(source, signal)) {
     if (count >= maximumRecords) {
       throw new EvidenceError('limit');
@@ -133,12 +155,14 @@ export async function indexAuditEvents(
     times[count] = row.recordedAt.getTime();
     count++;
     if (count % 4096 === 0) {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      progress?.({ phase: 'indexing', completed: count, total: -1 });
+      await yieldAuditWork(signal);
     }
   }
   if (signal.aborted) {
     throw new EvidenceError('cancelled');
   }
+  progress?.({ phase: 'indexing', completed: count, total: count });
   return { source, offsets, lengths, times, count };
 }
 function predicate(filter: ColumnFilter | null): (row: AuditEventRow) => boolean {
@@ -176,7 +200,8 @@ export async function auditEventPage(
   descending: boolean,
   signal: AbortSignal,
   exactFlow?: string,
-): Promise<{ items: AuditEventRow[]; next: string; skipped: number }> {
+  progress?: ProgressListener,
+): Promise<{ items: AuditEventRow[]; next: string; skipped: number; total: number }> {
   if (
     !Number.isSafeInteger(page) ||
     page < 0 ||
@@ -186,6 +211,7 @@ export async function auditEventPage(
     throw new EvidenceError('input');
   }
   const matched = new Uint32Array(index.count);
+  progress?.({ phase: 'filtering', completed: 0, total: index.count });
   let count = 0;
   const accepts = predicate(filter);
   const tokens = query.toLowerCase().split(/\s+/u).filter(Boolean);
@@ -210,7 +236,8 @@ export async function auditEventPage(
       }
       number++;
       if (number % 4096 === 0) {
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        progress?.({ phase: 'filtering', completed: number, total: index.count });
+        await yieldAuditWork(signal);
       }
     }
   }
@@ -231,7 +258,8 @@ export async function auditEventPage(
   if (signal.aborted) {
     throw new EvidenceError('cancelled');
   }
-  return { items, next: (page + 1) * 20 < count ? 'next' : '', skipped: 0 };
+  progress?.({ phase: 'filtering', completed: index.count, total: index.count });
+  return { items, next: (page + 1) * 20 < count ? 'next' : '', skipped: 0, total: count };
 }
 
 export async function auditEventByID(
@@ -239,11 +267,13 @@ export async function auditEventByID(
   id: string,
   signal: AbortSignal,
   flow?: string,
+  progress?: ProgressListener,
 ): Promise<AuditEventRow | null> {
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(id)) {
     throw new EvidenceError('input');
   }
   let number = 0;
+  progress?.({ phase: 'filtering', completed: 0, total: index.count });
   let found: AuditEventRow | null = null;
   for await (const line of lines(index.source, signal)) {
     if (number >= index.count) {
@@ -261,11 +291,13 @@ export async function auditEventByID(
     }
     number++;
     if (number % 4096 === 0) {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      progress?.({ phase: 'filtering', completed: number, total: index.count });
+      await yieldAuditWork(signal);
     }
   }
   if (signal.aborted) {
     throw new EvidenceError('cancelled');
   }
+  progress?.({ phase: 'filtering', completed: index.count, total: index.count });
   return found;
 }

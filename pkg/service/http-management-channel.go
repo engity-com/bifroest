@@ -24,15 +24,16 @@ const webManagementProtocol = "bifroest-management.v1"
 type webManagementContextKey struct{}
 type webManagementRequestIDContextKey struct{}
 type webManagementChannel struct {
-	stream  *webTerminalStream
-	conn    *terminalConnection
-	access  *webAccess
-	scope   webScope
-	request *http.Request
-	jobs    chan webManagementJob
-	mutex   sync.Mutex
-	pending map[string]context.CancelFunc
-	last    uint64
+	stream   *webTerminalStream
+	conn     *terminalConnection
+	access   *webAccess
+	scope    webScope
+	request  *http.Request
+	jobs     chan webManagementJob
+	mutex    sync.Mutex
+	pending  map[string]context.CancelFunc
+	last     uint64
+	progress bool
 }
 type webManagementJob struct {
 	id, action string
@@ -120,7 +121,7 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 	if err != nil || kind != websocket.TextMessage {
 		return
 	}
-	values, err := webTerminalObject(data, "type", "accessToken", "slug", "keepAlive")
+	values, err := webTerminalObject(data, "type", "accessToken", "slug", "keepAlive", "progress")
 	if err != nil || len(values) < 3 {
 		return
 	}
@@ -136,6 +137,14 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 	}
 	if command != "open" || len(interval) > 64 {
 		return
+	}
+	progress := false
+	if raw, present := values["progress"]; present {
+		var version string
+		if json.Unmarshal(raw, &version) != nil || version != "counts-v1" {
+			return
+		}
+		progress = true
 	}
 	scope, err := requestWebScope(r, slug)
 	if err != nil {
@@ -155,7 +164,7 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 		return
 	}
 	defer func() { _ = conn.Close(); <-conn.done }()
-	channel := &webManagementChannel{stream: stream, conn: conn, access: access, scope: scope, request: r, jobs: make(chan webManagementJob, 4), pending: make(map[string]context.CancelFunc)}
+	channel := &webManagementChannel{stream: stream, conn: conn, access: access, scope: scope, request: r, jobs: make(chan webManagementJob, 4), pending: make(map[string]context.CancelFunc), progress: progress}
 	defer func() {
 		this.mutex.Lock()
 		for key, value := range this.confirmations {
@@ -348,13 +357,42 @@ func (this *webManagementChannel) serve(service *webService, job webManagementJo
 // The existing handlers still own strict completion, budgets, per-operation
 // audit/recording and authorization. This adapter only frames their output.
 type webManagementResponse struct {
-	channel *webManagementChannel
-	id      string
-	ctx     context.Context
-	header  http.Header
-	started bool
-	cancel  context.CancelFunc
-	writing atomic.Bool
+	channel       *webManagementChannel
+	id            string
+	ctx           context.Context
+	header        http.Header
+	started       bool
+	cancel        context.CancelFunc
+	writing       atomic.Bool
+	progressAt    time.Time
+	progressPhase string
+}
+
+func (this *webManagementResponse) ManagementProgress(progress managementReadProgress) error {
+	if !this.channel.progress {
+		return nil
+	}
+	if err := this.ctx.Err(); err != nil {
+		return err
+	}
+	if this.channel.conn.check(false) != nil {
+		return errWebAccessDenied
+	}
+	// Once data begins, the adapter's bounded byte frames provide transfer
+	// progress. Never interleave a new pre-response status into body framing.
+	if this.started {
+		return nil
+	}
+	now := time.Now()
+	if progress.Phase == this.progressPhase && now.Sub(this.progressAt) < 100*time.Millisecond && (progress.Total < 0 || progress.Completed != progress.Total) {
+		return nil
+	}
+	this.progressAt, this.progressPhase = now, progress.Phase
+	return this.channel.stream.status(struct {
+		Type      string `json:"type"`
+		RequestID string `json:"requestId"`
+		managementReadProgress
+	}{"progress", this.id, progress})
 }
 
 func (this *webManagementResponse) Header() http.Header { return this.header }

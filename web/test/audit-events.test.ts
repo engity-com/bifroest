@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { auditEventByID, auditEventPage, indexAuditEvents } from '../src/artifacts/audit-events';
 
 function record(index: number) {
@@ -13,6 +13,57 @@ function record(index: number) {
     },
   };
 }
+it('streams local indexing/filter progress without relying on visible animation frames and cancels between bounded sections', async () => {
+  const source = new Blob(
+    Array.from({ length: 5000 }, (_, index) => `${JSON.stringify(record(index))}\n`),
+  );
+  const animation = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(() => {
+    throw new Error('indexing must not wait for a visible animation frame');
+  });
+  try {
+    const progress = vi.fn();
+    const index = await indexAuditEvents(source, new AbortController().signal, progress);
+    expect(progress).toHaveBeenCalledWith({ phase: 'indexing', completed: 4096, total: -1 });
+    expect(progress).toHaveBeenLastCalledWith({ phase: 'indexing', completed: 5000, total: 5000 });
+    expect(index.count).toBe(5000);
+    const filterProgress = vi.fn();
+    const page = await auditEventPage(
+      index,
+      0,
+      'work',
+      null,
+      true,
+      new AbortController().signal,
+      undefined,
+      filterProgress,
+    );
+    expect(page.items).toHaveLength(20);
+    expect(filterProgress).toHaveBeenLastCalledWith({
+      phase: 'filtering',
+      completed: 5000,
+      total: 5000,
+    });
+    const controller = new AbortController();
+    await expect(
+      indexAuditEvents(source, controller.signal, (value) => {
+        if (value.completed === 4096) {
+          controller.abort();
+        }
+      }),
+    ).rejects.toMatchObject({ code: 'cancelled' });
+    const filtering = new AbortController();
+    await expect(
+      auditEventPage(index, 0, 'work', null, true, filtering.signal, undefined, (value) => {
+        if (value.completed === 4096) {
+          filtering.abort();
+        }
+      }),
+    ).rejects.toMatchObject({ code: 'cancelled' });
+    expect(animation).not.toHaveBeenCalled();
+  } finally {
+    animation.mockRestore();
+  }
+});
 it('indexes verified JSONL in bounded primitive arrays and uses native predicates across all pages', async () => {
   const source = new Blob(
     Array.from({ length: 45 }, (_, index) => `${JSON.stringify(record(index))}\n`),

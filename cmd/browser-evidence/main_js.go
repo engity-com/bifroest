@@ -47,7 +47,7 @@ func verify(_ js.Value, args []js.Value) (result any) {
 		return result
 	}
 	used = true
-	if len(args) != 7 {
+	if len(args) != 7 && len(args) != 8 || len(args) == 8 && args[7].Type() != js.TypeFunction {
 		return failure("input")
 	}
 	for _, index := range []int{0, 1, 2, 3} {
@@ -76,6 +76,9 @@ func verify(_ js.Value, args []js.Value) (result any) {
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&options) != nil || decoder.Decode(new(any)) != io.EOF {
 		return failure("input")
+	}
+	if len(args) == 8 {
+		options.Progress = func(phase string, completed, total int64) error { args[7].Invoke(phase, completed, total); return nil }
 	}
 	if !args[4].InstanceOf(js.Global().Get("Array")) || args[4].Length() < 1 || args[4].Length() > 65536 {
 		return failure("input")

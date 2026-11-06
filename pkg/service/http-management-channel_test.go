@@ -79,7 +79,7 @@ func TestManagementChannelCancellationDoesNotCloseOrReplaceItsAdmission(t *testi
 	require.Contains(t, string(data), `"detail":"short"`)
 }
 
-func managementChannelDial(t *testing.T, fixture *webSocketFixture, token string) *websocket.Conn {
+func managementChannelDial(t *testing.T, fixture *webSocketFixture, token string, progress ...bool) *websocket.Conn {
 	t.Helper()
 	dialer := fixture.dialer
 	dialer.Subprotocols = []string{webManagementProtocol}
@@ -89,7 +89,11 @@ func managementChannelDial(t *testing.T, fixture *webSocketFixture, token string
 	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = socket.Close() })
-	require.NoError(t, socket.WriteJSON(map[string]string{"type": "open", "accessToken": token, "slug": "Work"}))
+	fields := map[string]string{"type": "open", "accessToken": token, "slug": "Work"}
+	if len(progress) == 0 || progress[0] {
+		fields["progress"] = "counts-v1"
+	}
+	require.NoError(t, socket.WriteJSON(fields))
 	return socket
 }
 func managementChannelRead(t *testing.T, socket *websocket.Conn, id, action string, fields map[string]string) (int, []byte) {

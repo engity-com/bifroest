@@ -117,6 +117,9 @@ func (this *service) streamManagementAudit(task environment.Task, args []string)
 }
 
 func (this *service) writeManagementAudit(ctx context.Context, name configuration.AuditlogName, output io.Writer) (resultErr error) {
+	if err := reportManagementProgress(ctx, "inventory", 0, -1); err != nil {
+		return err
+	}
 	identity := this.auditIdentities[name]
 	if identity == nil {
 		return fmt.Errorf("auditlog %q has no active signing identity", name)
@@ -167,6 +170,9 @@ func (this *service) streamManagementRecording(task environment.Task, args []str
 }
 
 func (this *service) writeManagementRecording(ctx context.Context, name configuration.AuditlogName, id recording.Id, output io.Writer) (resultErr error) {
+	if err := reportManagementProgress(ctx, "verifying", 0, -1); err != nil {
+		return err
+	}
 	repository := this.recordingRepositories[name]
 	if repository == nil || repository.native == nil {
 		return fmt.Errorf("auditlog %q has no active recording repository", name)

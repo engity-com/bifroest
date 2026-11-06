@@ -8,6 +8,7 @@ import { publicKeyLogin } from '../login/key';
 import type { SessionAction } from '../management/action';
 import { actionPreparation, actionResult, SessionActionConfirmation } from '../management/action';
 import { ManagementConnection } from '../management/channel';
+import type { ProgressListener, ReadProgress } from '../management/progress';
 import type {
   AuditlogSummary,
   FlowSummary,
@@ -47,6 +48,25 @@ export interface AccessSnapshot {
 }
 
 export type AccessStatus = 'active' | 'expired' | 'closed';
+
+function completedPage<T>(
+  page: Page<T>,
+  total: number | undefined,
+  after: string | undefined,
+): Page<T> {
+  if (total === undefined) {
+    return page;
+  }
+  if (
+    !Number.isSafeInteger(total) ||
+    total < page.items.length ||
+    (page.next !== '' && total <= page.items.length) ||
+    (!after && page.next === '' && total !== page.items.length)
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  return Object.freeze({ ...page, total });
+}
 
 interface AccessResponse extends AccessSnapshot {
   readonly accessToken: string;
@@ -281,9 +301,10 @@ export class WebAccess {
     );
     this.#managementChannel = channel;
     this.#managementHttp = {
-      post: (action, fields, _token, status, signal) =>
-        channel.post(action, fields, status, signal),
-      artifactImage: (request, _token, signal) => channel.artifactImage(request, signal),
+      post: (action, fields, _token, status, signal, progress) =>
+        channel.post(action, fields, status, signal, progress),
+      artifactImage: (request, _token, signal, progress) =>
+        channel.artifactImage(request, signal, progress),
     };
     return channel;
   }
@@ -314,6 +335,7 @@ export class WebAccess {
   async downloadArtifact(
     request: ArtifactRequest,
     signal?: AbortSignal,
+    progress?: ProgressListener,
   ): Promise<ReceivedArtifact> {
     this.#managementAllowed();
     const selected = Object.freeze({ ...request }) as ArtifactRequest;
@@ -330,8 +352,14 @@ export class WebAccess {
         const result = await receiveArtifact(
           selected,
           (receiving) =>
-            this.#managementHttp.artifactImage(selected, this.#response.accessToken, receiving),
+            this.#managementHttp.artifactImage(
+              selected,
+              this.#response.accessToken,
+              receiving,
+              progress,
+            ),
           stopped,
+          progress,
         );
         if (this.#closed) {
           throw new RememberMeError('denied');
@@ -415,9 +443,17 @@ export class WebAccess {
   async managementAuditlogs(
     options: PageOptions = {},
     signal?: AbortSignal,
+    progress?: ProgressListener,
   ): Promise<Page<AuditlogSummary>> {
     this.#managementAllowed();
     const fields = pageFields(options);
+    let total: number | undefined;
+    const report = (value: ReadProgress) => {
+      if (value.phase === 'finalizing' && value.total >= 0) {
+        total = value.total;
+      }
+      progress?.(value);
+    };
     const result = page<AuditlogSummary>(
       await this.#managementHttp.post(
         'management/auditlogs/list',
@@ -425,6 +461,7 @@ export class WebAccess {
         this.#response.accessToken,
         200,
         signal,
+        report,
       ),
       'auditlogs',
       Number(fields.limit),
@@ -444,14 +481,22 @@ export class WebAccess {
     ) {
       throw new RememberMeError('unavailable');
     }
-    return result;
+    return completedPage(result, total, fields.after);
   }
   async managementRecordings(
     auditlog: string,
     options: RecordingOptions = {},
     signal?: AbortSignal,
+    progress?: ProgressListener,
   ): Promise<Page<RecordingSummary>> {
     this.#managementAllowed();
+    let total: number | undefined;
+    const report = (value: ReadProgress) => {
+      if (value.phase === 'finalizing' && value.total >= 0) {
+        total = value.total;
+      }
+      progress?.(value);
+    };
     const fields: Record<string, string> = {
       ...recordingFields(options),
       auditlog: auditlogName(auditlog),
@@ -463,6 +508,7 @@ export class WebAccess {
         this.#response.accessToken,
         200,
         signal,
+        report,
       ),
       'recordings',
       Number(fields.limit),
@@ -496,7 +542,7 @@ export class WebAccess {
     ) {
       throw new RememberMeError('unavailable');
     }
-    return result;
+    return completedPage(result, total, fields.after);
   }
   async managementSession(flow: string, id: string, signal?: AbortSignal): Promise<SessionItem> {
     this.#managementAllowed();

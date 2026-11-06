@@ -1,3 +1,4 @@
+import { type ProgressListener, readProgress } from '../management/progress';
 import { object } from '../remember/http';
 import { RememberMeError } from '../remember/protocol';
 import { readLocalBytes } from '../wasm/local-file';
@@ -18,6 +19,7 @@ export function evidenceRPC(
   signal: AbortSignal,
   input?: unknown,
   transfer: Transferable[] = [],
+  progress?: ProgressListener,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const cleanup = () => {
@@ -37,6 +39,16 @@ export function evidenceRPC(
     };
     const received = (event: MessageEvent) => {
       try {
+        if (event.data?.kind === 'progress') {
+          const body = object(event.data, ['kind', 'phase', 'completed', 'total']);
+          if (kind === 'ready' || signal.aborted) {
+            throw new Error();
+          }
+          progress?.(
+            readProgress({ phase: body.phase, completed: body.completed, total: body.total }),
+          );
+          return;
+        }
         if (event.data?.kind === 'failed') {
           const body = object(event.data, ['kind', 'code']);
           if (
@@ -86,6 +98,7 @@ export async function verifyArtifact(
   requested: EvidenceOptions,
   key: EvidenceKey | null,
   signal: AbortSignal,
+  progress?: ProgressListener,
 ): Promise<VerifiedArtifact> {
   let request: ArtifactRequest;
   let files: ReceivedArtifact['files'];
@@ -144,8 +157,7 @@ export async function verifyArtifact(
   if (options.recipientFromKey && key === null) {
     throw new EvidenceError('key');
   }
-  const lifetime = AbortSignal.timeout(120_000);
-  const stopped = AbortSignal.any([signal, lifetime]);
+  const stopped = signal;
   if (stopped.aborted) {
     throw new EvidenceError('cancelled');
   }
@@ -185,6 +197,7 @@ export async function verifyArtifact(
         passphrase: password.buffer,
       },
       [privateBytes, password.buffer],
+      progress,
     );
     const metadata = evidenceMetadata(request, options, result.metadata);
     if (
@@ -206,9 +219,6 @@ export async function verifyArtifact(
   } catch (error) {
     if (signal.aborted) {
       throw new EvidenceError('cancelled');
-    }
-    if (lifetime.aborted) {
-      throw new EvidenceError('unavailable');
     }
     if (error instanceof RememberMeError && error.code === 'key-import') {
       throw new EvidenceError('key');

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import type { ReadProgress as Progress } from '../management/progress';
 import type { ColumnFilter, RecordingOptions } from '../management/protocol';
 import type { AuditlogSummary, Page, RecordingSummary, WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
@@ -11,6 +12,7 @@ import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, Select } from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
+import { ReadProgress } from '../ui/ReadProgress';
 import type { ArtifactRequest } from './protocol';
 
 const when = (value: Date) =>
@@ -72,6 +74,7 @@ export function ArtifactCatalog({
   const [sort, setSort] = useState<'asc' | 'desc'>('desc');
   const [filter, setFilter] = useState<ColumnFilter | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [failed, setFailed] = useState<Message | null>(null);
   const failedRoute = useRef<string | null>(null);
   const request = useRef<AbortController | null>(null);
@@ -105,10 +108,10 @@ export function ArtifactCatalog({
     };
   }, [access]);
   useEffect(() => {
-    if (disabled) {
+    if (disabled || !active) {
       request.current?.abort();
     }
-  }, [disabled]);
+  }, [disabled, active]);
   async function run(action: (signal: AbortSignal, current: number) => Promise<void>) {
     if (!active || disabled || request.current !== null) {
       return;
@@ -117,31 +120,39 @@ export function ArtifactCatalog({
     const current = ++generation.current;
     request.current = controller;
     setBusy(true);
+    setProgress(null);
     setFailed(null);
     failedRoute.current = null;
     try {
       await action(controller.signal, current);
     } catch (error) {
-      if (
-        current === generation.current &&
-        !controller.signal.aborted &&
-        !(error instanceof RememberMeError && error.code === 'cancelled')
-      ) {
+      if (current === generation.current) {
         loadedScope.current = null;
         setRows(null);
         setPage(0);
         cursors.current = [''];
-        reportUiError('artifact-catalog', error);
+        if (!controller.signal.aborted) {
+          reportUiError('artifact-catalog', error);
+        }
         failedRoute.current = routeKey;
         setFailed(
-          error instanceof RememberMeError && error.code === 'denied'
-            ? 'recordingReadDenied'
-            : error instanceof RememberMeError && error.code === 'catalog-incomplete'
-              ? 'recordingCatalogWarming'
+          controller.signal.aborted ||
+            (error instanceof RememberMeError && error.code === 'cancelled')
+            ? 'artifactCatalogCancelled'
+            : error instanceof RememberMeError && error.code === 'denied'
+              ? 'recordingReadDenied'
               : 'recordingReadFailed',
         );
       }
     } finally {
+      if (current === generation.current && controller.signal.aborted) {
+        loadedScope.current = null;
+        setRows(null);
+        setPage(0);
+        cursors.current = [''];
+        failedRoute.current = routeKey;
+        setFailed('artifactCatalogCancelled');
+      }
       if (request.current === controller) {
         request.current = null;
         setBusy(false);
@@ -178,7 +189,15 @@ export function ArtifactCatalog({
       setQuery(search);
       setSort(direction);
       setFilter(predicate);
-      const result = await access.managementRecordings(name, selected, signal);
+      const result = await access.managementRecordings(name, selected, signal, (value) => {
+        if (
+          current === generation.current &&
+          !signal.aborted &&
+          routeKey === currentRoute.current
+        ) {
+          setProgress(value);
+        }
+      });
       if (current !== generation.current || signal.aborted || routeKey !== currentRoute.current) {
         if (routeKey !== currentRoute.current && consumedRoute.current === routeKey) {
           consumedRoute.current = null;
@@ -201,7 +220,16 @@ export function ArtifactCatalog({
   }
   async function loadSources(after = '') {
     await run(async (signal, current) => {
-      const result = await access.managementAuditlogs({ after }, signal);
+      const report = (value: Progress) => {
+        if (
+          current === generation.current &&
+          !signal.aborted &&
+          routeKey === currentRoute.current
+        ) {
+          setProgress(value);
+        }
+      };
+      const result = await access.managementAuditlogs({ after }, signal, report);
       if (current !== generation.current || signal.aborted) {
         return;
       }
@@ -225,6 +253,12 @@ export function ArtifactCatalog({
           ? { field: 'flow', operator: 'equals', value: route.flow }
           : null;
         consumedRoute.current = routeKey;
+        // A source response can complete between a navigation render and its
+        // passive abort effect. Do not start a new scan for an inactive page.
+        if (!available.current) {
+          request.current?.abort();
+          return;
+        }
         loadedScope.current = null;
         setRows(null);
         setQuery('');
@@ -234,6 +268,7 @@ export function ArtifactCatalog({
           name,
           options(0, '', 'desc', predicate),
           signal,
+          report,
         );
         if (current !== generation.current || signal.aborted || routeKey !== currentRoute.current) {
           return;
@@ -305,6 +340,13 @@ export function ArtifactCatalog({
     );
   });
   useEffect(() => {
+    if (
+      request.current !== null &&
+      consumedRoute.current !== null &&
+      consumedRoute.current !== routeKey
+    ) {
+      request.current.abort();
+    }
     if (active && !disabled && !busy && consumedRoute.current !== routeKey) {
       readRoute();
     }
@@ -319,27 +361,10 @@ export function ArtifactCatalog({
   const visibleFailure = failedRoute.current === routeKey ? failed : null;
   return (
     <section className="stack" aria-label={t('artifactCatalog')}>
+      {busy && <ReadProgress value={progress} onCancel={() => request.current?.abort()} />}
       {visibleFailure && (
-        <Alert
-          role="status"
-          color={visibleFailure === 'recordingCatalogWarming' ? 'yellow' : 'red'}
-        >
-          <div className="stack">
-            <span>{t(visibleFailure)}</span>
-            {visibleFailure === 'recordingCatalogWarming' && (
-              <div className="actions">
-                <Button
-                  variant="default"
-                  disabled={locked || !active}
-                  onClick={() => {
-                    void (source === '' ? loadSources() : load(source, 0, query, sort, filter));
-                  }}
-                >
-                  {t('recordingCatalogContinue')}
-                </Button>
-              </div>
-            )}
-          </div>
+        <Alert role="status" color="red">
+          {t(visibleFailure)}
         </Alert>
       )}
       {((sources?.skipped ?? 0) > 0 || (rows?.skipped ?? 0) > 0) && (
@@ -388,6 +413,11 @@ export function ArtifactCatalog({
         active={active}
         actionField="open"
         label={`${t('recordingList')} · ${source}`}
+        resultAvailable={
+          rows !== null &&
+          (!route ||
+            loadedScope.current === JSON.stringify([route.flow, route.auditlogHint ?? source]))
+        }
         rows={
           !route ||
           loadedScope.current === JSON.stringify([route.flow, route.auditlogHint ?? source])
@@ -476,6 +506,7 @@ export function ArtifactCatalog({
         disabled={disabled}
         page={page}
         hasNext={(rows?.next ?? '') !== ''}
+        total={rows?.total}
         query={query}
         columnFilter={filter}
         sortField="startedAt"

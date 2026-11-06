@@ -15,6 +15,7 @@ import {
   keepAlivePolicy,
 } from '../terminal/keepalive';
 import type { Socket, SocketFactory, TerminalState } from '../terminal/socket';
+import { type ProgressListener, remoteReadProgress, streamingManagementAction } from './progress';
 import { ManagementResponseBuffer } from './response-buffer';
 
 const protocol = 'bifroest-management.v1';
@@ -43,6 +44,7 @@ interface Pending {
   reject(error: RememberMeError): void;
   retire(): void;
   aborted: boolean;
+  progress?: ProgressListener;
 }
 
 // One pre-expiry admission, owned by one management tab. No reconnect, bearer
@@ -115,6 +117,7 @@ export class ManagementConnection {
             type: 'open',
             slug: snapshot.scope.slug,
             accessToken: proof(),
+            progress: 'counts-v1',
             ...(preference === undefined ? {} : { keepAlive: preference }),
           }),
         );
@@ -163,8 +166,9 @@ export class ManagementConnection {
     fields: Record<string, string>,
     expected: number,
     signal?: AbortSignal,
+    progress?: ProgressListener,
   ): Promise<unknown> {
-    const result = await this.#request(action, fields, expected, 64 << 10, signal);
+    const result = await this.#request(action, fields, expected, 64 << 10, signal, progress);
     try {
       if (expected === 204) {
         if (result.bytes.byteLength !== 0) {
@@ -185,6 +189,7 @@ export class ManagementConnection {
   async artifactImage(
     request: ArtifactRequest,
     signal: AbortSignal,
+    progress?: ProgressListener,
   ): Promise<ArtifactResponseImage> {
     const result = await this.#request(
       `management/artifacts/${request.kind}`,
@@ -192,6 +197,7 @@ export class ManagementConnection {
       200,
       maximumTransferImageBytes,
       signal,
+      progress,
     );
     if (result.mediaType !== transferMediaType) {
       new Uint8Array(result.bytes).fill(0);
@@ -205,6 +211,7 @@ export class ManagementConnection {
     expected: number,
     maximum: number,
     signal?: AbortSignal,
+    progress?: ProgressListener,
   ): Promise<ArtifactResponseImage> {
     if (!allowed.has(action) || 'slug' in fields) {
       throw new RememberMeError('unavailable');
@@ -224,6 +231,7 @@ export class ManagementConnection {
     }
     const id = String(++this.#sequence);
     return new Promise((resolve, reject) => {
+      let retired: ReturnType<typeof setTimeout> | undefined;
       const abort = () => {
         const entry = this.#pending.get(id);
         if (!entry || entry.aborted) {
@@ -233,13 +241,15 @@ export class ManagementConnection {
         entry.buffer.wipe();
         reject(new RememberMeError(signal?.aborted ? 'cancelled' : 'unavailable'));
         this.#send({ type: 'cancel', requestId: id });
+        retired = setTimeout(() => {
+          if (this.#pending.has(id)) {
+            this.#stop('timeout');
+          }
+        }, 5000);
       };
-      const timer = setTimeout(abort, 20000);
-      const retired = setTimeout(() => {
-        if (this.#pending.has(id)) {
-          this.#stop('timeout');
-        }
-      }, 25000);
+      // A live scan/transfer has no aggregate wall-clock deadline. Transport
+      // liveness and bounded cancellation acknowledgement remain independent.
+      const timer = streamingManagementAction(action) ? undefined : setTimeout(abort, 20000);
       this.#pending.set(id, {
         action,
         status: null,
@@ -251,6 +261,7 @@ export class ManagementConnection {
         resolve,
         reject,
         aborted: false,
+        ...(progress ? { progress } : {}),
         retire: () => {
           clearTimeout(timer);
           clearTimeout(retired);
@@ -300,6 +311,9 @@ export class ManagementConnection {
       }
       if (!entry.aborted) {
         entry.buffer.append(new Uint8Array(data, 8));
+        if (entry.action.startsWith('management/artifacts/')) {
+          entry.progress?.({ phase: 'receiving', completed: entry.length, total: -1 });
+        }
       }
       return;
     }
@@ -339,7 +353,7 @@ export class ManagementConnection {
       return;
     }
     if (
-      !['response', 'complete', 'canceled'].includes(String(decoded?.type)) ||
+      !['progress', 'response', 'complete', 'canceled'].includes(String(decoded?.type)) ||
       typeof decoded.requestId !== 'string'
     ) {
       throw new Error();
@@ -347,6 +361,21 @@ export class ManagementConnection {
     const entry = this.#pending.get(decoded.requestId);
     if (!entry) {
       throw new Error();
+    }
+    if (decoded.type === 'progress') {
+      const value = object(decoded, ['type', 'requestId', 'phase', 'completed', 'total']);
+      if (!streamingManagementAction(entry.action) || entry.status !== null) {
+        throw new Error();
+      }
+      const progress = remoteReadProgress({
+        phase: value.phase,
+        completed: value.completed,
+        total: value.total,
+      });
+      if (!entry.aborted) {
+        entry.progress?.(progress);
+      }
+      return;
     }
     if (decoded.type === 'response') {
       const value = object(decoded, ['type', 'requestId', 'status', 'contentType']);

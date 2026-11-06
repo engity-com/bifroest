@@ -63,6 +63,7 @@ export function managementWire(page) {
         headers: () => ({}),
         postData: () => JSON.stringify(value.fields),
         channel: () => channel,
+        requestId: () => value.requestId,
         slug: () => slug,
         transport: 'websocket',
       };
@@ -130,6 +131,13 @@ export function managementWire(page) {
           },
         };
         events.emit('response', response);
+      } else if (value.type === 'progress') {
+        events.emit('progress', {
+          request: entry.request,
+          phase: value.phase,
+          completed: value.completed,
+          total: value.total,
+        });
       } else if (value.type === 'complete' || value.type === 'canceled') {
         clearTimeout(entry.timer);
         pending.delete(value.requestId);

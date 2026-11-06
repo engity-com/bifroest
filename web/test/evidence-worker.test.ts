@@ -198,7 +198,7 @@ describe('owned evidence worker RPC (not cryptographic fixture verification)', (
     expect(required(EvidenceWorker.instances[0]).terminated).toBe(true);
   });
 
-  it('kills a non-answering crypto worker at its hard deadline without releasing a Blob', async () => {
+  it('keeps local verification alive beyond the former total deadline and cancels its owned worker without releasing a Blob', async () => {
     vi.stubGlobal('Worker', EvidenceWorker);
     EvidenceWorker.hold = true;
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -207,11 +207,53 @@ describe('owned evidence worker RPC (not cryptographic fixture verification)', (
       setTimeout(() => controller.abort(), milliseconds);
       return controller.signal;
     });
-    const operation = verifyArtifact(artifact, options, null, new AbortController().signal);
-    const observed = expect(operation).rejects.toMatchObject({ code: 'unavailable' });
+    const controller = new AbortController();
+    let settled = false;
+    const progress = vi.fn();
+    const operation = verifyArtifact(artifact, options, null, controller.signal, progress);
+    const observed = expect(
+      operation.finally(() => {
+        settled = true;
+      }),
+    ).rejects.toMatchObject({ code: 'cancelled' });
     await vi.waitFor(() => expect(EvidenceWorker.instances[0]?.requests.length).toBe(1));
     await vi.advanceTimersByTimeAsync(120_001);
+    const worker = required(EvidenceWorker.instances[0]);
+    worker.send({ kind: 'progress', phase: 'integrity', completed: 64, total: -1 });
+    expect(progress).toHaveBeenCalledExactlyOnceWith({
+      phase: 'integrity',
+      completed: 64,
+      total: -1,
+    });
+    expect(settled).toBe(false);
+    expect(worker.terminated).toBe(false);
+    expect(worker.requests).toHaveLength(1);
+    controller.abort();
     await observed;
+    expect(required(EvidenceWorker.instances[0]).terminated).toBe(true);
+  });
+  it('rejects worker progress containing private fields rather than exposing a diagnostic or releasing output', async () => {
+    vi.stubGlobal('Worker', EvidenceWorker);
+    EvidenceWorker.hold = true;
+    const progress = vi.fn();
+    const operation = verifyArtifact(
+      artifact,
+      options,
+      null,
+      new AbortController().signal,
+      progress,
+    );
+    const observed = expect(operation).rejects.toMatchObject({ code: 'unavailable' });
+    await vi.waitFor(() => expect(EvidenceWorker.instances[0]?.requests.length).toBe(1));
+    required(EvidenceWorker.instances[0]).send({
+      kind: 'progress',
+      phase: 'integrity',
+      completed: 1,
+      total: 2,
+      privateKey: 'must-not-escape',
+    });
+    await observed;
+    expect(progress).not.toHaveBeenCalled();
     expect(required(EvidenceWorker.instances[0]).terminated).toBe(true);
   });
 });

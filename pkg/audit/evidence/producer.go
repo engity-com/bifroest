@@ -57,6 +57,9 @@ type AuditProducerOptions struct {
 	DecryptionIdentities        *keydata.AgeSshIdentities
 	WithSensitive               bool
 	Mode                        AuditProducerMode
+	// Provisional count-only observation. It does not acknowledge revalidation
+	// or source close; an error aborts without releasing a verified result.
+	Progress func(uint64) error
 }
 
 type AuditProducerSummary struct {
@@ -242,6 +245,11 @@ func inspectAuditProducer(ctx context.Context, source AuditProducerSegments, hea
 		return result, fmt.Errorf("native audit producer differs from independently expected producer")
 	}
 	result = AuditProducerSummary{ProducerId: identity.ProducerId(), Trusted: !options.ExpectedProducerId.IsZero(), Mode: options.Mode, Checkpoint: checkpoint}
+	if options.Progress != nil {
+		if err := options.Progress(0); err != nil {
+			return AuditProducerSummary{}, err
+		}
+	}
 	var sequence uint64
 	var segmentHash, last Hash
 	reached := false
@@ -259,6 +267,11 @@ func inspectAuditProducer(ctx context.Context, source AuditProducerSegments, hea
 				return fmt.Errorf("native audit record counters overflow")
 			}
 			result.RecordCount++
+			if options.Progress != nil && result.RecordCount%64 == 0 {
+				if err := options.Progress(result.RecordCount); err != nil {
+					return err
+				}
+			}
 			if options.ExpectedEncryptionRecipient == "" || options.DecryptionIdentities != nil {
 				result.PrivateRecordCount++
 			}
@@ -329,6 +342,11 @@ func inspectAuditProducer(ctx context.Context, source AuditProducerSegments, hea
 	}
 	if err := source.Revalidate(ctx); err != nil {
 		return AuditProducerSummary{}, err
+	}
+	if options.Progress != nil {
+		if err := options.Progress(result.RecordCount); err != nil {
+			return AuditProducerSummary{}, err
+		}
 	}
 	return result, nil
 }

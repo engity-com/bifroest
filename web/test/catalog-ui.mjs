@@ -32,8 +32,18 @@ try {
   const page = await context.newPage();
   const wire = managementWire(page);
   const requests = [];
+  const progress = [];
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  wire.on('progress', (value) => {
+    assert(
+      ['waiting', 'inventory', 'verifying', 'reverifying', 'finalizing'].includes(value.phase),
+    );
+    assert(Number.isSafeInteger(value.completed) && value.completed >= 0);
+    assert(Number.isSafeInteger(value.total) && value.total >= -1);
+    assert(value.total < 0 || value.completed <= value.total);
+    progress.push(value);
+  });
   wire.on('request', (request) => {
     const body = JSON.parse(request.postData());
     assertCatalogRequestPrivacy(request);
@@ -82,6 +92,13 @@ try {
   const catalog = () =>
     recordPanel().getByRole('region', { name: 'Artifact catalog (server metadata)', exact: true });
   const firstSources = read(await firstSourcesReply, 'auditlogs');
+  assert(
+    progress.some(
+      (value) =>
+        new URL(value.request.url()).pathname.endsWith('/auditlogs/list') &&
+        value.phase === 'inventory',
+    ),
+  );
   assert.equal(firstSources.items.length, 20);
   assert.deepEqual(
     firstSources.items.map((row) => row.name),
@@ -188,6 +205,16 @@ try {
   await catalog().getByRole('combobox', { name: 'Recording source', exact: true }).click();
   await page.getByRole('option', { name: 'catalog00', exact: true }).click();
   const first = read(await firstRecordingsReply, 'recordings');
+  assert(
+    progress.some(
+      (value) =>
+        new URL(value.request.url()).pathname.endsWith('/recordings/list') &&
+        value.phase === 'verifying' &&
+        value.completed === 21 &&
+        value.total === 21,
+    ),
+    'the actual Go scan streams completion counts independently of its final page',
+  );
   assert.equal(first.items.length, 20);
   assert.match(first.next, /^bmp1\./u);
   const recordings = () =>
@@ -328,7 +355,13 @@ try {
   );
   assert.equal(
     await catalog().getByRole('button', { name: 'Cancel catalog request', exact: true }).count(),
-    0,
+    1,
+  );
+  assert.equal(
+    await catalog()
+      .getByRole('button', { name: 'Cancel catalog request', exact: true })
+      .isEnabled(),
+    true,
   );
   await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-release', { method: 'POST', credentials: 'omit' }),

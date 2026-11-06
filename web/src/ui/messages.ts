@@ -340,6 +340,20 @@ export const messages = {
   artifactCatalogCancelled:
     'Catalog request cancelled. No late or partial page was adopted; no server logout/disposal was requested.',
   artifactCatalogCancel: 'Cancel catalog request',
+  scanWaiting: 'Waiting for the catalog scan…',
+  scanNoResult: 'No completed result loaded.',
+  scanInventory: 'Capturing the catalog inventory…',
+  scanVerifying: 'Verifying recordings…',
+  scanReverifying: 'Verifying the selected page…',
+  scanFinalizing: 'Finishing the verified read…',
+  scanReceiving: 'Receiving artifact bytes…',
+  scanValidating: 'Checking transfer completion…',
+  scanReading: 'Reading the local artifact…',
+  scanIntegrity: 'Checking signatures and chain integrity locally…',
+  scanDecrypting: 'Verifying private events locally…',
+  scanExporting: 'Preparing verified local output…',
+  scanIndexing: 'Indexing verified audit events…',
+  scanFiltering: 'Selecting verified audit events…',
   artifactLoadAuditlogs: 'Load auditlogs',
   artifactAuditlogCaption: 'Configured auditlogs (server metadata)',
   artifactCatalogConfiguration: 'Server-reported configuration',
@@ -486,9 +500,6 @@ export const messages = {
     'This sign-in cannot list recordings from this source. You can still use an exact ID if your permissions allow it.',
   recordingReadFailed:
     'Recordings could not be loaded. Check the Bifröst server log for the cause, then refresh the list.',
-  recordingCatalogWarming:
-    'Catalog verification needs another read. Continue verification promptly; cached progress expires after 30 seconds. No results from the failed read are shown. See the server log for details.',
-  recordingCatalogContinue: 'Continue verification',
   artifactDownloadDenied:
     'This sign-in is not permitted to open this recording or audit log. Choose an allowed source or use a different sign-in.',
   recordingNoMatches: 'No recordings match these filters.',

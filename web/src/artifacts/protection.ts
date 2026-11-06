@@ -1,3 +1,4 @@
+import type { ProgressListener } from '../management/progress';
 import type { EvidenceMetadata, EvidenceOptions } from './evidence-protocol';
 import type { ReceivedArtifact } from './protocol';
 import { verifyArtifact } from './verify';
@@ -8,6 +9,7 @@ export async function inspectProtection(
   received: ReceivedArtifact,
   signal: AbortSignal,
   auditScope: 'complete' | 'captured-prefix' = 'complete',
+  progress?: ProgressListener,
 ): Promise<EvidenceMetadata> {
   const options: EvidenceOptions = {
     producer: '',
@@ -19,5 +21,5 @@ export async function inspectProtection(
     auditScope: received.request.kind === 'audit' ? auditScope : '',
     ...(received.request.kind === 'recording' ? { recipientFromHeader: true } : {}),
   };
-  return (await verifyArtifact(received, options, null, signal)).metadata;
+  return (await verifyArtifact(received, options, null, signal, progress)).metadata;
 }

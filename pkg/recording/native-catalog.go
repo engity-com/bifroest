@@ -106,7 +106,10 @@ func (r *LocalNativeRecordingRepository) CatalogCursorMAC(payload []byte) ([]byt
 	return mac.Sum(nil), nil
 }
 
-// CatalogMetadata is called only after the shared management authorization and
+// CatalogMetadata is the legacy bounded materializing convenience API. Streaming
+// management pages use WalkCatalog instead, without this helper's aggregate
+// count/byte/deadline limits. The shared cache remains only an acceleration hint.
+// This helper is called only after the shared management authorization and
 // forced-command gates. It stores no actors, credentials, plaintext or rights.
 // Each query inventories names/stamps, verifies changed/expired entries within
 // hard count, compressed/decoded byte and deadline budgets, and removes stale
