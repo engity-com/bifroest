@@ -157,21 +157,30 @@ export function writeFrontendNotices(
       licenseTextSource: source,
     });
   }
-  const symbolFile = join(root, 'src/ui/LeftPanelCloseIcon.tsx');
-  if (existsSync(symbolFile)) {
+  for (const [symbol, file, upstreamPathSHA256] of [
+    [
+      'left_panel_close',
+      'LeftPanelCloseIcon',
+      '909577477a457f6902f6000398429358f32e11333146c050e80bb8abd9e4946f',
+    ],
+    ['license', 'LicenseIcon', '2210021c3f42ffbcb69bfc10cf3a675b31d40d5d474acc72bb9648541a9ee71c'],
+    ['123', 'DirectServerIcon', 'f0bff2ee8ae8a0a8f3cc156c9637236e298252343672d8c7a1b6fc4bb720b705'],
+  ]) {
+    const symbolFile = join(root, `src/ui/${file}.tsx`);
+    if (!existsSync(symbolFile)) {
+      continue;
+    }
     const bytes = readFileSync(symbolFile);
     const path = bytes.toString('utf8').match(/<path\s+d="([^"]+)"/u)?.[1];
-    const upstreamPathSHA256 = '909577477a457f6902f6000398429358f32e11333146c050e80bb8abd9e4946f';
     if (
       path === undefined ||
       createHash('sha256').update(path).digest('hex') !== upstreamPathSHA256
     ) {
       throw new Error('Unreviewed Material Symbols SVG path');
     }
-    const source =
-      'https://github.com/google/material-design-icons/tree/master/symbols/web/left_panel_close';
+    const source = `https://github.com/google/material-design-icons/tree/master/symbols/web/${symbol}`;
     vendoredAssets.push({
-      name: 'Google Material Symbols / left_panel_close',
+      name: `Google Material Symbols / ${symbol}`,
       version: '24px outlined',
       license: 'Apache-2.0',
       integrity: `sha256-${createHash('sha256').update(bytes).digest('base64')}`,
@@ -180,7 +189,7 @@ export function writeFrontendNotices(
       upstreamPathSHA256,
     });
     sections.push(
-      `Google Material Symbols / left_panel_close (24px outlined)\nCopyright Google LLC; MUI adapter Copyright 2026 Engity GmbH\nLicense: Apache-2.0\nSource: ${source}\nSVG path SHA256: ${upstreamPathSHA256}\n${readFileSync(new URL('../../LICENSE', import.meta.url), 'utf8')}`,
+      `Google Material Symbols / ${symbol} (24px outlined)\nCopyright Google LLC; MUI adapter Copyright 2026 Engity GmbH\nLicense: Apache-2.0\nSource: ${source}\nSVG path SHA256: ${upstreamPathSHA256}\n${readFileSync(new URL('../../LICENSE', import.meta.url), 'utf8')}`,
     );
   }
   writeFileSync(

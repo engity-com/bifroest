@@ -176,13 +176,13 @@ export async function logoutAccess(page) {
 }
 
 export async function confirmFullVerification(page, panel, source) {
-  await panel.getByRole('button', { name: 'Verify all', exact: true }).click();
+  await panel.getByRole('button', { name: 'Verify …', exact: true }).click();
   const dialog = page.getByRole('dialog', {
-    name: 'Verify the entire selected source?',
+    name: 'Verification options',
     exact: true,
   });
   await dialog.getByText(source, { exact: true }).waitFor();
-  await dialog.getByRole('button', { name: 'Verify all', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Start verification', exact: true }).click();
 }
 
 export async function notification(page, text) {

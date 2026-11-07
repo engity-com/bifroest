@@ -8,6 +8,9 @@ import (
 	"reflect"
 )
 
+// FileStampReuse permits the supported inode/change-time selection acceleration.
+const FileStampReuse = true
+
 func identityAndChange(_ *os.File, info os.FileInfo) (string, error) {
 	value := reflect.ValueOf(info.Sys())
 	if value.Kind() == reflect.Pointer && !value.IsNil() {

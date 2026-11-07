@@ -38,7 +38,20 @@ func New(maximumBytes int64, maximumEntries int, forbidden ...string) *Cache {
 
 // Use keeps data provisional until the complete cached image's digest and all
 // resource closes have succeeded. A consumer must not publish from its callback.
+// The caller supplies a reusable key, not a potentially delayed filesystem time
+// observation. Filesystem fingerprints must go through UseFile instead.
 func (c *Cache) Use(ctx context.Context, key string, stamp [32]byte, maximum int64, build func(io.Writer) error, consume func(io.Reader) error) (resultErr error) {
+	return c.use(ctx, key, stamp, maximum, build, consume, true)
+}
+
+// UseFile never reuses a timestamp-only observation on platforms where identical
+// observations can conceal completed writes. It still reads metadata only, not
+// full evidence contents, and keeps provisional image/digest/close guarantees.
+func (c *Cache) UseFile(ctx context.Context, key string, stamp [32]byte, maximum int64, build func(io.Writer) error, consume func(io.Reader) error) error {
+	return c.use(ctx, key, stamp, maximum, build, consume, FileStampReuse)
+}
+
+func (c *Cache) use(ctx context.Context, key string, stamp [32]byte, maximum int64, build func(io.Writer) error, consume func(io.Reader) error, reuse bool) (resultErr error) {
 	if c == nil || maximum < 1 || maximum > c.maximumBytes || c.maximumEntries < 1 {
 		return fmt.Errorf("invalid metadata cache limits")
 	}
@@ -55,7 +68,7 @@ func (c *Cache) Use(ctx context.Context, key string, stamp [32]byte, maximum int
 		return err
 	}
 	current, found := c.entries[key]
-	if found && current.stamp != stamp {
+	if found && (!reuse || current.stamp != stamp) {
 		if err := c.remove(key); err != nil {
 			return err
 		}
@@ -120,7 +133,7 @@ func (c *Cache) Use(ctx context.Context, key string, stamp [32]byte, maximum int
 	invalid := false
 	defer func() {
 		resultErr = errors.Join(resultErr, file.Close())
-		if invalid {
+		if invalid || !reuse {
 			resultErr = errors.Join(resultErr, c.remove(key))
 		}
 	}()
@@ -206,6 +219,8 @@ func (r *contextReader) Read(data []byte) (int, error) {
 	return r.source.Read(data)
 }
 
+// Fingerprint observes identity, size and times without reading evidence bodies.
+// Equality is not a reusable content version on every platform; use UseFile.
 func Fingerprint(file *os.File) ([32]byte, error) {
 	info, err := file.Stat()
 	if err != nil {

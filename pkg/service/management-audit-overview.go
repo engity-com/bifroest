@@ -111,7 +111,7 @@ func (this *service) managementAuditEventPage(ctx context.Context, request proto
 		}
 		fields := map[string]protocol.GridValue{"id": protocol.GridText(row.ID), "name": protocol.GridText(row.Name), "domain": protocol.GridText(row.Domain), "outcome": protocol.GridText(row.Outcome), "recordedAt": protocol.GridTime(row.RecordedAt)}
 		contextEvent := audit.Event{}
-		if request.Flow != "" || request.Sensitive {
+		if request.Flow != "" || request.SessionID != "" || request.Sensitive {
 			if source.Encrypted {
 				return nil
 			}
@@ -123,6 +123,9 @@ func (this *service) managementAuditEventPage(ctx context.Context, request proto
 			if request.Flow != "" && (request.Flow == "-" && contextEvent.Flow != "" || request.Flow != "-" && request.Flow != contextEvent.Flow) {
 				return nil
 			}
+			if request.SessionID != "" && contextEvent.SessionId != request.SessionID {
+				return nil
+			}
 		}
 		if request.Sensitive {
 			fields["flow"], fields["reason"], fields["sessionId"] = protocol.GridText(contextEvent.Flow), protocol.GridText(contextEvent.Reason), protocol.GridText(contextEvent.SessionId)
@@ -131,6 +134,9 @@ func (this *service) managementAuditEventPage(ctx context.Context, request proto
 		// export. Other predicates cannot treat redacted/unknown fields as empty.
 		if request.Flow != "" && request.GridFilter != nil && request.GridFilter.Field == "flow" && (request.GridFilter.Operator == "equals" && request.GridFilter.Value == request.Flow || request.Flow == "-" && request.GridFilter.Operator == "isEmpty") {
 			fields["flow"] = protocol.GridText(contextEvent.Flow)
+		}
+		if request.SessionID != "" && request.GridFilter != nil && request.GridFilter.Field == "sessionId" && request.GridFilter.Operator == "equals" && request.GridFilter.Value == request.SessionID {
+			fields["sessionId"] = protocol.GridText(contextEvent.SessionId)
 		}
 		search := []string{row.ID, row.Name, row.Domain, row.Outcome}
 		if request.Sensitive {
@@ -164,7 +170,7 @@ func (this *service) managementAuditEventPage(ctx context.Context, request proto
 		return nil
 	}, func(count int64) error {
 		phase := "metadata"
-		if request.Query != "" || request.GridFilter != nil || request.Flow != "" || request.Sensitive {
+		if request.Query != "" || request.GridFilter != nil || request.Flow != "" || request.SessionID != "" || request.Sensitive {
 			phase = "searching"
 		}
 		return reportManagementProgress(ctx, phase, count, -1)
@@ -196,7 +202,7 @@ func (this *service) managementAuditEventPage(ctx context.Context, request proto
 			return page, source, err
 		}
 		if request.ID == "" {
-			event = audit.Event{Name: event.Name, Domain: event.Domain, Outcome: event.Outcome, Flow: event.Flow, SessionId: event.SessionId, Reason: event.Reason}
+			event = audit.Event{Name: event.Name, Domain: event.Domain, Outcome: event.Outcome, Flow: event.Flow, SessionId: event.SessionId, RecordingId: event.RecordingId, Reason: event.Reason}
 		}
 		raw, err := json.Marshal(event)
 		if err != nil {

@@ -181,39 +181,59 @@ features remain text. A short-version-only grant still cannot obtain long build
 metadata.
 
 The grids have native refresh controls, disabled during a read, and retain the
-same grid while a skeleton is displayed. The eye switches between core fields
-and all available details in both lists and detail pages. The preference is
-saved for the origin; changing it refreshes the affected list when it is active.
-It does not grant access to withheld fields, credentials or decrypted content.
+same grid while its custom loading overlay displays the phase, counts and progress
+bar. Outside audit events, the eye switches between core fields and available
+details; this presentation preference is saved for the origin. It does not grant
+access to withheld fields, credentials or decrypted content.
 Returning to an otherwise unchanged loaded view does not repeat its reads.
 
 The normal pages are operational admin overviews, not automatically started
 archive verification. Recording lists use an index of authenticated metadata
 (signed header, seal and clear setup context), without verifying intervening
 recording contents. Only the selected page, at most 20 recordings, is fully
-checked before display. Stable metadata is reused across page changes; a cold
+checked before display. Stable metadata is reused across page changes where
+native change stamps support that optimization. Windows currently rereads only
+metadata on each query: its file change times can remain equal across completed
+writes, so they must not authorize index reuse. This does not enable whole-source
+content verification. A cold
 index or broader search may inspect metadata throughout the selected source.
 Progress distinguishes **Reading catalog metadata**, **Searching catalog
 metadata**, and verification of the selected page. There is no four-second
 overall deadline or manual continuation/cache-expiry window.
 
-**Verify all** is separate and requires confirmation of the entire selected
-source; the current page and filters do not narrow that job. Recording full
+The toolbar's certificate (`license`) action opens **Verification options**.
+Only **Start verification** starts the job. Its scope is the entire selected
+source; the current page and filters do not narrow it. Recording full
 verification reads all contents afresh, not a stamp-only cache. Its result is a
 server report, not independent browser evidence; encrypted recordings can have
 their envelopes checked without claiming private-content verification. The normal
 list remains usable while this runs. Per-artifact limits still apply; use the
 [CLI](../reference/cli/verification.md) for larger or independent forensic checks.
 
+While verification runs, the initiating toolbar action becomes a `cancel` icon.
+The custom overlay stays inside that DataGrid and shows the actual work phase and
+counts; unknown totals use an indeterminate bar. Retained rows, filters and paging
+remain usable. There is no separate page-level spinner or cancellation block.
+
 Opening an auditlog normally loads a small, server-reported event page, **not** a
 download or complete verification of the journal. The overview is explicitly
-labelled as such. **Show private fields in the overview** is a separate opt-in
-for clear journals; it is not enabled by the eye/full-detail preference. Encrypted
-private fields stay unavailable to the server and cannot be treated as absent
-flow assignments. For local decryption or complete verification select **Verify
-all**, confirm the source, and use **Local verification**. **Overview** remains
-available while that explicit operation runs; returning to a completed local
-result never silently starts a new transfer.
+labelled as such. Its **Include private details** eye is an explicit opt-in for
+this actor/source, shared by the grid and verification dialog. It includes private
+fields in clear server reads and in locally checked audit exports, without a
+second checkbox. A saved origin-wide display preference never activates this
+opt-in. Encrypted private fields stay unavailable to the server; the same eye can
+include them after explicit local decryption, never upload a key or treat unknown
+fields as absent flow assignments. Changing the eye in a locally checked view
+reprojects the already downloaded bytes locally, preserving filters and paging.
+
+The audit verification dialog contains the depth, journal scope, signing-ID and
+local-key options. When bytes are already available, it explicitly distinguishes
+downloading a fresh source snapshot from checking the downloaded snapshot again.
+Only a completed local verification and bounded event index may publish a new
+local grid. Its toolbar action then becomes `123`, **Direct data from the server**:
+that action returns to the operational view, not a new verification. Provenance
+and signer trust remain visible; there are no separate Overview/Local verification
+buttons or options disclosure below the grid.
 
 Audit downloads show transfer progress, followed by local integrity/private-event
 verification and local indexing/filtering progress. Decryption keys remain local;
@@ -227,9 +247,9 @@ or reauthenticated automatically.
 Counts are provisional status, not a partial result or successful completion.
 The grid stays loading until its complete, policy-projected page is ready. Only
 the explicitly selected local audit view claims completed local verification.
-Failures and
-cancellation clear old rows/paging rather than presenting an earlier result as
-current. Server logs retain the actual failure and, for WebSocket operations,
+Failed or cancelled page reads discard provisional rows/cursors. A separate full
+check leaves the prior overview available and never adopts an incomplete new
+verification result. Server logs retain the actual failure and, for WebSocket operations,
 its correlated request ID without exposing private causes in the browser.
 
 **Recordings** and **Audit logs** are separate navigation entries and keep their
@@ -242,9 +262,23 @@ The grid's pin opens a popover for an exact ID; it does not replace filters or
 issue a transfer until **Go** is selected. The audit-log pin requires **Auditlog
 Name** and optionally accepts an **Event ID**; the verified event grid has its own
 event-ID pin. Audit-event details open as an owned
-page, not a modal. Close icons return to the retained list. The monitor and
+page, not a modal. Server-reported and locally checked events use the same Details
+layout, field labels, relationship links and Actions section. Opaque ID hints are
+included in the breadcrumb without inventing a verified flow. Detail boxes have
+no standalone X: breadcrumb parents return to the retained list. Tab and dialog
+closing remain separate. The monitor and
 checklist icons identify Recordings and Audit logs in navigation and Overview
 actions. The left-panel-close icon only collapses navigation; it is not Back.
+
+Session tables start with the session ID. Row actions and detail Actions provide
+**Show recordings** and **Show audit logs**, selecting that flow and session in
+the configured source. Recordings show a known session ID as a detail link and
+offer **Show session** in both action locations. Events do the same for permitted
+session and recording references, including **Show recording**. Table actions use
+the matching navigation icons; detail actions add text. Missing, withheld or
+unroutable context never creates a guessed relationship or a hidden-field action.
+These links only navigate: target reads keep their live authorization checks and
+do not automatically start a full verification or search other archives.
 
 ### Direct management links
 
@@ -267,6 +301,14 @@ until local verification can replace it with the canonical flow path. An audit
 event shortcut similarly uses `/auditlogs/<auditlog>?event=<eventId>` until the
 verified event identifies its flow. In audit-event paths, `-` means **no flow
 assigned**, never “flow still unknown”.
+
+Recording and audit-event links may also include `sessionId=<sessionId>` (for
+example `/recordings/worker?auditlog=workload&sessionId=<sessionId>`). Flow and
+session selection apply to the entire server-side dataset and are bound into its
+cursor; the session predicate is visibly preselected in the native Community
+filter. Changing an exact session predicate to a non-exact one removes that exact
+URI selection. A redacted local export cannot establish a missing flow/session
+assignment; enable its eye explicitly when that private context is needed.
 
 An exact Flow filter binds both the URI and the queried dataset to that literal,
 case-sensitive flow. Changing to a non-exact operator removes the flow segment.

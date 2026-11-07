@@ -1,4 +1,3 @@
-import CloseIcon from '@mui/icons-material/Close';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutlineOutlined';
 import ScreenshotMonitorIcon from '@mui/icons-material/ScreenshotMonitor';
@@ -11,6 +10,7 @@ import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useAdminDetail } from '../ui/admin-navigation';
 import { useDetailRefresh } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
+import { ManagementJump, relationFlow, relationID } from '../ui/ManagementJump';
 import { exactFlow, type ManagementLocation, managementPath } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, Modal, TextInput } from '../ui/material';
@@ -571,6 +571,48 @@ export function ManagementPanel({
     }
   }
   const locked = disabled || busy;
+  function sessionArtifactActions(item: SessionItem, compact: boolean) {
+    const managementFlow = navigation?.location.managementFlow ?? access.snapshot().flow?.name;
+    if (
+      !managementFlow ||
+      !item.auditlog ||
+      item.policyLimited ||
+      !relationFlow(item.flow) ||
+      !relationID(item.id)
+    ) {
+      return null;
+    }
+    return (
+      <>
+        <ManagementJump
+          scope={access.snapshot().scope}
+          compact={compact}
+          disabled={locked}
+          label="showRecordings"
+          target={{
+            managementFlow,
+            page: 'recordings',
+            flow: item.flow,
+            sessionId: item.id,
+            auditlogHint: item.auditlog,
+          }}
+        />
+        <ManagementJump
+          scope={access.snapshot().scope}
+          compact={compact}
+          disabled={locked}
+          label="showAuditlogs"
+          target={{
+            managementFlow,
+            page: 'auditlogs',
+            flow: item.flow,
+            sessionId: item.id,
+            auditlog: item.auditlog,
+          }}
+        />
+      </>
+    );
+  }
   const detailed = useDetailRefresh(
     active && view !== 'version' && selected === null,
     disabled,
@@ -875,6 +917,7 @@ export function ManagementPanel({
             openLabel={(item) => `${t('managementDetails')} ${item.id}`}
             getRowId={(item) => `${item.flow}/${item.id}`}
             columns={[
+              { field: 'id', headerName: t('managementSessionId'), minWidth: 280 },
               {
                 field: 'user',
                 headerName: m('user'),
@@ -909,6 +952,7 @@ export function ManagementPanel({
                 valueGetter: (_value, item) => field(item, item.remote),
               },
             ]}
+            rowActions={(item) => <>{sessionArtifactActions(item, true)}</>}
             busy={busy || !attempted.current.sessions}
             disabled={disabled || notice?.kind === 'unknown'}
             page={sessionPage - 1}
@@ -976,11 +1020,6 @@ export function ManagementPanel({
               aria-label={m('detailsTitle')}
               className="stack session-details record-card"
             >
-              <div className="section-heading">
-                <IconButton aria-label={t('close')} disabled={locked} onClick={returnToSessions}>
-                  <CloseIcon />
-                </IconButton>
-              </div>
               <dl className="metadata-grid">
                 {detailed && (
                   <>
@@ -1030,6 +1069,7 @@ export function ManagementPanel({
                 </dd>
                 <dt>{t('adminGridActions')}</dt>
                 <dd className="actions">
+                  {sessionArtifactActions(selected, false)}
                   <Button
                     disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
                     color="orange"

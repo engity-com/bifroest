@@ -1,6 +1,7 @@
 package metadatacache
 
 import (
+	"bytes"
 	"context"
 	"github.com/stretchr/testify/require"
 	"io"
@@ -73,7 +74,7 @@ func TestCacheNeverCreatesItsWorkspaceInsideEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, entries)
 }
-func TestFingerprintIgnoresReadsButRejectsSameLengthRestoredMtimeCorruption(t *testing.T) {
+func TestFileCacheIgnoresReadsButRejectsSameLengthRestoredMtimeCorruption(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(path, []byte("original"), 0600))
 	file, err := os.Open(path)
@@ -81,6 +82,15 @@ func TestFingerprintIgnoresReadsButRejectsSameLengthRestoredMtimeCorruption(t *t
 	defer file.Close()
 	before, err := Fingerprint(file)
 	require.NoError(t, err)
+	cache := New(1024, 2)
+	defer func() { require.NoError(t, cache.Close()) }()
+	readImage := func(stamp [32]byte) []byte {
+		var result []byte
+		require.NoError(t, cache.UseFile(t.Context(), path, stamp, 64, func(output io.Writer) error { _, err := io.Copy(output, io.NewSectionReader(file, 0, 8)); return err }, func(input io.Reader) error { var err error; result, err = io.ReadAll(input); return err }))
+		return result
+	}
+	first := readImage(before)
+	require.Equal(t, []byte("original"), first)
 	info, err := file.Stat()
 	require.NoError(t, err)
 	_, err = io.ReadAll(file)
@@ -88,9 +98,40 @@ func TestFingerprintIgnoresReadsButRejectsSameLengthRestoredMtimeCorruption(t *t
 	read, err := Fingerprint(file)
 	require.NoError(t, err)
 	require.Equal(t, before, read)
+	require.Equal(t, first, readImage(read), "reads alone do not change the consumed metadata")
 	require.NoError(t, os.WriteFile(path, []byte("modified"), 0600))
 	require.NoError(t, os.Chtimes(path, info.ModTime(), info.ModTime()))
 	after, err := Fingerprint(file)
 	require.NoError(t, err)
-	require.NotEqual(t, before, after)
+	changed := readImage(after)
+	require.Equal(t, []byte("modified"), changed, "the cache consumer must see the changed bytes, even if native time observations coincide")
+	require.NotEqual(t, first, changed)
+}
+
+func TestUnreusableFileObservationsNeverRetainOrReuseAnImage(t *testing.T) {
+	cache := New(1024, 2)
+	defer func() { require.NoError(t, cache.Close()) }()
+	var observation [32]byte
+	source := []byte("original")
+	builds := 0
+	read := func() []byte {
+		var result bytes.Buffer
+		require.NoError(t, cache.use(t.Context(), "source", observation, 64, func(output io.Writer) error { builds++; _, err := output.Write(source); return err }, func(input io.Reader) error { _, err := io.Copy(&result, input); return err }, false))
+		require.Empty(t, cache.entries)
+		require.Zero(t, cache.bytes)
+		files, err := os.ReadDir(cache.directory)
+		require.NoError(t, err)
+		require.Empty(t, files, "uncacheable images are removed after their lease, including on Windows")
+		return result.Bytes()
+	}
+	require.Equal(t, []byte("original"), read())
+	source = []byte("modified")
+	require.Equal(t, []byte("modified"), read())
+	require.Equal(t, 2, builds)
+	err := cache.use(t.Context(), "source", observation, 64, func(output io.Writer) error { _, err := output.Write(source); return err }, func(io.Reader) error { return io.ErrUnexpectedEOF }, false)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.Empty(t, cache.entries)
+	files, err := os.ReadDir(cache.directory)
+	require.NoError(t, err)
+	require.Empty(t, files)
 }

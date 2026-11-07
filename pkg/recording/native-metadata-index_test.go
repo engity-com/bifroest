@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"github.com/engity-com/bifroest/pkg/metadatacache"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 	"github.com/engity-com/bifroest/pkg/recording/cast"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,12 @@ func TestRecordingMetadataIndexIsNotFullVerificationAndExplicitVerificationBypas
 	require.Zero(t, stats.ContentReads.Load())
 	require.Empty(t, repo.catalog.entries)
 	require.NoError(t, repo.WalkMetadata(ctx, consume, nil))
-	require.EqualValues(t, 3, stats.MetadataReads.Load(), "unchanged metadata is reused without rereading recording setup chunks")
+	expectedMetadata := 3
+	if !metadatacache.FileStampReuse {
+		expectedMetadata = 6
+	}
+	require.EqualValues(t, expectedMetadata, stats.MetadataReads.Load(), "reuse requires a supported file-version observation; otherwise metadata, never whole contents, is reread")
+	require.Zero(t, stats.ContentReads.Load())
 	require.NoError(t, repo.VerifyCatalog(ctx, consume, nil))
 	require.EqualValues(t, 3, stats.ContentReads.Load())
 	require.NoError(t, repo.VerifyCatalog(ctx, consume, nil))

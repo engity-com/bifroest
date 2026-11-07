@@ -105,7 +105,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		// unknown. Encrypted private context never enters this index. Unknown
 		// values cannot match concrete filters; never enrich from live sessions
 		// or historical journals.
-		if request.User != "" && request.User != row.User || request.Target != "" || request.Flow != "" && request.Flow != row.Flow ||
+		if request.User != "" && request.User != row.User || request.Target != "" || request.Flow != "" && request.Flow != row.Flow || request.SessionID != "" && request.SessionID != row.SessionID ||
 			request.Status != "all" && request.Status != string(row.Status) ||
 			!from.IsZero() && row.StartedAt.Before(from) || !until.IsZero() && row.StartedAt.After(until) ||
 			!managementSearch(request.Query, row.RecordingId.String(), row.User, row.Flow, string(row.Status)) {
@@ -118,6 +118,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 				fields["user"] = protocol.GridText(public.User)
 			}
 			fields["flow"] = protocol.GridText(public.Flow)
+			fields["sessionId"] = protocol.GridText(public.SessionID)
 		}
 		if filter(fields) {
 			total++
@@ -130,7 +131,7 @@ func (this *service) managementRecordingPage(ctx context.Context, request protoc
 		return nil
 	}, func(progress recording.NativeCatalogProgress) error {
 		phase := progress.Phase
-		if phase == "metadata" && (request.Query != "" || request.Flow != "" || request.User != "" || request.StartedFrom != "" || request.StartedUntil != "" || request.Status != "all" || request.GridFilter != nil) {
+		if phase == "metadata" && (request.Query != "" || request.Flow != "" || request.SessionID != "" || request.User != "" || request.StartedFrom != "" || request.StartedUntil != "" || request.Status != "all" || request.GridFilter != nil) {
 			phase = "searching"
 		}
 		return reportManagementProgress(ctx, phase, progress.Completed, progress.Total)

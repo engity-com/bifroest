@@ -154,6 +154,7 @@ export interface RecordingSummary {
 }
 export interface RecordingOptions extends PageOptions {
   readonly flow?: string;
+  readonly sessionId?: string;
   readonly user?: string;
   readonly target?: string;
   readonly startedFrom?: string;
@@ -203,6 +204,7 @@ export function recordingFields(options: RecordingOptions): Record<string, strin
   return {
     ...pageFields(options, ['started-desc', 'started-asc']),
     flow: text(options.flow ?? '', 255),
+    ...(options.sessionId === undefined ? {} : { sessionId: sessionID(options.sessionId) }),
     user: text(options.user ?? '', 256),
     target: text(options.target ?? '', 1024),
     startedFrom,
@@ -222,6 +224,18 @@ export interface SessionItem {
   readonly validUntil?: string;
   readonly owner: { readonly issuer: string; readonly subject: string } | null;
   readonly policyLimited?: boolean;
+  readonly auditlog?: string;
+}
+
+export function sessionID(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(value) ||
+    value === '00000000-0000-0000-0000-000000000000'
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  return value;
 }
 export interface Page<T> {
   readonly items: readonly T[];
@@ -448,7 +462,7 @@ function flow(value: unknown): FlowSummary {
   });
 }
 export function session(value: unknown): SessionItem {
-  const optional = ['lastAccessed', 'validUntil', 'policyLimited'].filter(
+  const optional = ['lastAccessed', 'validUntil', 'policyLimited', 'auditlog'].filter(
     (field) => value !== null && typeof value === 'object' && Object.hasOwn(value, field),
   );
   const row = object(value, [
@@ -472,7 +486,7 @@ export function session(value: unknown): SessionItem {
   if (row.policyLimited !== undefined && row.policyLimited !== true) {
     throw new RememberMeError('unavailable');
   }
-  if (row.policyLimited === true && row.owner !== null) {
+  if (row.policyLimited === true && (row.owner !== null || row.auditlog !== undefined)) {
     throw new RememberMeError('unavailable');
   }
   if (row.owner !== null) {
@@ -496,6 +510,7 @@ export function session(value: unknown): SessionItem {
     ...(row.lastAccessed === undefined ? {} : { lastAccessed: time(row.lastAccessed) }),
     ...(row.validUntil === undefined ? {} : { validUntil: time(row.validUntil) }),
     ...(row.policyLimited === true ? { policyLimited: true } : {}),
+    ...(row.auditlog === undefined ? {} : { auditlog: auditlogName(row.auditlog) }),
   });
 }
 export function page<T>(

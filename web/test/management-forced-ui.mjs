@@ -294,13 +294,34 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
   );
   await confirmFullVerification(page, artifacts, 'default');
   await artifacts
-    .getByRole('region', { name: 'Local audit verification', exact: true })
+    .getByRole('button', { name: 'Signature, source and export details', exact: true })
     .getByText('This sign-in is not permitted to open this recording or audit log.', {
       exact: false,
     })
     .waitFor();
   assert.equal(calls.filter((path) => path.endsWith('/artifacts/audit')).length, 1);
-  assert.equal(await artifacts.getByRole('grid', { name: 'Audit events', exact: true }).count(), 0);
+  assert.equal(
+    await artifacts
+      .getByRole('grid', { name: 'Audit events', exact: true })
+      .locator('[role="row"][data-id]')
+      .count(),
+    0,
+    'a denied operational read cannot publish event rows',
+  );
+  assert.equal(
+    await artifacts
+      .getByRole('region', { name: 'Local audit verification', exact: true })
+      .getByRole('grid', { name: 'Audit events', exact: true })
+      .count(),
+    0,
+    'a denied transfer cannot produce a locally verified dataset',
+  );
+  assert.equal(
+    await artifacts
+      .getByRole('button', { name: 'Direct data from the server', exact: true })
+      .count(),
+    0,
+  );
   for (const secret of [
     'private audit directory',
     'private identity file',

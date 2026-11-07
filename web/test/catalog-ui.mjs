@@ -168,8 +168,14 @@ try {
   await confirmFullVerification(page, auditPanel(), 'default');
   const opened = async (current) => {
     if (mode === 'catalog-encrypted') {
+      const audit = (await current.getAttribute('aria-label')) === 'Audit logs';
+      let owner = current;
+      if (audit) {
+        await current.getByRole('button', { name: 'Verify …', exact: true }).click();
+        owner = page.getByRole('dialog', { name: 'Verification options', exact: true });
+      }
       try {
-        await current.getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
+        await owner.getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
       } catch (error) {
         throw new Error(
           JSON.stringify({
@@ -188,9 +194,17 @@ try {
         );
       }
       assert.equal(
-        await current.getByRole('grid', { name: 'Audit events', exact: true }).count(),
+        await (audit
+          ? current.getByRole('region', { name: 'Local audit verification', exact: true })
+          : current
+        )
+          .getByRole('grid', { name: 'Audit events', exact: true })
+          .count(),
         0,
       );
+      if (audit) {
+        await owner.getByRole('button', { name: 'Cancel', exact: true }).click();
+      }
     } else {
       await current
         .getByRole('button', { name: 'Signature, source and export details', exact: true })
@@ -224,7 +238,15 @@ try {
     'raw files are not the primary audit view',
   );
   const beforeBack = requests.length;
-  await auditPanel().getByRole('button', { name: 'Back to list', exact: true }).click();
+  const direct = auditPanel().getByRole('button', {
+    name: 'Direct data from the server',
+    exact: true,
+  });
+  if (mode === 'catalog-encrypted') {
+    assert.equal(await direct.count(), 0, 'awaiting a key is not a locally verified dataset');
+  } else {
+    await direct.click();
+  }
   await auditPanel()
     .getByRole('region', { name: 'Audit overview (server-reported)', exact: true })
     .waitFor();
@@ -341,7 +363,10 @@ try {
     0,
   );
   const afterOpen = requests.length;
-  await recordPanel().getByRole('button', { name: 'Back to list', exact: true }).click();
+  await page
+    .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+    .getByRole('button', { name: 'Recordings', exact: true })
+    .click();
   await recordings()
     .getByRole('button', { name: `Open recording ${id}`, exact: true })
     .waitFor();

@@ -4,6 +4,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
+	"github.com/engity-com/bifroest/pkg/metadatacache"
 	"github.com/engity-com/bifroest/pkg/recording"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -31,7 +32,11 @@ func TestOperationalRecordingPageChecksOnlyItsVisibleTwentyAndVerifyAllIsExplici
 	page, err = svc.managementRecordingPage(ctx, request, actor)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 5)
-	require.EqualValues(t, 25, stats.MetadataReads.Load(), "a stable index is not rebuilt by page navigation")
+	expectedMetadata := 25
+	if !metadatacache.FileStampReuse {
+		expectedMetadata = 50
+	}
+	require.EqualValues(t, expectedMetadata, stats.MetadataReads.Load(), "only supported file-version observations may reuse the index")
 	require.EqualValues(t, 25, stats.ContentReads.Load(), "only each displayed page is fully verified")
 	before := stats.ContentReads.Load()
 	verification, err := svc.managementVerifyRecordings(ctx, protocol.ReadRequest{Operation: protocol.VerifyRecordings, Auditlog: "default"})

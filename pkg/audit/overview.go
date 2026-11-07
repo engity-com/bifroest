@@ -189,7 +189,7 @@ func (r *OverviewReader) Walk(ctx context.Context, source JournalSource, visit f
 		if active {
 			key += "/" + checkpoint.String()
 		}
-		err = r.cache.Use(ctx, key, stamp, 64<<20, func(output io.Writer) error { return buildOverviewIndex(ctx, lease, checkpoint, output) }, func(input io.Reader) error {
+		err = r.cache.UseFile(ctx, key, stamp, 64<<20, func(output io.Writer) error { return buildOverviewIndex(ctx, lease, checkpoint, output) }, func(input io.Reader) error {
 			scanner := bufio.NewScanner(input)
 			scanner.Buffer(make([]byte, 4<<10), 8<<10)
 			headerSeen := false

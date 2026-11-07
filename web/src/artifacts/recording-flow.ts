@@ -2,18 +2,23 @@ import type { VerifiedArtifact } from './evidence-protocol';
 // UI provenance only. These bytes have ALREADY passed the native full verifier;
 // this bounded read is not a parser/verifier replacement or a new trust anchor.
 export async function verifiedRecordingFlow(verified: VerifiedArtifact): Promise<string> {
+  return (await verifiedRecordingContext(verified)).flow;
+}
+export async function verifiedRecordingContext(
+  verified: VerifiedArtifact,
+): Promise<{ flow: string; sessionId: string }> {
   if (
     verified.request.kind !== 'recording' ||
     verified.output === null ||
     verified.metadata.validation !== 'private' ||
     verified.metadata.outputFormat !== 'cast'
   ) {
-    return '';
+    return { flow: '', sessionId: '' };
   }
   const header = await verified.output.slice(0, 64 << 10).text();
   const line = header.split('\n', 3).find((line) => line.startsWith('# bifroest:metadata:v1 '));
   if (!line) {
-    return '';
+    return { flow: '', sessionId: '' };
   }
   try {
     const metadata = JSON.parse(line.slice('# bifroest:metadata:v1 '.length)) as Record<
@@ -21,14 +26,23 @@ export async function verifiedRecordingFlow(verified: VerifiedArtifact): Promise
       unknown
     >;
     const flow = metadata.flow;
-    return metadata.recordingId === verified.request.id &&
+    const valid =
+      metadata.recordingId === verified.request.id &&
       typeof flow === 'string' &&
       flow.isWellFormed() &&
       flow.length <= 255 &&
-      !/[\p{Cc}\p{Cf}]/u.test(flow)
-      ? flow
-      : '';
+      !/[\p{Cc}\p{Cf}]/u.test(flow);
+    return {
+      flow: valid ? flow : '',
+      sessionId:
+        valid &&
+        typeof metadata.sessionId === 'string' &&
+        /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(metadata.sessionId) &&
+        metadata.sessionId !== '00000000-0000-0000-0000-000000000000'
+          ? metadata.sessionId
+          : '',
+    };
   } catch {
-    return '';
+    return { flow: '', sessionId: '' };
   }
 }

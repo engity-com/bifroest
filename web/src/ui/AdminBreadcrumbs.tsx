@@ -8,12 +8,18 @@ export interface AdminCrumb {
 }
 
 export function AdminBreadcrumbs({ items }: { items: readonly AdminCrumb[] }) {
+  const keyed: { item: AdminCrumb; key: string }[] = [];
+  const path: string[] = [];
+  for (const item of items) {
+    path.push(item.label);
+    keyed.push({ item, key: JSON.stringify(path) });
+  }
   return (
     <Breadcrumbs aria-label={t('adminBreadcrumbs')} className="admin-breadcrumbs">
-      {items.map((item, index) =>
+      {keyed.map(({ item, key }, index) =>
         item.onClick && index < items.length - 1 ? (
           <Link
-            key={item.label}
+            key={key}
             component="button"
             type="button"
             underline="hover"
@@ -25,7 +31,7 @@ export function AdminBreadcrumbs({ items }: { items: readonly AdminCrumb[] }) {
           </Link>
         ) : (
           <Typography
-            key={item.label}
+            key={key}
             component="span"
             color="text.primary"
             aria-current={index === items.length - 1 ? 'page' : undefined}

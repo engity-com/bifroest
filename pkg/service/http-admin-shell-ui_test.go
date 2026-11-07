@@ -13,3 +13,10 @@ func TestBrowserManagementDrawerGridAndKeepAlive(t *testing.T) {
 		conf.Session.V.(*configuration.SessionFs).MaxConnections = 1
 	})
 }
+
+func TestBrowserManagementSessionRecordingEventRelations(t *testing.T) {
+	testBrowserLoginUi(t, true, "management-relations", func(conf *configuration.Configuration) {
+		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
+		conf.Session.V.(*configuration.SessionFs).MaxConnections = 1
+	})
+}

@@ -27,7 +27,7 @@ func (r *LocalNativeRecordingRepository) indexedMetadata(ctx context.Context, pa
 	if err != nil {
 		return summary, err
 	}
-	err = r.metadata.Use(ctx, path, stamp, 4<<10, func(output io.Writer) error {
+	err = r.metadata.UseFile(ctx, path, stamp, 4<<10, func(output io.Writer) error {
 		catalogReadWork(ctx, false)
 		format, ok := r.repository.format.(*localNativeRecordingFormat)
 		if !ok {

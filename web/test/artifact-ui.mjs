@@ -69,6 +69,9 @@ try {
             this.ready = true;
           }
           if (event.data?.kind === 'failed') {
+            this.transferFailureReason = ['unavailable', 'too-large'].includes(event.data.reason)
+              ? event.data.reason
+              : null;
             this.failureCode = ['input', 'key', 'verification', 'limit', 'unavailable'].includes(
               event.data.code,
             )
@@ -118,6 +121,28 @@ try {
   const page = await context.newPage();
   const wire = managementWire(page);
   const errors = [];
+  const assetObservations = [];
+  page.on('response', (response) => {
+    const path = new URL(response.url()).pathname;
+    if (
+      path.endsWith('/browser-transfer.wasm') ||
+      path.endsWith('/browser-transfer-worker.js') ||
+      path.endsWith('/go-wasm-exec.js')
+    ) {
+      assetObservations.push({
+        path,
+        status: response.status(),
+        type: response.headers()['content-type'] ?? '',
+        encoding: response.headers()['content-encoding'] ?? '',
+      });
+    }
+  });
+  page.on('requestfailed', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/_bifroest/files/')) {
+      assetObservations.push({ path, error: request.failure()?.errorText ?? 'failed' });
+    }
+  });
   const apiRequests = [];
   const transfers = [];
   let terminalSocketCount = 0;
@@ -199,17 +224,80 @@ try {
       .locator('[data-connection-active="true"]')
       .getByRole('region', { name: 'Audit logs', exact: true });
   const options = async (current) => {
-    const summary = current.locator('.artifact-verification > summary');
-    await summary.waitFor();
-    if (!(await summary.locator('..').evaluate((node) => node.open))) {
-      await summary.click();
+    const states = [];
+    const state = async (stage) =>
+      states.push({
+        stage,
+        ...(await page.evaluate(() => {
+          const pane = document.querySelector('[data-connection-active="true"]');
+          return {
+            views: [...pane.querySelectorAll('[data-audit-view]')].map((node) => ({
+              view: node.dataset.auditView,
+              phase: node.dataset.auditPhase,
+            })),
+            evidence: [...pane.querySelectorAll('[data-evidence-phase]')].map((node) => ({
+              phase: node.dataset.evidencePhase,
+              input: node.dataset.evidenceInput,
+            })),
+            controls: [...pane.querySelectorAll('[data-grid-work-mode]')].map((node) => ({
+              mode: node.dataset.gridWorkMode,
+              disabled: node.disabled,
+              hidden: !!node.closest('[hidden]'),
+            })),
+            dialogs: [...document.querySelectorAll('[role="dialog"]')]
+              .filter((node) => !node.closest('[aria-hidden="true"]'))
+              .map((node) => node.getAttribute('aria-labelledby')),
+          };
+        })),
+      });
+    const dialog = page.getByRole('dialog', { name: 'Verification options', exact: true });
+    if (await dialog.isVisible()) {
+      return dialog;
+    }
+    const direct = current.getByRole('button', {
+      name: 'Direct data from the server',
+      exact: true,
+    });
+    const verify = current.getByRole('button', { name: 'Verify …', exact: true });
+    await direct.or(verify).first().waitFor();
+    await state('ready');
+    if (await direct.isVisible()) {
+      await direct.click();
+      await state('after-direct');
+    }
+    try {
+      await verify.click();
+    } catch (cause) {
+      await state('failed-open-options');
+      throw new Error(JSON.stringify({ stage: 'open-verification-options', states }), { cause });
+    }
+    await dialog.waitFor();
+    return dialog;
+  };
+  const checkAgain = async (current) => {
+    const dialog = await options(current);
+    await dialog.getByRole('button', { name: 'Start verification', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+  };
+  const localControls = async (current) => {
+    const dialog = page.getByRole('dialog', { name: 'Verification options', exact: true });
+    return (await dialog.isVisible()) ? dialog : current;
+  };
+  const closeOptions = async () => {
+    const dialog = page.getByRole('dialog', { name: 'Verification options', exact: true });
+    if (await dialog.isVisible()) {
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await dialog.waitFor({ state: 'hidden' });
     }
   };
   const select = async (current, label, value) => {
-    await current.getByRole('combobox', { name: label, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Verification options', exact: true });
+    const owner = (await dialog.isVisible()) ? dialog : await options(current);
+    await owner.getByRole('combobox', { name: label, exact: true }).click();
     await page.getByRole('option', { name: value, exact: true }).click();
   };
   const openDetails = async (current) => {
+    await closeOptions();
     await current
       .getByRole('button', { name: 'Signature, source and export details', exact: true })
       .click();
@@ -227,16 +315,19 @@ try {
       .click();
   };
   const key = async (current, password = 'tab fixture secret') => {
-    await current.getByLabel('Decryption key file (local only)', { exact: true }).setInputFiles({
+    const dialog = page.getByRole('dialog', { name: 'Verification options', exact: true });
+    const owner = (await dialog.isVisible()) ? dialog : current;
+    await owner.getByLabel('Decryption key file (local only)', { exact: true }).setInputFiles({
       name: 'local-key.pem',
       mimeType: 'application/octet-stream',
       buffer: readFileSync(keyPath),
     });
-    await current
+    await owner
       .getByLabel('Decryption passphrase (optional, local only)', { exact: true })
       .fill(password);
   };
   const successful = async (current) => {
+    await closeOptions();
     const status = current.getByRole('button', {
       name: 'Signature, source and export details',
       exact: true,
@@ -257,6 +348,7 @@ try {
             .getByRole('grid')
             .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label'))),
           notices: await current.getByRole('status').allTextContents(),
+          assetObservations,
           workers: await page.evaluate(() =>
             window.ownedWorkers.map((worker) => ({
               name: worker.workerName,
@@ -264,6 +356,7 @@ try {
               sent: worker.sentVerification,
               terminated: worker.terminated,
               code: worker.failureCode,
+              transferFailureReason: worker.transferFailureReason ?? null,
             })),
           ),
         }),
@@ -272,14 +365,16 @@ try {
     }
   };
   const save = async (current) => {
-    await options(current);
+    const dialog = await options(current);
     const downloading = page.waitForEvent('download');
-    await current.getByRole('button', { name: 'Save verified export', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Save verified export', exact: true }).click();
     const download = await downloading;
     const chunks = [];
     for await (const chunk of await download.createReadStream()) {
       chunks.push(chunk);
     }
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
     return { filename: download.suggestedFilename(), bytes: Buffer.concat(chunks) };
   };
   let releaseModule;
@@ -340,7 +435,7 @@ try {
       'cancellation cannot restart a worker automatically',
     );
     await options(panel());
-    await panel().getByRole('button', { name: 'Check again', exact: true }).click();
+    await checkAgain(panel());
   }
   assert.equal(
     await panel().getByRole('combobox', { name: 'Expected encryption', exact: true }).count(),
@@ -364,7 +459,7 @@ try {
         'Verification depth',
         'Outer signatures/container only — no private verification',
       );
-      await panel().getByRole('button', { name: 'Check again', exact: true }).click();
+      await checkAgain(panel());
       await panel().getByText('Signatures OK · decryption not checked', { exact: true }).waitFor();
       assert.equal(
         await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
@@ -381,21 +476,25 @@ try {
       );
     }
     await key(panel(), 'wrong fixture secret');
-    await panel().getByRole('button', { name: 'Unlock and open', exact: true }).click();
-    await panel()
+    await (await localControls(panel()))
+      .getByRole('button', { name: 'Unlock and open', exact: true })
+      .click();
+    await (await localControls(panel()))
       .getByText('The local decryption key could not be imported', { exact: false })
       .waitFor();
     assert.equal(
-      await panel()
+      await (await localControls(panel()))
         .getByLabel('Decryption key file (local only)', { exact: true })
         .evaluate((input) => input.files.length),
       1,
       'a failed candidate remains editable, never silently replaced by an older cache',
     );
-    await panel()
+    await (await localControls(panel()))
       .getByLabel('Decryption passphrase (optional, local only)', { exact: true })
       .fill('tab fixture secret');
-    await panel().getByRole('button', { name: 'Unlock and open', exact: true }).click();
+    await (await localControls(panel()))
+      .getByRole('button', { name: 'Unlock and open', exact: true })
+      .click();
   }
   await successful(panel());
   await captureLayout(page, `artifact-${mode}-opened`);
@@ -403,10 +502,18 @@ try {
   assert.equal(originalCalls, 1);
   await options(panel());
   assert.equal(
-    await panel().getByLabel('Trusted signing ID', { exact: false }).inputValue(),
+    await (await localControls(panel()))
+      .getByLabel('Trusted signing ID', { exact: false })
+      .inputValue(),
     entry.producer,
   );
-  assert.equal(await panel().getByLabel('Trusted signing ID', { exact: false }).isDisabled(), true);
+  assert.equal(
+    await (await localControls(panel()))
+      .getByLabel('Trusted signing ID', { exact: false })
+      .isDisabled(),
+    true,
+  );
+  await closeOptions();
   if (scenario === 'recording') {
     await exerciseArtifactPlayback({
       page,
@@ -418,13 +525,13 @@ try {
       terminalSockets: () => terminalSocketCount,
       save: () => save(panel()),
     });
-    await options(panel());
-    await panel()
+    const trustOptions = await options(panel());
+    await trustOptions
       .getByRole('checkbox', { name: 'Check the signing identity against this ID', exact: true })
       .check();
-    await panel().getByLabel('Trusted signing ID', { exact: false }).fill('1'.repeat(64));
+    await trustOptions.getByLabel('Trusted signing ID', { exact: false }).fill('1'.repeat(64));
     const before = transfers.length;
-    await panel().getByRole('button', { name: 'Check again', exact: true }).click();
+    await checkAgain(panel());
     await panel().getByText('Evidence verification failed.', { exact: false }).waitFor();
     assert.equal(
       await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
@@ -434,8 +541,9 @@ try {
     await failed.getByText('verification', { exact: true }).waitFor();
     await failed.getByText('1'.repeat(64), { exact: true }).waitFor();
     await closeDetails();
-    await panel().getByLabel('Trusted signing ID', { exact: false }).fill(entry.producer);
-    await panel().getByRole('button', { name: 'Check again', exact: true }).click();
+    const correctedOptions = await options(panel());
+    await correctedOptions.getByLabel('Trusted signing ID', { exact: false }).fill(entry.producer);
+    await checkAgain(panel());
     await successful(panel());
     assert.equal(
       transfers.length,
@@ -503,27 +611,46 @@ try {
       await page.getByRole('dialog', { name: 'Audit event details', exact: true }).count(),
       0,
     );
-    await eventDetails.getByRole('button', { name: 'Close', exact: true }).click();
+    assert.equal(await eventDetails.getByRole('button', { name: 'Close', exact: true }).count(), 0);
+    await page
+      .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+      .getByRole('button', { name: 'default', exact: true })
+      .click();
     await events.waitFor();
     const beforeLocal = apiRequests.length;
     const controls = events.locator('xpath=ancestor::div[@class="admin-data-grid"][1]');
-    const eye = controls.getByRole('button', { name: 'Show all available details', exact: true });
-    assert.equal(await eye.getAttribute('aria-pressed'), 'true');
+    const eye = controls.getByRole('button', { name: 'Include private details', exact: true });
+    assert.equal(await eye.getAttribute('aria-pressed'), 'false');
+    const presentationBefore = await page.evaluate(() =>
+      localStorage.getItem('bifroest-ui-v1:details'),
+    );
     const gridNode = await events.elementHandle();
     await eye.click();
-    await page.waitForFunction(() => localStorage.getItem('bifroest-ui-v1:details') === 'compact');
+    await events.locator('[role="columnheader"][data-field="reason"]').waitFor();
+    assert.equal(await eye.getAttribute('aria-pressed'), 'true');
+    assert.equal(
+      apiRequests.length,
+      beforeLocal,
+      'explicit private export reprojection is local, not another transfer or server query',
+    );
+    await eye.click();
+    await events.locator('[role="columnheader"][data-field="reason"]').waitFor({ state: 'hidden' });
     await controls
       .getByRole('button', { name: 'Refresh audit events', exact: true })
       .waitFor({ state: 'visible' });
     assert.equal(await events.locator('[role="columnheader"][data-field="reason"]').count(), 0);
+    assert.equal(await eye.getAttribute('aria-pressed'), 'false');
     assert.equal(await gridNode.evaluate((node) => node.isConnected), true);
     assert.equal(
       apiRequests.length,
       beforeLocal,
       'the eye rebuilds verified local audit rows without refetching content',
     );
-    await eye.click();
-    await page.waitForFunction(() => localStorage.getItem('bifroest-ui-v1:details') === 'full');
+    assert.equal(
+      await page.evaluate(() => localStorage.getItem('bifroest-ui-v1:details')),
+      presentationBefore,
+      'private-field opt-in is never an origin-wide persisted display preference',
+    );
     await controls.getByRole('button', { name: 'Search', exact: true }).click();
     await controls.getByPlaceholder('Search…', { exact: true }).fill('session');
     await page.waitForFunction(() => {
@@ -590,7 +717,10 @@ try {
     await confirmFullVerification(page, auditPanel(), 'default');
     await page.evaluate(() => fetch('/_bifroest/test/artifact-entered', { credentials: 'omit' }));
     assert.equal(
-      await auditPanel().getByRole('grid', { name: 'Audit events', exact: true }).count(),
+      await auditPanel()
+        .getByRole('region', { name: 'Local audit verification', exact: true })
+        .getByRole('grid', { name: 'Audit events', exact: true })
+        .count(),
       0,
       'provisional audited transfer cannot publish event content',
     );

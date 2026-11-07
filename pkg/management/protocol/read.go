@@ -51,6 +51,7 @@ type ReadRequest struct {
 	Query         string        `json:"query,omitempty"`
 	GridFilter    *GridFilter   `json:"gridFilter,omitempty"`
 	Sensitive     bool          `json:"sensitive,omitempty"`
+	SessionID     string        `json:"sessionId,omitempty"`
 }
 
 func text(value string, maximum int) bool {
@@ -68,6 +69,9 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 		return this, ErrRequest
 	}
 	if this.Sensitive && this.Operation != ListAuditEvents {
+		return this, ErrRequest
+	}
+	if this.SessionID != "" && ((this.Operation != ListRecordings && this.Operation != ListAuditEvents) || !ValidID(this.SessionID)) {
 		return this, ErrRequest
 	}
 	if this.Auditlog != "" && this.Operation != ListRecordings && this.Operation != ListAuditEvents && this.Operation != VerifyRecordings {
@@ -308,6 +312,7 @@ type SessionItem struct {
 	SessionView
 	Owner         *Owner `json:"owner"`
 	PolicyLimited bool   `json:"policyLimited,omitempty"`
+	Auditlog      string `json:"auditlog,omitempty"`
 }
 type Page[T any] struct {
 	Items   []T    `json:"items"`

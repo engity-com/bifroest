@@ -32,6 +32,7 @@ import { accessMessages } from './access-messages';
 import { type AdminDetail, AdminDetailContext, type AdminSection } from './admin-navigation';
 import { reportUiError } from './error-report';
 import { LeftPanelCloseIcon } from './LeftPanelCloseIcon';
+import { managementCrumbs } from './management-crumbs';
 import type { ManagementLocation } from './management-location';
 import { ManagementNavigationContext } from './management-navigation';
 import { Alert, Button } from './material';
@@ -236,51 +237,7 @@ export function ManagementWorkspace({
     }
   };
   const crumbs = location
-    ? [
-        { label: t('workspaceBifroest') },
-        {
-          label: sectionTitle,
-          ...(location.flow || location.id || location.auditlog
-            ? {
-                onClick: () =>
-                  routeNavigate({ managementFlow: location.managementFlow, page: location.page }),
-              }
-            : {}),
-        },
-        ...(location.auditlog
-          ? [
-              {
-                label: location.auditlog,
-                ...(location.flow || location.id
-                  ? {
-                      onClick: () =>
-                        routeNavigate({
-                          managementFlow: location.managementFlow,
-                          page: 'auditlogs',
-                          ...(location.auditlog ? { auditlog: location.auditlog } : {}),
-                        }),
-                    }
-                  : {}),
-              },
-            ]
-          : []),
-        ...(location.flow
-          ? [
-              {
-                label: location.flow,
-                ...(location.id
-                  ? {
-                      onClick: () => {
-                        const { id: _id, ...parent } = location;
-                        routeNavigate(parent);
-                      },
-                    }
-                  : {}),
-              },
-            ]
-          : []),
-        ...(location.id ? [{ label: location.id }] : []),
-      ]
+    ? managementCrumbs(location, routeNavigate, disabled || locked)
     : legacyCrumbs;
   const drawerOpen = wide ? !collapsed : active && temporaryOpen;
   return (

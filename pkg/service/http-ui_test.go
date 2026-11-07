@@ -256,7 +256,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if mode == "dummy-banner" || mode == "admin-shell" {
 		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 	}
-	if mode == "management" || mode == "management-actions" || workspaceActionMode || forcedReadMode || forcedActionMode || mode == "workspace" || mode == "profile-reset" {
+	if mode == "management" || mode == "management-relations" || mode == "management-actions" || workspaceActionMode || forcedReadMode || forcedActionMode || mode == "workspace" || mode == "profile-reset" {
 		if mode != "workspace" {
 			svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 		}
@@ -266,6 +266,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	}
 	if mode == "management-forced-audit" {
 		addForcedAuditSummaries(svc)
+	}
+	if mode == "management-relations" {
+		// This case follows actual recording/event correlations. Unlike the
+		// generic execution observer it needs the persisted native journal.
+		flow := svc.Configuration.Flows[0]
+		svc.flowAuditRecorders[flow.Name] = svc.auditRecorders[flow.Auditlog]
 	}
 	if mode == "management-forced-version" {
 		svc.Version = versionMarkupTestVersion{}

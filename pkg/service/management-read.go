@@ -157,6 +157,8 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 		}
 		if ceiling != nil {
 			item = ceiling.Project(item)
+		} else {
+			item.Auditlog = this.flowAuditlogs[configuration.FlowName(item.Flow)].String()
 		}
 		result.Session = &item
 	default:
@@ -331,6 +333,8 @@ func (this *service) managementSessionPage(ctx context.Context, request protocol
 				return true, nil
 			}
 			item = ceiling.Project(item)
+		} else {
+			item.Auditlog = this.flowAuditlogs[configuration.FlowName(item.Flow)].String()
 		}
 		if !managementSearch(request.Query, item.ID, item.Flow, item.User, item.State, item.Remote) {
 			return true, nil

@@ -165,6 +165,7 @@ func (this ReadCeiling) Allows(request protocol.ReadRequest) bool {
 
 func (this ReadCeiling) Project(item protocol.SessionItem) protocol.SessionItem {
 	item.Owner = nil
+	item.Auditlog = ""
 	item.PolicyLimited = true
 	if this.WholeSeconds {
 		item.CreatedAt = item.CreatedAt.Truncate(time.Second)

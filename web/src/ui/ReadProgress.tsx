@@ -26,7 +26,7 @@ export function ReadProgress({
   cancelLabel = 'artifactCatalogCancel',
 }: {
   value: Progress | null;
-  onCancel(): void;
+  onCancel?: (() => void) | undefined;
   cancelLabel?: Message;
 }) {
   const known = value !== null && value.total > 0;
@@ -45,9 +45,11 @@ export function ReadProgress({
             </>
           )}
         </span>
-        <Button variant="default" onClick={onCancel}>
-          {t(cancelLabel)}
-        </Button>
+        {onCancel && (
+          <Button variant="default" onClick={onCancel}>
+            {t(cancelLabel)}
+          </Button>
+        )}
       </div>
       <LinearProgress
         variant={known ? 'determinate' : 'indeterminate'}

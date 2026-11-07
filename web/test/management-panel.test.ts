@@ -240,7 +240,8 @@ describe('management view read intent and retained ownership', () => {
     expect(container.querySelector('.session-details')).toBe(details);
     expect(api.managementSession).toHaveBeenCalledTimes(1);
     expect(api.managementSessions).toHaveBeenCalledTimes(1);
-    await click(button('Close', container));
+    expect(container.querySelector('.session-details button[aria-label="Close"]')).toBeNull();
+    await click(button('Sessions', container));
     await openSessionTarget(container);
     expect(document.querySelector<HTMLInputElement>('[role="dialog"] input')?.value).toBe(
       'retained-flow',

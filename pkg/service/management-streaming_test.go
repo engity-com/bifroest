@@ -19,6 +19,7 @@ import (
 	bfconnection "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
+	"github.com/engity-com/bifroest/pkg/metadatacache"
 	"github.com/engity-com/bifroest/pkg/recording"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -217,5 +218,9 @@ func TestManagementRecordingStreamingSelectsAuthoritativePagesBeyond1024Entries(
 	require.Equal(t, "00000015-0000-4000-8000-000000000000", next.Items[0].ID)
 	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, matched, "cursor position must not turn the full matching total into a remaining-row count")
 	require.EqualValues(t, 40, stats.ContentReads.Load())
-	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, stats.MetadataReads.Load(), "unchanged metadata is indexed once, not decoded on each page")
+	expectedMetadata := recording.MaximumNativeCatalogEntries + 1
+	if !metadatacache.FileStampReuse {
+		expectedMetadata *= 2
+	}
+	require.EqualValues(t, expectedMetadata, stats.MetadataReads.Load(), "only supported file-version observations may reuse the index; content reads remain page-bound on every platform")
 }

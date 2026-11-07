@@ -7,9 +7,71 @@ import {
   setDetailedView,
   useDetailRefresh,
 } from '../src/ui/detail-preference';
+import { t } from '../src/ui/messages';
 import '../src/ui/app.css';
 
 const rows = [{ id: 'row1', name: 'Core field', extra: 'Additional metadata' }];
+
+it('keeps the source-switch action in place while search expands and read cancellation becomes available', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const host = document.createElement('div');
+  host.style.width = '1200px';
+  document.body.append(host);
+  const root = createRoot(host);
+  const switchSource = vi.fn();
+  const render = async (busy = false) =>
+    act(async () =>
+      root.render(
+        createElement(AdminDataGrid, {
+          label: 'Stable toolbar',
+          rows,
+          columns: [{ field: 'name', headerName: 'Name', flex: 1 }],
+          busy,
+          disabled: false,
+          page: 0,
+          hasNext: false,
+          query: '',
+          sortField: 'name',
+          sortDirection: 'asc',
+          onPage: vi.fn(),
+          onQuery: vi.fn(),
+          onSort: vi.fn(),
+          onSearch: vi.fn(),
+          onRefresh: vi.fn(),
+          onCancelRead: vi.fn(),
+          work: { mode: 'server', onClick: switchSource },
+        }),
+      ),
+    );
+  const button = (label: string) => {
+    const node = host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    if (!node) {
+      throw new Error(`Missing ${label}`);
+    }
+    return node;
+  };
+  try {
+    await render();
+    const action = button(t('directServerData'));
+    const before = Math.round(action.getBoundingClientRect().x);
+    await act(async () => button('Search').click());
+    await vi.waitFor(() =>
+      expect(host.querySelector('input[placeholder="Search…"]')?.getClientRects().length).toBe(1),
+    );
+    expect(Math.round(action.getBoundingClientRect().x)).toBe(before);
+    await render(true);
+    expect(host.querySelector(`button[aria-label="${t('directServerData')}"]`)).toBe(action);
+    expect(Math.round(action.getBoundingClientRect().x)).toBe(before);
+    await render(false);
+    expect(Math.round(action.getBoundingClientRect().x)).toBe(before);
+    await act(async () => action.click());
+    expect(switchSource).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+  }
+});
 it('retains the same grid while loading, disables refresh, and opens rows or the final non-hideable Actions icon exactly once', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   const host = document.createElement('div');
@@ -64,7 +126,9 @@ it('retains the same grid while loading, disables refresh, and opens rows or the
     expect(button('Refresh').disabled).toBe(true);
     expect(grid?.getAttribute('aria-busy')).toBe('true');
     await vi.waitFor(() =>
-      expect(host.querySelector('.MuiDataGrid-skeletonLoadingOverlay')).not.toBeNull(),
+      expect(
+        host.querySelector('[data-testid="GridLoadingOverlay"]')?.closest('[role="grid"]'),
+      ).toBe(grid),
     );
     expect(host.querySelector('[data-testid="VisibilityOffIcon"]')).not.toBeNull();
   } finally {

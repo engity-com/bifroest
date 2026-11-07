@@ -206,4 +206,13 @@ func TestBuiltBrowserReleaseInventoryMatchesActualSources(t *testing.T) {
 		}
 		require.True(t, found, ecosystem)
 	}
+	for _, symbol := range []string{"left_panel_close", "license", "123"} {
+		found := false
+		for _, component := range m.Components {
+			if component.Name == "Google Material Symbols / "+symbol {
+				found = true
+			}
+		}
+		require.True(t, found, "the actual browser inventory must retain each shipped symbol")
+	}
 }

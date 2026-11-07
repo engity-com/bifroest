@@ -1,9 +1,17 @@
 import { object } from '../remember/http';
 import { RememberMeError } from '../remember/protocol';
-import { auditlogName, type Page, type PageOptions, pageFields, recordingTime } from './protocol';
+import {
+  auditlogName,
+  type Page,
+  type PageOptions,
+  pageFields,
+  recordingTime,
+  sessionID,
+} from './protocol';
 
 export interface AuditEventOptions extends PageOptions {
   readonly flow?: string;
+  readonly sessionId?: string;
   readonly id?: string;
   readonly sensitive?: boolean;
 }
@@ -45,6 +53,9 @@ export function auditEventFields(
   fields.after = after;
   fields.auditlog = auditlogName(auditlog);
   fields.sort = options.sort ?? 'recorded-desc';
+  if (options.sessionId !== undefined) {
+    fields.sessionId = sessionID(options.sessionId);
+  }
   if (options.flow !== undefined) {
     if (
       !/^[A-Za-z0-9.-]{1,255}$/u.test(options.flow) ||
@@ -160,6 +171,9 @@ export function auditOverviewPage(
       }
     }
     if (typeof event.name !== 'string' || event.name === '') {
+      throw new RememberMeError('unavailable');
+    }
+    if (fields.sessionId && source.sensitive && event.sessionId !== fields.sessionId) {
       throw new RememberMeError('unavailable');
     }
     if (

@@ -201,6 +201,8 @@ export async function auditEventPage(
   signal: AbortSignal,
   exactFlow?: string,
   progress?: ProgressListener,
+  exactSession?: string,
+  privateFieldsKnown = false,
 ): Promise<{ items: AuditEventRow[]; next: string; skipped: number; total: number }> {
   if (
     !Number.isSafeInteger(page) ||
@@ -215,7 +217,12 @@ export async function auditEventPage(
   let count = 0;
   const accepts = predicate(filter);
   const tokens = query.toLowerCase().split(/\s+/u).filter(Boolean);
-  if (filter === null && tokens.length === 0 && exactFlow === undefined) {
+  if (
+    filter === null &&
+    tokens.length === 0 &&
+    exactFlow === undefined &&
+    exactSession === undefined
+  ) {
     for (let row = 0; row < index.count; row++) {
       matched[count++] = row;
     }
@@ -228,7 +235,8 @@ export async function auditEventPage(
         .toLowerCase();
       if (
         (exactFlow === undefined ||
-          (exactFlow === '-' ? row.flow === '' : row.flow === exactFlow)) &&
+          (exactFlow === '-' ? privateFieldsKnown && row.flow === '' : row.flow === exactFlow)) &&
+        (exactSession === undefined || row.sessionId === exactSession) &&
         accepts(row) &&
         tokens.every((token) => search.includes(token))
       ) {
@@ -268,6 +276,8 @@ export async function auditEventByID(
   signal: AbortSignal,
   flow?: string,
   progress?: ProgressListener,
+  sessionId?: string,
+  privateFieldsKnown = false,
 ): Promise<AuditEventRow | null> {
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(id)) {
     throw new EvidenceError('input');
@@ -282,7 +292,9 @@ export async function auditEventByID(
     const row = rowFor(JSON.parse(line.text) as unknown, number);
     if (
       row.record.id === id &&
-      (flow === undefined || (flow === '-' ? row.flow === '' : row.flow === flow))
+      (flow === undefined ||
+        (flow === '-' ? privateFieldsKnown && row.flow === '' : row.flow === flow)) &&
+      (sessionId === undefined || row.sessionId === sessionId)
     ) {
       if (found !== null) {
         throw new EvidenceError('verification');

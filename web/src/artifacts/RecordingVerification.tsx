@@ -2,12 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { CatalogVerification } from '../management/audit-overview';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { WebAccess } from '../remember';
-import { Alert } from '../ui/material';
+import type { GridWork } from '../ui/GridWork';
 import { t } from '../ui/messages';
-import { ReadProgress } from '../ui/ReadProgress';
-import { VerifyAllButton } from './VerifyAllButton';
+import { VerificationDialog } from './VerificationDialog';
 
-export function RecordingVerification({
+export function useRecordingVerification({
   access,
   source,
   active,
@@ -27,6 +26,7 @@ export function RecordingVerification({
   const [result, setResult] = useState<CatalogVerification | null>(null);
   const [failed, setFailed] = useState(false);
   const [cancelled, setCancelled] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reset the entire explicit job at its actor/source boundary, never replay it after navigation.
   useEffect(() => {
     generation.current++;
@@ -35,6 +35,7 @@ export function RecordingVerification({
     setResult(null);
     setFailed(false);
     setCancelled(false);
+    setOptionsOpen(false);
     return () => {
       generation.current++;
       controller.current?.abort();
@@ -85,41 +86,31 @@ export function RecordingVerification({
       }
     }
   }
-  return (
-    <section className="stack" aria-label={t('verifyAll')}>
-      <div className="actions">
-        <VerifyAllButton
-          source={source}
-          kind="recordings"
-          disabled={disabled || !active || busy}
-          onConfirm={(selected) => {
-            void verify(selected);
-          }}
-        />
-      </div>
-      {busy && (
-        <ReadProgress
-          value={progress}
-          cancelLabel="verifyAllCancel"
-          onCancel={() => controller.current?.abort()}
-        />
-      )}
-      {failed && (
-        <Alert color="red" role="status">
-          {t('verifyAllServerFailed')}
-        </Alert>
-      )}
-      {cancelled && (
-        <Alert color="blue" role="status">
-          {t('verifyAllServerCancelled')}
-        </Alert>
-      )}
-      {result && (
-        <Alert color="blue" role="status">
-          {t('verifyAllServerDone')} {result.checked} ({t('verifyAllFull')}: {result.full};{' '}
-          {t('verifyAllOuter')}: {result.outer})
-        </Alert>
-      )}
-    </section>
+  const work: GridWork = {
+    mode: busy ? 'cancel' : 'verify',
+    disabled: disabled || !active || source === '',
+    progress,
+    onClick: () => (busy ? controller.current?.abort() : setOptionsOpen(true)),
+    status: failed
+      ? t('verifyAllServerFailed')
+      : cancelled
+        ? t('verifyAllServerCancelled')
+        : result
+          ? `${t('verifyAllServerDone')} ${result.checked} (${t('verifyAllFull')}: ${result.full}; ${t('verifyAllOuter')}: ${result.outer})`
+          : undefined,
+  };
+  const dialog = (
+    <VerificationDialog
+      open={optionsOpen && active && !disabled}
+      source={source}
+      kind="recordings"
+      disabled={busy || source === ''}
+      onClose={() => setOptionsOpen(false)}
+      onStart={() => {
+        setOptionsOpen(false);
+        void verify(source);
+      }}
+    />
   );
+  return { work, dialog };
 }

@@ -1,15 +1,15 @@
-import CloseIcon from '@mui/icons-material/Close';
-import { IconButton } from '@mui/material';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { ColumnFilter } from '../management/protocol';
+import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
-import { useDetailRefresh } from '../ui/detail-preference';
+import { relationFlow, relationID } from '../ui/ManagementJump';
 import { exactFlow, type ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, TextInput } from '../ui/material';
 import { t } from '../ui/messages';
-import { ReadProgress } from '../ui/ReadProgress';
+import { AuditEventActions, AuditEventDetails } from './AuditEventDetails';
+import { useAuditView } from './AuditViewContext';
 import {
   type AuditEventIndex,
   type AuditEventRow,
@@ -23,12 +23,18 @@ export function AuditEvents({
   active,
   selected: controlled,
   onSelect,
+  privateFieldsKnown = false,
+  initialIndex,
 }: {
   source: Blob;
   active: boolean;
   selected?: AuditEventRow | null;
   onSelect?: (row: AuditEventRow | null) => void;
+  privateFieldsKnown?: boolean;
+  initialIndex?: AuditEventIndex | undefined;
 }) {
+  const view = useAuditView();
+  const retainSelection = view !== null;
   const navigation = useManagementNavigation();
   const route = navigation?.location.page === 'auditlogs' ? navigation.location : null;
   const routeKey = JSON.stringify(route);
@@ -70,15 +76,17 @@ export function AuditEvents({
       : rawSelected;
   const shownFilter: ColumnFilter | null =
     route && !detailIntent
-      ? route.flow
-        ? {
-            field: 'flow',
-            operator: route.flow === '-' ? 'isEmpty' : 'equals',
-            value: route.flow === '-' ? '' : route.flow,
-          }
-        : exactFlow(filter) || (filter?.field === 'flow' && filter.operator === 'isEmpty')
-          ? null
-          : filter
+      ? route.sessionId
+        ? { field: 'sessionId', operator: 'equals', value: route.sessionId }
+        : route.flow
+          ? {
+              field: 'flow',
+              operator: route.flow === '-' ? 'isEmpty' : 'equals',
+              value: route.flow === '-' ? '' : route.flow,
+            }
+          : exactFlow(filter) || (filter?.field === 'flow' && filter.operator === 'isEmpty')
+            ? null
+            : filter
       : filter;
   const choose = useCallback(
     (row: AuditEventRow | null) => {
@@ -87,17 +95,8 @@ export function AuditEvents({
     },
     [onSelect],
   );
-  const detailed = useDetailRefresh(
-    active && selected === null && !detailIntent,
-    false,
-    busy,
-    () => {
-      setFilter(null);
-      setPage(0);
-      setRefresh((value) => value + 1);
-    },
-  );
-  const index = useRef<AuditEventIndex | null>(null);
+  const detailed = privateFieldsKnown;
+  const index = useRef<AuditEventIndex | null>(initialIndex ?? null);
   const generation = useRef(0);
   const indexedRevision = useRef(0);
   const listScope = useRef<string | undefined>(undefined);
@@ -105,16 +104,21 @@ export function AuditEvents({
     if (index.current?.source === source) {
       return;
     }
-    index.current = null;
+    index.current = initialIndex?.source === source ? initialIndex : null;
+    if (index.current) {
+      indexedRevision.current = refresh;
+    }
     cachedEvent.current = null;
     returnRoute.current = null;
-    listScope.current = undefined;
     setRows([]);
-    setPage(0);
-    setQuery('');
-    setFilter(null);
+    if (!retainSelection) {
+      listScope.current = undefined;
+      setPage(0);
+      setQuery('');
+      setFilter(null);
+    }
     choose(null);
-  }, [source, choose]);
+  }, [source, choose, initialIndex, refresh, retainSelection]);
   useEffect(() => {
     const controller = new AbortController();
     const current = ++generation.current;
@@ -147,14 +151,28 @@ export function AuditEvents({
         const target = JSON.parse(routeKey) as ManagementLocation | null;
         if (target && (target.id || target.eventHint)) {
           const id = target.id ?? target.eventHint ?? '';
-          const key = JSON.stringify([target.auditlog, target.flow, target.id, target.eventHint]);
+          const key = JSON.stringify([
+            target.auditlog,
+            target.flow,
+            target.id,
+            target.eventHint,
+            target.sessionId,
+          ]);
           const cached = cachedEvent.current;
           if (cached?.source === source && cached.key === key) {
             choose(cached.row);
             return;
           }
           choose(null);
-          const row = await auditEventByID(ownedIndex, id, controller.signal, target.flow, report);
+          const row = await auditEventByID(
+            ownedIndex,
+            id,
+            controller.signal,
+            target.flow,
+            report,
+            target.sessionId,
+            privateFieldsKnown,
+          );
           if (current !== generation.current || controller.signal.aborted) {
             return;
           }
@@ -166,8 +184,10 @@ export function AuditEvents({
             managementFlow: target.managementFlow,
             page: 'auditlogs',
             auditlog: target.auditlog,
-            flow: row.flow || '-',
-            id,
+            ...(privateFieldsKnown && (relationFlow(row.flow) || row.flow === '')
+              ? { flow: row.flow || '-', id }
+              : { eventHint: id }),
+            ...(target.sessionId ? { sessionId: target.sessionId } : {}),
           };
           cachedEvent.current = {
             source,
@@ -176,11 +196,12 @@ export function AuditEvents({
               canonical.flow,
               canonical.id,
               canonical.eventHint,
+              canonical.sessionId,
             ]),
             row,
           };
           choose(row);
-          if (target.eventHint) {
+          if (target.eventHint && canonical.id) {
             navigateRef.current?.navigate(canonical, true);
           }
           return;
@@ -188,17 +209,20 @@ export function AuditEvents({
         if (navigateRef.current) {
           choose(null);
         }
-        const requestedFilter: ColumnFilter | null = target?.flow
-          ? {
-              field: 'flow',
-              operator: target.flow === '-' ? 'isEmpty' : 'equals',
-              value: target.flow === '-' ? '' : target.flow,
-            }
-          : target &&
-              (exactFlow(filter) || (filter?.field === 'flow' && filter.operator === 'isEmpty'))
-            ? null
-            : filter;
-        const scopeChanged = target?.flow !== listScope.current;
+        const requestedFilter: ColumnFilter | null = target?.sessionId
+          ? { field: 'sessionId', operator: 'equals', value: target.sessionId }
+          : target?.flow
+            ? {
+                field: 'flow',
+                operator: target.flow === '-' ? 'isEmpty' : 'equals',
+                value: target.flow === '-' ? '' : target.flow,
+              }
+            : target &&
+                (exactFlow(filter) || (filter?.field === 'flow' && filter.operator === 'isEmpty'))
+              ? null
+              : filter;
+        const scopeKey = JSON.stringify([target?.flow, target?.sessionId]);
+        const scopeChanged = scopeKey !== listScope.current;
         const native =
           nativeFilterIntent.current?.flow === target?.flow ? nativeFilterIntent.current : null;
         const result = await auditEventPage(
@@ -210,9 +234,11 @@ export function AuditEvents({
           controller.signal,
           target?.flow,
           report,
+          target?.sessionId,
+          privateFieldsKnown,
         );
         if (current === generation.current && !controller.signal.aborted) {
-          listScope.current = target?.flow;
+          listScope.current = scopeKey;
           if (scopeChanged) {
             setPage(0);
             setQuery(native?.query ?? '');
@@ -245,7 +271,7 @@ export function AuditEvents({
       }
     })();
     return () => controller.abort();
-  }, [source, active, page, query, filter, sort, refresh, routeKey, choose]);
+  }, [source, active, page, query, filter, sort, refresh, routeKey, choose, privateFieldsKnown]);
   function openRow(row: AuditEventRow) {
     if (navigation && route?.auditlog && typeof row.record.id === 'string') {
       returnRoute.current = route;
@@ -253,8 +279,10 @@ export function AuditEvents({
         managementFlow: route.managementFlow,
         page: 'auditlogs',
         auditlog: route.auditlog,
-        flow: row.flow || '-',
-        id: row.record.id,
+        ...(privateFieldsKnown && (relationFlow(row.flow) || row.flow === '')
+          ? { flow: row.flow || '-', id: row.record.id }
+          : { eventHint: row.record.id }),
+        ...(route.sessionId ? { sessionId: route.sessionId } : {}),
       });
     } else {
       choose(row);
@@ -273,11 +301,8 @@ export function AuditEvents({
     event !== null && typeof event === 'object' && !Array.isArray(event)
       ? (event as Record<string, unknown>)
       : {};
-  const display = (value: unknown) =>
-    typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   return (
     <section className="stack" aria-label={t('auditEvents')}>
-      {busy && <ReadProgress value={progress} onCancel={() => operation.current?.abort()} />}
       {cancelled && <Alert>{t('artifactCatalogCancelled')}</Alert>}
       {failed && <Alert color="red">{t('auditEventsFailed')}</Alert>}
       {busy && detailIntent && selected === null && <p role="status">{t('auditEventLoading')}</p>}
@@ -286,7 +311,32 @@ export function AuditEvents({
           active={active && selected === null && !detailIntent}
           label={t('auditEvents')}
           resultAvailable={!busy && !failed && !cancelled && index.current?.source === source}
-          rows={!route || listScope.current === route.flow ? rows : []}
+          rows={
+            !route || listScope.current === JSON.stringify([route.flow, route.sessionId])
+              ? rows
+              : []
+          }
+          readProgress={progress}
+          onCancelRead={() => operation.current?.abort()}
+          detailToggle={
+            view
+              ? {
+                  checked: view.sensitive,
+                  onChange: view.toggleSensitive,
+                  disabled: view.running,
+                  label: 'privateDetails',
+                }
+              : undefined
+          }
+          rowActions={(row) => (
+            <AuditEventActions
+              event={row.record.event as Record<string, unknown>}
+              scope={view?.scope}
+              sensitive={privateFieldsKnown}
+              compact
+              disabled={busy || !active}
+            />
+          )}
           onOpen={openRow}
           openByID={
             <form
@@ -338,9 +388,29 @@ export function AuditEvents({
             },
             { field: 'name', headerName: t('auditEventName'), minWidth: 260, flex: 1 },
             { field: 'outcome', headerName: t('auditEventOutcome'), minWidth: 120 },
-            { field: 'flow', headerName: t('recordingFilterFlow'), minWidth: 130 },
-            { field: 'reason', headerName: t('auditEventReason'), minWidth: 180 },
-            { field: 'sessionId', headerName: t('auditEventSession'), minWidth: 280 },
+            {
+              field: 'flow',
+              headerName: t('recordingFilterFlow'),
+              minWidth: 130,
+              renderCell: (params) =>
+                privateFieldsKnown ? params.row.flow : t('auditPrivateNotIncluded'),
+            },
+            {
+              field: 'reason',
+              headerName: t('auditEventReason'),
+              minWidth: 180,
+              valueGetter: (_value, row) => (privateFieldsKnown ? row.reason : ''),
+              renderCell: (params) =>
+                privateFieldsKnown ? params.row.reason : t('auditPrivateNotIncluded'),
+            },
+            {
+              field: 'sessionId',
+              headerName: t('auditEventSession'),
+              minWidth: 280,
+              valueGetter: (_value, row) => (privateFieldsKnown ? row.sessionId : ''),
+              renderCell: (params) =>
+                privateFieldsKnown ? params.row.sessionId : t('auditPrivateNotIncluded'),
+            },
           ]}
           busy={busy}
           disabled={!active}
@@ -361,11 +431,31 @@ export function AuditEvents({
             setFilter(filter);
             setPage(0);
             const flow =
-              filter?.field === 'flow' && filter.operator === 'isEmpty' ? '-' : exactFlow(filter);
-            if (navigation && route && flow !== route.flow) {
+              route?.sessionId && filter?.field !== 'flow'
+                ? route.flow
+                : filter?.field === 'flow' && filter.operator === 'isEmpty'
+                  ? '-'
+                  : exactFlow(filter);
+            const nextSession =
+              filter?.field === 'sessionId'
+                ? filter.operator === 'equals' && relationID(filter.value)
+                  ? filter.value
+                  : undefined
+                : route?.sessionId;
+            if (navigation && route && (flow !== route.flow || nextSession !== route.sessionId)) {
               nativeFilterIntent.current = { flow, query, filter };
-              const { flow: _flow, id: _id, eventHint: _hint, ...parent } = route;
-              navigation.navigate({ ...parent, ...(flow ? { flow } : {}) });
+              const {
+                flow: _flow,
+                id: _id,
+                eventHint: _hint,
+                sessionId: _session,
+                ...parent
+              } = route;
+              navigation.navigate({
+                ...parent,
+                ...(flow ? { flow } : {}),
+                ...(nextSession ? { sessionId: nextSession } : {}),
+              });
             }
           }}
           onSort={(value) => {
@@ -375,45 +465,25 @@ export function AuditEvents({
         />
       </div>
       {selected && (
-        <section
-          className="stack record-card audit-event-details"
-          aria-label={t('auditEventDetails')}
-          tabIndex={-1}
-        >
-          <div className="section-heading">
-            <IconButton aria-label={t('close')} onClick={close}>
-              <CloseIcon />
-            </IconButton>
-          </div>
-          <dl className="metadata-grid">
-            <dt>{t('auditRecordedAt')}</dt>
-            <dd>{selected.recordedAt.toLocaleString()}</dd>
-            <dt>{t('auditEventName')}</dt>
-            <dd>{selected.name}</dd>
-            <dt>{t('auditEventOutcome')}</dt>
-            <dd>{selected.outcome}</dd>
-            <dt>{t('recordingFilterFlow')}</dt>
-            <dd>{selected.flow || '—'}</dd>
-            {detailed &&
-              Object.entries(selected.record)
-                .filter(([key]) => key !== 'event' && key !== 'recordedAt')
-                .map(([key, value]) => (
-                  <div className="metadata-pair" key={key}>
-                    <dt>{key}</dt>
-                    <dd className="identifier">{display(value)}</dd>
-                  </div>
-                ))}
-            {detailed &&
-              Object.entries(fields)
-                .filter(([key]) => !['name', 'outcome', 'flow'].includes(key))
-                .map(([key, value]) => (
-                  <div className="metadata-pair" key={key}>
-                    <dt>{key}</dt>
-                    <dd className="identifier">{display(value)}</dd>
-                  </div>
-                ))}
-          </dl>
-        </section>
+        <>
+          {!navigation && (
+            <AdminBreadcrumbs
+              items={[
+                { label: t('auditEvents'), onClick: close },
+                { label: String(selected.record.id ?? selected.id) },
+              ]}
+            />
+          )}
+          <AuditEventDetails
+            id={String(selected.record.id ?? selected.id)}
+            recordedAt={selected.recordedAt}
+            event={fields}
+            envelope={selected.record}
+            scope={view?.scope}
+            sensitive={privateFieldsKnown}
+            provenance={view?.provenance ?? t('locallyChecked')}
+          />
+        </>
       )}
     </section>
   );

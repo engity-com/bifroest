@@ -63,6 +63,12 @@ var revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var npmNamePattern = regexp.MustCompile(`^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`)
 var versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$`)
 
+var reviewedMaterialSymbols = map[string]struct{ symbol, file, sha256 string }{
+	"Google Material Symbols / left_panel_close": {"left_panel_close", "LeftPanelCloseIcon", "909577477a457f6902f6000398429358f32e11333146c050e80bb8abd9e4946f"},
+	"Google Material Symbols / license":          {"license", "LicenseIcon", "2210021c3f42ffbcb69bfc10cf3a675b31d40d5d474acc72bb9648541a9ee71c"},
+	"Google Material Symbols / 123":              {"123", "DirectServerIcon", "f0bff2ee8ae8a0a8f3cc156c9637236e298252343672d8c7a1b6fc4bb720b705"},
+}
+
 func Decode(raw []byte) (*Manifest, error) {
 	if len(raw) == 0 || len(raw) > MaximumManifestBytes {
 		return nil, fmt.Errorf("browser manifest size is invalid")
@@ -165,14 +171,15 @@ func (m *Manifest) Validate() error {
 		}
 		switch component.Ecosystem {
 		case "vendored-svg":
+			review, reviewed := reviewedMaterialSymbols[component.Name]
 			encoded, ok := strings.CutPrefix(component.Integrity, "sha256-")
 			decoded, err := base64.StdEncoding.DecodeString(encoded)
-			if component.Name != "Google Material Symbols / left_panel_close" || component.Version != "24px outlined" || component.License != "Apache-2.0" || component.Source != "https://github.com/google/material-design-icons/tree/master/symbols/web/left_panel_close" || component.UpstreamPathSHA256 != "909577477a457f6902f6000398429358f32e11333146c050e80bb8abd9e4946f" || !ok || err != nil || len(decoded) != sha256.Size || base64.StdEncoding.EncodeToString(decoded) != encoded || !slices.Equal(component.Artifacts, []string{"browser-ui"}) {
+			if !reviewed || component.Version != "24px outlined" || component.License != "Apache-2.0" || component.Source != "https://github.com/google/material-design-icons/tree/master/symbols/web/"+review.symbol || component.UpstreamPathSHA256 != review.sha256 || !ok || err != nil || len(decoded) != sha256.Size || base64.StdEncoding.EncodeToString(decoded) != encoded || !slices.Equal(component.Artifacts, []string{"browser-ui"}) {
 				return fmt.Errorf("unreviewed vendored browser SVG")
 			}
 			found := false
 			for _, input := range m.Inputs {
-				if input.Name == "web/src/ui/LeftPanelCloseIcon.tsx" && input.SHA256 == hex.EncodeToString(decoded) {
+				if input.Name == "web/src/ui/"+review.file+".tsx" && input.SHA256 == hex.EncodeToString(decoded) {
 					found = true
 				}
 			}

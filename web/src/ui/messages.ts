@@ -344,11 +344,30 @@ export const messages = {
   scanMetadata: 'Reading catalog metadata…',
   scanSearching: 'Searching catalog metadata…',
   verifyAll: 'Verify all',
+  showRecordings: 'Show recordings',
+  showAuditlogs: 'Show audit logs',
+  showSession: 'Show session',
+  showRecording: 'Show recording',
+  detailsTitle: 'Details',
+  verifyOpen: 'Verify …',
+  verifyStart: 'Start verification',
+  verificationInput: 'Verification input',
+  verificationFresh: 'Download a fresh snapshot from this auditlog',
+  verificationReceived: 'Check the already downloaded snapshot locally',
+  auditScopeNeedsPrivateDetails:
+    'This flow/session-filtered local view needs private context. Use the eye to include it; otherwise unknown private fields cannot match the filter.',
+  directServerData: 'Direct data from the server',
+  serverReported: 'Server-reported',
+  locallyChecked: 'Locally checked · signer trust is separate',
+  privateDetails: 'Include private details',
+  auditPrivateNotIncluded: 'Not included',
+  auditPrivateNotice:
+    'Private context is not included in this view. Use the eye in the list or verification options to include it.',
   verifyAllTitle: 'Verify the entire selected source?',
   verifyAllRecordingsScope:
-    'This reads every sealed recording in the selected source, not only this page or its filters. It does not change recordings or dispose workloads. Large artifacts may require the CLI.',
+    'This reads every sealed recording in the selected source, not only this page or its filters. It runs on the server: clear contents are checked fully; encrypted recordings have only their signed envelopes checked. No decryption keys are uploaded. Recordings and workloads are unchanged. Use the CLI for larger or independent full archive checks.',
   verifyAllAuditScope:
-    'This downloads the selected auditlog snapshot and verifies it locally. It does not change the journal or upload decryption keys. The overview remains available while this runs; use the CLI for larger journals or independent forensic checks.',
+    'This checks the entire selected auditlog snapshot locally, not only this page or its filters. Choose a fresh download or an already downloaded snapshot when available. It does not change the journal or upload decryption keys. The overview remains available while this runs; use the CLI for larger journals or independent forensic checks.',
   verifyAllCancel: 'Cancel full verification',
   verifyAllServerDone:
     'Server verification completed. This is not independent browser verification.',

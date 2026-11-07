@@ -1,6 +1,7 @@
 import { act, createElement, type ReactNode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { page as browserPage, userEvent } from 'vitest/browser';
 import { ArtifactCatalog } from '../src/artifacts/ArtifactCatalog';
 import { ArtifactPanel } from '../src/artifacts/ArtifactPanel';
 import type { AuditOverviewPage } from '../src/management/audit-overview';
@@ -48,6 +49,7 @@ const recording: RecordingSummary = {
   flow: 'docker',
 };
 const cleanups: (() => void)[] = [];
+let restoreViewport: [number, number] | null = null;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.spyOn(WebAccess.prototype, 'managementAuditlogs').mockResolvedValue({
@@ -72,6 +74,10 @@ afterEach(async () => {
     }
   });
   vi.restoreAllMocks();
+  if (restoreViewport) {
+    await browserPage.viewport(...restoreViewport);
+    restoreViewport = null;
+  }
   vi.unstubAllGlobals();
 });
 function access() {
@@ -103,7 +109,9 @@ async function mount(node: ReactNode) {
 }
 function button(host: ParentNode, name: string) {
   const result = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
-    (node) => node.textContent === name || node.getAttribute('aria-label') === name,
+    (node) =>
+      !node.closest('[hidden]') &&
+      (node.textContent === name || node.getAttribute('aria-label') === name),
   );
   if (!result) {
     throw new Error(`Missing ${name}`);
@@ -114,13 +122,18 @@ const click = async (node: HTMLElement) => act(async () => node.click());
 const eventRows = (host: HTMLElement) =>
   host.querySelectorAll(`[role="grid"][aria-label="${t('auditEvents')}"] [role="row"][data-id]`);
 async function confirmVerify(host: HTMLElement) {
-  await click(button(host, t('verifyAll')));
-  const dialog = document.querySelector('[role="dialog"]');
+  const start = button(host, t('verifyOpen'));
+  expect(start.closest('[role="toolbar"]')).not.toBeNull();
+  await click(start);
+  const dialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
+    (node) => !node.closest('[aria-hidden="true"]'),
+  );
   if (!dialog) {
     throw new Error('Missing scope confirmation');
   }
   expect(dialog.textContent).toContain('default');
-  await click(button(dialog, t('verifyAll')));
+  await click(button(dialog, t('verifyStart')));
+  await vi.waitFor(() => expect(dialog.closest('[aria-hidden="true"]')).not.toBeNull());
 }
 
 it('opens audit events as a server overview without downloading or automatically verifying the journal', async () => {
@@ -141,13 +154,17 @@ it('opens audit events as a server overview without downloading or automatically
   expect(host.textContent).toContain(t('auditOverviewWarning'));
   expect(host.textContent).not.toContain('Integrity OK');
   await click(button(host, `${t('auditEventDetails')} ${id}`));
-  await vi.waitFor(() => expect(host.textContent).toContain(t('auditOverviewDetails')));
+  await vi.waitFor(() => expect(host.querySelector('[aria-current="page"]')?.textContent).toBe(id));
+  expect(host.querySelector(`[aria-label="${t('auditEventDetails')}"]`)?.textContent).toContain(
+    t('detailsTitle'),
+  );
+  expect(host.querySelector(`[aria-label="${t('auditOverviewBack')}"]`)).toBeNull();
   expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledTimes(2);
   expect(vi.mocked(WebAccess.prototype.managementAuditEvents).mock.calls[1]?.[1]).toMatchObject({
     id,
   });
   expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
-  await click(button(host, t('auditOverviewBack')));
+  await click(button(host, 'default'));
   await vi.waitFor(() => expect(eventRows(host)).toHaveLength(1));
   expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledTimes(2);
 });
@@ -178,7 +195,13 @@ it('starts a local full audit check only after confirmation and keeps the operat
     kind: 'audit',
     auditlog: 'default',
   });
-  await click(button(host, t('auditOverviewMode')));
+  expect(
+    host.querySelector('[data-testid="GridLoadingOverlay"]')?.closest('[role="grid"]'),
+  ).not.toBeNull();
+  expect(
+    host.querySelector('[data-testid="CancelIcon"]')?.closest('[role="toolbar"]'),
+  ).not.toBeNull();
+  expect(host.querySelector(`[aria-label="${t('auditOverviewMode')}"]`)).toBeNull();
   expect(artifactSignal?.aborted).toBe(false);
   const before = vi.mocked(WebAccess.prototype.managementAuditEvents).mock.calls.length;
   await click(button(host, t('auditRefreshEvents')));
@@ -192,6 +215,8 @@ it('starts a local full audit check only after confirmation and keeps the operat
 });
 
 it('keeps recording paging independent of its explicit whole-source verification job', async () => {
+  restoreViewport = [window.innerWidth, window.innerHeight];
+  await browserPage.viewport(1440, 900);
   vi.mocked(WebAccess.prototype.managementRecordings)
     .mockResolvedValueOnce({ items: [recording], next: 'bmp1.next', skipped: 0, total: 21 })
     .mockResolvedValue({ items: [recording], next: '', skipped: 0, total: 21 });
@@ -206,12 +231,13 @@ it('keeps recording paging independent of its explicit whole-source verification
       });
     },
   );
+  const onSelect = vi.fn();
   const host = await mount(
     createElement(ArtifactCatalog, {
       access: access(),
       active: true,
       disabled: false,
-      onSelect: vi.fn(),
+      onSelect,
     }),
   );
   await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
@@ -223,11 +249,19 @@ it('keeps recording paging independent of its explicit whole-source verification
   expect(vi.mocked(WebAccess.prototype.managementVerifyRecordings).mock.calls[0]?.[0]).toBe(
     'default',
   );
-  await click(button(host, 'Go to next page'));
+  await act(async () => userEvent.click(button(host, 'Go to next page')));
   await vi.waitFor(() => expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledTimes(2));
   expect(vi.mocked(WebAccess.prototype.managementRecordings).mock.calls[1]?.[1]).toMatchObject({
     after: 'bmp1.next',
   });
+  expect(signal?.aborted).toBe(false);
+  await vi.waitFor(() => expect(button(host, t('recordingRefresh')).disabled).toBe(false));
+  const grid = browserPage.getByRole('grid', {
+    name: `${t('recordingList')} · default`,
+    exact: true,
+  });
+  await act(async () => userEvent.click(grid.getByRole('gridcell', { name: id, exact: true })));
+  expect(onSelect).toHaveBeenCalledOnce();
   expect(signal?.aborted).toBe(false);
   await click(button(host, t('verifyAllCancel')));
   await vi.waitFor(() => expect(signal?.aborted).toBe(true));
@@ -248,7 +282,13 @@ it('keeps encrypted overview fields private and erases the owned view on profile
   );
   await click(button(host, 'Open audit log default'));
   await vi.waitFor(() => expect(host.textContent).toContain(t('auditOverviewEncrypted')));
-  expect(host.querySelector<HTMLInputElement>('input[type="checkbox"]')?.disabled).toBe(true);
+  expect(host.querySelector<HTMLInputElement>('input[type="checkbox"]')).toBeNull();
+  await click(button(host, t('privateDetails')));
+  expect(
+    vi
+      .mocked(WebAccess.prototype.managementAuditEvents)
+      .mock.calls.every((call) => call[1]?.sensitive === false),
+  ).toBe(true);
   expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
   await act(async () => window.dispatchEvent(new Event(profileResetEvent)));
   expect(host.textContent).toContain(t('auditOverviewForgotten'));

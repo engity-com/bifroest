@@ -153,11 +153,17 @@ it('binds route flow selectors literally and finds ID shortcuts across the verif
         false,
         signal,
         '-',
+        undefined,
+        undefined,
+        true,
       )
     ).items.map((row) => row.record.id),
   ).toEqual([other]);
   expect((await auditEventByID(index, id, signal, 'Docker'))?.flow).toBe('Docker');
   await expect(auditEventByID(index, id, signal)).rejects.toMatchObject({ code: 'verification' });
   expect(await auditEventByID(index, other, signal, 'Docker')).toBeNull();
-  expect((await auditEventByID(index, other, signal, '-'))?.flow).toBe('');
+  expect(await auditEventByID(index, other, signal, '-')).toBeNull();
+  expect((await auditEventByID(index, other, signal, '-', undefined, undefined, true))?.flow).toBe(
+    '',
+  );
 });

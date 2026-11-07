@@ -150,7 +150,7 @@ function Scene({
             disabled: false,
             view: 'recordings',
           })
-        : createElement(AuditEvents, { source, active: true }),
+        : createElement(AuditEvents, { source, active: true, privateFieldsKnown: true }),
   );
 }
 const cleanups: (() => void)[] = [];
@@ -492,7 +492,8 @@ it('binds a sessions URI to the literal flow and opens/closes details through th
     id,
     expect.any(AbortSignal),
   );
-  await click(button(host, 'Close'));
+  expect(host.querySelector('.session-details button[aria-label="Close"]')).toBeNull();
+  await click(button(host, t('workspaceSessions')));
   await vi.waitFor(() =>
     expect(router.state.location.pathname).toBe('/Admin/admin/sessions/Docker'),
   );
@@ -770,7 +771,8 @@ it('reopens the same encrypted Recording through the router with a fresh owned t
   await vi.waitFor(() =>
     expect(host.querySelector('.artifact-key input[type="file"]')).not.toBeNull(),
   );
-  await click(button(host, t('artifactBackToList')));
+  expect(host.querySelector(`[aria-label="${t('artifactBackToList')}"]`)).toBeNull();
+  await click(button(host, t('workspaceRecordings')));
   await vi.waitFor(() => expect(router.state.location.search).toBe('?auditlog=default'));
   await vi.waitFor(() => expect(host.querySelector('.artifact-key')).toBeNull());
   await act(async () => router.navigate(path));

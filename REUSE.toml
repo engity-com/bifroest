@@ -79,7 +79,7 @@ SPDX-FileCopyrightText = ["2008 Rob Landley", "2008 Denys Vlasenko", "2026 Engit
 SPDX-License-Identifier = "GPL-2.0-only"
 
 [[annotations]]
-path = "web/src/ui/LeftPanelCloseIcon.tsx"
+path = ["web/src/ui/LeftPanelCloseIcon.tsx","web/src/ui/LicenseIcon.tsx","web/src/ui/DirectServerIcon.tsx"]
 precedence = "override"
 SPDX-FileCopyrightText = ["Google LLC", "2026 Engity GmbH"]
 SPDX-License-Identifier = "Apache-2.0"

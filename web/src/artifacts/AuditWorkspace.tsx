@@ -1,16 +1,22 @@
-import { type ComponentType, useEffect, useRef, useState } from 'react';
+import { type ComponentType, useCallback, useEffect, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
+import { type GridWork, GridWorkContext } from '../ui/GridWork';
+import { managementCrumbs } from '../ui/management-crumbs';
 import type { ManagementLocation } from '../ui/management-location';
 import { ManagementNavigationContext, useManagementNavigation } from '../ui/management-navigation';
-import { Alert, Button } from '../ui/material';
+import { Alert } from '../ui/material';
 import { t } from '../ui/messages';
 import { profileResetEvent } from '../ui/profile-reset';
 import { ArtifactOpenByID } from './ArtifactOpenByID';
-import type { ArtifactEvidencePanelProps } from './ArtifactPanel';
+import type {
+  ArtifactEvidenceControl,
+  ArtifactEvidencePanelProps,
+  ArtifactEvidenceState,
+} from './ArtifactPanel';
 import { AuditCatalog } from './AuditCatalog';
 import { AuditOverview } from './AuditOverview';
-import { VerifyAllButton } from './VerifyAllButton';
+import { AuditViewContext } from './AuditViewContext';
 
 export function AuditWorkspace({
   access,
@@ -56,22 +62,22 @@ export function AuditWorkspace({
     }
   };
   const [mode, setMode] = useState<'overview' | 'local'>('overview');
-  const [nonce, setNonce] = useState(0);
-  const [phase, setPhase] = useState<string | null>(null);
-  const [cancelRevision, setCancelRevision] = useState(0);
-  const verification = useRef<{
-    access: WebAccess;
-    source: string;
-  } | null>(null);
+  const evidence = useRef<ArtifactEvidenceControl | null>(null);
+  const [state, setState] = useState<ArtifactEvidenceState>({
+    phase: null,
+    progress: null,
+    hasGrid: false,
+    received: false,
+    status: undefined,
+  });
+  const [details, setDetails] = useState({ access, source, value: false });
+  const sensitive = details.access === access && details.source === source && details.value;
   const [forgotten, setForgotten] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Only a newly owned access may leave the locally-forgotten state; no old grant is resumed.
   useEffect(() => {
     setForgotten(false);
     const forget = () => {
-      verification.current = null;
       setForgotten(true);
-      setNonce(0);
-      setPhase(null);
     };
     window.addEventListener(profileResetEvent, forget);
     return () => window.removeEventListener(profileResetEvent, forget);
@@ -79,28 +85,31 @@ export function AuditWorkspace({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Actor/source boundaries retire their verification controller and local result rather than rebinding it.
   useEffect(() => {
     setMode('overview');
-    setNonce(0);
-    setPhase(null);
-    return () => {
-      verification.current = null;
-    };
+    setState({ phase: null, progress: null, hasGrid: false, received: false, status: undefined });
   }, [access, source]);
-  const local =
-    verification.current?.access === access && verification.current.source === source && nonce > 0;
-  function verify(selected: string) {
-    if (!active || disabled || remoteDisabled || selected !== source) {
-      return;
-    }
-    verification.current = { access, source: selected };
-    setNonce((value) => value + 1);
-    setMode('local');
-  }
+  // Only an explicit verification's completed result may switch the source.
+  // Availability/status changes must never undo a user's return to the server.
+  const showLocal = useCallback(() => setMode('local'), []);
+  const local = mode === 'local' && state.hasGrid;
+  const work: GridWork = {
+    mode: state.phase !== null ? 'cancel' : local ? 'server' : 'verify',
+    disabled: disabled || !active || (!local && remoteDisabled && !state.received),
+    progress: state.progress,
+    status: state.status,
+    onStatusClick: () => evidence.current?.showDetails(),
+    onClick: () => {
+      if (state.phase !== null) {
+        evidence.current?.cancel();
+      } else if (local) {
+        setMode('overview');
+      } else {
+        evidence.current?.openOptions();
+      }
+    },
+  };
   const localNavigate = (next: ManagementLocation, replace?: boolean) => {
-    if (!next.auditlog) {
-      verification.current = null;
-      setNonce(0);
+    if (next.page === 'auditlogs' && !next.auditlog) {
       setMode('overview');
-      setPhase(null);
       return;
     }
     navigate(next, replace);
@@ -114,125 +123,97 @@ export function AuditWorkspace({
   }
   return (
     <ManagementNavigationContext.Provider value={{ location: route, navigate }}>
-      <section className="stack artifact-panel" aria-label={t('workspaceAuditlogs')}>
-        {!external && (
-          <AdminBreadcrumbs
-            items={[
-              { label: t('workspaceBifroest') },
-              {
-                label: t('workspaceAuditlogs'),
-                ...(source
-                  ? {
-                      onClick: () =>
-                        navigate({ managementFlow: route.managementFlow, page: 'auditlogs' }),
-                    }
-                  : {}),
-              },
-              ...(source ? [{ label: source }] : []),
-            ]}
-          />
-        )}
-        <div className="actions">
-          <VerifyAllButton
-            source={source}
-            kind="audit"
-            disabled={disabled || remoteDisabled || !active || phase !== null}
-            onConfirm={verify}
-          />
-          {source && (
-            <>
-              <Button
-                variant={mode === 'overview' ? 'light' : 'subtle'}
-                onClick={() => setMode('overview')}
-              >
-                {t('auditOverviewMode')}
-              </Button>
-              <Button
-                variant={mode === 'local' ? 'light' : 'subtle'}
-                disabled={!local}
-                onClick={() => setMode('local')}
-              >
-                {t('auditLocalMode')}
-              </Button>
-            </>
-          )}
-          {phase !== null && mode === 'overview' && (
-            <Button variant="default" onClick={() => setCancelRevision((value) => value + 1)}>
-              {t('verifyAllCancel')}
-            </Button>
-          )}
-        </div>
-        {phase !== null && mode === 'overview' && (
-          <Alert color="blue" role="status">
-            {t('auditLocalRunning')}
-          </Alert>
-        )}
-        <div hidden={source !== ''}>
-          <AuditCatalog
-            key={`catalog:${owner.current.epoch}`}
-            access={access}
-            disabled={disabled || remoteDisabled}
-            active={active && source === ''}
-            openByID={
-              <ArtifactOpenByID
-                view="auditlogs"
-                auditlog={pinValue.auditlog}
-                id={pinValue.event}
+      <AuditViewContext.Provider
+        value={{
+          scope: access.snapshot().scope,
+          sensitive,
+          toggleSensitive: () => {
+            if (active && !disabled && state.phase === null) {
+              setDetails({ access, source, value: !sensitive });
+            }
+          },
+          local,
+          running: state.phase !== null,
+          provenance: state.status,
+        }}
+      >
+        <GridWorkContext.Provider value={source ? work : undefined}>
+          <section
+            className="stack artifact-panel"
+            aria-label={t('workspaceAuditlogs')}
+            data-audit-view={local ? 'local' : 'server'}
+            data-audit-phase={state.phase ?? 'idle'}
+          >
+            {!external && <AdminBreadcrumbs items={managementCrumbs(route, navigate, disabled)} />}
+            <div hidden={source !== ''}>
+              <AuditCatalog
+                key={`catalog:${owner.current.epoch}`}
+                access={access}
                 disabled={disabled || remoteDisabled}
-                onAuditlog={(auditlog) => setPin({ ...pinValue, auditlog })}
-                onID={(event) => setPin({ ...pinValue, event })}
-                onGo={() =>
+                active={active && source === ''}
+                openByID={
+                  <ArtifactOpenByID
+                    view="auditlogs"
+                    auditlog={pinValue.auditlog}
+                    id={pinValue.event}
+                    disabled={disabled || remoteDisabled}
+                    onAuditlog={(auditlog) => setPin({ ...pinValue, auditlog })}
+                    onID={(event) => setPin({ ...pinValue, event })}
+                    onGo={() =>
+                      navigate({
+                        managementFlow: route.managementFlow,
+                        page: 'auditlogs',
+                        auditlog: pinValue.auditlog,
+                        ...(pinValue.event ? { eventHint: pinValue.event } : {}),
+                      })
+                    }
+                  />
+                }
+                onSelect={(request) =>
                   navigate({
                     managementFlow: route.managementFlow,
                     page: 'auditlogs',
-                    auditlog: pinValue.auditlog,
-                    ...(pinValue.event ? { eventHint: pinValue.event } : {}),
+                    auditlog: request.auditlog,
                   })
                 }
               />
-            }
-            onSelect={(request) =>
-              navigate({
-                managementFlow: route.managementFlow,
-                page: 'auditlogs',
-                auditlog: request.auditlog,
-              })
-            }
-          />
-        </div>
-        {source && (
-          <div hidden={mode !== 'overview'}>
-            <AuditOverview
-              key={`overview:${owner.current.epoch}:${source}`}
-              access={access}
-              source={source}
-              active={active && mode === 'overview'}
-              disabled={disabled || remoteDisabled}
-            />
-          </div>
-        )}
-        {local && (
-          <div hidden={mode !== 'local'}>
-            <ManagementNavigationContext.Provider
-              value={{ location: route, navigate: localNavigate }}
-            >
-              <Evidence
-                key={`local:${owner.current.epoch}:${source}:${nonce}`}
-                access={access}
-                view="auditlogs"
-                disabled={disabled}
-                remoteDisabled={remoteDisabled}
-                active={active && mode === 'local'}
-                backgroundAllowed={active && mode === 'overview'}
-                verificationCancel={cancelRevision}
-                onPhaseChange={setPhase}
-                hideBreadcrumbs
-                regionLabel={t('auditLocalRegion')}
-              />
-            </ManagementNavigationContext.Provider>
-          </div>
-        )}
-      </section>
+            </div>
+            {source && (
+              <div hidden={local}>
+                <AuditOverview
+                  key={`overview:${owner.current.epoch}:${source}`}
+                  access={access}
+                  source={source}
+                  active={active && !local}
+                  disabled={disabled || remoteDisabled}
+                />
+              </div>
+            )}
+            {source && (
+              <div hidden={!local}>
+                <ManagementNavigationContext.Provider
+                  value={{ location: route, navigate: localNavigate }}
+                >
+                  <Evidence
+                    key={`local:${owner.current.epoch}:${source}`}
+                    access={access}
+                    view="auditlogs"
+                    disabled={disabled}
+                    remoteDisabled={remoteDisabled}
+                    active={active}
+                    backgroundAllowed={active}
+                    controlRef={evidence}
+                    onEvidenceState={setState}
+                    onResultReady={showLocal}
+                    hideBreadcrumbs
+                    regionLabel={t('auditLocalRegion')}
+                  />
+                </ManagementNavigationContext.Provider>
+              </div>
+            )}
+          </section>
+        </GridWorkContext.Provider>
+      </AuditViewContext.Provider>
     </ManagementNavigationContext.Provider>
   );
 }

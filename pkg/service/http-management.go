@@ -12,7 +12,7 @@ import (
 )
 
 func managementReadRequest(path string, values map[string]string) (protocol.ReadRequest, error) {
-	request := protocol.ReadRequest{After: values["after"], Flow: values["flow"], User: values["user"], State: values["state"], ID: values["id"], Auditlog: values["auditlog"], Query: values["query"], Sort: values["sort"]}
+	request := protocol.ReadRequest{After: values["after"], Flow: values["flow"], User: values["user"], State: values["state"], ID: values["id"], Auditlog: values["auditlog"], Query: values["query"], Sort: values["sort"], SessionID: values["sessionId"]}
 	_, field := values["filterField"]
 	_, operator := values["filterOperator"]
 	_, value := values["filterValue"]

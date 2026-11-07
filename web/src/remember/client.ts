@@ -534,6 +534,7 @@ export class WebAccess {
         return (
           row.auditlog !== fields.auditlog ||
           (fields.flow !== '' && row.flow !== fields.flow) ||
+          (fields.sessionId !== undefined && row.sessionId !== fields.sessionId) ||
           (fields.user !== '' && row.user !== fields.user) ||
           (fields.target !== '' && row.target !== fields.target) ||
           (fields.status !== 'all' && row.status !== fields.status) ||

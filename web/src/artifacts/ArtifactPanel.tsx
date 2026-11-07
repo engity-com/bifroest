@@ -1,20 +1,29 @@
 import CancelIcon from '@mui/icons-material/Cancel';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import CloseIcon from '@mui/icons-material/Close';
 import { IconButton } from '@mui/material';
-import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
+import {
+  type Ref,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { RecordingSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { useAdminDetail } from '../ui/admin-navigation';
-import { useDetailedView } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
+import { LicenseIcon } from '../ui/LicenseIcon';
+import { relationFlow } from '../ui/ManagementJump';
 import type { ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, Checkbox, Modal, PasswordInput, Select, TextInput } from '../ui/material';
 import { type Message, t } from '../ui/messages';
+import { PrivateDetailsButton } from '../ui/PrivateDetailsButton';
 import { profileResetEvent } from '../ui/profile-reset';
 import { ReadProgress } from '../ui/ReadProgress';
 import { readLocalBytes } from '../wasm/local-file';
@@ -23,8 +32,9 @@ import { ArtifactOpenByID } from './ArtifactOpenByID';
 import { ArtifactSourceDetails } from './ArtifactSourceDetails';
 import { AuditCatalog } from './AuditCatalog';
 import { AuditEvents } from './AuditEvents';
+import { useAuditView } from './AuditViewContext';
 import { AuditWorkspace } from './AuditWorkspace';
-import type { AuditEventRow } from './audit-events';
+import { type AuditEventIndex, type AuditEventRow, indexAuditEvents } from './audit-events';
 import {
   EvidenceError,
   type EvidenceMetadata,
@@ -35,8 +45,9 @@ import { LocalArtifactDownload } from './local-download';
 import { inspectProtection } from './protection';
 import { type ArtifactRequest, artifactFields, type ReceivedArtifact } from './protocol';
 import { RecordingPlayer } from './RecordingPlayer';
-import { verifiedRecordingFlow } from './recording-flow';
+import { verifiedRecordingContext } from './recording-flow';
 import { useArtifactSecrets } from './session-secrets';
+import { VerificationDialog } from './VerificationDialog';
 import { type EvidenceKey, verifyArtifact } from './verify';
 
 type Phase = 'downloading' | 'inspecting' | 'verifying';
@@ -53,6 +64,21 @@ export interface ArtifactEvidencePanelProps extends ArtifactPanelProps {
   onPhaseChange?: (phase: Phase | null) => void;
   regionLabel?: string;
   hideBreadcrumbs?: boolean;
+  controlRef?: Ref<ArtifactEvidenceControl>;
+  onEvidenceState?: (state: ArtifactEvidenceState) => void;
+  onResultReady?: () => void;
+}
+export interface ArtifactEvidenceControl {
+  openOptions(): void;
+  cancel(): void;
+  showDetails(): void;
+}
+export interface ArtifactEvidenceState {
+  phase: Phase | null;
+  progress: Progress | null;
+  hasGrid: boolean;
+  received: boolean;
+  status: string | undefined;
 }
 type UsedExpectation = { enabled: boolean; producer: string; source: 'reported' | 'user' };
 function failure(error: unknown): Message {
@@ -97,7 +123,12 @@ export function ArtifactEvidencePanel({
   onPhaseChange,
   regionLabel,
   hideBreadcrumbs = false,
+  controlRef,
+  onEvidenceState,
+  onResultReady,
 }: ArtifactEvidencePanelProps) {
+  const auditView = useAuditView();
+  const managed = !!controlRef;
   const secrets = useArtifactSecrets(access);
   const navigation = useManagementNavigation();
   const route = navigation?.location.page === view ? navigation.location : null;
@@ -114,8 +145,8 @@ export function ArtifactEvidencePanel({
   const returnRoute = useRef<ManagementLocation | null>(null);
   const routeKey = JSON.stringify(route);
   const routedSummary = useRef<RecordingSummary | null>(null);
-  const detailed = useDetailedView();
   const [recordingFlow, setRecordingFlow] = useState('');
+  const [recordingSession, setRecordingSession] = useState('');
   const [auditEvent, setAuditEvent] = useState<AuditEventRow | null>(null);
   const inputID = useId();
   const passwordID = useId();
@@ -124,6 +155,8 @@ export function ArtifactEvidencePanel({
   const [received, setReceived] = useState<ReceivedArtifact | null>(null);
   const [protection, setProtection] = useState<EvidenceMetadata | null>(null);
   const [verified, setVerified] = useState<VerifiedArtifact | null>(null);
+  const [verifiedSensitive, setVerifiedSensitive] = useState(false);
+  const [auditIndex, setAuditIndex] = useState<AuditEventIndex | null>(null);
   const [phase, setPhase] = useState<Phase | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   useEffect(() => {
@@ -144,6 +177,9 @@ export function ArtifactEvidencePanel({
   const [sensitive, setSensitive] = useState(false);
   const [level, setLevel] = useState<'outer' | 'private'>('private');
   const [scope, setScope] = useState<'complete' | 'captured-prefix'>('complete');
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [verificationInput, setVerificationInput] = useState<'fresh' | 'received'>('fresh');
+  const effectiveSensitive = auditView?.sensitive ?? sensitive;
   const [auditlog, setAuditlog] = useState('');
   const [id, setID] = useState('');
   const heading = useRef<HTMLDivElement | null>(null);
@@ -153,6 +189,7 @@ export function ArtifactEvidencePanel({
   const generation = useRef(0);
   const downloads = useRef(new LocalArtifactDownload());
   const forgetEvidence = useEffectEvent(() => {
+    setOptionsOpen(false);
     generation.current++;
     operation.current?.abort();
     operation.current = null;
@@ -231,6 +268,7 @@ export function ArtifactEvidencePanel({
     setValidateIdentity(false);
     setProducer('');
     setProducerSource('reported');
+    setOptionsOpen(false);
     setSensitive(false);
     setLevel('private');
     setScope('complete');
@@ -247,6 +285,7 @@ export function ArtifactEvidencePanel({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Hide portals and clear unvalidated inputs on deactivation; retain the explicitly approved tab key cache.
   useEffect(() => {
     if (!active) {
+      setOptionsOpen(false);
       if (!backgroundAllowed) {
         operation.current?.abort();
       }
@@ -308,6 +347,9 @@ export function ArtifactEvidencePanel({
         );
       }
     } finally {
+      if (managed) {
+        clearInputs();
+      }
       if (operation.current === controller) {
         operation.current = null;
         setPhase(null);
@@ -315,6 +357,8 @@ export function ArtifactEvidencePanel({
     }
   }
   function resetResult() {
+    setAuditIndex(null);
+    setVerifiedSensitive(false);
     setAuditEvent(null);
     downloads.current.clear();
     setVerified(null);
@@ -328,7 +372,7 @@ export function ArtifactEvidencePanel({
     expectation: UsedExpectation,
     signal: AbortSignal,
     token: number,
-    includeSensitive = sensitive,
+    includeSensitive = effectiveSensitive,
   ) {
     const checked = {
       ...expectation,
@@ -338,7 +382,7 @@ export function ArtifactEvidencePanel({
           : header.producer
         : '',
     };
-    if (current(token, signal)) {
+    if (current(token, signal) && !(managed && auditView?.local)) {
       setUsed(checked);
     }
     const options = evidenceOptions(image.request, {
@@ -362,7 +406,22 @@ export function ArtifactEvidencePanel({
     if (!matchesRoute(image.request)) {
       throw new EvidenceError('cancelled');
     }
-    const flow = await verifiedRecordingFlow(result);
+    const preparedIndex =
+      managed &&
+      image.request.kind === 'audit' &&
+      result.output &&
+      result.metadata.outputFormat === 'jsonl'
+        ? await indexAuditEvents(result.output, signal, (value) => {
+            if (current(token, signal)) {
+              setProgress(value);
+            }
+          })
+        : null;
+    if (!current(token, signal)) {
+      return;
+    }
+    const context = await verifiedRecordingContext(result);
+    const flow = context.flow;
     if (!current(token, signal)) {
       return;
     }
@@ -370,18 +429,37 @@ export function ArtifactEvidencePanel({
     if (image.request.kind === 'recording' && target?.flow && flow && target.flow !== flow) {
       throw new EvidenceError('verification');
     }
+    if (
+      image.request.kind === 'recording' &&
+      result.metadata.validation === 'private' &&
+      target?.sessionId &&
+      context.sessionId !== target.sessionId
+    ) {
+      throw new EvidenceError('verification');
+    }
     setRecordingFlow(flow);
+    setRecordingSession(context.sessionId);
     if (key !== null) {
       secrets.remember(key, result);
       setCacheRevision((value) => value + 1);
     }
     resetResult();
     setVerified(result);
+    setAuditIndex(preparedIndex);
+    setVerifiedSensitive(includeSensitive);
     setUsed(checked);
     clearInputs();
     if (
+      managed &&
+      image.request.kind === 'audit' &&
+      result.output &&
+      result.metadata.outputFormat === 'jsonl'
+    ) {
+      onResultReady?.();
+    }
+    if (
       image.request.kind === 'recording' &&
-      flow &&
+      relationFlow(flow) &&
       target?.recordingHint &&
       navigation &&
       activeRef.current
@@ -393,6 +471,7 @@ export function ArtifactEvidencePanel({
           flow,
           id: image.request.id,
           auditlogHint: image.request.auditlog,
+          ...(target.sessionId ? { sessionId: target.sessionId } : {}),
         },
         true,
       );
@@ -405,15 +484,24 @@ export function ArtifactEvidencePanel({
     if (request.kind !== (view === 'recordings' ? 'recording' : 'audit')) {
       return;
     }
+    const chosenFile = managed ? keyInput.current?.files?.[0] : undefined;
+    const chosenPassphrase = managed
+      ? (form.current?.querySelector<HTMLInputElement>('[name="evidence-passphrase"]')?.value ?? '')
+      : '';
     resetResult();
-    clearInputs();
+    if (!managed) {
+      clearInputs();
+    }
     setReceived(null);
     setProtection(null);
     setOpened(request);
     setSelection(summary ?? null);
     setRecordingFlow(summary?.flow ?? '');
+    setRecordingSession(summary?.sessionId ?? '');
     setFilePage(0);
-    setSensitive(false);
+    if (!managed) {
+      setSensitive(false);
+    }
     const expected = identity();
     await run('downloading', async (signal, token, stage) => {
       artifactFields(request);
@@ -439,13 +527,32 @@ export function ArtifactEvidencePanel({
       if (expected.source === 'reported') {
         setProducer(header.producer);
       }
-      const key =
+      let key =
         level === 'outer' || header.expectedRecipient === ''
           ? null
           : secrets.matching(header.expectedRecipient);
+      if (managed && chosenFile && level === 'private' && header.expectedRecipient !== '') {
+        if (chosenFile.size < 1 || chosenFile.size > 64 << 10) {
+          throw new EvidenceError('key');
+        }
+        const bytes = await readLocalBytes(chosenFile, signal);
+        try {
+          key = { file: new Blob([bytes]), passphrase: chosenPassphrase };
+        } finally {
+          new Uint8Array(bytes).fill(0);
+        }
+      }
       if (level === 'outer' || header.expectedRecipient === '' || key !== null) {
         stage('verifying');
-        await check(image, header, key, expected, signal, token, false);
+        await check(
+          image,
+          header,
+          key,
+          expected,
+          signal,
+          token,
+          managed ? effectiveSensitive : false,
+        );
       }
       if (activeRef.current) {
         heading.current?.focus({ preventScroll: true });
@@ -462,7 +569,9 @@ export function ArtifactEvidencePanel({
     const passphrase =
       form.current?.querySelector<HTMLInputElement>('[name="evidence-passphrase"]')?.value ?? '';
     const expected = identity();
-    resetResult();
+    if (!(managed && auditView?.local)) {
+      resetResult();
+    }
     await run(previousHeader ? 'verifying' : 'inspecting', async (signal, token, stage) => {
       const header =
         previousHeader ??
@@ -532,6 +641,7 @@ export function ArtifactEvidencePanel({
         page: 'recordings',
         ...(flow ? { flow, id } : { recordingHint: id }),
         auditlogHint: auditlog,
+        ...(route.sessionId ? { sessionId: route.sessionId } : {}),
       });
     }
   }
@@ -561,6 +671,9 @@ export function ArtifactEvidencePanel({
   );
   const readRoute = useEffectEvent(() => {
     if (!route || !active || disabled) {
+      return;
+    }
+    if (managed) {
       return;
     }
     const requested = view === 'recordings' ? (route.id ?? route.recordingHint) : route.auditlog;
@@ -597,7 +710,7 @@ export function ArtifactEvidencePanel({
       view === 'recordings' &&
       route.recordingHint &&
       verified?.metadata.validation === 'private' &&
-      recordingFlow &&
+      relationFlow(recordingFlow) &&
       (!route.flow || route.flow === recordingFlow) &&
       navigation
     ) {
@@ -608,6 +721,7 @@ export function ArtifactEvidencePanel({
           flow: recordingFlow,
           id: route.recordingHint,
           auditlogHint: route.auditlogHint ?? '',
+          ...(route.sessionId ? { sessionId: route.sessionId } : {}),
         },
         true,
       );
@@ -698,6 +812,61 @@ export function ArtifactEvidencePanel({
   );
   const success = verified !== null && !flowMismatch;
   const keyNeeded = level === 'private' && encrypted && !cached && !candidate;
+  useImperativeHandle(controlRef, () => ({
+    showDetails: () => setDetails(true),
+    openOptions: () => {
+      setVerificationInput(managed && (!received || !keyNeeded) ? 'fresh' : 'received');
+      clearInputs();
+      setOptionsOpen(true);
+    },
+    cancel: () => {
+      operation.current?.abort();
+      clearInputs();
+    },
+  }));
+  const stateStatus = notice
+    ? t(notice)
+    : success
+      ? t(
+          metadata?.validation === 'outer'
+            ? 'artifactOuterVerified'
+            : used?.enabled && used.source === 'user'
+              ? 'artifactVerificationOK'
+              : 'artifactVerificationUnpinned',
+        )
+      : keyNeeded
+        ? t('artifactKeyNeeded')
+        : undefined;
+  useEffect(() => {
+    onEvidenceState?.({
+      phase,
+      progress,
+      hasGrid: !!(
+        verified?.output &&
+        metadata?.kind === 'audit' &&
+        metadata.outputFormat === 'jsonl'
+      ),
+      received: received !== null,
+      status: stateStatus,
+    });
+  }, [onEvidenceState, phase, progress, verified, metadata, received, stateStatus]);
+  const appliedSensitive = useRef(effectiveSensitive);
+  const applySensitive = useEffectEvent(() => {
+    if (appliedSensitive.current !== effectiveSensitive) {
+      appliedSensitive.current = effectiveSensitive;
+      if (received !== null && operation.current === null) {
+        if (!managed || auditView?.local) {
+          void recheck();
+        } else {
+          resetResult();
+        }
+      }
+    }
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Only an explicit, actor/source-owned eye change may reproject existing local bytes, never unrelated state or route activation.
+  useEffect(() => {
+    applySensitive();
+  }, [effectiveSensitive]);
   const openByID = (
     <ArtifactOpenByID
       view={view}
@@ -734,6 +903,8 @@ export function ArtifactEvidencePanel({
       className="stack artifact-panel"
       aria-label={regionLabel ?? title}
       data-key-cache-revision={cacheRevision}
+      data-evidence-phase={phase ?? 'idle'}
+      data-evidence-input={received !== null}
     >
       {!integrated && !hideBreadcrumbs && (
         <AdminBreadcrumbs
@@ -749,7 +920,7 @@ export function ArtifactEvidencePanel({
           ]}
         />
       )}
-      {opened && !auditEvent && (
+      {opened && !auditEvent && !managed && (
         <div className="section-heading" ref={heading} tabIndex={-1}>
           {opened && (
             <div className="actions">
@@ -777,8 +948,15 @@ export function ArtifactEvidencePanel({
                         : 'recordingVerificationDetails',
                 )}
               </Button>
-              <IconButton aria-label={t('artifactBackToList')} disabled={locked} onClick={close}>
-                <CloseIcon />
+              <IconButton
+                aria-label={t('verifyOpen')}
+                disabled={locked}
+                onClick={() => {
+                  clearInputs();
+                  setOptionsOpen(true);
+                }}
+              >
+                <LicenseIcon />
               </IconButton>
             </div>
           )}
@@ -788,6 +966,7 @@ export function ArtifactEvidencePanel({
         {view === 'recordings' ? (
           <ArtifactCatalog
             access={access}
+            ownerActive={active}
             disabled={disabled || remoteDisabled}
             active={
               active &&
@@ -819,7 +998,7 @@ export function ArtifactEvidencePanel({
       {opened !== null && (
         <>
           {flowMismatch && <Alert color="red">{t('artifactFlowMismatch')}</Alert>}
-          {phase && (
+          {phase && !managed && (
             <div className="stack">
               <span>
                 {t(
@@ -840,7 +1019,7 @@ export function ArtifactEvidencePanel({
               />
             </div>
           )}
-          {notice && (
+          {notice && !managed && (
             <Alert color="red" role="status">
               {t(notice)}{' '}
               <Button variant="subtle" onClick={() => setDetails(true)}>
@@ -860,64 +1039,68 @@ export function ArtifactEvidencePanel({
           )}
           {received && (
             <>
-              {(verified === null || candidate) && level === 'private' && encrypted && (
-                <form
-                  ref={form}
-                  method="dialog"
-                  className="stack artifact-key"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void recheck();
-                  }}
-                >
-                  <p>{t(cached && !candidate ? 'artifactUsingCachedKey' : 'artifactKeyLocal')}</p>
-                  <label htmlFor={inputID}>{t('artifactKeyFile')}</label>
-                  <input
-                    key={keyRevision}
-                    ref={keyInput}
-                    id={inputID}
-                    name="evidence-private"
-                    type="file"
-                    disabled={locked}
-                    onChange={(event) => {
-                      const chosen = (event.currentTarget.files?.length ?? 0) > 0;
-                      setCandidate(chosen);
-                      const password = form.current?.querySelector<HTMLInputElement>(
-                        '[name="evidence-passphrase"]',
-                      );
-                      if (password) {
-                        password.value = '';
-                      }
+              {!managed &&
+                !optionsOpen &&
+                (verified === null || candidate) &&
+                level === 'private' &&
+                encrypted && (
+                  <form
+                    ref={form}
+                    method="dialog"
+                    className="stack artifact-key"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void recheck();
                     }}
-                  />
-                  {candidate && (
-                    <PasswordInput
-                      id={passwordID}
-                      name="evidence-passphrase"
-                      label={t('artifactPassphrase')}
-                      autoComplete="off"
+                  >
+                    <p>{t(cached && !candidate ? 'artifactUsingCachedKey' : 'artifactKeyLocal')}</p>
+                    <label htmlFor={inputID}>{t('artifactKeyFile')}</label>
+                    <input
+                      key={keyRevision}
+                      ref={keyInput}
+                      id={inputID}
+                      name="evidence-private"
+                      type="file"
                       disabled={locked}
+                      onChange={(event) => {
+                        const chosen = (event.currentTarget.files?.length ?? 0) > 0;
+                        setCandidate(chosen);
+                        const password = form.current?.querySelector<HTMLInputElement>(
+                          '[name="evidence-passphrase"]',
+                        );
+                        if (password) {
+                          password.value = '';
+                        }
+                      }}
                     />
-                  )}
-                  <div className="actions">
-                    <Button type="submit" disabled={locked || !ready}>
-                      {t('artifactUnlock')}
-                    </Button>
-                    {cached && (
-                      <Button
-                        variant="subtle"
+                    {candidate && (
+                      <PasswordInput
+                        id={passwordID}
+                        name="evidence-passphrase"
+                        label={t('artifactPassphrase')}
+                        autoComplete="off"
                         disabled={locked}
-                        onClick={() => {
-                          secrets.clear();
-                          setCacheRevision((value) => value + 1);
-                        }}
-                      >
-                        {t('artifactForgetKey')}
-                      </Button>
+                      />
                     )}
-                  </div>
-                </form>
-              )}
+                    <div className="actions">
+                      <Button type="submit" disabled={locked || !ready}>
+                        {t('artifactUnlock')}
+                      </Button>
+                      {cached && (
+                        <Button
+                          variant="subtle"
+                          disabled={locked}
+                          onClick={() => {
+                            secrets.clear();
+                            setCacheRevision((value) => value + 1);
+                          }}
+                        >
+                          {t('artifactForgetKey')}
+                        </Button>
+                      )}
+                    </div>
+                  </form>
+                )}
               {!flowMismatch &&
                 verified?.output &&
                 metadata?.kind === 'recording' &&
@@ -930,7 +1113,7 @@ export function ArtifactEvidencePanel({
                       allowUntrusted: !(used?.enabled && used.source === 'user'),
                     }}
                     disabled={disabled}
-                    active={active}
+                    active={active && (!managed || auditView?.local === true)}
                     autoPrepare
                   />
                 )}
@@ -939,137 +1122,18 @@ export function ArtifactEvidencePanel({
                 metadata.outputFormat === 'jsonl' && (
                   <AuditEvents
                     source={verified.output}
-                    active={active}
+                    initialIndex={auditIndex ?? undefined}
+                    privateFieldsKnown={verifiedSensitive && effectiveSensitive}
+                    active={active && (!managed || auditView?.local === true)}
                     selected={auditEvent}
                     onSelect={setAuditEvent}
                   />
                 )}
-              <details className="artifact-verification" hidden={auditEvent !== null}>
-                <summary>{t('artifactVerificationOptions')}</summary>
-                <div className="stack">
-                  <Select
-                    label={t('artifactLevel')}
-                    value={level}
-                    disabled={locked}
-                    data={[
-                      { value: 'private', label: t('artifactPrivate') },
-                      { value: 'outer', label: t('artifactOuter') },
-                    ]}
-                    onChange={(value) => {
-                      setLevel(value === 'outer' ? 'outer' : 'private');
-                      setSensitive(false);
-                      resetResult();
-                      clearInputs();
-                    }}
-                  />
-                  {view === 'auditlogs' && (
-                    <Select
-                      label={t('artifactAuditScope')}
-                      value={scope}
-                      disabled={locked}
-                      data={[
-                        { value: 'complete', label: t('artifactComplete') },
-                        { value: 'captured-prefix', label: t('artifactPrefix') },
-                      ]}
-                      onChange={(value) => {
-                        setScope(value === 'captured-prefix' ? 'captured-prefix' : 'complete');
-                        setProtection(null);
-                        resetResult();
-                      }}
-                    />
-                  )}
-                  <Checkbox
-                    label={t('artifactCheckSigner')}
-                    checked={validateIdentity}
-                    disabled={locked}
-                    onChange={(event) => {
-                      setValidateIdentity(event.currentTarget.checked);
-                      resetResult();
-                    }}
-                  />
-                  <TextInput
-                    label={t('artifactExpectedProducer')}
-                    value={producer}
-                    disabled={locked || !validateIdentity}
-                    maxLength={64}
-                    onChange={(event) => {
-                      setProducer(event.currentTarget.value);
-                      setProducerSource('user');
-                      resetResult();
-                    }}
-                  />
-                  {producerSource === 'reported' && (
-                    <p className="caption subtle">{t('artifactSuggestedSigner')}</p>
-                  )}
-                  {view === 'auditlogs' && (
-                    <Checkbox
-                      label={t('artifactSensitive')}
-                      checked={sensitive}
-                      disabled={locked}
-                      onChange={(event) => {
-                        setSensitive(event.currentTarget.checked);
-                        resetResult();
-                      }}
-                    />
-                  )}
-                  {encrypted && verified !== null && (
-                    <Button
-                      variant="subtle"
-                      onClick={() => {
-                        resetResult();
-                        setCandidate(false);
-                      }}
-                    >
-                      {t('artifactReplaceKey')}
-                    </Button>
-                  )}
-                  <div className="actions">
-                    <Button
-                      disabled={locked || !ready}
-                      onClick={() => {
-                        void recheck();
-                      }}
-                    >
-                      {t('artifactCheckAgain')}
-                    </Button>
-                    {secrets.fingerprint() !== null && (
-                      <Button
-                        variant="subtle"
-                        disabled={locked}
-                        onClick={() => {
-                          secrets.clear();
-                          setCacheRevision((value) => value + 1);
-                        }}
-                      >
-                        {t('artifactForgetKey')}
-                      </Button>
-                    )}
-                    {!flowMismatch && verified?.output && (
-                      <Button
-                        variant="default"
-                        disabled={locked}
-                        onClick={() => {
-                          if (verified.output) {
-                            save(
-                              verified.output,
-                              verified.request.kind === 'recording'
-                                ? `recording-${verified.request.id}.cast`
-                                : `audit-${verified.request.auditlog}.jsonl`,
-                            );
-                          }
-                        }}
-                      >
-                        {t('artifactSaveExport')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </details>
             </>
           )}
         </>
       )}
-      {detailed && received && opened?.kind === 'recording' && (
+      {received && opened?.kind === 'recording' && (
         <section className="recording-evidence">
           <ArtifactSourceDetails
             received={received}
@@ -1079,9 +1143,210 @@ export function ArtifactEvidencePanel({
             onPage={setFilePage}
             onSave={save}
             showFiles={false}
+            scope={access.snapshot().scope}
+            relation={{ flow: recordingFlow, sessionId: recordingSession }}
           />
         </section>
       )}
+      <VerificationDialog
+        open={active && optionsOpen}
+        source={opened?.auditlog ?? route?.auditlog ?? ''}
+        kind={view === 'auditlogs' ? 'audit' : 'recording'}
+        disabled={
+          locked ||
+          !pinReady ||
+          (received === null ? remoteDisabled || !managed || !route?.auditlog : !ready)
+        }
+        onClose={() => {
+          setOptionsOpen(false);
+          clearInputs();
+        }}
+        onStart={() => {
+          setOptionsOpen(false);
+          if (managed && verificationInput === 'fresh' && route?.auditlog) {
+            void open({ kind: 'audit', auditlog: route.auditlog });
+          } else if (received) {
+            void recheck();
+          } else if (route?.auditlog) {
+            void open({ kind: 'audit', auditlog: route.auditlog });
+          }
+        }}
+        actions={
+          <>
+            {secrets.fingerprint() !== null && (
+              <Button
+                disabled={locked}
+                onClick={() => {
+                  secrets.clear();
+                  setCacheRevision((value) => value + 1);
+                }}
+              >
+                {t('artifactForgetKey')}
+              </Button>
+            )}
+            {!flowMismatch && verified?.output && (
+              <Button
+                variant="default"
+                disabled={locked}
+                onClick={() => {
+                  if (verified.output) {
+                    save(
+                      verified.output,
+                      verified.request.kind === 'recording'
+                        ? `recording-${verified.request.id}.cast`
+                        : `audit-${verified.request.auditlog}.jsonl`,
+                    );
+                  }
+                }}
+              >
+                {t('artifactSaveExport')}
+              </Button>
+            )}
+          </>
+        }
+      >
+        {managed && received && (
+          <Select
+            label={t('verificationInput')}
+            value={verificationInput}
+            disabled={locked}
+            data={[
+              { value: 'fresh', label: t('verificationFresh') },
+              { value: 'received', label: t('verificationReceived') },
+            ]}
+            onChange={(value) => setVerificationInput(value === 'received' ? 'received' : 'fresh')}
+          />
+        )}
+        {notice && (
+          <Alert color="red" role="status">
+            {t(notice)}
+          </Alert>
+        )}
+        {managed && (route?.flow || route?.sessionId) && !effectiveSensitive && (
+          <Alert color="blue">{t('auditScopeNeedsPrivateDetails')}</Alert>
+        )}
+        <Select
+          label={t('artifactLevel')}
+          value={level}
+          disabled={locked}
+          data={[
+            { value: 'private', label: t('artifactPrivate') },
+            { value: 'outer', label: t('artifactOuter') },
+          ]}
+          onChange={(value) => {
+            setLevel(value === 'outer' ? 'outer' : 'private');
+            resetResult();
+            clearInputs();
+          }}
+        />
+        {view === 'auditlogs' && (
+          <Select
+            label={t('artifactAuditScope')}
+            value={scope}
+            disabled={locked}
+            data={[
+              { value: 'complete', label: t('artifactComplete') },
+              { value: 'captured-prefix', label: t('artifactPrefix') },
+            ]}
+            onChange={(value) => {
+              setScope(value === 'captured-prefix' ? 'captured-prefix' : 'complete');
+              setProtection(null);
+              resetResult();
+            }}
+          />
+        )}
+        <Checkbox
+          label={t('artifactCheckSigner')}
+          checked={validateIdentity}
+          disabled={locked}
+          onChange={(event) => {
+            setValidateIdentity(event.currentTarget.checked);
+            resetResult();
+          }}
+        />
+        <TextInput
+          label={t('artifactExpectedProducer')}
+          value={producer}
+          disabled={locked || !validateIdentity}
+          maxLength={64}
+          onChange={(event) => {
+            setProducer(event.currentTarget.value);
+            setProducerSource('user');
+            resetResult();
+          }}
+        />
+        {producerSource === 'reported' && (
+          <p className="caption subtle">{t('artifactSuggestedSigner')}</p>
+        )}
+        {view === 'auditlogs' && (
+          <PrivateDetailsButton
+            checked={effectiveSensitive}
+            disabled={locked}
+            onChange={() =>
+              auditView ? auditView.toggleSensitive() : setSensitive((value) => !value)
+            }
+          />
+        )}
+        {(managed || (optionsOpen && encrypted && (verified === null || candidate))) &&
+          level === 'private' && (
+            <form
+              ref={form}
+              method="dialog"
+              className="stack artifact-key"
+              onSubmit={(event) => event.preventDefault()}
+            >
+              <p>{t(cached && !candidate ? 'artifactUsingCachedKey' : 'artifactKeyLocal')}</p>
+              <label htmlFor={inputID}>{t('artifactKeyFile')}</label>
+              <input
+                key={keyRevision}
+                ref={keyInput}
+                id={inputID}
+                name="evidence-private"
+                type="file"
+                disabled={locked}
+                onChange={(event) => {
+                  setCandidate((event.currentTarget.files?.length ?? 0) > 0);
+                  const password = form.current?.querySelector<HTMLInputElement>(
+                    '[name="evidence-passphrase"]',
+                  );
+                  if (password) {
+                    password.value = '';
+                  }
+                }}
+              />
+              {candidate && (
+                <PasswordInput
+                  id={passwordID}
+                  name="evidence-passphrase"
+                  label={t('artifactPassphrase')}
+                  autoComplete="off"
+                  disabled={locked}
+                />
+              )}
+              {!managed && (
+                <Button
+                  disabled={locked || !ready}
+                  onClick={() => {
+                    void recheck();
+                  }}
+                >
+                  {t('artifactUnlock')}
+                </Button>
+              )}
+            </form>
+          )}
+        {encrypted && verified !== null && (
+          <Button
+            disabled={locked}
+            onClick={() => {
+              resetResult();
+              setCandidate(false);
+            }}
+          >
+            {t('artifactReplaceKey')}
+          </Button>
+        )}
+      </VerificationDialog>
       <Modal
         opened={active && details}
         onClose={() => setDetails(false)}

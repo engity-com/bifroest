@@ -27,7 +27,7 @@ func (f GridFilter) Kind(operation ReadOperation) string {
 		texts = []string{"name"}
 		booleans = []string{"enabled", "recordingEnabled", "encrypted"}
 	case ListRecordings:
-		texts = []string{"id", "flow", "user", "target", "status", "format"}
+		texts = []string{"id", "flow", "sessionId", "user", "target", "status", "format"}
 		dates = []string{"startedAt", "endedAt"}
 		numbers = []string{"duration", "containerBytes"}
 		booleans = []string{"encrypted"}

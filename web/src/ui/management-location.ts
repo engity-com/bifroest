@@ -11,6 +11,7 @@ export interface ManagementLocation {
   readonly auditlogHint?: string;
   readonly eventHint?: string;
   readonly recordingHint?: string;
+  readonly sessionId?: string;
 }
 const name = (value: string) =>
   /^[A-Za-z0-9.-]{1,255}$/u.test(value) && value !== '.' && value !== '..';
@@ -91,7 +92,14 @@ export function parseManagementLocation(
       return null;
     }
     seen.add(key);
-    if (key === 'auditlog' && result.page === 'recordings' && log(value)) {
+    if (
+      key === 'sessionId' &&
+      (result.page === 'recordings' || result.page === 'auditlogs') &&
+      id(value) &&
+      value !== '00000000-0000-0000-0000-000000000000'
+    ) {
+      result = { ...result, sessionId: value };
+    } else if (key === 'auditlog' && result.page === 'recordings' && log(value)) {
       result = { ...result, auditlogHint: value };
     } else if (
       key === 'event' &&
@@ -144,6 +152,9 @@ export function managementPath(scope: Scope, route: ManagementLocation): string 
   }
   if (route.recordingHint) {
     query.set('recording', route.recordingHint);
+  }
+  if (route.sessionId) {
+    query.set('sessionId', route.sessionId);
   }
   const search = query.size ? `?${query}` : '';
   const parsed = parseManagementLocation(scope, { pathname: path, search, hash: '' });

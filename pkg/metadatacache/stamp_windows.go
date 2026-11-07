@@ -9,6 +9,11 @@ import (
 	"unsafe"
 )
 
+// FileStampReuse is false because FILE_BASIC_INFO can retain the same change
+// time after a completed same-size write and restoration of mtime. Do not turn
+// that observation into cache authority, enable a USN journal or acquire rights.
+const FileStampReuse = false
+
 func identityAndChange(file *os.File, _ os.FileInfo) (string, error) {
 	var identity windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &identity); err != nil {

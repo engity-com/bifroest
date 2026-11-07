@@ -31,6 +31,31 @@ test('vendored Material Symbols retain separate source/hash/Apache notices inste
   assert.throws(f.run, /Unreviewed Material Symbols/u);
 });
 
+test('verification and direct-server controls inventory their exact reviewed SVG paths', (t) => {
+  const f = fixture(t);
+  mkdirSync(join(f.root, 'src/ui'), { recursive: true });
+  for (const file of ['LicenseIcon', 'DirectServerIcon']) {
+    writeFileSync(
+      join(f.root, `src/ui/${file}.tsx`),
+      readFileSync(new URL(`../src/ui/${file}.tsx`, import.meta.url)),
+    );
+  }
+  f.save();
+  f.run();
+  const inventory = JSON.parse(readFileSync(join(f.output, 'frontend-components.json'), 'utf8'));
+  assert.deepEqual(
+    inventory.vendoredAssets.map((asset) => asset.name),
+    ['Google Material Symbols / license', 'Google Material Symbols / 123'],
+  );
+  for (const asset of inventory.vendoredAssets) {
+    assert.equal(asset.license, 'Apache-2.0');
+    assert.match(asset.integrity, /^sha256-/u);
+    assert.match(asset.upstreamPathSHA256, /^[a-f0-9]{64}$/u);
+  }
+  writeFileSync(join(f.root, 'src/ui/DirectServerIcon.tsx'), '<path d="unreviewed"/>');
+  assert.throws(f.run, /Unreviewed Material Symbols/u);
+});
+
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'bifroest-notices-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

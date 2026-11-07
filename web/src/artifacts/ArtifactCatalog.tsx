@@ -7,14 +7,14 @@ import { RememberMeError } from '../remember';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useDetailRefresh } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
+import { ManagementJump, relationID, sessionRelation } from '../ui/ManagementJump';
 import { exactFlow } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, Select } from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
-import { ReadProgress } from '../ui/ReadProgress';
 import type { ArtifactRequest } from './protocol';
-import { RecordingVerification } from './RecordingVerification';
+import { useRecordingVerification } from './RecordingVerification';
 
 const when = (value: Date) =>
   new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(value);
@@ -38,6 +38,7 @@ export function ArtifactCatalog({
   access,
   disabled,
   active = true,
+  ownerActive,
   onSelect,
   openByID,
   onSource,
@@ -45,6 +46,7 @@ export function ArtifactCatalog({
   access: WebAccess;
   disabled: boolean;
   active?: boolean;
+  ownerActive?: boolean;
   selected?: ArtifactRequest | null;
   onSelect(request: ArtifactRequest, summary?: RecordingSummary): void;
   openByID?: ReactNode;
@@ -57,6 +59,7 @@ export function ArtifactCatalog({
     route?.auditlogHint,
     route?.id,
     route?.recordingHint,
+    route?.sessionId,
   ]);
   const currentRoute = useRef(routeKey);
   currentRoute.current = routeKey;
@@ -69,6 +72,12 @@ export function ArtifactCatalog({
   } | null>(null);
   const [sources, setSources] = useState<Page<AuditlogSummary> | null>(null);
   const [source, setSource] = useState('');
+  const verification = useRecordingVerification({
+    access,
+    source,
+    active: ownerActive ?? active,
+    disabled,
+  });
   const [rows, setRows] = useState<Page<RecordingSummary> | null>(null);
   const [page, setPage] = useState(0);
   const [query, setQuery] = useState('');
@@ -172,6 +181,7 @@ export function ArtifactCatalog({
       sort: direction === 'asc' ? 'started-asc' : 'started-desc',
       filter: predicate,
       ...(route?.flow ? { flow: route.flow } : {}),
+      ...(route?.sessionId ? { sessionId: route.sessionId } : {}),
     };
   }
   async function load(
@@ -210,7 +220,7 @@ export function ArtifactCatalog({
       }
       cursors.current[index + 1] = result.next;
       setSource(name);
-      loadedScope.current = JSON.stringify([route?.flow, name]);
+      loadedScope.current = JSON.stringify([route?.flow, name, route?.sessionId]);
       setRows(result);
       setPage(index);
       setQuery(search);
@@ -250,9 +260,11 @@ export function ArtifactCatalog({
           onSource?.(name);
           return;
         }
-        const predicate = route?.flow
-          ? { field: 'flow', operator: 'equals', value: route.flow }
-          : null;
+        const predicate = route?.sessionId
+          ? { field: 'sessionId', operator: 'equals', value: route.sessionId }
+          : route?.flow
+            ? { field: 'flow', operator: 'equals', value: route.flow }
+            : null;
         consumedRoute.current = routeKey;
         // A source response can complete between a navigation render and its
         // passive abort effect. Do not start a new scan for an inactive page.
@@ -275,7 +287,7 @@ export function ArtifactCatalog({
           return;
         }
         cursors.current = ['', result.next];
-        loadedScope.current = JSON.stringify([route?.flow, name]);
+        loadedScope.current = JSON.stringify([route?.flow, name, route?.sessionId]);
         setRows(result);
         setPage(0);
         setQuery('');
@@ -318,7 +330,11 @@ export function ArtifactCatalog({
     // That spelling change is not a different dataset and must not replay its
     // retained list read after playback. A genuinely different flow/source or
     // pending native filter intent still requires an authoritative new read.
-    if (!native && rows !== null && loadedScope.current === JSON.stringify([route.flow, name])) {
+    if (
+      !native &&
+      rows !== null &&
+      loadedScope.current === JSON.stringify([route.flow, name, route.sessionId])
+    ) {
       setFailed(null);
       return;
     }
@@ -333,11 +349,13 @@ export function ArtifactCatalog({
       sort,
       native
         ? native.filter
-        : route.flow
-          ? { field: 'flow', operator: 'equals', value: route.flow }
-          : exactFlow(filter)
-            ? null
-            : filter,
+        : route.sessionId
+          ? { field: 'sessionId', operator: 'equals', value: route.sessionId }
+          : route.flow
+            ? { field: 'flow', operator: 'equals', value: route.flow }
+            : exactFlow(filter)
+              ? null
+              : filter,
     );
   });
   useEffect(() => {
@@ -362,8 +380,7 @@ export function ArtifactCatalog({
   const visibleFailure = failedRoute.current === routeKey ? failed : null;
   return (
     <section className="stack" aria-label={t('artifactCatalog')}>
-      <RecordingVerification access={access} source={source} active={active} disabled={disabled} />
-      {busy && <ReadProgress value={progress} onCancel={() => request.current?.abort()} />}
+      {verification.dialog}
       {visibleFailure && (
         <Alert role="status" color="red">
           {t(visibleFailure)}
@@ -412,17 +429,22 @@ export function ArtifactCatalog({
         <p className="empty-state">{t('recordingNoSources')}</p>
       )}
       <AdminDataGrid<RecordingSummary>
+        work={verification.work}
+        readProgress={progress}
+        onCancelRead={() => request.current?.abort()}
         active={active}
         actionField="open"
         label={`${t('recordingList')} · ${source}`}
         resultAvailable={
           rows !== null &&
           (!route ||
-            loadedScope.current === JSON.stringify([route.flow, route.auditlogHint ?? source]))
+            loadedScope.current ===
+              JSON.stringify([route.flow, route.auditlogHint ?? source, route.sessionId]))
         }
         rows={
           !route ||
-          loadedScope.current === JSON.stringify([route.flow, route.auditlogHint ?? source])
+          loadedScope.current ===
+            JSON.stringify([route.flow, route.auditlogHint ?? source, route.sessionId])
             ? (rows?.items ?? [])
             : []
         }
@@ -434,10 +456,29 @@ export function ArtifactCatalog({
         detailsAvailable
         detailed={detailed}
         detailFields={['user', 'duration', 'containerBytes']}
+        hiddenFields={['sessionId']}
         onOpen={(row) => onSelect({ kind: 'recording', auditlog: row.auditlog, id: row.id }, row)}
         openLabel={(row) => `${t('recordingOpen')} ${row.id}`}
+        rowActions={(row) =>
+          navigation &&
+          identity(row) && (
+            <ManagementJump
+              scope={access.snapshot().scope}
+              target={sessionRelation(navigation.location.managementFlow, row.flow, row.sessionId)}
+              label="showSession"
+              compact
+              disabled={locked}
+            />
+          )
+        }
         columns={[
           { field: 'id', headerName: t('artifactRecordingID'), minWidth: 270 },
+          {
+            field: 'sessionId',
+            headerName: t('managementSessionId'),
+            minWidth: 280,
+            valueGetter: (_value, row) => identity(row)?.sessionId ?? '',
+          },
           {
             field: 'startedAt',
             headerName: t('recordingStarted'),
@@ -522,14 +563,39 @@ export function ArtifactCatalog({
           void load(source, 0, value);
         }}
         onSearch={(search, predicate) => {
-          const flow = exactFlow(predicate);
-          if (navigation && route && flow !== route.flow) {
+          const flow =
+            route?.sessionId && predicate?.field !== 'flow' ? route.flow : exactFlow(predicate);
+          const sessionId =
+            predicate?.field === 'sessionId'
+              ? predicate.operator === 'equals' && relationID(predicate.value)
+                ? predicate.value
+                : undefined
+              : predicate === null && filter?.field === 'sessionId'
+                ? undefined
+                : route?.sessionId;
+          if (navigation && route && (flow !== route.flow || sessionId !== route.sessionId)) {
             setQuery(search);
             setFilter(predicate);
-            const { flow: _flow, id: _id, recordingHint: _recording, ...parent } = route;
-            const next = { ...parent, ...(flow ? { flow } : {}) };
+            const {
+              flow: _flow,
+              id: _id,
+              recordingHint: _recording,
+              sessionId: _session,
+              ...parent
+            } = route;
+            const next = {
+              ...parent,
+              ...(flow ? { flow } : {}),
+              ...(sessionId ? { sessionId } : {}),
+            };
             nativeFilterIntent.current = {
-              key: JSON.stringify([next.flow, next.auditlogHint, undefined, undefined]),
+              key: JSON.stringify([
+                next.flow,
+                next.auditlogHint,
+                undefined,
+                undefined,
+                next.sessionId,
+              ]),
               query: search,
               filter: predicate,
             };

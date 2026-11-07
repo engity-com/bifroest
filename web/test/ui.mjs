@@ -24,6 +24,7 @@ import {
   exerciseManagementForcedAudit,
   exerciseManagementForcedVersion,
 } from './management-forced-ui.mjs';
+import { exerciseManagementRelations } from './management-relations-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
 import { managementWire } from './management-wire.mjs';
 import { exercisePreferences } from './preferences-ui.mjs';
@@ -465,6 +466,11 @@ try {
     }
     if (process.argv[3] === 'management') {
       await exerciseManagement(page, login, logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'management-relations') {
+      await exerciseManagementRelations(page, login);
       assert.deepEqual(errors, []);
       return;
     }

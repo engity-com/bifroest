@@ -1,4 +1,7 @@
 import type { RecordingSummary } from '../management/protocol';
+import type { Scope } from '../remember/protocol';
+import { ManagementJump, sessionRelation } from '../ui/ManagementJump';
+import { useManagementNavigation } from '../ui/management-navigation';
 import { Button, Title } from '../ui/material';
 import { t } from '../ui/messages';
 import type { ReceivedArtifact } from './protocol';
@@ -12,6 +15,8 @@ export function ArtifactSourceDetails({
   summary,
   showFiles = true,
   showMetadata = true,
+  scope,
+  relation,
 }: {
   received: ReceivedArtifact;
   disabled: boolean;
@@ -21,7 +26,15 @@ export function ArtifactSourceDetails({
   summary?: RecordingSummary | null;
   showFiles?: boolean;
   showMetadata?: boolean;
+  scope?: Scope;
+  relation?: { flow: string; sessionId: string };
 }) {
+  const navigation = useManagementNavigation();
+  const context = relation?.sessionId ? relation : summary;
+  const session =
+    context && navigation
+      ? sessionRelation(navigation.location.managementFlow, context.flow, context.sessionId)
+      : null;
   return (
     <section className="stack" aria-label={t('artifactHints')}>
       {showMetadata && (
@@ -31,7 +44,7 @@ export function ArtifactSourceDetails({
               showFiles
                 ? 'artifactHints'
                 : received.request.kind === 'recording'
-                  ? 'recordingDetails'
+                  ? 'detailsTitle'
                   : 'auditLogDetails',
             )}
           </Title>
@@ -67,6 +80,20 @@ export function ArtifactSourceDetails({
                 </dd>
               </>
             )}
+            {context?.sessionId && (
+              <>
+                <dt>{t('managementSessionId')}</dt>
+                <dd>
+                  {scope && session ? (
+                    <ManagementJump scope={scope} target={session} label="showSession">
+                      {context.sessionId}
+                    </ManagementJump>
+                  ) : (
+                    context.sessionId
+                  )}
+                </dd>
+              </>
+            )}
             <dt>{t('artifactProducerHint')}</dt>
             <dd>
               {'ProducerID' in received.metadata
@@ -77,6 +104,14 @@ export function ArtifactSourceDetails({
               <>
                 <dt>{t('artifactRecipientHint')}</dt>
                 <dd>{received.metadata.Recipient || t('artifactHintNone')}</dd>
+              </>
+            )}
+            {scope && session && (
+              <>
+                <dt>{t('adminGridActions')}</dt>
+                <dd className="actions">
+                  <ManagementJump scope={scope} target={session} label="showSession" />
+                </dd>
               </>
             )}
           </dl>

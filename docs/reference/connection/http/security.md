@@ -133,24 +133,41 @@ producer chain or download it to the browser. Source/cursor/filter/actor binding
 and final audit/capture completion still govern publication. Unverified event
 shortcuts are not canonicalized from server-reported flow metadata.
 
-Private output remains a separate opt-in and encrypted private context is never
+Private output remains an explicit actor/source-owned opt-in through the audit
+grid/dialog eye, not a saved origin-wide detail preference. Encrypted context is never
 decrypted server-side. An exact clear-flow selector can narrow a public overview
 without enabling a private export; unknown encrypted context cannot match that
 selector. Hidden fields are not empty values for negative/empty predicates.
 
-**Verify all** explicitly starts the existing whole-audit transfer and independent
-local verifier. Only its local event view is built from successfully verified
+The toolbar certificate action opens verification options; confirming them
+explicitly starts a fresh whole-audit transfer or rechecks the selected downloaded
+snapshot. Only its local event view is built from successfully verified
 local export bytes. That view keeps a bounded offset/time index and materializes
 one page, not one JavaScript object for every event. Its filtering/paging remain
-local to those bytes. Closing a verified event detail retains the local grid and
-does not replay the transfer. Producer identity still needs an independent pin.
+local to those bytes. Initial indexing shares the same abortable operation and
+must finish before a new local result is published. The `123` toolbar action
+returns to server-reported data, never claims that those data are locally checked.
+Breadcrumb navigation retains event lists without replaying their transfer;
+details have no standalone X. Producer identity still needs an independent pin.
 
-The detail-visibility eye is an origin-scoped presentation preference, not an
-authorization or encryption switch. Compact mode hides supplemental columns and
-metadata; full mode displays only information already available under the same
-actor and policy. A toggle refreshes the affected active list (locally for the
-verified audit view, remotely for its server overview) but never upgrades credentials, uploads keys or enables sensitive audit
-exports. Unavailable detail controls remain disabled.
+Outside audit events, the eye is an origin-scoped presentation preference, not an
+authorization/encryption switch. The audit eye instead explicitly selects private
+fields for that owned view and its local export. It is not persisted, inherited
+from the presentation preference, or rebound to another actor/source. Server reads
+include only private clear context already permitted by artifact-content policy;
+encrypted fields require local verification/decryption. Local eye changes reuse
+owned bytes, retain list selection, and never issue a transfer or server query.
+No eye upgrades credentials, uploads keys or confirms a signing identity.
+
+Session IDs lead their table. Configured source links can narrow Recordings and
+events by exact flow/session selectors, with normalization and actor/filter/MAC
+cursor binding. Forced metadata projections withhold the added source association.
+Relationship actions use only permitted row/detail fields, never a route filter
+as proof of an event's session/flow. Unknown IDs/flows have no guessed jump target;
+recording shortcuts remain opaque until local verification can canonicalize them.
+Server-reported and locally checked event details share one layout while retaining
+their provenance distinction. Target reads still reauthorize; no navigation link
+confers a grant or implicitly searches foreign archives.
 
 Live shell titles are bounded, control-/bidi-formatting-free text attached only
 to the owning connection tab. They are not trusted identities or navigation
@@ -188,6 +205,11 @@ not an implicit prerequisite for every other page.
 
 Private metadata caches live outside evidence directories, bind inode/file ID,
 size, mode, mtime and change stamps, and verify their cached images' digests. They
+reuse file-derived images only on supported change-stamp platforms. Windows
+file times can conceal completed same-size writes with restored mtime, so Windows
+uses fresh, provisional metadata images and removes them after each read. It
+neither grants host rights nor enables/forces a filesystem change journal. This
+does not turn normal queries into full recording/journal verification. The caches
 are bounded and removed on owner shutdown, store no credentials/decryption keys
 or decrypted encrypted context, and never authorize a row. Recording metadata
 entries may contain setup context already clear in that source; audit indexes

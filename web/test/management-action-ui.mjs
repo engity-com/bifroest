@@ -29,6 +29,9 @@ async function sessionLayout(page, id, requestCount) {
     const cards = page.getByRole('grid', { name: 'Live session metadata', exact: true });
     await cards.waitFor();
     assert.equal(await cards.count(), 1, 'the mobile list uses the native grid');
+    await cards
+      .locator('.MuiDataGrid-virtualScroller')
+      .evaluate((node) => node.scrollTo({ left: node.scrollWidth }));
     await cards.getByRole('button', { name: `Session details ${id}`, exact: true }).click();
     await page.getByRole('region', { name: 'Session details', exact: true }).waitFor();
     assert.equal(

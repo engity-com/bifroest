@@ -22,6 +22,21 @@ it('roundtrips the explicit management prefix and every supported dataset/detail
       managementFlow: 'admin',
       page: 'recordings',
       flow: 'docker',
+      sessionId: uuid,
+      auditlogHint: 'default',
+    },
+    {
+      managementFlow: 'admin',
+      page: 'recordings',
+      flow: 'docker',
+      id: uuid,
+      sessionId: uuid,
+      auditlogHint: 'default',
+    },
+    {
+      managementFlow: 'admin',
+      page: 'recordings',
+      flow: 'docker',
       id: uuid,
       auditlogHint: 'default',
     },
@@ -30,6 +45,21 @@ it('roundtrips the explicit management prefix and every supported dataset/detail
     { managementFlow: 'admin', page: 'auditlogs', auditlog: 'default', flow: 'docker' },
     { managementFlow: 'admin', page: 'auditlogs', auditlog: 'default', flow: '-', id: uuid },
     { managementFlow: 'admin', page: 'auditlogs', auditlog: 'default', eventHint: uuid },
+    {
+      managementFlow: 'admin',
+      page: 'auditlogs',
+      auditlog: 'default',
+      flow: 'docker',
+      sessionId: uuid,
+    },
+    {
+      managementFlow: 'admin',
+      page: 'auditlogs',
+      auditlog: 'default',
+      flow: 'docker',
+      sessionId: uuid,
+      id: uuid,
+    },
   ] as const) {
     const path = managementPath(scope, route);
     const url = new URL(path, scope.origin);
@@ -55,6 +85,10 @@ it('rejects malformed paths, unsupported or duplicated query data, IDs in the wr
     `/auditlogs/default/docker/${uuid}?event=${uuid}`,
     '/sessions/%64ocker',
     `/sessions/docker/${uuid}/extra`,
+    `/sessions/docker?sessionId=${uuid}`,
+    `/recordings?sessionId=${uuid}&sessionId=${uuid}`,
+    '/auditlogs/default?sessionId=not-an-id',
+    '/auditlogs/default?sessionId=00000000-0000-0000-0000-000000000000',
   ]) {
     expect(
       parseManagementLocation(scope, new URL(`https://app.example.org/team/Admin/admin${suffix}`)),
