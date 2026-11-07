@@ -80,11 +80,29 @@ func (this *fsInfo) Created(context.Context) (InfoCreated, error) {
 }
 
 func (this *fsInfo) ValidUntil(context.Context) (result time.Time, _ error) {
-	lastAccessed, err := this.lastAccessed()
+	this.session.repository.mutex.RLock()
+	defer this.session.repository.mutex.RUnlock()
+	return this.validUntilLocked()
+}
+
+// The caller owns the repository read/write lock. Binding use must check the
+// same session deadline atomically with its own persisted revision update.
+func (this *fsInfo) validUntilLocked() (result time.Time, _ error) {
+	lastAccessed, err := this.lastAccessedLocked()
 	if err != nil {
 		return time.Time{}, err
 	}
 	lat := lastAccessed.At()
+	// In-memory activity bridges the bounded filesystem touch interval. A busy
+	// SSH/neutral connection must not appear idle merely because no Chtimes was
+	// due yet. Reading validity itself never updates this timestamp.
+	if byFlow := this.session.repository.connectionInterceptors[this.Flow()]; byFlow != nil {
+		if stack := byFlow[this.Id()]; stack != nil {
+			if at := time.UnixMilli(stack.observedActivity.Load()); at.After(lat) {
+				lat = at
+			}
+		}
+	}
 	if v := this.session.repository.conf.IdleTimeout.Native(); v > 0 {
 		result = lat.Add(v)
 	}
@@ -100,7 +118,10 @@ func (this *fsInfo) ValidUntil(context.Context) (result time.Time, _ error) {
 func (this *fsInfo) lastAccessed() (*fsLastAccessed, error) {
 	this.session.repository.mutex.RLock()
 	defer this.session.repository.mutex.RUnlock()
+	return this.lastAccessedLocked()
+}
 
+func (this *fsInfo) lastAccessedLocked() (*fsLastAccessed, error) {
 	f, _, err := this.session.repository.openRead(this.session.flow, this.session.id, FsFileLastAccessed)
 	if err != nil {
 		return nil, err

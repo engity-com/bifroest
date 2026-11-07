@@ -1,15 +1,15 @@
 ---
 title: Bifröst SSH server and gateway
-description: Use standard SSH clients with OIDC Device Authorization, SSH gateways and Docker/Kubernetes sessions. Verify optional audit and recordings.
+description: Use SSH clients or optional HTTPS browser access with configurable authorization and session environments. Verify optional audit and recordings.
 ---
 
 # Engity's Bifröst
 
 ![Engity's Bifröst](assets/logo-with-text.svg){. class=bifroest-logo title="Logo of Engity's Bifröst with title"}
 
-## SSH access with identity and session control
+## SSH and browser access with identity and session control
 
-Bifröst lets platform teams combine SSH authorization with the environment in which a session runs. Users connect with a standard SSH client; [OIDC Device Authorization](reference/authorization/oidc.md) also requires a browser and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
+Bifröst lets platform teams combine authorization with the environment in which a session runs. Users connect with a standard SSH client or the optional [HTTPS browser interface](guides/browser-access.md). [OIDC Device Authorization](reference/authorization/oidc.md) requires a browser verification step and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
 
 Bifröst was created for teams with [time-bound off-boarding requirements](usecases.md#offboard), whether the target is 15 minutes, 60 minutes or another defined limit. Meeting it depends on the IdP, bounded access and checks of existing connections.
 
@@ -19,6 +19,7 @@ Bifröst was created for teams with [time-bound off-boarding requirements](useca
 
 * [Connect to a private OpenSSH server](guides/ssh-gateway.md) through an SSH gateway.
 * [Log in with OIDC](guides/oidc.md) using an SSH client and a browser verification step.
+* [Open a terminal in your browser](guides/browser-access.md) with an existing local account.
 * [Verify a session recording](guides/recording.md) and export the recorded output.
 
 ## Features
@@ -37,11 +38,11 @@ Connect through Bifröst to an existing SSH server. The [gateway](guides/ssh-gat
 
 ### Verifiable audit and recording
 
-Optionally sign [audit events](reference/auditlog/index.md) and [terminal recordings](guides/recording.md) for later verification. Recording captures terminal output, not raw keyboard input or SFTP and forwarding payloads.
+Optionally sign [audit events](reference/auditlog/index.md) and [terminal recordings](guides/recording.md) for later verification in the CLI or browser. Recording captures terminal output, not raw keyboard input or SFTP and forwarding payloads.
 
 ### Bound access over time
 
-Set maximum [connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) lifetimes, and optionally provision or clean up [local accounts](reference/environment/local.md#account-management). OIDC's default policy checks refresh grants even for sessions reused with a remembered public key and closes Bifröst connections after a grant is rejected. [Time-bound off-boarding](usecases.md#offboard) still needs an end-to-end check.
+Set maximum [SSH connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) lifetimes, and optionally provision or clean up [local accounts](reference/environment/local.md#account-management). OIDC's default policy checks refresh grants even for sessions reused with a remembered public key and closes Bifröst connections after a grant is permanently rejected. [Time-bound off-boarding](usecases.md#offboard) still needs an end-to-end check.
 
 ## More topics
 * [Getting started](setup/index.md)

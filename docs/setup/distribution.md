@@ -189,6 +189,15 @@ relates every artifact to its platform, edition, media type and SHA-256 digest.
 Use [the checksum file](<<release_asset_url("bifroest-checksums.txt")>>) to verify
 all downloadable release assets.
 
+Builds with the browser UI include `BROWSER_BUILD.json` in archives and beside
+the image's legal resources. The release manifest's `browserBuildDigest` binds
+this inventory to each variant. It records embedded-asset hashes and browser
+dependencies, also covered by the notices and SBOMs. This is unsigned build
+metadata, not signed source provenance or proof of a reproducible build.
+Inspect the artifacts for the release you install; older releases may not
+contain these fields. See [License](../legal/license.md#embedded-browser-components)
+for browser license details.
+
 <<compliance_matrix()>>
 
 OCI entries link to the container package. The abbreviated digest identifies

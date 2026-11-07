@@ -14,9 +14,23 @@ There are more specialized variants of the authorization request available, base
 
 ## Properties
 
+<<property("connection", "Connection", "connection.md")>>
+
+Read-only incoming connection metadata, including `.connection.transport` and
+the HTTP host/slug selection when applicable. This is available before credential
+lookup, including in `remoteName`. It does not provide an authenticated identity.
+
 <<property("remote", "Remote", "remote.md")>>
 
-Identifies the user with its host and username.
+Identifies the requesting peer with its host and client-supplied username. This
+name is not necessarily the authenticated principal and is not replaced after
+authentication.
+
+<<property("authentication", "Authentication", "authentication.md")>>
+
+The normalized identity of the current authorization candidate, when available.
+Before a candidate is resolved this view is anonymous. Environment acceptance
+checks may inspect it, but credentials still have to pass normal verification.
 
 ## Public Key
 

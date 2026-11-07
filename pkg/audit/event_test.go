@@ -22,6 +22,17 @@ func TestLegacyAuditEventEncodingRemainsCanonical(t *testing.T) {
 	require.Equal(t, Event{Name: "test.legacy"}, decoded)
 }
 
+func TestBrowserRememberMeMethodIsDistinctAndCanonical(t *testing.T) {
+	event := Event{Name: EventNameAuthenticationCompleted, Domain: EventDomainAuthentication, Outcome: EventOutcomeSuccess, AuthenticationMethod: AuthenticationMethodBrowserRememberMe, AuthenticationPhase: AuthenticationPhaseVerified, AuthorizationKind: "oidc-device-auth"}
+	require.NoError(t, validateAuditEventForWrite(event))
+	raw, err := json.Marshal(event)
+	require.NoError(t, err)
+	var restored Event
+	require.NoError(t, decodeCanonicalJournalPayload(raw, &restored))
+	require.Equal(t, event, restored)
+	require.Contains(t, string(raw), `"authenticationMethod":"browser-remember-me"`)
+}
+
 func TestAuditEventEncodingIncludesStructuredFields(t *testing.T) {
 	exitCode := 0
 	bytesRead := int64(1)

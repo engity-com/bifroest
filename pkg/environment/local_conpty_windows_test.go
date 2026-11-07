@@ -104,9 +104,12 @@ func TestLocalConPTYRelayExitStatusFailsClosed(t *testing.T) {
 
 func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	if os.Getenv("BIFROEST_CONPTY_RELAY_TEST_CHILD") == "1" {
-		code, err := RunLocalConPTYRelay(80, 25, []string{os.Args[0], "local-windows-identity-child"})
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		code, err := RunLocalConPTYRelay(80, 25, []string{os.Args[0], "local-windows-console-child"})
+		// This is observed only after the production relay has returned; it
+		// does not claim any earlier native flush/shutdown event was observed.
+		diagnostic := fmt.Sprintf("conpty-test relay-returned exit=%d error=%t\n", code, err != nil)
+		written, diagnosticErr := fmt.Fprint(os.Stderr, diagnostic)
+		if err != nil || diagnosticErr != nil || written != len(diagnostic) {
 			os.Exit(1)
 		}
 		os.Exit(code)
@@ -128,6 +131,11 @@ func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	go func() { result <- cmd.Wait() }()
 	select {
 	case err := <-result:
+		t.Logf("ConPTY test parent wait completed: error=%t relayReturnSuccessMarker=%t childWriteSuccessMarker=%t stdoutBytes=%d stderrBytes=%d",
+			err != nil,
+			stderr.String() == "conpty-test relay-returned exit=0 error=false\n",
+			strings.Contains(stdout.String(), "native-console-child write-success=true "),
+			stdout.Len(), stderr.Len())
 		require.NoError(t, err, "%s", stderr.String())
 	case <-time.After(20 * time.Second):
 		_ = cmd.Process.Kill()
@@ -136,4 +144,38 @@ func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	}
 	_ = stdin.Close()
 	require.Contains(t, strings.ToUpper(stdout.String()), strings.ToUpper(self.User.Sid.String()))
+	require.Contains(t, stdout.String(), "native-console=80x25")
+}
+
+func TestLocalConPTYChildStandardHandlesAreClearedAndRestored(t *testing.T) {
+	for _, failure := range []string{"", "clear", "create"} {
+		t.Run(failure, func(t *testing.T) {
+			ids := []uint32{windows.STD_INPUT_HANDLE, windows.STD_OUTPUT_HANDLE, windows.STD_ERROR_HANDLE}
+			table := map[uint32]windows.Handle{ids[0]: 11, ids[1]: 22, ids[2]: 33}
+			created := false
+			err := withLocalConPTYChildStandardHandles(func(id uint32) (windows.Handle, error) { return table[id], nil }, func(id uint32, value windows.Handle) error {
+				if failure == "clear" && value == 0 && id == ids[1] {
+					return fmt.Errorf("clear failed")
+				}
+				table[id] = value
+				return nil
+			}, func() error {
+				created = true
+				for _, id := range ids {
+					require.Zero(t, table[id])
+				}
+				if failure == "create" {
+					return fmt.Errorf("create failed")
+				}
+				return nil
+			})
+			if failure == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			require.Equal(t, failure != "clear", created)
+			require.Equal(t, map[uint32]windows.Handle{ids[0]: 11, ids[1]: 22, ids[2]: 33}, table)
+		})
+	}
 }

@@ -47,6 +47,45 @@ type Unit struct {
 
 var crcTable = crc32.MakeTable(crc32.Castagnoli)
 
+// ReadFinalMetadataUnit reads a bounded suffix, not the intervening contents.
+// A valid result proves framing only; callers must authenticate its payload and
+// must not mistake a signed seal for complete content/chain verification.
+func ReadFinalMetadataUnit(source io.ReaderAt, size int64, kind UnitType) (Unit, int64, error) {
+	windowSize := min(size, int64(MaxMetadataPayload+framePrefixSize+frameTrailerSize))
+	if windowSize < int64(framePrefixSize+frameTrailerSize) {
+		return Unit{}, 0, fmt.Errorf("missing final metadata unit")
+	}
+	start := size - windowSize
+	window := make([]byte, windowSize)
+	if _, err := source.ReadAt(window, start); err != nil {
+		return Unit{}, 0, err
+	}
+	var result Unit
+	var position int64
+	found := false
+	for offset := 0; offset+framePrefixSize+frameTrailerSize <= len(window); offset++ {
+		if UnitType(window[offset]) != kind || window[offset+commitOffset] != 1 {
+			continue
+		}
+		length := int64(binary.BigEndian.Uint32(window[offset+1 : offset+commitOffset]))
+		if length < 1 || length > MaxMetadataPayload || int64(offset)+int64(framePrefixSize+frameTrailerSize)+length != windowSize {
+			continue
+		}
+		unit, next, tail, err := ReadUnitAt(bytes.NewReader(window), int64(offset), windowSize, MaxMetadataPayload)
+		if err != nil || tail || next != windowSize {
+			continue
+		}
+		if found {
+			return Unit{}, 0, fmt.Errorf("ambiguous final metadata unit")
+		}
+		result, position, found = unit, start+int64(offset), true
+	}
+	if !found {
+		return Unit{}, 0, fmt.Errorf("missing committed final metadata unit")
+	}
+	return result, position, nil
+}
+
 func DetectFamily(source io.ReaderAt) (Family, int64, error) {
 	var prefix [len(AuditMagic)]byte
 	if _, err := source.ReadAt(prefix[:len(RecordingMagic)], 0); err != nil {

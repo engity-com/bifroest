@@ -8,7 +8,8 @@ Used by the [local environment](../environment/local.md) when evaluating account
 
 ## Properties
 
-Includes the [Authorization Request context](authorization-request.md), plus:
+Includes the [Environment context](environment.md), including its read-only
+`.connection`, plus:
 
 <<property("user", "Local User", "local-user.md", optional=True)>>
 

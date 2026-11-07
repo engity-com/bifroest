@@ -27,6 +27,7 @@ type kubernetesFixture struct {
 	namespace      string
 	clusterCreated bool
 	environmentPod string
+	withBrowser    bool
 }
 
 func TestOpenSSHKubernetesEnvironment(t *testing.T) {
@@ -360,6 +361,10 @@ func newKubernetesRecordingFixture(t *testing.T) (*kubernetesFixture, error) {
 }
 
 func newKubernetesFixtureWithRecording(t *testing.T, recording bool) (*kubernetesFixture, error) {
+	return newKubernetesExecutionFixture(t, recording, false)
+}
+
+func newKubernetesExecutionFixture(t *testing.T, recording, browser bool) (*kubernetesFixture, error) {
 	t.Helper()
 	f, err := newFixture(t)
 	if err != nil {
@@ -370,6 +375,7 @@ func newKubernetesFixtureWithRecording(t *testing.T, recording bool) (*kubernete
 		clusterName: fmt.Sprintf("bf-e2e-%d", time.Now().UnixNano()),
 		kubeconfig:  filepath.Join(f.tempDir, "admin.kubeconfig"),
 		namespace:   "bifroest-e2e",
+		withBrowser: browser,
 	}
 	k.flowName = k.name
 	t.Cleanup(k.cleanup)
@@ -441,6 +447,9 @@ func (k *kubernetesFixture) prepareImages() error {
 	if err := os.WriteFile(filepath.Join(targetContext, "e2e-helper"), mustRead(k.helper), 0755); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(targetContext, "read-key-cursor.patch"), busyboxCursorPatch, 0644); err != nil {
+		return err
+	}
 	if err := k.buildImage(targetContext); err != nil {
 		return err
 	}
@@ -498,9 +507,8 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string, recording
 	configurationPath := filepath.Join(k.tempDir, "kubernetes-environment.yaml")
 	auditlogConfiguration := ""
 	if recording {
-		auditlogConfiguration = fmt.Sprintf(`auditlog:
-  - name: default
-    enabled: true
+		auditlogConfiguration = fmt.Sprintf(`auditlogs:
+  default:
     identityFile: %s
     directory: %s
     minimumFreeBytes: 1048576
@@ -518,6 +526,14 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string, recording
 		yamlString(k.flowName), yamlString(k.clientKey+".pub"), yamlString(controllerKubeconfig),
 		yamlString(k.namespace), yamlString(k.imageName),
 	)
+	if k.withBrowser {
+		var err error
+		configuration, err = k.browserConfiguration(configuration)
+		if err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0600); err != nil {
 		_ = listener.Close()
 		return err

@@ -107,9 +107,6 @@ func handleAuditExport(ctx context.Context, o exportOptions) error {
 	if err != nil {
 		return err
 	}
-	if !configured.Enabled {
-		return fmt.Errorf("auditlog %q is disabled", configured.Name)
-	}
 	output, err := CanonicalAuditOutput(o.Output)
 	if err != nil {
 		return err
@@ -259,17 +256,12 @@ func ensureAuditOutputSafe(ctx context.Context, output string, conf *configurati
 	}
 	for index := range conf.Auditlogs {
 		configured := &conf.Auditlogs[index]
-		if !configured.Enabled && !configured.Recording.Enabled {
-			continue
+		absoluteJournal, err := ensureAuditOutputOutsideDirectory(output, absoluteOutput, configured.Directory, fmt.Sprintf("auditlog %q journal", configured.Name))
+		if err != nil {
+			return err
 		}
-		if configured.Enabled {
-			absoluteJournal, err := ensureAuditOutputOutsideDirectory(output, absoluteOutput, configured.Directory, fmt.Sprintf("auditlog %q journal", configured.Name))
-			if err != nil {
-				return err
-			}
-			if err := ensureAuditOutputDoesNotAliasDirectoryFile(ctx, output, absoluteJournal, "journal file"); err != nil {
-				return err
-			}
+		if err := ensureAuditOutputDoesNotAliasDirectoryFile(ctx, output, absoluteJournal, "journal file"); err != nil {
+			return err
 		}
 		if err := common.EnsureBootstrapOutputIsNotPrivateKey(output, configured.IdentityFile); err != nil {
 			return err

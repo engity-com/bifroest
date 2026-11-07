@@ -131,5 +131,6 @@ func (this UserRequirementTemplate) isEqualTo(other *UserRequirementTemplate) bo
 		isEqual(&this.Group, &other.Group) &&
 		isEqual(&this.Groups, &other.Groups) &&
 		isEqual(&this.Shell, &other.Shell) &&
+		isEqual(&this.HomeDir, &other.HomeDir) &&
 		isEqual(&this.Skel, &other.Skel)
 }

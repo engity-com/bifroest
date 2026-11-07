@@ -2,11 +2,11 @@ package management
 
 import (
 	"context"
-	"fmt"
 	"io"
 
-	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementclient "github.com/engity-com/bifroest/pkg/management/client"
+	transport "github.com/engity-com/bifroest/pkg/management/wire"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -47,15 +47,5 @@ func DownloadRecording(ctx context.Context, target Target, auditlogName string, 
 		return transport.RecordingArtifactHeader{}, err
 	}
 	defer command.close()
-	header, err := transport.ReadRecordingArtifact(command.stdout, output, recording.DefaultMaximumNativeRecordingBytes)
-	if err != nil {
-		return transport.RecordingArtifactHeader{}, command.failure("cannot download signed recording", err)
-	}
-	if err := command.wait("remote recording transfer failed"); err != nil {
-		return transport.RecordingArtifactHeader{}, err
-	}
-	if header.ID != id.String() {
-		return transport.RecordingArtifactHeader{}, fmt.Errorf("remote recording does not match requested ID")
-	}
-	return header, nil
+	return managementclient.ReadRecording(ctx, command.response("remote recording transfer failed"), id.String(), output, recording.DefaultMaximumNativeRecordingBytes)
 }

@@ -405,9 +405,8 @@ func (f *fixture) startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targ
 	configurationPath := filepath.Join(f.tempDir, "ssh-environment.yaml")
 	auditlogConfiguration := ""
 	if recording {
-		auditlogConfiguration = fmt.Sprintf(`auditlog:
-  - name: default
-    enabled: true
+		auditlogConfiguration = fmt.Sprintf(`auditlogs:
+  default:
     identityFile: %s
     directory: %s
     minimumFreeBytes: 1048576
@@ -484,7 +483,6 @@ session:
   maxConnections: 4
 flows:
   - name: ssh
-    auditlog: default
     authorization:
       type: simple
       entries:

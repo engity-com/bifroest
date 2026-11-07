@@ -174,7 +174,7 @@ func (this *WindowsService) install(start, retry bool, displayName string) error
 		DelayedAutoStart: true,
 	}
 	success := false
-	s, err := m.CreateService(this.Name, exe, mgrCfg, "run", "--configuration="+confFn)
+	s, err := m.CreateService(this.Name, exe, mgrCfg, windowsServiceArguments(confFn, this.Name)...)
 	if err != nil {
 		return err
 	}
@@ -200,6 +200,10 @@ func (this *WindowsService) install(start, retry bool, displayName string) error
 
 	success = true
 	return nil
+}
+
+func windowsServiceArguments(configurationFile, name string) []string {
+	return []string{"run", "--configuration=" + configurationFile, "--windowsService", "--serviceName=" + name}
 }
 
 func (this *WindowsService) remove(stop bool) error {

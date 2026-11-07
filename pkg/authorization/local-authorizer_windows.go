@@ -22,6 +22,8 @@ import (
 
 var _ = RegisterAuthorizer(NewLocal)
 
+const localPamAuthenticationAvailable = false
+
 type LocalAuthorizer struct {
 	flow           configuration.FlowName
 	conf           *configuration.AuthorizationLocal
@@ -68,7 +70,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	if len(this.conf.AuthorizedKeys) == 0 && len(this.trustedUserCAs) == 0 {
 		return Forbidden(remote), nil
 	}
-	u, found, err := this.lookupActive(remote.User())
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return nil, err
+	}
+	u, found, err := this.lookupActive(remoteName)
 	if err != nil {
 		return nil, fmt.Errorf("cannot lookup local user: %w", err)
 	}
@@ -81,7 +87,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	} else if !ok {
 		return Forbidden(remote), nil
 	}
-	policy, accepted, err := evaluatePublicKeyCredential(req.RemotePublicKey(), remote.User(), remote.Host(), this.trustedUserCAs,
+	policy, accepted, err := evaluatePublicKeyCredential(req.RemotePublicKey(), remoteName, remote.Host(), this.trustedUserCAs,
 		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
 			files, err := common.MapSliceErr(this.conf.AuthorizedKeys, func(tmpl template.String) (string, error) {
 				return tmpl.Render(&localUserRequest{Request: req, user: u})
@@ -102,11 +108,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		return Forbidden(remote), nil
 	}
 	candidate.authorizedKeyPolicy = policy
+	if !isPublicKeyVerified(req) {
+		return candidate, nil
+	}
 	if _, isCert := req.RemotePublicKey().(*ssh.Certificate); isCert {
-		if !isPublicKeyVerified(req) {
-			return candidate, nil
-		}
-		candidate.session, err = this.ensureSessionFor(req, u)
+		candidate.session, err = this.ensureSessionFor(req, candidate)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +137,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 			return candidate, nil
 		}
 	}
-	candidate.session, err = this.ensureSessionFor(req, u)
+	candidate.session, err = this.ensureSessionFor(req, candidate)
 	if err != nil {
 		return nil, err
 	}
@@ -143,11 +149,11 @@ type localUserRequest struct {
 	user windowslocal.Account
 }
 
-func (this *localUserRequest) GetField(name string) (any, bool) {
+func (this *localUserRequest) GetField(name string) (any, bool, error) {
 	if name == "user" {
-		return this.user, true
+		return this.user, true, nil
 	}
-	return nil, false
+	return (remoteNameRequest{this.Request}).GetField(name)
 }
 
 func localSessionMatches(ctx context.Context, sess session.Session, u windowslocal.Account) (bool, error) {
@@ -162,12 +168,15 @@ func localSessionMatches(ctx context.Context, sess session.Session, u windowsloc
 	return token.User.SID == u.SID && strings.EqualFold(token.User.Name, u.Name), nil
 }
 
-func (this *LocalAuthorizer) ensureSessionFor(req Request, u windowslocal.Account) (session.Session, error) {
+func (this *LocalAuthorizer) ensureSessionFor(req Request, auth *local) (session.Session, error) {
 	var token localToken
-	token.User.Name, token.User.SID = u.Name, u.SID
+	token.User.Name, token.User.SID = auth.user.Name, auth.user.SID
 	b, err := json.Marshal(token)
 	if err != nil {
 		return nil, err
+	}
+	if sess, handled, err := resolveAuthenticatedSession(req, auth, b); handled || err != nil {
+		return sess, err
 	}
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), b, (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow), session.IsStillValid, session.IsRemoteName(req.Connection().Remote().User()),
@@ -196,7 +205,11 @@ func (this *LocalAuthorizer) authorizePassword(req Request, value string, allowe
 			return Forbidden(remote), nil
 		}
 	}
-	u, found, err := this.lookupActive(remote.User())
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return nil, err
+	}
+	u, found, err := this.lookupActive(remoteName)
 	if err != nil {
 		return nil, fmt.Errorf("cannot lookup local user: %w", err)
 	}
@@ -219,7 +232,7 @@ func (this *LocalAuthorizer) authorizePassword(req Request, value string, allowe
 	} else if !ok {
 		return Forbidden(remote), nil
 	}
-	candidate.session, err = this.ensureSessionFor(req, u)
+	candidate.session, err = this.ensureSessionFor(req, candidate)
 	if err != nil {
 		return nil, err
 	}

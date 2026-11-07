@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	goerrors "errors"
-	"io"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,15 +10,17 @@ import (
 	"unicode/utf8"
 
 	essh "github.com/engity-com/ssh-server-go"
-	"github.com/google/uuid"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/session"
 	bssh "github.com/engity-com/bifroest/pkg/ssh"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 func (this *service) handleNewSshSession(srv *essh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx essh.Context) error {
@@ -210,7 +210,8 @@ func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType e
 
 type sessionTaskAuditLifecycle struct {
 	service     *service
-	ctx         essh.Context
+	ctx         context.Context
+	connection  bconn.Connection
 	auth        authorization.Authorization
 	operationId string
 	task        audit.SessionTask
@@ -232,7 +233,7 @@ func isInvalidSessionExitStatus(err error) bool {
 
 func (this *sessionTaskAuditLifecycle) start(hasPty, agentForwarding, forcedCommand bool) error {
 	this.startedAt = time.Now()
-	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskStarted, audit.EventDomainSession)
+	event := authorizationAuditEventFor(this.connection, this.auth, audit.EventNameSessionTaskStarted, audit.EventDomainSession)
 	event.OperationId = this.operationId
 	event.SessionTask = this.task
 	event.SessionSubsystem = this.subsystem
@@ -243,7 +244,7 @@ func (this *sessionTaskAuditLifecycle) start(hasPty, agentForwarding, forcedComm
 }
 
 func (this *sessionTaskAuditLifecycle) complete(exitCode int, taskErr error) error {
-	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskCompleted, audit.EventDomainSession)
+	event := authorizationAuditEventFor(this.connection, this.auth, audit.EventNameSessionTaskCompleted, audit.EventDomainSession)
 	event.OperationId = this.operationId
 	event.SessionTask = this.task
 	event.SessionSubsystem = this.subsystem
@@ -277,26 +278,7 @@ func (this *sessionTaskAuditLifecycle) complete(exitCode int, taskErr error) err
 }
 
 func (this *service) executeSession(sshSess essh.Session, conn *connection, taskType environment.TaskType, respond func(bool) error) (exitCode int, rErr error) {
-	fail := func(err error) (int, error) {
-		return -1, err
-	}
-	failf := func(t errors.Type, msg string, args ...any) (int, error) {
-		return fail(errors.Newf(t, msg, args...))
-	}
-
 	auth, _ := sshSess.Context().Value(authorizationCtxKey).(authorization.Authorization)
-	if auth == nil {
-		return failf(errors.System, "no authorization resolved, but it should")
-	}
-	managementFlow := this.isManagementFlow(auth.Flow())
-	sess := auth.FindSession()
-	if sess == nil {
-		return failf(errors.System, "authorization resolved, but does not have a valid session")
-	}
-	operationId, err := uuid.NewRandom()
-	if err != nil {
-		return failf(errors.System, "cannot generate audit operation ID: %w", err)
-	}
 	requestedSubsystem := taskType != environment.TaskTypeShell
 	requestedExec := sessionRequestedExec(sshSess)
 	requestedTask := auditSessionTask(taskType, requestedExec)
@@ -309,118 +291,86 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	if forcedCommand {
 		taskType = environment.TaskTypeShell
 	}
-	recordingTask := auditSessionTask(taskType, executesCommand)
 	pty, windows, hasPty := sshSess.Pty()
 	ptySnapshot := recordedSessionPty{pty: pty, windows: windows, hasPty: hasPty}
-	taskAudit := sessionTaskAuditLifecycle{
-		service:     this,
-		ctx:         sshSess.Context(),
-		auth:        auth,
-		operationId: operationId.String(),
-		task:        requestedTask,
-		subsystem:   subsystem,
+	source := &sshExecutionSource{service: this, session: sshSess, pty: ptySnapshot, respond: respond, forced: forcedCommand, requestedSubsystem: requestedSubsystem}
+	defer source.stop()
+	key, _ := sshSess.Context().Value(handshakeKeyCtxKey).(essh.PublicKey)
+	return this.execute(&executionRequest{
+		base:       environmentContext{service: this, connection: conn, authorization: auth, executionContext: sshSess.Context()},
+		connection: conn, source: source, taskType: taskType, requestedTask: requestedTask, subsystem: subsystem,
+		command: executesCommand, forced: forcedCommand, agentForwarding: bssh.AgentRequested(sshSess), verifiedKey: key,
+		pty: terminalRecordingPty{pty: bssh.TerminalPty(pty), hasPty: hasPty},
+	})
+}
+
+type sshExecutionSource struct {
+	service                    *service
+	session                    essh.Session
+	unrecorded                 essh.Session
+	pty                        recordedSessionPty
+	stream                     *bssh.Terminal
+	respond                    func(bool) error
+	forced, requestedSubsystem bool
+}
+
+func (this *sshExecutionSource) Terminal() terminal.Stream {
+	if this.stream == nil {
+		this.stream = bssh.NewTerminal(this.session.Context(), this.session)
 	}
-	if err := taskAudit.start(hasPty, bssh.AgentRequested(sshSess), forcedCommand); err != nil {
-		return fail(err)
+	return this.stream
+}
+func (this *sshExecutionSource) Close() error { return this.session.Close() }
+func (this *sshExecutionSource) stop() {
+	if this.stream != nil {
+		this.stream.Stop()
 	}
-	defer func() {
-		if recordErr := taskAudit.complete(exitCode, rErr); recordErr != nil {
-			rErr = goerrors.Join(rErr, recordErr)
-		}
-	}()
-	recorded, recordingLifecycle, err := this.beginSessionRecording(sshSess, ptySnapshot, conn, sess, operationId, auth.Flow(), recordingTask)
+}
+func (this *sshExecutionSource) Capture(sink recordingSink, elapsed func() time.Duration, onFailure func(error)) (*terminalCapture, error) {
+	capture, err := newRecordedSessionWithPty(this.session, this.pty, sink, elapsed, onFailure)
 	if err != nil {
-		return fail(markSessionRecordingFailure(err))
+		return nil, err
 	}
-	if recorded != nil {
-		sshSess = recorded
-		defer func() {
-			if recordingErr := recordingLifecycle.finish(exitCode, rErr, conn); recordingErr != nil {
-				exitCode = -1
-				rErr = goerrors.Join(rErr, markSessionRecordingFailure(recordingErr))
-			}
-		}()
+	this.unrecorded = this.session
+	this.session = capture
+	return capture.terminalCapture, nil
+}
+func (this *sshExecutionSource) DiscardCapture() {
+	if this.unrecorded != nil {
+		this.session = this.unrecorded
+		this.unrecorded = nil
 	}
-	_, _, oldState, err := this.resolveAuthorizationAndSession(sshSess.Context())
-	if err != nil {
-		return fail(err)
-	}
-
-	req := environmentRequest{
-		environmentContext{
-			service:          this,
-			connection:       conn,
-			authorization:    auth,
-			executionContext: sshSess.Context(),
-		},
-		sshSess,
-	}
-
-	env, err := this.environments.Ensure(&req)
-	if err != nil {
-		return fail(err)
-	}
-	defer common.KeepCloseError(&rErr, env)
-	if respond != nil && forcedCommand {
-		if err := respond(true); err != nil {
-			return fail(err)
+}
+func (this *sshExecutionSource) Request(base environmentContext) environment.Request {
+	return &environmentRequest{base, this.Terminal()}
+}
+func (this *sshExecutionSource) Prepared(oldState session.State) error {
+	if this.respond != nil && this.forced {
+		if err := this.respond(true); err != nil {
+			return err
 		}
 	}
-	if recordingLifecycle != nil && !managementFlow {
-		if err := recordingLifecycle.showNotice(sshSess, !executesCommand); err != nil {
-			return fail(err)
-		}
+	auth, _ := this.session.Context().Value(authorizationCtxKey).(authorization.Authorization)
+	if !this.requestedSubsystem && !this.service.isManagementFlow(auth.Flow()) {
+		return this.service.showRememberMe(this.session, auth, auth.FindSession(), oldState)
 	}
-	if !requestedSubsystem && !managementFlow {
-		if err := this.showRememberMe(sshSess, auth, sess, oldState); err != nil {
-			return fail(err)
-		}
-	}
-
-	if !executesCommand && taskType == environment.TaskTypeShell {
-		banner, err := env.Banner(&req)
-		if err != nil {
-			return failf(errors.System, "cannot render banner: %w", err)
-		}
-		if banner != nil {
-			defer common.IgnoreCloseError(banner)
-			if _, err := io.Copy(sshSess, banner); err != nil {
-				return failf(errors.System, "cannot print banner: %w", err)
-			}
-		}
-	}
-
-	t := environmentTask{
-		environmentContext: req.environmentContext,
-		sshSession:         sshSess,
-		taskType:           taskType,
-	}
-	if respond != nil && !forcedCommand {
+	return nil
+}
+func (this *sshExecutionSource) Run(env environment.Environment, base environmentContext, taskType environment.TaskType) (int, error) {
+	t := &environmentTask{environmentContext: base, sshSession: this.session, taskType: taskType}
+	if this.respond != nil && !this.forced {
 		if runner, ok := env.(environment.SubsystemRunner); ok {
-			exitCode, err = runner.RunSubsystem(&t, respond)
-		} else if taskType == environment.TaskTypeSftp {
-			if err = respond(true); err == nil {
-				exitCode, err = env.Run(&t)
+			return runner.RunSubsystem(t, this.respond)
+		}
+		if taskType == environment.TaskTypeSftp {
+			if err := this.respond(true); err != nil {
+				return -1, err
 			}
-		} else {
-			return failf(errors.User, "environment does not support subsystem %q", subsystem)
+			return env.Run(t)
 		}
-	} else {
-		exitCode, err = env.Run(&t)
+		return -1, errors.User.Newf("environment does not support subsystem %q", this.session.Subsystem())
 	}
-	if err != nil {
-		return failf(errors.System, "run of environment failed: %w", err)
-	}
-	if exitCode < 0 {
-		if contextErr := sshSess.Context().Err(); contextErr != nil {
-			return exitCode, contextErr
-		}
-		return fail(&invalidSessionExitStatusError{cause: errors.System.Newf("environment returned invalid exit code %d", exitCode)})
-	}
-	if uint64(exitCode) > math.MaxUint32 {
-		return fail(&invalidSessionExitStatusError{cause: errors.System.Newf("environment returned unsupported exit code %d", exitCode)})
-	}
-	return exitCode, nil
+	return env.Run(t)
 }
 
 func auditSessionTask(taskType environment.TaskType, command bool) audit.SessionTask {

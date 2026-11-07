@@ -9,6 +9,7 @@ import (
 
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/cli/model"
+	managementview "github.com/engity-com/bifroest/pkg/management/view"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -46,14 +47,7 @@ func ListSessions(ctx context.Context, output io.Writer, selected cliformat.Form
 }
 
 func matchesSessionState(view model.SessionView, state string, now time.Time) bool {
-	switch state {
-	case "all":
-		return true
-	case "active":
-		return view.State == session.StateAuthorized.String() && (view.ValidUntil == nil || now.Before(*view.ValidUntil))
-	default:
-		return view.State == state
-	}
+	return managementview.MatchesState(view, state, now)
 }
 
 func ShowSession(ctx context.Context, output io.Writer, selected cliformat.Format, source SessionSource, id session.Id, diagnostics session.FindDiagnosticConsumer) error {
@@ -82,33 +76,7 @@ func ShowSession(ctx context.Context, output io.Writer, selected cliformat.Forma
 }
 
 func newSessionView(ctx context.Context, info session.Info) (model.SessionView, error) {
-	view := model.SessionView{ID: info.Id().String(), Flow: info.Flow().String(), State: info.State().String()}
-	created, err := info.Created(ctx)
-	if err != nil {
-		return view, err
-	}
-	if created != nil {
-		view.CreatedAt = created.At()
-		if remote := created.Remote(); remote != nil {
-			view.Remote, view.User = remote.String(), remote.User()
-		}
-	}
-	last, err := info.LastAccessed(ctx)
-	if err != nil {
-		return view, err
-	}
-	if last != nil && !last.At().IsZero() {
-		value := last.At()
-		view.LastAccessed = &value
-	}
-	valid, err := info.ValidUntil(ctx)
-	if err != nil {
-		return view, err
-	}
-	if !valid.IsZero() {
-		view.ValidUntil = &valid
-	}
-	return view, nil
+	return managementview.Session(ctx, info)
 }
 
 func SessionSourceFromRepository(repository session.Repository) SessionSource {

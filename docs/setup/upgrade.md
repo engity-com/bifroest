@@ -16,6 +16,12 @@ The filesystem session repository now holds an exclusive operating-system lock. 
 
 The lock file, `.<storage-name>.bifroest.lock`, is created next to the **resolved** storage directory. Check that its parent directory and any existing lock file are writable. Storage symlinks resolve to the same lock; a symlink pointing to a missing directory prevents startup. Existing session metadata needs no conversion.
 
+!!! warning "Downgrades and session metadata"
+    Before downgrading, stop Bifröst and back up the complete session repository.
+    Older versions may delete metadata used for session reuse and saved browser
+    access because they do not recognize it. See
+    [session reuse](../reference/session/fs.md#session-association-groundwork).
+
 ### `session.maxTimeout`
 
 If set, the maximum lifetime now counts from session creation rather than last access. Check active sessions and this setting before upgrading: some sessions may expire earlier or immediately.

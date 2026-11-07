@@ -55,3 +55,16 @@ does not provide a conclusion.
 
 The documentation build toolchain is not embedded in or distributed with
 Bifröst artifacts and is therefore outside this artifact license policy.
+
+## Embedded browser components
+
+Browser-enabled builds include production npm, Go/WASM and Go-runtime notices.
+The SBOMs identify these components separately from native Go dependencies.
+`BROWSER_BUILD.json` records exact embedded-asset hashes and build inputs.
+
+The production inventory can include dependencies removed during bundling.
+Recorded npm archive integrity is not a compiled-asset hash, and the inventory
+is not signed source provenance. See the
+[browser license notes](https://github.com/engity-com/bifroest/blob/main/web/licenses/README.md)
+for retained historical license-text supplements; they are not current browser
+dependencies.

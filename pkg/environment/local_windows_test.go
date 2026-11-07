@@ -19,6 +19,7 @@ import (
 	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
+	"golang.org/x/term"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -112,6 +113,33 @@ func TestLocalWindowsUnmanagedCleanupSnapshot(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "local-windows-console-child" {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) || !term.IsTerminal(int(os.Stderr.Fd())) {
+			fmt.Fprintln(os.Stderr, "native child standard handles are not attached to its console")
+			os.Exit(1)
+		}
+		user, err := windows.GetCurrentProcessToken().GetTokenUser()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		output := fmt.Sprintf("%s\r\nnative-console=%dx%d\r\n", user.User.Sid.String(), cols, rows)
+		written, writeErr := fmt.Fprint(os.Stdout, output)
+		complete := writeErr == nil && written == len(output)
+		// This acknowledges OS writes only, not delivery through ConPTY. Keep
+		// the diagnostic bounded and omit raw write errors and identity data.
+		diagnostic := fmt.Sprintf("native-console-child write-success=%t bytes=%d expected=%d\r\n", complete, written, len(output))
+		diagnosticWritten, diagnosticErr := fmt.Fprint(os.Stderr, diagnostic)
+		if !complete || diagnosticErr != nil || diagnosticWritten != len(diagnostic) {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "local-windows-identity-child" {
 		user, err := windows.GetCurrentProcessToken().GetTokenUser()
 		if err != nil {

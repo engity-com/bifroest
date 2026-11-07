@@ -71,6 +71,7 @@ type fixture struct {
 	bifroestProc        *runningProcess
 	sessionStorage      string
 	recordingProducerID string
+	browserOrigin       string
 }
 
 type commandResult struct {
@@ -368,7 +369,7 @@ func (f *fixture) prepareLocal() error {
 	return f.prepareLocalImage(localContainerfile, localConfiguration, nil, true)
 }
 
-func (f *fixture) prepareLocalRecording(auditIdentity string, recordingOnly ...bool) error {
+func (f *fixture) prepareLocalRecording(auditIdentity string, withoutAuditlog ...bool) error {
 	extraFiles := map[string]struct {
 		content []byte
 		mode    os.FileMode
@@ -376,12 +377,14 @@ func (f *fixture) prepareLocalRecording(auditIdentity string, recordingOnly ...b
 		"audit_identity": {mustRead(auditIdentity), 0400},
 	}
 	configuration := localRecordingConfiguration
-	if len(recordingOnly) > 0 && recordingOnly[0] {
-		const enabled = "auditlog:\n  - name: default\n    enabled: true"
-		if strings.Count(configuration, enabled) != 1 {
-			return fmt.Errorf("local Recording configuration has no unique audit enablement")
+	if len(withoutAuditlog) > 0 && withoutAuditlog[0] {
+		start := strings.Index(configuration, "auditlogs:\n")
+		end := strings.Index(configuration, "flows:\n")
+		if start < 0 || end <= start {
+			return fmt.Errorf("local Recording configuration has no unique auditlogs block")
 		}
-		configuration = strings.Replace(configuration, enabled, "auditlog:\n  - name: default\n    enabled: false", 1)
+		configuration = configuration[:start] + configuration[end:]
+		configuration = strings.Replace(configuration, "    auditlog: default\n", "", 1)
 	}
 	return f.prepareLocalImage(localRecordingContainerfile, configuration, extraFiles, false)
 }
@@ -1484,9 +1487,8 @@ session:
   idleTimeout: 2m
   maxTimeout: 5m
   maxConnections: 4
-auditlog:
-  - name: default
-    enabled: true
+auditlogs:
+  default:
     identityFile: "/etc/bifroest/audit_identity"
     directory: "/var/lib/bifroest/auditlog"
     minimumFreeBytes: 1048576

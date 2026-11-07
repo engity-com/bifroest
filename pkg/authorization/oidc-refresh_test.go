@@ -18,7 +18,6 @@ import (
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
 	essh "github.com/engity-com/ssh-server-go"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/oauth2"
@@ -29,6 +28,12 @@ import (
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
+
+type oidcRefreshTestKeySetFunc func(context.Context, string) ([]byte, error)
+
+func (f oidcRefreshTestKeySetFunc) VerifySignature(ctx context.Context, jwt string) ([]byte, error) {
+	return f(ctx, jwt)
+}
 
 func oidcRefreshTestSession(t *testing.T, token oidcToken) *authorizationRestoreTestSession {
 	t.Helper()
@@ -774,6 +779,7 @@ func TestOidcRotatedRefreshWaitsForJWKSBeforeTrustingCredentials(t *testing.T) {
 			var keysAvailable atomic.Bool
 			var exchanges atomic.Int32
 			var jwksRequests atomic.Int32
+			var successfulJWKSRequests atomic.Int32
 			var idToken string
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -792,6 +798,7 @@ func TestOidcRotatedRefreshWaitsForJWKSBeforeTrustingCredentials(t *testing.T) {
 						w.WriteHeader(http.StatusServiceUnavailable)
 						return
 					}
+					successfulJWKSRequests.Add(1)
 					_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]any{
 						"kty": "RSA", "kid": "rotated-key", "alg": "RS256", "use": "sig",
 						"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
@@ -821,14 +828,40 @@ func TestOidcRotatedRefreshWaitsForJWKSBeforeTrustingCredentials(t *testing.T) {
 			}
 			var verified []verification
 			newAuthorizer := func() *OidcDeviceAuthAuthorizer {
+				remoteKeys := coidc.NewRemoteKeySet(ctx, server.URL+"/keys")
+				var keys coidc.KeySet = remoteKeys
+				if !tc.restart {
+					// Keep the authorizer, session and key set alive across recovery.
+					// Observe the real 503 synchronously instead of joining the
+					// dependency's asynchronously cleared failed in-flight request.
+					// Recovery still fetches real JWKS and verifies the RSA signature.
+					keys = oidcRefreshTestKeySetFunc(func(ctx context.Context, jwt string) ([]byte, error) {
+						if keysAvailable.Load() {
+							return remoteKeys.VerifySignature(ctx, jwt)
+						}
+						request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/keys", nil)
+						if err != nil {
+							return nil, err
+						}
+						response, err := server.Client().Do(request)
+						if err != nil {
+							return nil, err
+						}
+						defer response.Body.Close()
+						if response.StatusCode != http.StatusServiceUnavailable {
+							return nil, errors.New("unexpected controlled JWKS response")
+						}
+						return nil, errors.New("controlled JWKS unavailable")
+					})
+				}
 				return &OidcDeviceAuthAuthorizer{
 					flow: "flow", conf: &configuration.AuthorizationOidcDeviceAuth{
 						RetrieveIdToken: true, ForceDisposeSessionOn: "lostAccess", RefreshToken: configuration.AuthorizationOidcRefreshToken{Mode: "proactive"},
 					},
 					oauth2Config: oauth2.Config{ClientID: "client", Endpoint: oauth2.Endpoint{TokenURL: server.URL + "/token"}},
-					verifier:     coidc.NewVerifier(server.URL, coidc.NewRemoteKeySet(ctx, server.URL+"/keys"), &coidc.Config{ClientID: "client"}),
+					verifier:     coidc.NewVerifier(server.URL, keys, &coidc.Config{ClientID: "client"}),
 					OnVerified: func(got session.Session, deadline time.Time) {
-						// Capture the persisted state before the callback returns, including during retries.
+						// Capture persisted state before the callback returns.
 						verified = append(verified, verification{
 							token: append([]byte(nil), got.(*authorizationRestoreTestSession).token...), deadline: deadline,
 						})
@@ -874,20 +907,24 @@ func TestOidcRotatedRefreshWaitsForJWKSBeforeTrustingCredentials(t *testing.T) {
 			require.ErrorContains(t, err, "pending ID token could not be verified")
 			require.EqualValues(t, 1, exchanges.Load())
 
+			originalAuthorizer, originalSession := a, sess
+			require.Zero(t, successfulJWKSRequests.Load())
+			requestsBeforeRecovery := jwksRequests.Load()
 			keysAvailable.Store(true)
 			if tc.restart {
 				// A process restart reloads the JSON and discards the old remote key set's in-flight state.
 				sess = &authorizationRestoreTestSession{flow: "flow", token: append([]byte(nil), sess.token...)}
 				a = newAuthorizer()
-				next, lost, err = a.RefreshSession(ctx, sess)
-				require.NoError(t, err)
+				require.NotSame(t, originalAuthorizer, a)
+				require.NotSame(t, originalSession, sess)
 			} else {
-				// RemoteKeySet may briefly reuse a completed failed request before clearing its in-flight state.
-				require.EventuallyWithT(t, func(c *assert.CollectT) {
-					next, lost, err = a.RefreshSession(ctx, sess)
-					require.NoError(c, err)
-				}, 5*time.Second, 10*time.Millisecond)
+				require.Same(t, originalAuthorizer, a)
+				require.Same(t, originalSession, sess)
 			}
+			next, lost, err = a.RefreshSession(ctx, sess)
+			require.NoError(t, err)
+			require.Greater(t, jwksRequests.Load(), requestsBeforeRecovery, "recovery must fetch the now-available signing keys")
+			require.EqualValues(t, 1, successfulJWKSRequests.Load(), "one successful JWKS fetch, never an authentication retry loop")
 			require.False(t, lost)
 			require.True(t, next.After(time.Now()))
 			require.EqualValues(t, 1, exchanges.Load())
@@ -912,6 +949,7 @@ func TestOidcRotatedRefreshWaitsForJWKSBeforeTrustingCredentials(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, "unverified-role", role)
 			require.EqualValues(t, 1, exchanges.Load())
+			require.EqualValues(t, 1, successfulJWKSRequests.Load())
 		})
 	}
 }
@@ -1058,8 +1096,11 @@ type oidcRefreshTestPublicKeyRequest struct {
 }
 
 func (this oidcRefreshTestPublicKeyRequest) Sessions() session.Repository { return this.repository }
-func (this oidcRefreshTestPublicKeyRequest) Context() essh.Context        { return this.ctx }
-func (oidcRefreshTestPublicKeyRequest) RemotePublicKey() gossh.PublicKey  { return nil }
+func (this oidcRefreshTestPublicKeyRequest) Context() context.Context     { return this.ctx }
+
+// These existing refresh tests exercise the post-possession restoration path.
+func (oidcRefreshTestPublicKeyRequest) PublicKeyVerified() bool          { return true }
+func (oidcRefreshTestPublicKeyRequest) RemotePublicKey() gossh.PublicKey { return nil }
 func (oidcRefreshTestPublicKeyRequest) Connection() connection.Connection {
 	return oidcRefreshTestConnection{}
 }

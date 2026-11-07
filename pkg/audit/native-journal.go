@@ -38,9 +38,6 @@ func newNativeRecorder(conf *configuration.Auditlog, identity *Identity) (Record
 	if conf == nil {
 		return nil, fmt.Errorf("nil native audit configuration")
 	}
-	if !conf.Enabled {
-		return NewNoopRecorder(), nil
-	}
 	if identity == nil || identity.ProducerId().IsZero() {
 		return nil, fmt.Errorf("missing native audit identity")
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/mattn/go-zglob"
 
 	bib "github.com/engity-com/bifroest/internal/build"
+	"github.com/engity-com/bifroest/internal/build/browser"
 	"github.com/engity-com/bifroest/pkg/common"
 )
 
@@ -86,6 +87,12 @@ func (this *buildArchive) create(ctx context.Context, binary *buildArtifact) (_ 
 		return fail(fmt.Errorf("binary has no third-party license inventory"))
 	}
 	a.thirdPartyLicenseInventory = binary.thirdPartyLicenseInventory
+	if binary.browserManifest == nil {
+		return fail(fmt.Errorf("binary has no browser build manifest"))
+	}
+	if err := baw.addFile(browser.ArchiveFilename, browserBuildPath(binary), 0644); err != nil {
+		return fail(err)
+	}
 	if err := baw.addFile(thirdPartyNoticesFilename, binary.thirdPartyNoticesFilepath, 0644); err != nil {
 		return fail(err)
 	}

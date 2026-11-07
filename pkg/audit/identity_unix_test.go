@@ -34,7 +34,7 @@ func TestEnsureIdentityRejectsInsecureUnixKeyFiles(t *testing.T) {
 		}, "not a regular file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			conf := auditIdentityTestConfiguration(t.TempDir(), true)
+			conf := auditIdentityTestConfiguration(t.TempDir())
 			tc.prepare(t, conf.IdentityFile)
 
 			identity, err := EnsureIdentity(&conf)

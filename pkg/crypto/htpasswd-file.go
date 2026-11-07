@@ -16,6 +16,18 @@ func (this HtpasswdFile) Match(username, password string) bool {
 	return false
 }
 
+// Contains rechecks the configured source without needing or retaining a user's
+// password. A failed reload must not silently authorize from a stale user list.
+func (this HtpasswdFile) Contains(username string) (bool, error) {
+	if this.file == nil {
+		return false, nil
+	}
+	if err := this.file.Reload(nil); err != nil {
+		return false, err
+	}
+	return this.file.Exists(username), nil
+}
+
 func (this HtpasswdFile) MarshalText() (text []byte, err error) {
 	return []byte(this.String()), nil
 }

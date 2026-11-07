@@ -666,14 +666,16 @@ session:
   storage: "%s"
 flows:
   - name: recording-test
+    requirement:
+      http:
+        includedSlug: "^Work$"
     authorization:
       type: none
     environment:
       type: dummy
 `, filepath.ToSlash(filepath.Join(root, "ssh", "host-key")), filepath.ToSlash(filepath.Join(root, "session-storage")))), "session-recording-test.yaml")
 	require.NoError(t, err)
-	auditlog := &conf.Auditlogs[0]
-	auditlog.Enabled = true
+	auditlog := configureDefaultTestAuditlog(&conf)
 	auditlog.IdentityFile = filepath.Join(root, "audit", "identity")
 	auditlog.Directory = filepath.Join(root, "audit", "journal")
 	auditlog.Recording.Directory = filepath.Join(root, "recording-storage")
@@ -682,6 +684,22 @@ flows:
 
 func enableSessionRecording(auditlog *configuration.Auditlog) {
 	auditlog.Recording.Enabled = true
+}
+
+// Only fixtures that exercise audit or Recording opt into a configured log.
+func configureDefaultTestAuditlog(conf *configuration.Configuration) *configuration.Auditlog {
+	if len(conf.Auditlogs) == 0 {
+		var auditlog configuration.Auditlog
+		if err := auditlog.SetDefaults(); err != nil {
+			panic(err)
+		}
+		auditlog.Name = configuration.DefaultAuditlogName
+		conf.Auditlogs = configuration.Auditlogs{auditlog}
+	}
+	if len(conf.Flows) > 0 && conf.Flows[0].Auditlog == "" {
+		conf.Flows[0].Auditlog = conf.Auditlogs[0].Name
+	}
+	return &conf.Auditlogs[0]
 }
 
 func sessionRecordingEncryptionPublicKey(t *testing.T) bfcrypto.PublicKeys {

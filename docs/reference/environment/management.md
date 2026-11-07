@@ -1,18 +1,22 @@
 ---
-description: Configure an authorized SSH flow for Bifröst management commands.
+description: Configure authorized SSH and browser access to Bifröst management operations.
 toc_depth: 5
 ---
 
 # Management environment
 
-The management environment provides administrative commands over SSH: inspect server state, disconnect sessions and dispose of sessions. Unlike the [local environment](local.md), it does not provide a host shell. PTYs, SFTP, agent forwarding and port forwarding are not available.
+The management environment provides administrative commands over SSH and a structured browser view: inspect server state, disconnect sessions and dispose of sessions. Unlike the [local environment](local.md), it does not provide a host shell. PTYs, SFTP, agent forwarding and port forwarding are not available.
 
 Use a dedicated, explicitly authorized [flow](../flow.md), with management and workload logins matched separately. There is no implicit administrator role. Management connections create regular sessions and follow the flow's audit-logging configuration.
 
-!!! warning "Management access includes session control"
-    Every user authorized by a management flow can [disconnect](../cli/session/disconnect.md) or [dispose](../cli/session/dispose.md) sessions in any flow. Disposal revokes the session and runs its configured environment and authorization cleanup, which can remove containers, Pods or managed accounts and home directories. The permissions below do not restrict these commands.
+To keep management SSH-only when an HTTPS endpoint is enabled, set `http.enabled: false` on its flow.
 
-See [Remote access](../cli/management.md) for supported commands and client settings.
+!!! warning "Management access includes session control"
+    Unless limited by a forced command, users authorized by a management flow can [disconnect](../cli/session/disconnect.md) or [dispose](../cli/session/dispose.md) sessions in any flow. Disposal revokes the session and runs its configured environment and authorization cleanup, which can remove containers, Pods or managed accounts and home directories. The permissions below do not restrict these commands.
+
+See [Remote access](../cli/management.md) for SSH commands and client settings,
+or [Browser access](../../guides/browser-access.md) for the browser view.
+Forced-command credentials support only a [restricted browser subset](../connection/http/security.md); they do not grant unrestricted management access.
 
 ## Configuration {: #configuration}
 
@@ -24,6 +28,8 @@ Must be `management`.
 <<property("includingCredentials", "bool", default=False)>>
 Controls whether `flow show` displays unredacted configuration strings **in this management flow's output**.
 
+Browser metadata does not expose credentials, even with this option enabled.
+
 By default, credentials and other arbitrary strings, including commands, URLs, image references and environment variables, are replaced with `***redacted***`. Even a valid image name can contain private information. Structural names, booleans, numeric settings and fixed Docker/Kubernetes image-pull policies remain visible. Audit-log target settings are redacted independently.
 
 !!! warning "Do not enable includingCredentials in production"
@@ -34,7 +40,7 @@ Permits downloading original signed audit journals and sealed Recordings for **c
 
 With the default `false`:
 
-* Listing, metadata inspection, public audit events and direct-SSH verification remain available.
+* Metadata inspection remains available. Direct SSH can also inspect public audit events and verify allowed evidence.
 * Binary artifact downloads and direct-SSH access to sensitive audit events or Recording content are denied.
 
 !!! warning "Original artifacts can contain sensitive data"

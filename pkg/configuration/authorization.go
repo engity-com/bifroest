@@ -6,10 +6,17 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/authentication"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 type Authorization struct {
-	V AuthorizationV
+	V         AuthorizationV  `yaml:"-"`
+	Principal template.String `yaml:"principal,omitempty"`
+	// Reference is the configured definition name; V is the effective per-flow value.
+	Reference string `yaml:"-"`
+	resolved  bool
 }
 
 type AuthorizationV interface {
@@ -56,6 +63,19 @@ func (this *Authorization) Trim() error {
 }
 
 func (this *Authorization) Validate() error {
+	if err := this.Principal.Validate(); err != nil {
+		return fmt.Errorf("[principal] %w", err)
+	}
+	if !this.Principal.IsZero() {
+		if _, anonymous := this.V.(*AuthorizationNone); anonymous {
+			return fmt.Errorf("[principal] cannot map an anonymous authorization to an authenticated principal")
+		}
+		if this.Principal.IsHardCoded() {
+			if err := (authentication.Identity{Principal: this.Principal.String(), Issuer: "configuration", Subject: "configuration"}).Validate(); err != nil {
+				return fmt.Errorf("[principal] %w", err)
+			}
+		}
+	}
 	if v := this.V; v != nil {
 		return v.Validate()
 	}
@@ -63,8 +83,16 @@ func (this *Authorization) Validate() error {
 }
 
 func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
+		*this = Authorization{Reference: node.Value}
+		return nil
+	}
+	if _, err := effectiveHttpFields(node); err != nil {
+		return err
+	}
 	var typeBuf struct {
-		Type string `yaml:"type"`
+		Type      string          `yaml:"type"`
+		Principal template.String `yaml:"principal,omitempty"`
 	}
 
 	if err := node.Decode(&typeBuf); err != nil {
@@ -74,6 +102,7 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 	if err := this.SetDefaults(); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
+	this.Principal = typeBuf.Principal
 
 	if typeBuf.Type == "" {
 		return reportYamlRelatedErrf(node, "[type] required but absent")
@@ -85,6 +114,9 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	this.V = factory()
+	if err := rejectUnknownConfigurationFields(node, this.V, "type", "principal"); err != nil {
+		return err
+	}
 	if err := node.Decode(this.V); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
@@ -92,9 +124,12 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 	return this.Trim()
 }
 
-func (this *Authorization) MarshalYAML() (any, error) {
-	if this.V == nil {
-		return struct{}{}, nil
+func (this Authorization) MarshalYAML() (any, error) {
+	if this.Reference != "" {
+		return this.Reference, nil
+	}
+	if this.resolved || this.V == nil {
+		return nil, nil
 	}
 	var result yaml.Node
 	if err := result.Encode(this.V); err != nil {
@@ -107,6 +142,12 @@ func (this *Authorization) MarshalYAML() (any, error) {
 		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "type"},
 		{Kind: yaml.ScalarNode, Tag: "!!str", Value: this.V.Types()[0]},
 	}, result.Content...)
+	if !this.Principal.IsZero() {
+		result.Content = append(result.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "principal"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: this.Principal.String()},
+		)
+	}
 	return &result, nil
 }
 
@@ -125,10 +166,13 @@ func (this Authorization) IsEqualTo(other any) bool {
 }
 
 func (this Authorization) isEqualTo(other *Authorization) bool {
+	if other == nil || this.Reference != other.Reference || (this.Reference == "" && this.resolved != other.resolved) || !this.Principal.IsEqualTo(other.Principal) {
+		return false
+	}
 	if other.V == nil {
 		return this.V == nil
 	}
-	return this.V.IsEqualTo(other.V)
+	return this.V != nil && this.V.IsEqualTo(other.V)
 }
 
 func GetSupportedAuthorizationFeatureFlags() []string {

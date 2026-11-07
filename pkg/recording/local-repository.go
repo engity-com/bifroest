@@ -387,6 +387,15 @@ func (this *localRepository[Head, Summary]) listSealed(ctx context.Context) ([]I
 }
 
 func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id Id) (_ *LocalSealedArtifact[Summary], rErr error) {
+	return this.openSealedWithVerifier(ctx, id, func(file *os.File, size int64, ctx context.Context) (Summary, error) {
+		return this.format.verifyPublished(file, size, nil, ctx)
+	})
+}
+
+// A catalog can supply stricter per-call verification without changing the
+// repository format/options or the ordinary OpenSealed/CLI contract. The
+// verifier sees the actual opened descriptor's stat size before any reads.
+func (this *localRepository[Head, Summary]) openSealedWithVerifier(ctx context.Context, id Id, verify func(*os.File, int64, context.Context) (Summary, error)) (_ *LocalSealedArtifact[Summary], rErr error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil local recording repository")
 	}
@@ -437,7 +446,7 @@ func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id I
 	if info.Size() < 1 {
 		return nil, errors.Config.Newf("sealed recording artifact is empty")
 	}
-	summary, err := this.format.verifyPublished(file, info.Size(), nil, ctx)
+	summary, err := verify(file, info.Size(), ctx)
 	if err != nil {
 		return nil, err
 	}

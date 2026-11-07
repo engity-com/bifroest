@@ -1,0 +1,87 @@
+.recording-video {
+  box-sizing: border-box;
+  --recording-background: #fff;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--app-border, #444);
+  border-radius: 8px;
+  background: var(--recording-background);
+  isolation: isolate;
+  outline-offset: 3px;
+}
+.recording-video--dark { --recording-background: #101820; }
+.recording-loading { width: min(90%, 28rem); }
+.recording-video:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none !important;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+}
+.recording-video::backdrop { background: var(--recording-background); }
+.recording-video .playback-surface {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  height: max-content;
+  max-width: none;
+  overflow: hidden;
+  transform-origin: 0 0;
+}
+.recording-video .xterm-viewport { overflow: hidden !important; }
+.recording-video[data-seeking="true"] .playback-surface { visibility: hidden; }
+.recording-video[data-controls-visible="false"] { cursor: none; }
+.recording-controls {
+  margin: 0;
+  border: 0;
+  min-width: 0;
+  position: absolute;
+  z-index: 2;
+  inset: auto 0 0;
+  display: grid;
+  gap: 4px;
+  padding: 24px 12px 8px;
+  color: #fff;
+  background: linear-gradient(transparent, rgb(0 0 0 / .84));
+  opacity: 1;
+  transition: opacity .15s ease;
+}
+.recording-video[data-controls-visible="false"] .recording-controls {
+  opacity: 0;
+  pointer-events: none;
+}
+.recording-control-row { display: flex; gap: 4px; align-items: center; min-width: 0; }
+.recording-control {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  padding: 6px;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.recording-control svg { display: block; width: 24px; height: 24px; fill: currentColor; }
+.recording-control:hover, .recording-control:focus-visible { background: rgb(255 255 255 / .18); }
+.recording-control:focus-visible, .recording-timeline:focus-visible, .recording-speed:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.recording-control:disabled { opacity: .4; cursor: default; }
+.recording-time { margin-left: 4px; font: 12px ui-monospace, monospace; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.recording-speed { margin-left: auto; height: 32px; padding: 2px 5px; color: #fff; background: #222; border: 1px solid #666; border-radius: 4px; font: inherit; font-size: 12px; }
+.recording-timeline { display: block; width: 100%; min-width: 0; height: 16px; margin: 0; cursor: pointer; accent-color: #64b5f6; }
+.recording-overlay { position: absolute; z-index: 1; inset: 0; display: flex; align-items: center; justify-content: center; padding: 1rem; color: var(--app-text, #ddd); background: var(--recording-background); text-align: center; }
+.recording-player-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 32rem) {
+  .recording-controls { padding: 20px 6px 4px; }
+  .recording-control { width: 30px; height: 30px; padding: 4px; }
+  .recording-time { font-size: 10px; margin-left: 0; }
+  .recording-control-row { gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) { .recording-controls { transition: none; } }

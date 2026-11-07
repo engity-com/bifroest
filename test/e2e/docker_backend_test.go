@@ -731,6 +731,10 @@ func newDockerEnvironmentRecordingFixture(t *testing.T) (*fixture, error) {
 }
 
 func newDockerEnvironmentFixtureWithRecording(t *testing.T, recording bool) (*fixture, error) {
+	return newDockerEnvironmentExecutionFixture(t, recording, false)
+}
+
+func newDockerEnvironmentExecutionFixture(t *testing.T, recording, browser bool) (*fixture, error) {
 	t.Helper()
 	f, err := newFixture(t)
 	if err != nil {
@@ -763,8 +767,9 @@ func newDockerEnvironmentFixtureWithRecording(t *testing.T, recording bool) (*fi
 		content []byte
 		mode    os.FileMode
 	}{
-		"Containerfile": {[]byte(dockerEnvironmentContainerfile), 0644},
-		"e2e-helper":    {mustRead(f.targetHelper), 0755},
+		"Containerfile":         {[]byte(dockerEnvironmentContainerfile), 0644},
+		"e2e-helper":            {mustRead(f.targetHelper), 0755},
+		"read-key-cursor.patch": {busyboxCursorPatch, 0644},
 	}
 	for name, file := range files {
 		if err := os.WriteFile(filepath.Join(contextDir, name), file.content, file.mode); err != nil {
@@ -783,13 +788,13 @@ func newDockerEnvironmentFixtureWithRecording(t *testing.T, recording bool) (*fi
 		}
 		f.recordingProducerID = recordingProducerID(t, filepath.Join(f.tempDir, "auditlog-key"))
 	}
-	if err := f.startHostBifroest(recording); err != nil {
+	if err := f.startHostBifroest(recording, browser); err != nil {
 		return f, err
 	}
 	return f, nil
 }
 
-func (f *fixture) startHostBifroest(recording bool) error {
+func (f *fixture) startHostBifroest(recording, browser bool) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("reserve SSH listen port: %w", err)
@@ -825,6 +830,13 @@ func (f *fixture) startHostBifroest(recording bool) error {
 		yamlString(f.imageName),
 		yamlString(f.networkName),
 	)
+	if browser {
+		configuration, err = f.browserConfiguration(configuration)
+		if err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0600); err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("write Docker environment configuration: %w", err)
@@ -885,10 +897,37 @@ func parseEnvironmentIDs(t *testing.T, output string) map[string]string {
 	return result
 }
 
-const dockerEnvironmentContainerfile = `FROM ` + alpineImage + `
+const dockerEnvironmentContainerfile = `FROM ` + alpineImage + ` AS fixture-shell-build
+# Preserve the pinned image's configuration before installing build-only tools.
+RUN /bin/busybox bbconfig > /busybox.config \
+	&& apk add --no-cache build-base linux-headers curl
+WORKDIR /src
+RUN curl --fail --location --proto '=https' --tlsv1.2 https://busybox.net/downloads/busybox-1.37.0.tar.bz2 -o /busybox-1.37.0.tar.bz2 \
+	&& echo '3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4  /busybox-1.37.0.tar.bz2' | sha256sum -c - \
+	&& tar -xjf /busybox-1.37.0.tar.bz2
+COPY read-key-cursor.patch /read-key-cursor.patch
+WORKDIR /src/busybox-1.37.0
+RUN cp /busybox.config .config \
+	&& make oldconfig </dev/null \
+	&& make -j2 busybox \
+	&& cp busybox /busybox-original \
+	&& patch --fuzz=0 -p1 < /read-key-cursor.patch \
+	&& make -j2 busybox
+
+FROM ` + alpineImage + `
 ENV BIFROEST_IMAGE_VALUE=from-image BIFROEST_OVERRIDE_VALUE=from-image
+COPY --from=fixture-shell-build /src/busybox-1.37.0/busybox /usr/local/libexec/e2e-busybox
+COPY --from=fixture-shell-build /busybox-original /usr/local/libexec/e2e-original/busybox
+# Keep the original /bin/busybox for the unpatched negative control; only sh/ash
+# use the corrected parser. Keep corresponding source, config and patch in the
+# test image. Nothing from this stage enters Bifroest's release artifacts.
+COPY --from=fixture-shell-build /busybox-1.37.0.tar.bz2 /busybox.config /read-key-cursor.patch /usr/local/share/e2e-busybox/
+COPY --from=fixture-shell-build /src/busybox-1.37.0/.config /usr/local/share/e2e-busybox/build.config
+COPY Containerfile /usr/local/share/e2e-busybox/Containerfile
 COPY e2e-helper /usr/local/bin/e2e-helper
-RUN addgroup -S -g 10001 e2e \
+RUN ln -sf /usr/local/libexec/e2e-busybox /bin/sh \
+	&& ln -sf /usr/local/libexec/e2e-busybox /bin/ash \
+	&& addgroup -S -g 10001 e2e \
 	&& addgroup -S -g 10002 supplemental \
 	&& adduser -S -D -u 10001 -G e2e -h /home/e2e -s /bin/sh e2e \
 	&& addgroup e2e supplemental \
@@ -899,6 +938,7 @@ RUN addgroup -S -g 10001 e2e \
 	&& ln -s /usr/bin/bifroest /opt/bifroest-target/bin/target-bifroest
 USER 10001:10001
 WORKDIR /home/e2e
+RUN /usr/local/bin/e2e-helper shell-cursor-regression
 `
 
 const dockerEnvironmentConfiguration = `startMessage: '{{""}}'
@@ -907,8 +947,8 @@ housekeeping:
   initialDelay: 100ms
   autoRepair: true
   keepExpiredFor: 0s
-auditlog:
-  - enabled: true
+auditlogs:
+  default:
     identityFile: %s
     directory: %s
 %s

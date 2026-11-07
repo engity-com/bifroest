@@ -1,24 +1,40 @@
 [tools]
-uv = "0.12.13"
 "pipx:reuse" = { version = "6.2.0", extras = "chardet", uvx_args = "--python 3.14" }
 
 [tasks."install"]
 run = [
     { task = "install:go" },
+    { task = "install:web" },
     { task = "install:docs" }
 ]
 
 [tasks."install:go"]
 run = "go mod download"
 
+[tasks."install:web"]
+dir = "web"
+run = "bun install --frozen-lockfile --ignore-scripts"
+
+[tasks."install:web:browser"]
+dir = "web"
+run = "bun run test:browser:install"
+
 [tasks."install:docs"]
 run = "python -m pip install -r docs/requirements.txt"
 
 [tasks."lint"]
 run = [
+    { task = "lint:biome" },
     { task = "lint:go" },
+    { task = "lint:web" },
     { task = "lint:reuse" }
 ]
+
+[tasks."format"]
+run = "biome format --write ."
+
+[tasks."lint:biome"]
+run = "biome check --error-on-warnings ."
 
 [tasks."lint:go"]
 run = "golangci-lint run --color=always"
@@ -26,9 +42,14 @@ run = "golangci-lint run --color=always"
 [tasks."lint:reuse"]
 run = "reuse lint --lines"
 
+[tasks."lint:web"]
+dir = "web"
+run = "bun run check"
+
 [tasks."test"]
 run = [
-    { task = "test:go" }
+    { task = "test:go" },
+    { task = "test:web" }
 ]
 
 [tasks."test:go"]
@@ -41,6 +62,10 @@ run = [
 [tasks."test:go:race"]
 depends = ["build:var"]
 run = "go test -race ./..."
+
+[tasks."test:web"]
+dir = "web"
+run = "bun run test"
 
 [tasks."test:e2e:local"]
 depends = ["build:var"]
@@ -59,8 +84,24 @@ depends = ["build:var"]
 run = "go test -v -count=1 -failfast -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesEnvironment(SessionRecording)?$' ./test/e2e"
 
 [tasks."test:e2e:authorization"]
-depends = ["build:var"]
+depends = ["build:var", "build:e2e:authorization"]
 run = "go test -v -count=1 -tags=e2e -timeout=5m -run '^Test(HtpasswdAuthorization|OIDC.*|SimpleRememberMe)$' ./test/e2e"
+
+[tasks."build:e2e:authorization"]
+description = "Warm fixture compilation before the unchanged authorization test deadline."
+depends = ["build:var"]
+env = { CGO_ENABLED = "0" }
+# Warm outputs are not fixture inputs. Each test still builds its own binaries,
+# private keys and unique version from this checkout; no shared executable replay.
+run = [
+    "mkdir -p var/e2e/authorization-build-cache",
+    "go build -tags local_build,local_kind -trimpath -ldflags='-s -w' -o var/e2e/authorization-build-cache/bifroest ./cmd/bifroest",
+    "go build -tags e2e -trimpath -ldflags='-s -w' -o var/e2e/authorization-build-cache/helper ./test/e2e/helper"
+]
+
+[tasks."test:e2e:pam"]
+depends = ["install:go", "build:web"]
+run = "node test/pam/run.mjs"
 
 [tasks."test:e2e:nanoserver"]
 run = "go test -v -count=1 -tags=nanoserver_integration -timeout=20m -run=TestPinnedNanoServerLocalEnvironment ./test/nanoserver"
@@ -88,6 +129,7 @@ run = [
 ]
 
 [tasks."build:go"]
+depends = ["build:web"]
 run = "go run ./cmd/build build --log.colorMode=always"
 
 [tasks."build:go:binary"]
@@ -95,6 +137,10 @@ run = "go run ./cmd/build build-binary --log.colorMode=always"
 
 [tasks."build:go:package"]
 run = "go run ./cmd/build package-binaries --log.colorMode=always"
+
+[tasks."build:web"]
+dir = "web"
+run = "bun run build"
 
 [tasks."build:docs"]
 run = [
@@ -145,6 +191,7 @@ run = "kind delete cluster --name bifroest"
 env_file = ".env"
 
 [tool_alias]
+biome = "aqua:biomejs/biome"
 golangci-lint = "aqua:golangci/golangci-lint"
 go-licenses = "go:github.com/google/go-licenses/v2"
 syft = "aqua:anchore/syft"

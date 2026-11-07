@@ -13,9 +13,8 @@ This Linux example adds audit logging and session recording to a local-account h
 1. Add the auditlog and flow to the host configuration. This complete example uses the named `default` audit log:
 
     ```yaml title="Bifröst host: /etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - name: default
-        enabled: true
+    auditlogs:
+      default:
         recording:
           enabled: true
 
@@ -29,7 +28,7 @@ This Linux example adds audit logging and session recording to a local-account h
           portForwardingAllowed: false
     ```
 
-    The flow selects `default` automatically. Audit journals and Recordings are enabled independently; the default strict failure policy stops an affected task if local persistence fails. See [audit configuration](../reference/auditlog/index.md) and [Recording configuration](../reference/auditlog/recording.md).
+    The flow selects the explicitly defined `default` logger automatically; `recording.enabled: true` adds output recording. Without a defined default or explicit logger selection, neither runs. The default strict failure policy stops an affected task if local persistence fails. See [audit configuration](../reference/auditlog/index.md) and [Recording configuration](../reference/auditlog/recording.md).
 
 2. Restart Bifröst using the host's service manager. For a fresh installation, the default signing key, audit journal and Recording repository are created when enabled.
 
@@ -80,6 +79,52 @@ This Linux example adds audit logging and session recording to a local-account h
     ```
 
     Recording exports are complete, sensitive plaintext and are never redacted. Without an encryption recipient, signatures protect integrity but not confidentiality of the stored original either.
+
+## Browser alternative
+
+The same settings capture output from [browser shells](browser-access.md). With
+a management flow and `allowArtifactTransfer: true`:
+
+1. Open **Recordings**. The first page loads newest recordings first; choose a
+   source only when several are available. Use the grid's **Filters** button or a
+   column menu for requesting user, flow, time, status and other available fields.
+2. Choose **Open recording**. Protection is detected from the signed header.
+   Unencrypted content opens after local verification. For encrypted content,
+   select your local decryption key and passphrase once and choose **Unlock and
+   open**. The recipient fingerprint is derived locally; you do not have to type
+   it. A successfully verified key is reused only within this management tab.
+3. Choose **Play**. Playback does not start automatically. The compact status
+   opens a dialog with verification and diagnostic details. **Verification
+   options** lets you pin a separately obtained signing ID or choose advanced
+   verification depth. The suggested header ID is not independent confirmation.
+   Saving an export is a separate action.
+
+The player keeps a 16:9 viewing area and scales the recorded terminal
+proportionally, without changing its recorded rows or columns. Its bottom
+controls provide play/pause, seeking, speed and native fullscreen; fullscreen
+uses the whole screen. Seeking reconstructs earlier output and resize events
+locally and preserves whether playback was running or paused. Long recordings
+may take a moment to reconstruct.
+
+Controls fade after three seconds of inactivity while playing and reappear on
+pointer movement or keyboard interaction. They stay visible while paused,
+scrubbing or using keyboard-focused controls. With player focus, **Space** or
+**K** toggles playback, **Left/Right** seeks five seconds, **J/L** ten seconds,
+and **F** toggles fullscreen. **Escape** exits fullscreen. Hardware media keys
+are best-effort browser support, without a hidden audio/video source. These
+controls neither reconnect to the server nor send terminal input.
+
+The viewing area is also capped by the current pane's height, reducing its width
+proportionally when necessary. The question-mark button beside fullscreen opens
+playback help as a modal dialog, including in fullscreen. Opening help pauses
+playback; closing it does not resume automatically. Signature, source and export
+information remains visible in a separate card below the player; unverified
+server hints stay clearly distinguished from verified evidence.
+
+Older recordings may lack the requesting user; encrypted identity details are
+not exposed by the catalog. Missing values are not inferred from current
+accounts. See [encrypted evidence](evidence.md) for trust setup and
+[browser limits](../reference/connection/http/security.md) for bounds.
 
 ## Next steps
 

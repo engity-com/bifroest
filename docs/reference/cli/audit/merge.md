@@ -69,15 +69,17 @@ All sources must verify before output is published. The merged JSONL result is l
 2. Point a dedicated configuration at those copies:
 
     ```yaml title="Verification workstation: /srv/audit-evidence/configuration.yaml"
-    auditlog:
-      - name: first
-        enabled: true
+    auditlogs:
+      first:
         identityFile: /srv/audit-evidence/absent-first-signing-key
         directory: /srv/audit-evidence/first-journal
-      - name: second
-        enabled: true
+        recording:
+          directory: /srv/audit-evidence/first-recordings
+      second:
         identityFile: /srv/audit-evidence/absent-second-signing-key
         directory: /srv/audit-evidence/second-journal
+        recording:
+          directory: /srv/audit-evidence/second-recordings
     session:
       type: fs
       storage: /srv/audit-evidence/session-inspection

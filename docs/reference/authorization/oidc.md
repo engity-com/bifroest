@@ -6,19 +6,19 @@ description: How to authorize a user request via OpenID Connect (OIDC) with Bifr
 
 Authorizes a user request via [OpenID Connect (OIDC)](https://openid.net/developers/how-connect-works/).
 
-There is no need that the actual user exists in any way on the host machine of Bifröst. Even if the [local environment](../environment/local.md) is used together with [`createIfAbsent`](../environment/local.md#property-createIfAbsent) and [`updateIfDifferent`](../environment/local.md#property-updateIfDifferent) set to `true`, it will create/update the users. There is no need for tools like Puppet or Ansible.
+Users do not need a local host account to authenticate. The selected environment
+determines the target account; [local account management](../environment/local.md#account-management)
+can provision one when explicitly configured.
 
-This provides an easy way for SSO in all types of organizations, small or big. See [use cases for more details](../../usecases.md).
-
-Currently, the following flow of OpenID Connect is supported:
-
-* [Device Auth](#device-auth)
+Bifröst supports [Device Auth](#device-auth) through SSH and
+[browser access](../../guides/browser-access.md). Users follow the provider's
+verification instructions; this is not an OIDC redirect login.
 
 ## Device Auth {: #device-auth }
 
 ### Properties {: #device-auth-properties }
 
-<<property("type", "Authorization Type", default="oidc", required=True, id_prefix="device-auth-", heading=4)>>
+<<property("type", "Authorization Type", default="oidcDeviceAuth", required=True, id_prefix="device-auth-", heading=4)>>
 Has to be set to `oidcDeviceAuth` to enable the OIDC DeviceAuth authorization.
 
 <<property("issuer", "URL", "../data-type.md#url", template_context="../context/core.md", id_prefix="device-auth-", heading=4, required=True)>>
@@ -95,6 +95,23 @@ Positive maximum time without successful refresh verification during transient i
 
 For `lostAccess`, a refresh is scheduled before this deadline if the configured access-token percentage would be later. A session that has already exceeded the deadline is disposed even if the identity provider becomes available again.
 
+### Session sharing
+
+With filesystem sessions and built-in environments, device logins with the same
+verified issuer/subject, flow and effective target can [reuse a session](../session/fs.md#session-association-groundwork).
+The requesting name alone is not an identity. Without verified identity information,
+this identity-based reuse is unavailable. Each connection keeps its own verified claims.
+
+A fresh login does not replace an existing rotating refresh grant or reset its
+verification deadline. Temporary retained-grant verification failures reject reuse.
+With `lostAccess`, detected grant loss closes the old session's connections;
+a fresh login may create a new session instead. Only when both refresh and forced
+disposal are disabled may a newer verified login update the retained claims.
+
+Remembered SSH keys and [browser RememberMe](../connection/http/index.md#rememberme)
+do not bypass configured refresh-token checks. A remembered SSH key must first
+prove possession before reconnect authorization is evaluated.
+
 ### Session cleanup
 
 When a session is disposed (for example, after expiry or lost OIDC access), housekeeping removes the local OIDC authorization token after successful session and environment disposal, without contacting the identity provider or restoring the authorization. This applies both before and after the session's retention period ends. After retention, housekeeping can delete the session once environment cleanup succeeds, subject to the configured [audit failure policy](../housekeeping.md#cleanup-guarantees). Bifröst does not revoke access or refresh tokens at the identity provider; OIDC disposal only removes the local token.
@@ -103,7 +120,7 @@ When a session is disposed (for example, after expiry or lost OIDC access), hous
 
 This authorization will produce a context of type [Authorization OIDC](../context/authorization.md#oidc).
 
-### Examples {: #device-auth-examples }
+## Examples {: #device-auth-examples }
 
 1. Use the default `lostAccess` policy with a provider that requires `offline_access` to issue refresh tokens:
    ```yaml

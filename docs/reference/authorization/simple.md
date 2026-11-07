@@ -12,8 +12,26 @@ Authorizes a user request via stored credentials.
 <<property("type", "Authorization Type", default="simple", required=True)>>
 Has to be set to `simple` to enable simple authorization.
 
+<<property("remoteName", "string", template_context="../context/authorization-request.md", default="{{.remote.user}}")>>
+Resolve the account name before checking credentials. The default preserves the
+client-supplied name. See [login-name mapping](login-name-mapping.md) for shared
+credentials across suffix-selected flows, regex examples and session boundaries.
+
+For example, strip the routing suffix from SSH `foo@bar` to check entry `foo`,
+but leave the HTTP login name unchanged:
+
+```yaml
+remoteName: '{{if eq .connection.transport "ssh"}}{{regexReplaceAll "@[^@]+$" .remote.user ""}}{{else}}{{.remote.user}}{{end}}'
+```
+
+[Flow requirements](../flow.md#requirement) still inspect the original name:
+`requirement.includedRequestingName: '^docker$'` matches only the literal login
+`docker`, **not** `foo@bar`. Use `requirement.ssh.includedRequestingName: '@bar$'`
+for that SSH suffix and `requirement.http.includedSlug: '^docker$'` for the HTTP
+slug. See the [combined flow example](login-name-mapping.md#ssh-suffix-and-http-slug).
+
 <<property("trustedUserCAs", "Public Keys", "../data-type.md#public-keys")>>
-OpenSSH public keys of certificate authorities that may sign user certificates for every entry in this authorization. The requested SSH username must be included in the certificate's principals.
+OpenSSH public keys of certificate authorities that may sign user certificates for every entry in this authorization. The resolved `remoteName` must be included in the certificate's principals; without a custom mapping this is the requested SSH username.
 
 <<property("trustedUserCAsFile", ref("File Path", "../data-type.md#file-path", ref("Public Keys", "../data-type.md#public-keys")))>>
 Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist, contain at least one valid public key, and be no larger than 4 MiB.
@@ -35,7 +53,8 @@ An entry containing only `name` can additionally be authenticated by a user cert
 ### Properties {: #entry-properties }
 
 <<property("name", "string", id_prefix="entry-", heading=4, required=True)>>
-Name the remote user has to have.
+Account name matched against the resolved [`remoteName`](#property-remoteName),
+using the existing case-insensitive simple-entry lookup.
 
 Like: `ssh <name>@my-great-domain.tld` to match this entry.
 
@@ -92,7 +111,7 @@ This authorization will produce a context of type [Authorization Simple](../cont
      - name: foo
    ```
 
-User certificates must be current, signed by the selected CA, have the requested SSH username as a principal, and contain no critical options. Missing `permit-pty`, `permit-port-forwarding`, or `permit-agent-forwarding` certificate extensions disable the corresponding capability. Authorized-key options can only restrict these capabilities further.
+User certificates must be current, signed by the selected CA, have the resolved `remoteName` as a principal, and contain no critical options. Missing `permit-pty`, `permit-port-forwarding`, or `permit-agent-forwarding` certificate extensions disable the corresponding capability. Authorized-key options can only restrict these capabilities further.
 
 ## Compatibility
 

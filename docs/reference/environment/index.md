@@ -6,6 +6,12 @@ description: How environments within Bifröst work when user sessions are execut
 
 Bifröst executes user sessions within environments. These environments can either be the [local environment](local.md) of the host (on which Bifröst runs on) itself or even containers.
 
+Configure an environment inline in a [flow](../flow.md#property-environment), or
+define it once in the root [`environments` map](../configuration.md#property-environments)
+and reference its map key. The map value contains `type` and the same settings
+shown below. Omitted, `null` or empty flow values use `environments.default` only
+if explicitly defined; otherwise an environment is required.
+
 ## Types
 
 1. `docker`: [Docker](docker.md) executes each user session inside a separate Docker container.
@@ -13,7 +19,25 @@ Bifröst executes user sessions within environments. These environments can eith
 3. `local`: [Local](local.md) executes on the host itself (same host on which Bifröst is running).
 4. `ssh`: [SSH](ssh.md) connects to another SSH server and forwards sessions and direct TCP channels.
 5. `dummy`: [Dummy](dummy.md) for demonstration purposes, it simply prints a message and exists immediately.
-6. `management`: [Management](management.md) provides authorized administrative commands via SSH without a shell.
+6. `management`: [Management](management.md) provides authorized structured administrative commands via SSH and HTTP without a shell.
+
+## Shared SSH and browser execution
+
+Local, Docker, Kubernetes, SSH and Dummy environments support browser terminals.
+They share session quotas, authorization restrictions, audit logging and recording
+with SSH. Each new terminal starts a fresh execution, not a reattachment.
+Agent forwarding, SFTP and other named subsystems remain SSH-only.
+
+Configured environment banners are shell text: with a PTY, bare LF line breaks
+are sent as CRLF so SSH and browser terminals both start the next line at column
+zero. Existing CRLF, standalone carriage returns and other bytes are preserved.
+Without a PTY the banner stays byte-exact. This does not enable a global terminal
+conversion: backend process output, exec/subsystem streams and existing
+recordings are not rewritten.
+
+Management uses a separate structured browser view, not a host shell or CLI
+subprocess. See [Browser access](../../guides/browser-access.md) for operation
+and the [security limits](../connection/http/security.md) for restrictions.
 
 ## Examples
 

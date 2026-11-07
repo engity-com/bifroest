@@ -80,6 +80,10 @@ IDs and recording digest are text in the established audit Event schema, not
 | 19 | PTY | boolean | O |
 | 20 | agent forwarding | boolean | O |
 | 21 | forced command | boolean | O |
+| 22 | session subsystem | nonempty UTF-8 text | O |
+
+`session subsystem` is at most 256 UTF-8 bytes, contains no NUL, and is valid
+only when `session task` is `sftp` or `subsystem`.
 
 ### Seal (type 3)
 
@@ -124,7 +128,7 @@ The confidential part contains **every other** current `Event` field:
 `recordingDigest`, `target`, `authenticationMethod`, `authenticationPhase`,
 `authorizationKind`, `sessionTask`, `reason`, `errorCategory`, `exitCode`,
 `bytesRead`, `bytesWritten`, `durationMillis`, `count`, `pty`,
-`agentForwarding`, and `forcedCommand`. New fields default to confidential
+`agentForwarding`, `forcedCommand`, and `sessionSubsystem`. New fields default to confidential
 until explicitly classified and documented. Event values still obey their
 established type and validation rules; the current name and reason constants
 do not imply a closed set.
@@ -248,3 +252,23 @@ encrypted payloads it cannot attest to decrypted event semantics. Full
 verification decrypts/authenticates if needed and validates the private audit
 event. The [operational audit documentation](../reference/auditlog/index.md)
 explains verification and export of a complete journal.
+
+## Verification scope
+
+Complete verification requires the available chain to end at its signed head.
+Captured-prefix verification covers only the chosen signed checkpoint. Published
+segments must still pass their full seal and physical-hash checks. Filtering
+exported records does not allow invalid unselected records to be skipped.
+
+Obtain expected producer IDs and recipient fingerprints independently. A key
+matching its own producer ID establishes consistency, not trust. Signatures do
+not establish freshness, filesystem provenance or successful decryption. Output
+redaction is separate from private-field validation.
+
+The CLI and browser use the same format verifier. A downloaded byte snapshot
+does not prove original paths, inodes or hard-link relationships; native readers
+perform those additional filesystem checks. See
+[HTTP security and limits](../reference/connection/http/security.md) for browser
+trust boundaries. Decoder and snapshot API contracts are documented in the
+[Go evidence package](https://github.com/engity-com/bifroest/tree/main/pkg/audit/evidence),
+not additional requirements of this file format.

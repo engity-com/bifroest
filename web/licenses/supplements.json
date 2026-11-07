@@ -1,0 +1,9 @@
+{
+  "react-remove-scroll-bar@2.3.8": {
+    "license": "MIT",
+    "file": "react-remove-scroll-bar-MIT.txt",
+    "sha256": "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84",
+    "source": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/8ca9ba5ea52de03308fe8ced94f7b159a44d28ff/LICENSE",
+    "note": "Publisher MIT text with a recorded provenance bridge: 2.3.8 non-metadata payload matches 2.3.7; the pinned publisher source adds only LICENSE after the 2.3.7 gitHead. Not a source/tarball build attestation or legal opinion. See web/licenses/README.md and react-remove-scroll-bar-2.3.8-evidence.json."
+  }
+}

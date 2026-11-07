@@ -35,6 +35,12 @@ type NativeRecordingSummary struct {
 	CastBytes            uint64
 	Digest               CastDigest
 	Bytes                uint64
+	// Verified catalog context, never populated from journals or live sessions.
+	StartedAt time.Time
+	EndedAt   time.Time
+	Flow      string
+	SessionID string
+	User      string
 }
 
 // NativeRecordingWriter emits signed framed units. Plain io.Writer is only for
@@ -208,10 +214,10 @@ func (w *NativeRecordingWriter) WriteOutput(elapsed time.Duration, stream Output
 	if err := w.ready(); err != nil {
 		return err
 	}
-	if err := w.cast.validateOutputStream(stream); err != nil {
+	if err := w.cast.ValidateOutputStream(stream); err != nil {
 		return err
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	for offset := 0; offset < len(data); {
@@ -236,7 +242,7 @@ func (w *NativeRecordingWriter) WriteResize(elapsed time.Duration, columns, rows
 	if !w.metadata.Pty || columns == 0 || rows == 0 || columns > MaximumCastTerminalDimension || rows > MaximumCastTerminalDimension {
 		return fmt.Errorf("invalid native recording resize")
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	event := NativeCastEvent{Kind: NativeEventResize, Elapsed: elapsed, Columns: columns, Rows: rows}
@@ -254,7 +260,7 @@ func (w *NativeRecordingWriter) WriteMarker(elapsed time.Duration, label string)
 	if err := w.ready(); err != nil {
 		return err
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	event := NativeCastEvent{Kind: NativeEventMarker, Elapsed: elapsed, Label: label}
@@ -289,7 +295,7 @@ func (w *NativeRecordingWriter) Flush() error {
 	if err != nil {
 		return w.poison(err)
 	}
-	lastElapsed := uint64(w.cast.lastElapsed)
+	lastElapsed := uint64(w.cast.LastElapsed())
 	chunk := nativeRecordingChunk{Sequence: w.chunkCount + 1, PreviousUnitHash: w.previousHash, DecodedLength: uint32(len(decoded)), CastHashState: checkpoint.State, CastHashBytes: checkpoint.Bytes, LastElapsedNanos: &lastElapsed}
 	if err := w.writeChunk(decoded, chunk); err != nil {
 		return w.poison(err)
@@ -383,11 +389,16 @@ func (w *NativeRecordingWriter) Seal(elapsed time.Duration, result CastResult, e
 	if w.recipient != nil {
 		fingerprint = w.recipient.Fingerprint()
 	}
+	flow, sessionID, requestingUser := "", "", ""
+	if w.recipient == nil {
+		flow, sessionID, requestingUser = w.metadata.Flow.String(), w.metadata.SessionId.String(), w.metadata.User
+	}
 	return NativeRecordingSummary{
 		RecordingId: w.metadata.RecordingId, ProducerId: w.metadata.ProducerId,
 		RecipientFingerprint: fingerprint,
 		Status:               result.Status, ChunkCount: w.chunkCount, CastBytes: castBytes,
 		Digest: digest, Bytes: w.prefixBytes,
+		StartedAt: w.metadata.StartedAt, EndedAt: result.EndedAt, Flow: flow, SessionID: sessionID, User: requestingUser,
 	}, nil
 }
 

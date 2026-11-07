@@ -153,9 +153,17 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 	}
 
 	var proc windows.ProcessInformation
-	if err := windows.CreateProcess(path, line, nil, nil, false,
-		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_SUSPENDED,
-		nil, nil, &startup.StartupInfo, &proc); err != nil {
+	if err := withLocalConPTYChildStandardHandles(windows.GetStdHandle, windows.SetStdHandle, func() error {
+		return windows.CreateProcess(path, line, nil, nil, false,
+			windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_SUSPENDED,
+			nil, nil, &startup.StartupInfo, &proc)
+	}); err != nil {
+		if proc.Process != 0 {
+			_ = windows.TerminateProcess(proc.Process, 1)
+			_, _ = windows.WaitForSingleObject(proc.Process, windows.INFINITE)
+			_ = windows.CloseHandle(proc.Process)
+			_ = windows.CloseHandle(proc.Thread)
+		}
 		return -1, fmt.Errorf("start shell: %w", err)
 	}
 	defer func() { _ = windows.CloseHandle(proc.Process) }()
@@ -305,4 +313,36 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 		return -1, relayErr
 	}
 	return int(code), nil
+}
+
+var localConPTYProcessCreation sync.Mutex
+
+// The relay owns framed pipe handles, not a terminal. Let the new console
+// populate the child's standard table instead of copying those pipe values.
+// Go's os.Stdin/Stdout/Stderr retain their original handles; none are closed.
+// This helper runs only in the dedicated relay process and restores its table
+// even when process creation or a SetStdHandle operation fails.
+func withLocalConPTYChildStandardHandles(get func(uint32) (windows.Handle, error), set func(uint32, windows.Handle) error, create func() error) (resultErr error) {
+	localConPTYProcessCreation.Lock()
+	defer localConPTYProcessCreation.Unlock()
+	ids := []uint32{windows.STD_INPUT_HANDLE, windows.STD_OUTPUT_HANDLE, windows.STD_ERROR_HANDLE}
+	saved := make([]windows.Handle, len(ids))
+	for i, id := range ids {
+		handle, err := get(id)
+		if err != nil {
+			return err
+		}
+		saved[i] = handle
+	}
+	defer func() {
+		for i, id := range ids {
+			resultErr = errors.Join(resultErr, set(id, saved[i]))
+		}
+	}()
+	for _, id := range ids {
+		if err := set(id, 0); err != nil {
+			return err
+		}
+	}
+	return create()
 }

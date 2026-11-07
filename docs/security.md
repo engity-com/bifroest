@@ -1,18 +1,24 @@
 ---
-description: Understand Bifröst SSH trust boundaries, service privileges, session storage, audit evidence and release checks.
+description: Understand Bifröst access boundaries, service privileges, session storage, audit evidence and release checks.
 ---
 
 # Security and trust
 
-Bifröst accepts SSH connections, selects an [authorization and session environment](reference/flow.md), and can connect to a separate SSH target. The security of an installation depends on its access policy, service permissions, identity provider, target systems and storage. Start with a configuration for your actual workflow, not an assumed `sshd`-compatible default.
+Bifröst accepts SSH and optional HTTPS browser connections, selects an [authorization and session environment](reference/flow.md), and can connect to a separate SSH target. The security of an installation depends on its access policy, service permissions, identity provider, target systems and storage. Start with a configuration for your actual workflow, not an assumed `sshd`-compatible default.
 
 ## Identity and SSH targets
 
-* An [OIDC Device login](guides/oidc.md) requires a browser and an identity provider that supports the flow. By default it also requires a refresh token: Bifröst checks the grant while the session is active, and closes its SSH connections if access is lost. Check whether the IdP invalidates existing refresh grants on user disablement; this is not an instant global logout. Keep the client secret and session storage restricted to the service operator; Bifröst stores authorization data in its session repository.
+* An [OIDC Device login](guides/oidc.md) requires a browser and an identity provider that supports the flow. By default it also requires a refresh token: Bifröst checks the grant while the session is active, and closes its connections if access is lost. Check whether the IdP invalidates existing refresh grants on user disablement; this is not an instant global logout. Keep the client secret and session storage restricted to the service operator; Bifröst stores authorization data in its session repository.
 * An [SSH gateway](guides/ssh-gateway.md) ends the incoming SSH connection and opens a separately authenticated one to the target. Configure and verify the target's host key; the gateway's incoming host key does not prove the identity of that target.
 * [Connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) maximum lifetimes can be configured. For a time-bound [off-boarding requirement](usecases.md#offboard), test both new and existing access against the actual IdP and target systems.
 
 ## Service and storage permissions
+
+The optional browser interface uses the same authorization rules, not a separate
+administrator role. Protect its HTTPS endpoint and any custom JavaScript. Browser
+verification runs locally, but its application code is supplied by the server.
+See [HTTP security and limits](reference/connection/http/security.md) for saved
+access, logout and evidence trust boundaries.
 
 Local-account sessions require privileges to run processes as the selected user: normally root on Linux and macOS, or LocalSystem for a Windows service. Protect the configuration, private keys, session directory and backups. Access to a Docker daemon or its socket grants extensive control over the host; container isolation depends on the runtime permissions and mounts you configure.
 

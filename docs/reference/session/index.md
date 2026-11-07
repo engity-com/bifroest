@@ -4,13 +4,24 @@ description: How sessions are stored within Bifröst and what they are for.
 
 # Sessions
 
-A session is grouping one or more connections of a user together. This enables the user:
+A session groups a user's connections to the same [environment](../environment/index.md).
+It lets the user:
 
-1. ... to connect with several connections to the same [environment](../environment/index.md),
-2. ... to use the same [environment](../environment/index.md), although all other prior connections are already disconnected, but the timeout of idle sessions is not already reached,
-3. ... and the authorization _more lean_ by remembering the user by its [SSH Public Key](../data-type.md#ssh-public-key) instead of (for example of the [OpenID Connect Authorization](../authorization/oidc.md)) repeatedly asking the user to go through the authorization flow.
+1. Open several connections to one environment.
+2. Reconnect to that environment while the session remains valid, even after all previous connections have closed.
+3. Use a remembered SSH public key to avoid repeating an interactive login, where the authorization supports it.
 
 For OIDC, a remembered key can skip the browser step, but does not disable configured refresh-token checks or permit reuse of a disposed session.
+
+With filesystem sessions and built-in environments, fresh SSH and browser logins
+can also [reuse a session by verified identity, flow and target](fs.md#session-association-groundwork).
+Every connection retains its own checked credentials and restrictions; a known
+session ID does not grant access.
+
+[Browser RememberMe](../connection/http/index.md#rememberme) is a separate opt-in with
+current authorization checks and an independent browser-key proof. Each new
+terminal starts a fresh execution, not a reattachment. Closing a connection or
+logging out of the browser is not session disposal; see [Browser access](../../guides/browser-access.md).
 
 ## Types
 

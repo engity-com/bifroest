@@ -1,6 +1,10 @@
 package environment
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/engity-com/bifroest/pkg/connection"
+)
 
 type localTemplateContext struct {
 	Request
@@ -9,6 +13,10 @@ type localTemplateContext struct {
 }
 
 func (this localTemplateContext) GetField(name string) (any, bool, error) {
+	if name == "connection" {
+		view, err := connection.TemplateViewOf(this.Request)
+		return view, true, err
+	}
 	if name == "user" {
 		if this.user == nil {
 			return nil, true, nil

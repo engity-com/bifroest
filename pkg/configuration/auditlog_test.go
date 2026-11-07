@@ -23,7 +23,6 @@ func TestAuditlog_UnmarshalYAML(t *testing.T) {
 			yaml: `{}`,
 			expected: Auditlog{
 				Name:             DefaultAuditlogName,
-				Enabled:          DefaultAuditlogEnabled,
 				FailurePolicy:    DefaultAuditlogFailurePolicy,
 				IdentityFile:     DefaultAuditlogIdentityFile,
 				Directory:        DefaultAuditlogJournalDirectory,
@@ -32,16 +31,13 @@ func TestAuditlog_UnmarshalYAML(t *testing.T) {
 			},
 		},
 		unmarshalYamlTestCase[Auditlog]{
-			name: "enabled-and-customized",
+			name: "customized",
 			yaml: `
-enabled: true
-name: security
 failurePolicy: bestEffort
 identityFile: "  custom-audit-key  "
 directory: "  custom-journal  "`,
 			expected: Auditlog{
-				Name:             "security",
-				Enabled:          true,
+				Name:             DefaultAuditlogName,
 				FailurePolicy:    AuditlogFailurePolicyBestEffort,
 				IdentityFile:     "custom-audit-key",
 				Directory:        "custom-journal",
@@ -74,7 +70,7 @@ directory: "  custom-journal  "`,
 			name: "explicit-reserve",
 			yaml: "minimumFreeBytes: 1048576",
 			expected: Auditlog{
-				Name: DefaultAuditlogName, Enabled: DefaultAuditlogEnabled,
+				Name:          DefaultAuditlogName,
 				FailurePolicy: DefaultAuditlogFailurePolicy, IdentityFile: DefaultAuditlogIdentityFile,
 				Directory: DefaultAuditlogJournalDirectory, MinimumFreeBytes: 1048576,
 				Recording: expectedDefaultAuditlogRecording(),
@@ -84,7 +80,7 @@ directory: "  custom-journal  "`,
 			name: "explicit-zero-reserve",
 			yaml: "minimumFreeBytes: 0",
 			expected: Auditlog{
-				Name: DefaultAuditlogName, Enabled: DefaultAuditlogEnabled,
+				Name:          DefaultAuditlogName,
 				FailurePolicy: DefaultAuditlogFailurePolicy, IdentityFile: DefaultAuditlogIdentityFile,
 				Directory: DefaultAuditlogJournalDirectory, MinimumFreeBytes: 0,
 				Recording: expectedDefaultAuditlogRecording(),
@@ -96,31 +92,22 @@ directory: "  custom-journal  "`,
 func TestAuditlogsDefaultAndExplicitEntries(t *testing.T) {
 	var absent Auditlogs
 	require.NoError(t, absent.SetDefaults())
-	require.Equal(t, Auditlogs{{
-		Name:             DefaultAuditlogName,
-		Enabled:          false,
-		FailurePolicy:    DefaultAuditlogFailurePolicy,
-		IdentityFile:     DefaultAuditlogIdentityFile,
-		Directory:        DefaultAuditlogJournalDirectory,
-		MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
-		Recording:        expectedDefaultAuditlogRecording(),
-	}}, absent)
+	require.Empty(t, absent)
 
 	var empty Auditlogs
-	require.NoError(t, yaml.Unmarshal([]byte(`[]`), &empty))
-	require.Equal(t, absent, empty)
+	require.NoError(t, yaml.Unmarshal([]byte(`{}`), &empty))
+	require.Empty(t, empty)
+	require.Error(t, yaml.Unmarshal([]byte(`[]`), &empty))
 
 	var configured Auditlogs
 	require.NoError(t, yaml.Unmarshal([]byte(`
-- name: default
-- name: security
-  enabled: true
+default: {}
+security:
   identityFile: security-key
   directory: security-journal
 `), &configured))
 	require.Len(t, configured, 2)
 	require.Equal(t, AuditlogName("security"), configured[1].Name)
-	require.True(t, configured[1].Enabled)
 }
 
 func TestAuditlogsRejectConflicts(t *testing.T) {
@@ -128,37 +115,36 @@ func TestAuditlogsRejectConflicts(t *testing.T) {
 	require.ErrorContains(t, duplicateNames.Validate(), "duplicates")
 
 	duplicatePaths := Auditlogs{
-		{Name: "first", Enabled: true, IdentityFile: "key", Directory: "journal-1"},
-		{Name: "second", Enabled: true, IdentityFile: "key", Directory: "journal-2"},
+		{Name: "first", IdentityFile: "key", Directory: "journal-1"},
+		{Name: "second", IdentityFile: "key", Directory: "journal-2"},
 	}
 	require.ErrorContains(t, duplicatePaths.Validate(), "identityFile")
 	duplicatePaths[1].IdentityFile = "other-key"
 	duplicatePaths[1].Directory = duplicatePaths[0].Directory
-	require.ErrorContains(t, duplicatePaths.Validate(), "[1][directory] duplicates enabled auditlog [0][directory]")
+	require.ErrorContains(t, duplicatePaths.Validate(), "[1][directory] duplicates auditlog [0][directory]")
 
 	overlappingJournals := Auditlogs{
-		{Name: "first", Enabled: true, IdentityFile: "key-1", Directory: "journals"},
-		{Name: "second", Enabled: true, IdentityFile: "key-2", Directory: "journals/second"},
+		{Name: "first", IdentityFile: "key-1", Directory: "journals"},
+		{Name: "second", IdentityFile: "key-2", Directory: "journals/second"},
 	}
-	require.ErrorContains(t, overlappingJournals.Validate(), "[1][directory] overlaps enabled auditlog [0][directory]")
+	require.ErrorContains(t, overlappingJournals.Validate(), "[1][directory] overlaps auditlog [0][directory]")
 
 	identityInsideJournal := Auditlogs{
-		{Name: "first", Enabled: true, IdentityFile: "journals/first-key", Directory: "journal-1"},
-		{Name: "second", Enabled: true, IdentityFile: "key-2", Directory: "journals"},
+		{Name: "first", IdentityFile: "journals/first-key", Directory: "journal-1"},
+		{Name: "second", IdentityFile: "key-2", Directory: "journals"},
 	}
-	require.ErrorContains(t, identityInsideJournal.Validate(), "[0][identityFile] is located inside enabled auditlog [1][directory]")
+	require.ErrorContains(t, identityInsideJournal.Validate(), "[0][identityFile] is located inside auditlog [1][directory]")
 
 	journalBelowIdentity := Auditlogs{{
 		Name:         "first",
-		Enabled:      true,
 		IdentityFile: "key",
 		Directory:    "key/journal",
 	}}
-	require.ErrorContains(t, journalBelowIdentity.Validate(), "[0][directory] is located below enabled auditlog [0][identityFile]")
+	require.ErrorContains(t, journalBelowIdentity.Validate(), "[0][directory] is located below auditlog [0][identityFile]")
 
 	overlappingIdentities := Auditlogs{
-		{Name: "first", Enabled: true, IdentityFile: "keys", Directory: "journal-1"},
-		{Name: "second", Enabled: true, IdentityFile: "keys/second", Directory: "journal-2"},
+		{Name: "first", IdentityFile: "keys", Directory: "journal-1"},
+		{Name: "second", IdentityFile: "keys/second", Directory: "journal-2"},
 	}
 	require.ErrorContains(t, overlappingIdentities.Validate(), "identityFile] overlaps")
 }
@@ -184,7 +170,7 @@ func TestAuditlogEncryptionPublicKey(t *testing.T) {
 	authorized := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPublic)))
 
 	var configured Auditlog
-	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("enabled: true\nencryptionPublicKey: %s\n", authorized)), &configured))
+	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("encryptionPublicKey: %s\n", authorized)), &configured))
 	require.Equal(t, crypto.PublicKeys(authorized), configured.EncryptionPublicKey)
 
 	var multiple Auditlog
@@ -198,21 +184,19 @@ func TestAuditlogEncryptionPublicKey(t *testing.T) {
 	publicKeyFile := filepath.Join(t.TempDir(), "audit-encryption.pub")
 	require.NoError(t, os.WriteFile(publicKeyFile, []byte(authorized+"\n"), 0600))
 	var fromFile Auditlog
-	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("enabled: true\nencryptionPublicKeyFile: %s\n", publicKeyFile)), &fromFile))
+	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("encryptionPublicKeyFile: %s\n", publicKeyFile)), &fromFile))
 	require.Equal(t, crypto.PublicKeysFile(publicKeyFile), fromFile.EncryptionPublicKeyFile)
 	require.NoError(t, os.WriteFile(publicKeyFile, []byte(authorized+"\n"+authorized+"\n"), 0600))
 	var multipleFromFile Auditlog
-	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("enabled: true\nencryptionPublicKeyFile: %s\n", publicKeyFile)), &multipleFromFile))
+	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("encryptionPublicKeyFile: %s\n", publicKeyFile)), &multipleFromFile))
 	require.NoError(t, os.WriteFile(publicKeyFile, []byte(authorized+"\n"), 0600))
 
 	var combined Auditlog
-	err = yaml.Unmarshal([]byte(fmt.Sprintf("enabled: true\nencryptionPublicKey: %s\nencryptionPublicKeyFile: %s\n", authorized, publicKeyFile)), &combined)
+	err = yaml.Unmarshal([]byte(fmt.Sprintf("encryptionPublicKey: %s\nencryptionPublicKeyFile: %s\n", authorized, publicKeyFile)), &combined)
 	require.ErrorContains(t, err, "cannot be combined")
 
-	var missingEnabled Auditlog
-	require.NoError(t, yaml.Unmarshal([]byte("enabled: true\nencryptionPublicKeyFile: missing.pub\n"), &missingEnabled))
-	var missingDisabled Auditlog
-	require.NoError(t, yaml.Unmarshal([]byte("encryptionPublicKeyFile: missing.pub\n"), &missingDisabled))
+	var missing Auditlog
+	require.NoError(t, yaml.Unmarshal([]byte("encryptionPublicKeyFile: missing.pub\n"), &missing))
 }
 
 func TestConfigurationValidatesFlowAuditlogReferences(t *testing.T) {
