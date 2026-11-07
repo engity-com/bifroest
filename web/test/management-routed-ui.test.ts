@@ -199,6 +199,17 @@ function button(host: ParentNode, label: string) {
   return result;
 }
 const click = async (node: HTMLElement) => act(async () => node.click());
+async function verifyRecording(host: HTMLElement) {
+  await vi.waitFor(() => expect(button(host, t('verifyOpen')).disabled).toBe(false));
+  await click(button(host, t('verifyOpen')));
+  const dialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((node) =>
+    node.checkVisibility({ visibilityProperty: true }),
+  );
+  if (!dialog) {
+    throw new Error('Missing verification options');
+  }
+  await click(button(dialog, t('verifyStart')));
+}
 
 it('uses screenshot_monitor and fact_check consistently for Overview actions and side navigation', async () => {
   const { access, api } = fixture();
@@ -210,6 +221,15 @@ it('uses screenshot_monitor and fact_check consistently for Overview actions and
     skipped: 0,
   });
   const { host } = await mount('/Admin/admin', 'workspace', access);
+  // Actions can be outside the horizontally virtualized viewport. Exercise
+  // the real scroll instead of assuming all columns are mounted at CI's width.
+  await vi.waitFor(() =>
+    expect(host.querySelector('[role="row"][data-id="docker"]')).not.toBeNull(),
+  );
+  await act(async () => {
+    const scroller = host.querySelector('.MuiDataGrid-virtualScroller');
+    scroller?.scrollTo({ left: scroller.scrollWidth });
+  });
   await vi.waitFor(() => expect(button(host, 'Recordings docker').disabled).toBe(false));
   expect(
     button(host, 'Recordings docker').querySelector('[data-testid="ScreenshotMonitorIcon"]'),
@@ -325,6 +345,7 @@ it('returns through the real flow breadcrumb to the retained dataset when the so
   await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
   const grid = host.querySelector('[role="grid"][aria-label="Recordings · default"]');
   await click(button(host, `Open recording ${id}`));
+  await verifyRecording(host);
   await vi.waitFor(() => expect(host.querySelector('[aria-label="Routed player"]')).not.toBeNull());
   await click(button(host, 'docker'));
   await vi.waitFor(() =>
@@ -350,6 +371,7 @@ it('loads a genuinely new breadcrumb flow and exposes no earlier rows when that 
   const { host, router } = await mount('/Admin/admin/recordings', 'workspace', access);
   await vi.waitFor(() => expect(button(host, `Open recording ${id}`).disabled).toBe(false));
   await click(button(host, `Open recording ${id}`));
+  await verifyRecording(host);
   await vi.waitFor(() => expect(host.querySelector('[aria-label="Routed player"]')).not.toBeNull());
   await click(button(host, 'docker'));
   await vi.waitFor(() => expect(host.textContent).toContain(t('recordingReadFailed')));
@@ -644,6 +666,8 @@ it('opens a qualified Recording URI as one explicit transfer and validates the v
     'recordings',
     access,
   );
+  expect(verifyArtifact).not.toHaveBeenCalled();
+  await verifyRecording(host);
   await vi.waitFor(() => expect(host.querySelector('[aria-label="Routed player"]')).not.toBeNull());
   expect(api.downloadArtifact).toHaveBeenCalledExactlyOnceWith(
     image.request,
@@ -655,7 +679,12 @@ it('opens a qualified Recording URI as one explicit transfer and validates the v
   await act(async () =>
     router.navigate(`/Admin/admin/recordings/Other?recording=${id}&auditlog=default`),
   );
-  await vi.waitFor(() => expect(host.textContent).toContain(t('artifactVerificationFailed')));
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Routed player"]')).toBeNull());
+  expect(verifyArtifact).toHaveBeenCalledOnce();
+  await verifyRecording(host);
+  await vi.waitFor(() =>
+    expect(host.querySelector('[data-verification-result="failure"]')).not.toBeNull(),
+  );
   expect(host.querySelector('[aria-label="Routed player"]')).toBeNull();
   expect(api.downloadArtifact).toHaveBeenCalledOnce();
   expect(verifyArtifact).toHaveBeenCalledTimes(2);
@@ -731,7 +760,7 @@ it('shows live verification progress in one request and adopts only its complete
   await act(async () => report?.({ phase: 'verifying', completed: 230, total: 284 }));
   expect(host.textContent).toContain(t('scanVerifying'));
   expect(host.textContent).toContain('230 / 284');
-  expect(button(host, 'Refresh recordings').disabled).toBe(true);
+  expect(host.querySelector('button[aria-label="Refresh recordings"]')).toBeNull();
   expect(button(host, t('artifactCatalogCancel')).disabled).toBe(false);
   expect(api.managementRecordings).toHaveBeenCalledOnce();
   expect(host.querySelectorAll('[role="row"][data-id]').length).toBe(0);
@@ -768,17 +797,39 @@ it('reopens the same encrypted Recording through the router with a fresh owned t
   });
   const path = `/Admin/admin/recordings?auditlog=default&recording=${id}`;
   const { host, router } = await mount(path, 'recordings', access);
+  expect(inspectProtection).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(button(host, t('verifyOpen')).disabled).toBe(false));
+  await click(button(host, t('verifyOpen')));
   await vi.waitFor(() =>
-    expect(host.querySelector('.artifact-key input[type="file"]')).not.toBeNull(),
+    expect(
+      document.querySelector('[aria-modal="true"] .artifact-key input[type="file"]'),
+    ).not.toBeNull(),
   );
   expect(host.querySelector(`[aria-label="${t('artifactBackToList')}"]`)).toBeNull();
+  const openDialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((node) =>
+    node.checkVisibility({ visibilityProperty: true }),
+  );
+  if (!openDialog) {
+    throw new Error('Missing visible verification options');
+  }
+  await click(button(openDialog, t('cancel')));
   await click(button(host, t('workspaceRecordings')));
   await vi.waitFor(() => expect(router.state.location.search).toBe('?auditlog=default'));
-  await vi.waitFor(() => expect(host.querySelector('.artifact-key')).toBeNull());
+  await vi.waitFor(() =>
+    expect(
+      [...document.querySelectorAll('[role="dialog"]')].some((node) =>
+        node.checkVisibility({ visibilityProperty: true }),
+      ),
+    ).toBe(false),
+  );
   await act(async () => router.navigate(path));
   await vi.waitFor(() => expect(api.downloadArtifact).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(button(host, t('verifyOpen')).disabled).toBe(false));
+  await click(button(host, t('verifyOpen')));
   await vi.waitFor(() =>
-    expect(host.querySelector('.artifact-key input[type="file"]')).not.toBeNull(),
+    expect(
+      document.querySelector('[aria-modal="true"] .artifact-key input[type="file"]'),
+    ).not.toBeNull(),
   );
   expect(verifyArtifact).not.toHaveBeenCalled();
 });

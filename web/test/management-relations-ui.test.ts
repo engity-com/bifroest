@@ -331,6 +331,10 @@ it('links a recording to its own session in both the dataset and Details without
   expect(api.downloadArtifact).not.toHaveBeenCalled();
   await act(async () => router.navigate('/Admin/admin/recordings/worker?auditlog=default'));
   await click(action(host, `${t('recordingOpen')} ${recordingID}`));
+  expect(inspectProtection).not.toHaveBeenCalled();
+  expect(verifyArtifact).not.toHaveBeenCalled();
+  const verificationDialog = await options(host);
+  await click(action(verificationDialog, t('verifyStart')));
   await vi.waitFor(() =>
     expect(host.querySelector('[aria-label="Relationship player"]')).not.toBeNull(),
   );
@@ -350,13 +354,43 @@ it('links a recording to its own session in both the dataset and Details without
   expect(api.downloadArtifact).toHaveBeenCalledOnce();
 });
 
+it('retires verified recording output on a changed session selector without automatically verifying again', async () => {
+  const { api, access } = fixture();
+  const { host, router } = await mount(
+    `/Admin/admin/recordings/worker/${recordingID}?auditlog=default`,
+    access,
+  );
+  const dialog = await options(host);
+  await click(action(dialog, t('verifyStart')));
+  await vi.waitFor(() =>
+    expect(host.querySelector('[aria-label="Relationship player"]')).not.toBeNull(),
+  );
+  const other = '70d5159d-a0e4-46ca-b011-c4f831f4ade1';
+  await act(async () =>
+    router.navigate(
+      `/Admin/admin/recordings/worker/${recordingID}?auditlog=default&sessionId=${other}`,
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(host.querySelector('[aria-label="Relationship player"]')).toBeNull(),
+  );
+  expect(verifyArtifact).toHaveBeenCalledOnce();
+  expect(api.downloadArtifact).toHaveBeenCalledOnce();
+  await click(action(host, t('verifyOpen')));
+  await vi.waitFor(() =>
+    expect(host.querySelector('[data-verification-result="failure"]')).not.toBeNull(),
+  );
+  expect(verifyArtifact).toHaveBeenCalledTimes(2);
+  expect(host.querySelector('[aria-label="Relationship player"]')).toBeNull();
+});
+
 it('uses the same event Details and breadcrumb for server and local data, with explicit eye consent and source-switch toolbar action', async () => {
   const { api, access } = fixture();
   const { host, router } = await mount('/Admin/admin/auditlogs/default', access);
   await vi.waitFor(() => expect(api.managementAuditEvents).toHaveBeenCalledOnce());
   expect(api.managementAuditEvents.mock.calls[0]?.[1]?.sensitive).toBe(false);
   expect(host.querySelector(`a[aria-label="${t('showSession')} ${sessionID}"]`)).toBeNull();
-  await click(action(host, t('privateDetails')));
+  await click(action(host, t('adminGridShowDetails')));
   await vi.waitFor(() => expect(api.managementAuditEvents).toHaveBeenCalledTimes(2));
   expect(api.managementAuditEvents.mock.calls[1]?.[1]?.sensitive).toBe(true);
   expect(
@@ -388,7 +422,9 @@ it('uses the same event Details and breadcrumb for server and local data, with e
   expect(
     dialog.querySelector('input[type="checkbox"]')?.closest('label')?.textContent,
   ).not.toContain('sensitive');
-  expect(action(dialog, t('privateDetails')).getAttribute('aria-pressed')).toBe('true');
+  expect(
+    dialog.querySelector('[data-testid="VisibilityIcon"], [data-testid="VisibilityOffIcon"]'),
+  ).toBeNull();
   await click(action(dialog, t('verifyStart')));
   await vi.waitFor(() =>
     expect(
@@ -425,9 +461,9 @@ it('uses the same event Details and breadcrumb for server and local data, with e
   await click(action(host, 'default'));
   const serverReads = api.managementAuditEvents.mock.calls.length;
   await vi.waitFor(() =>
-    expect((action(local, t('privateDetails')) as HTMLButtonElement).disabled).toBe(false),
+    expect((action(local, t('adminGridHideDetails')) as HTMLButtonElement).disabled).toBe(false),
   );
-  await click(action(local, t('privateDetails')));
+  await click(action(local, t('adminGridHideDetails')));
   await vi.waitFor(() => expect(verifyArtifact).toHaveBeenCalledTimes(2));
   await vi.waitFor(() => expect(action(local, t('directServerData'))).toBeDefined());
   expect(api.managementAuditEvents).toHaveBeenCalledTimes(serverReads);
@@ -443,6 +479,7 @@ it('uses the same event Details and breadcrumb for server and local data, with e
   expect(router.state.location.pathname).toBe('/Admin/admin/auditlogs/default');
   await click(action(host, 'default'));
   await click(action(host, t('directServerData')));
+  expect(host.querySelector('[data-verification-result]')?.getClientRects().length ?? 0).toBe(0);
   expect(api.downloadArtifact).toHaveBeenCalledOnce();
   expect(verifyArtifact).toHaveBeenCalledTimes(2);
 });
@@ -471,7 +508,7 @@ it('does not invent a session target from a route filter when an event withholds
   }));
   const { host } = await mount('/Admin/admin/auditlogs/default/worker', access);
   await vi.waitFor(() => expect(api.managementAuditEvents).toHaveBeenCalledOnce());
-  await click(action(host, t('privateDetails')));
+  await click(action(host, t('adminGridShowDetails')));
   await vi.waitFor(() => expect(api.managementAuditEvents).toHaveBeenCalledTimes(2));
   await click(action(host, `${t('auditEventDetails')} ${eventID}`));
   await vi.waitFor(() => expect(host.querySelector('.audit-event-details')).not.toBeNull());

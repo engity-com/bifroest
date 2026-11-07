@@ -167,13 +167,28 @@ try {
   );
   await confirmFullVerification(page, auditPanel(), 'default');
   const opened = async (current) => {
+    const audit = (await current.getAttribute('aria-label')) === 'Audit logs';
+    if (!audit) {
+      await current
+        .and(page.locator('[data-evidence-phase="idle"][data-evidence-input="true"]'))
+        .waitFor();
+      assert.equal(
+        await current.getByRole('region', { name: 'Recording playback', exact: true }).count(),
+        0,
+      );
+      await current.getByRole('button', { name: 'Verify …', exact: true }).click();
+      if (mode !== 'catalog-encrypted') {
+        await page
+          .getByRole('dialog', { name: 'Verification options', exact: true })
+          .getByRole('button', { name: 'Start verification', exact: true })
+          .click();
+      }
+    }
     if (mode === 'catalog-encrypted') {
-      const audit = (await current.getAttribute('aria-label')) === 'Audit logs';
-      let owner = current;
       if (audit) {
         await current.getByRole('button', { name: 'Verify …', exact: true }).click();
-        owner = page.getByRole('dialog', { name: 'Verification options', exact: true });
       }
+      const owner = page.getByRole('dialog', { name: 'Verification options', exact: true });
       try {
         await owner.getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
       } catch (error) {
@@ -202,18 +217,12 @@ try {
           .count(),
         0,
       );
-      if (audit) {
-        await owner.getByRole('button', { name: 'Cancel', exact: true }).click();
-      }
+      await owner.getByRole('button', { name: 'Cancel', exact: true }).click();
     } else {
       await current
         .getByRole('button', { name: 'Signature, source and export details', exact: true })
         .waitFor();
-      await page.waitForFunction(() =>
-        [...document.querySelectorAll('[data-connection-active="true"] button')].some((node) =>
-          node.textContent.startsWith('Integrity OK'),
-        ),
-      );
+      await current.locator('[data-verification-result="success"]:visible').waitFor();
     }
   };
   await opened(auditPanel());
@@ -384,7 +393,12 @@ try {
     await recordings()
       .getByRole('button', { name: `Open recording ${id}`, exact: true })
       .click();
-    await recordPanel()
+    await recordPanel().locator('.recording-video [data-verification-result="failure"]').click();
+    const failureDialog = page.getByRole('dialog', {
+      name: 'Signature, source and export details',
+      exact: true,
+    });
+    await failureDialog
       .getByText('The artifact download could not be confirmed or is not permitted.', {
         exact: false,
       })
@@ -395,7 +409,7 @@ try {
       1,
       'failed worker startup cannot issue or replay a transfer',
     );
-    await recordPanel().getByRole('button', { name: 'Try opening again', exact: true }).click();
+    await failureDialog.getByRole('button', { name: 'Try opening again', exact: true }).click();
   } else {
     await recordings()
       .getByRole('button', { name: `Open recording ${id}`, exact: true })
@@ -438,8 +452,8 @@ try {
   );
   const loadingGrid = await catalog().getByRole('grid').elementHandle();
   assert.equal(
-    await catalog().getByRole('button', { name: 'Refresh recordings', exact: true }).isDisabled(),
-    true,
+    await catalog().getByRole('button', { name: 'Refresh recordings', exact: true }).count(),
+    0,
   );
   assert.equal(
     await catalog().getByRole('button', { name: 'Cancel catalog request', exact: true }).count(),

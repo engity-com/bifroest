@@ -324,7 +324,7 @@ describe('finding and opening recordings without API choreography', () => {
     );
     expect(grid).not.toBeNull();
     expect(button(t('artifactCatalogCancel')).disabled).toBe(false);
-    expect(button(t('recordingRefresh')).disabled).toBe(true);
+    expect(document.querySelector(`button[aria-label="${t('recordingRefresh')}"]`)).toBeNull();
     await click(button(t('artifactCatalogCancel')));
     await app.render({ disabled: true });
     expect(vi.mocked(WebAccess.prototype.managementRecordings).mock.calls[0]?.[2]?.aborted).toBe(

@@ -248,10 +248,6 @@ export function AuditOverview({
   }
   return (
     <section className="stack" aria-label={t('auditOverview')}>
-      {!target && <Alert color="blue">{t('auditOverviewWarning')}</Alert>}
-      {!target && sourceInfo?.encrypted && (
-        <Alert color="blue">{t('auditOverviewEncrypted')}</Alert>
-      )}
       {failed && (
         <Alert color="red" role="status">
           {t(denied ? 'artifactDownloadDenied' : 'auditOverviewFailed')}

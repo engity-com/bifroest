@@ -29,6 +29,9 @@ export async function nativeColumnFilter(
     throw new Error(`Missing native filter column ${columnLabel}`);
   }
   await act(async () => option.click());
+  const priorValue = document.querySelector<HTMLInputElement>(
+    'input[placeholder="Filter value"]',
+  )?.value;
   if (operator !== undefined) {
     const control = document.querySelector<HTMLElement>(
       '.MuiDataGrid-filterFormOperatorInput [role="combobox"]',
@@ -49,6 +52,12 @@ export async function nativeColumnFilter(
   }
   const input = document.querySelector<HTMLInputElement>('input[placeholder="Filter value"]');
   if (!input) {
+    // Changing an existing predicate can submit it immediately. The resulting
+    // read now locks the grid and closes its portal; no second input is needed
+    // when the requested value was already present.
+    if (priorValue === value) {
+      return;
+    }
     throw new Error('Missing native filter value input');
   }
   await act(async () => {

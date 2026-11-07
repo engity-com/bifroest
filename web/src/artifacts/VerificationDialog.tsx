@@ -37,9 +37,7 @@ export function VerificationDialog({
         <p>
           {t('verifyAllSource')}: <strong>{source}</strong>
         </p>
-        {kind !== 'recording' && (
-          <p>{t(kind === 'audit' ? 'verifyAllAuditScope' : 'verifyAllRecordingsScope')}</p>
-        )}
+        {kind !== 'recording' && <p>{t('verificationSelectedSourceOnly')}</p>}
         {children}
       </DialogContent>
       <DialogActions>

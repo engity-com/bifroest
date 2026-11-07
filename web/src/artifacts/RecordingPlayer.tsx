@@ -1,7 +1,17 @@
-import { Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
+import CancelIcon from '@mui/icons-material/Cancel';
+import { Dialog, DialogActions, DialogContent, DialogTitle, IconButton } from '@mui/material';
 import type { IDisposable, Terminal as Xterm } from '@xterm/xterm';
-import { type KeyboardEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react';
 import { Alert, Button, Title, useComputedColorScheme } from '../ui/material';
+import { ReadProgress } from '../ui/ReadProgress';
 import '@xterm/xterm/css/xterm.css';
 import { noncedDocument } from '../terminal/document';
 import { installTerminalRenderer } from '../terminal/renderer';
@@ -26,12 +36,14 @@ export function RecordingPlayer({
   disabled,
   autoPrepare = false,
   active = true,
+  verificationControls,
 }: {
   source: Blob;
   expected: PlaybackOptions;
   disabled: boolean;
   autoPrepare?: boolean;
   active?: boolean;
+  verificationControls?: ReactNode;
 }) {
   const container = useRef<HTMLElement | null>(null);
   const playerSection = useRef<HTMLElement | null>(null);
@@ -601,7 +613,12 @@ export function RecordingPlayer({
         {metadata === null && (
           <div className="recording-overlay">
             {busy ? (
-              <p role="status">{t('playbackPreparing')}</p>
+              <div className="recording-loading">
+                <p>{t('playbackPreparing')}</p>
+                <ReadProgress value={null} />
+              </div>
+            ) : verificationControls !== undefined ? (
+              <span>{t('playbackVerificationRequired')}</span>
             ) : (
               <Button
                 disabled={disabled}
@@ -626,8 +643,17 @@ export function RecordingPlayer({
           </div>
         )}
         <div ref={toolbar}>
-          {(busy || metadata !== null) && (
+          {(busy || metadata !== null || verificationControls !== undefined) && (
             <PlaybackControls
+              verificationControls={
+                busy ? (
+                  <IconButton color="inherit" aria-label={t('artifactCancel')} onClick={retire}>
+                    <CancelIcon />
+                  </IconButton>
+                ) : (
+                  verificationControls
+                )
+              }
               state={state}
               durationUs={metadata?.durationUs ?? 0}
               preview={preview}

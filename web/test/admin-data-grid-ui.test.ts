@@ -66,7 +66,7 @@ function Fixture({
   });
 }
 
-it('uses native grid pagination, column sorting and quick search as server intents, not local page transformations', async () => {
+it('uses native grid pagination and column sorting as server intents, without quick search', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   const host = document.createElement('div');
   host.style.width = '1000px';
@@ -97,19 +97,8 @@ it('uses native grid pagination, column sorting and quick search as server inten
   }
   await act(async () => header.click());
   expect(requests).toHaveBeenLastCalledWith('sort', 'desc');
-  await act(async () => button('Search').click());
-  const input = host.querySelector<HTMLInputElement>('input[placeholder="Search…"]');
-  if (!input) {
-    throw new Error('Missing native quick search');
-  }
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
-      input,
-      'not-a-local-row',
-    );
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  await vi.waitFor(() => expect(requests).toHaveBeenLastCalledWith('query', 'not-a-local-row'));
+  expect(host.querySelector('button[aria-label="Search"]')).toBeNull();
+  expect(host.querySelector('input[placeholder="Search…"]')).toBeNull();
   // The server has deliberately not replaced this fixture page yet. A local
   // filter/sort would remove/reorder these rows, misrepresenting the inventory.
   expect(host.querySelector('[role="gridcell"][data-field="name"]')?.textContent).toBe('Name 0');

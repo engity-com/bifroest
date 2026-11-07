@@ -1,5 +1,6 @@
 import CancelIcon from '@mui/icons-material/Cancel';
-import { Box, Button, Tooltip } from '@mui/material';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { Box, IconButton, Skeleton, Tooltip } from '@mui/material';
 import { createContext, useContext } from 'react';
 import type { ReadProgress as Progress } from '../management/progress';
 import { DirectServerIcon } from './DirectServerIcon';
@@ -13,6 +14,7 @@ export interface GridWork {
   readonly disabled?: boolean;
   readonly progress?: Progress | null;
   readonly status?: string | undefined;
+  readonly result?: 'success' | 'failure' | undefined;
   readonly onStatusClick?: (() => void) | undefined;
 }
 export interface GridDetails {
@@ -36,30 +38,56 @@ export function GridWorkButton({ work }: { work: GridWork }) {
   return (
     <Tooltip title={t(label)}>
       <span>
-        <Button
+        <IconButton
           size="small"
           disabled={work.disabled}
           aria-label={t(label)}
           data-grid-work-mode={work.mode}
+          data-grid-cancel={work.mode === 'cancel' || undefined}
           onClick={work.onClick}
-          startIcon={
-            work.mode === 'cancel' ? (
-              <CancelIcon fontSize="small" />
-            ) : work.mode === 'server' ? (
-              <DirectServerIcon fontSize="small" />
-            ) : (
-              <LicenseIcon fontSize="small" />
-            )
-          }
         >
-          {work.mode === 'server' ? t(label) : null}
-        </Button>
+          {work.mode === 'cancel' ? (
+            <CancelIcon fontSize="small" />
+          ) : work.mode === 'server' ? (
+            <DirectServerIcon fontSize="small" />
+          ) : (
+            <LicenseIcon fontSize="small" />
+          )}
+        </IconButton>
       </span>
     </Tooltip>
   );
 }
-// The overlay belongs to this grid. It never becomes a page scrim or disables
-// retained rows/filters/paging while a separate full-verification job runs.
+export function VerificationResultButton({
+  result,
+  onClick,
+  disabled = false,
+}: {
+  result: 'success' | 'failure';
+  onClick(): void;
+  disabled?: boolean;
+}) {
+  return (
+    <Tooltip title={t('recordingVerificationDetails')}>
+      <span>
+        <IconButton
+          size="small"
+          aria-label={t('recordingVerificationDetails')}
+          disabled={disabled}
+          data-verification-result={result}
+          onClick={onClick}
+        >
+          {result === 'success' ? (
+            <CheckCircleIcon color="success" />
+          ) : (
+            <CancelIcon color="error" />
+          )}
+        </IconButton>
+      </span>
+    </Tooltip>
+  );
+}
+// Loading replaces retained data and locks the grid, not the surrounding page.
 export function GridLoadingOverlay() {
   const progress = useContext(GridProgressContext);
   return (
@@ -71,8 +99,15 @@ export function GridLoadingOverlay() {
         alignItems: 'center',
         justifyContent: 'center',
         pointerEvents: 'none',
+        bgcolor: 'background.paper',
+        position: 'relative',
       }}
     >
+      <Box aria-hidden="true" sx={{ position: 'absolute', inset: 0, p: 2, overflow: 'hidden' }}>
+        {Array.from({ length: 20 }, (_, index) => `placeholder-${index}`).map((key) => (
+          <Skeleton key={key} variant="rounded" height={32} sx={{ mb: 1 }} />
+        ))}
+      </Box>
       <Box
         sx={{
           width: 'min(90%, 28rem)',
@@ -82,6 +117,7 @@ export function GridLoadingOverlay() {
           borderColor: 'divider',
           borderRadius: 1,
           boxShadow: 1,
+          zIndex: 1,
         }}
       >
         {progress.visible ? <ReadProgress value={progress.value} /> : <ReadProgress value={null} />}

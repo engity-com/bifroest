@@ -12,6 +12,7 @@
   outline-offset: 3px;
 }
 .recording-video--dark { --recording-background: #101820; }
+.recording-loading { width: min(90%, 28rem); }
 .recording-video:fullscreen {
   width: 100vw;
   height: 100dvh;

@@ -1,6 +1,5 @@
 import CancelIcon from '@mui/icons-material/Cancel';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import { IconButton } from '@mui/material';
+import { IconButton, Tooltip } from '@mui/material';
 import {
   type Ref,
   useEffect,
@@ -17,13 +16,22 @@ import { RememberMeError } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { useAdminDetail } from '../ui/admin-navigation';
 import { reportUiError } from '../ui/error-report';
+import { VerificationResultButton } from '../ui/GridWork';
 import { LicenseIcon } from '../ui/LicenseIcon';
 import { relationFlow } from '../ui/ManagementJump';
 import type { ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
-import { Alert, Button, Checkbox, Modal, PasswordInput, Select, TextInput } from '../ui/material';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Modal,
+  PasswordInput,
+  Select,
+  TextInput,
+  useComputedColorScheme,
+} from '../ui/material';
 import { type Message, t } from '../ui/messages';
-import { PrivateDetailsButton } from '../ui/PrivateDetailsButton';
 import { profileResetEvent } from '../ui/profile-reset';
 import { ReadProgress } from '../ui/ReadProgress';
 import { readLocalBytes } from '../wasm/local-file';
@@ -49,6 +57,7 @@ import { verifiedRecordingContext } from './recording-flow';
 import { useArtifactSecrets } from './session-secrets';
 import { VerificationDialog } from './VerificationDialog';
 import { type EvidenceKey, verifyArtifact } from './verify';
+import './recording-player.css';
 
 type Phase = 'downloading' | 'inspecting' | 'verifying';
 export interface ArtifactPanelProps {
@@ -79,6 +88,7 @@ export interface ArtifactEvidenceState {
   hasGrid: boolean;
   received: boolean;
   status: string | undefined;
+  result?: 'success' | 'failure' | undefined;
 }
 type UsedExpectation = { enabled: boolean; producer: string; source: 'reported' | 'user' };
 function failure(error: unknown): Message {
@@ -127,6 +137,7 @@ export function ArtifactEvidencePanel({
   onEvidenceState,
   onResultReady,
 }: ArtifactEvidencePanelProps) {
+  const palette = useComputedColorScheme('light');
   const auditView = useAuditView();
   const managed = !!controlRef;
   const secrets = useArtifactSecrets(access);
@@ -347,9 +358,7 @@ export function ArtifactEvidencePanel({
         );
       }
     } finally {
-      if (managed) {
-        clearInputs();
-      }
+      clearInputs();
       if (operation.current === controller) {
         operation.current = null;
         setPhase(null);
@@ -518,6 +527,11 @@ export function ArtifactEvidencePanel({
         throw new EvidenceError('cancelled');
       }
       setReceived(image);
+      // Opening a recording only downloads bytes. Header inspection itself is
+      // an integrity check and must also wait for the explicit verify action.
+      if (request.kind === 'recording' && !managed) {
+        return;
+      }
       stage('inspecting');
       const header = await inspectProtection(image, signal, scope, report);
       if (!current(token, signal)) {
@@ -727,7 +741,7 @@ export function ArtifactEvidencePanel({
       );
       return;
     }
-    const selectionKey = JSON.stringify([key, route.flow]);
+    const selectionKey = JSON.stringify([key, route.flow, route.sessionId]);
     if (consumedRoute.current === key && opened !== null) {
       if (consumedSelection.current !== selectionKey) {
         consumedSelection.current = selectionKey;
@@ -737,10 +751,11 @@ export function ArtifactEvidencePanel({
           !(
             verified?.metadata.validation === 'private' &&
             recordingFlow &&
-            recordingFlow === route.flow
+            recordingFlow === route.flow &&
+            (!route.sessionId || recordingSession === route.sessionId)
           )
         ) {
-          void recheck();
+          resetResult();
         }
       }
       return;
@@ -805,10 +820,9 @@ export function ArtifactEvidencePanel({
   const metadata = verified?.metadata;
   const flowMismatch = !!(
     navigation &&
-    route?.flow &&
-    recordingFlow &&
     verified?.metadata.validation === 'private' &&
-    route.flow !== recordingFlow
+    ((route?.flow && recordingFlow && route.flow !== recordingFlow) ||
+      (route?.sessionId && route.sessionId !== recordingSession))
   );
   const success = verified !== null && !flowMismatch;
   const keyNeeded = level === 'private' && encrypted && !cached && !candidate;
@@ -848,13 +862,30 @@ export function ArtifactEvidencePanel({
       ),
       received: received !== null,
       status: stateStatus,
+      result:
+        notice && failedStage !== null && notice !== 'artifactCancelled'
+          ? 'failure'
+          : success
+            ? 'success'
+            : undefined,
     });
-  }, [onEvidenceState, phase, progress, verified, metadata, received, stateStatus]);
+  }, [
+    onEvidenceState,
+    phase,
+    progress,
+    verified,
+    metadata,
+    received,
+    stateStatus,
+    notice,
+    failedStage,
+    success,
+  ]);
   const appliedSensitive = useRef(effectiveSensitive);
   const applySensitive = useEffectEvent(() => {
     if (appliedSensitive.current !== effectiveSensitive) {
       appliedSensitive.current = effectiveSensitive;
-      if (received !== null && operation.current === null) {
+      if (view === 'auditlogs' && received !== null && operation.current === null) {
         if (!managed || auditView?.local) {
           void recheck();
         } else {
@@ -898,6 +929,39 @@ export function ArtifactEvidencePanel({
       }}
     />
   );
+  const verificationControls = (
+    <>
+      {(success || notice || flowMismatch) && (
+        <VerificationResultButton
+          result={success && !notice ? 'success' : 'failure'}
+          disabled={locked}
+          onClick={() => setDetails(true)}
+        />
+      )}
+      <Tooltip title={t(phase ? 'artifactCancel' : 'verifyOpen')}>
+        <span>
+          <IconButton
+            color="inherit"
+            aria-label={t(phase ? 'artifactCancel' : 'verifyOpen')}
+            disabled={disabled || (!phase && received === null)}
+            onClick={() => {
+              if (phase) {
+                operation.current?.abort();
+                clearInputs();
+              } else if (protection !== null && !keyNeeded) {
+                void recheck();
+              } else {
+                clearInputs();
+                setOptionsOpen(true);
+              }
+            }}
+          >
+            {phase ? <CancelIcon /> : <LicenseIcon />}
+          </IconButton>
+        </span>
+      </Tooltip>
+    </>
+  );
   return (
     <section
       className="stack artifact-panel"
@@ -920,48 +984,7 @@ export function ArtifactEvidencePanel({
           ]}
         />
       )}
-      {opened && !auditEvent && !managed && (
-        <div className="section-heading" ref={heading} tabIndex={-1}>
-          {opened && (
-            <div className="actions">
-              <Button
-                variant="subtle"
-                onClick={() => setDetails(true)}
-                aria-label={t('recordingVerificationDetails')}
-              >
-                {success ? (
-                  <CheckCircleIcon color="success" />
-                ) : notice || flowMismatch ? (
-                  <CancelIcon color="error" />
-                ) : null}
-                {t(
-                  success
-                    ? metadata?.validation === 'outer'
-                      ? 'artifactOuterVerified'
-                      : used?.enabled && used.source === 'user'
-                        ? 'artifactVerificationOK'
-                        : 'artifactVerificationUnpinned'
-                    : notice || flowMismatch
-                      ? 'artifactVerificationError'
-                      : keyNeeded
-                        ? 'artifactKeyNeeded'
-                        : 'recordingVerificationDetails',
-                )}
-              </Button>
-              <IconButton
-                aria-label={t('verifyOpen')}
-                disabled={locked}
-                onClick={() => {
-                  clearInputs();
-                  setOptionsOpen(true);
-                }}
-              >
-                <LicenseIcon />
-              </IconButton>
-            </div>
-          )}
-        </div>
-      )}
+      {opened && !auditEvent && !managed && <div ref={heading} tabIndex={-1} />}
       <div hidden={opened !== null}>
         {view === 'recordings' ? (
           <ArtifactCatalog
@@ -998,109 +1021,39 @@ export function ArtifactEvidencePanel({
       {opened !== null && (
         <>
           {flowMismatch && <Alert color="red">{t('artifactFlowMismatch')}</Alert>}
-          {phase && !managed && (
-            <div className="stack">
-              <span>
-                {t(
-                  phase === 'downloading'
-                    ? 'recordingOpening'
-                    : phase === 'inspecting'
-                      ? 'artifactInspecting'
-                      : 'recordingVerifying',
-                )}
-              </span>
-              <ReadProgress
-                value={progress}
-                onCancel={() => {
-                  operation.current?.abort();
-                  clearInputs();
-                }}
-                cancelLabel="artifactCancel"
-              />
-            </div>
-          )}
-          {notice && !managed && (
-            <Alert color="red" role="status">
-              {t(notice)}{' '}
-              <Button variant="subtle" onClick={() => setDetails(true)}>
-                {t('managementDetails')}
-              </Button>
-              {received === null && (
-                <Button
-                  disabled={locked || remoteDisabled}
-                  onClick={() => {
-                    void open(opened, selection ?? undefined);
-                  }}
-                >
-                  {t('recordingRetryOpen')}
-                </Button>
-              )}
-            </Alert>
-          )}
+          {!managed &&
+            view === 'recordings' &&
+            !(success && verified?.output && metadata?.outputFormat === 'cast') && (
+              <section
+                className={`recording-video${palette === 'dark' ? ' recording-video--dark' : ''}`}
+                aria-label={t('playbackVideo')}
+                aria-busy={phase !== null}
+              >
+                <div className="recording-overlay">
+                  {phase ? (
+                    <div className="stack recording-loading">
+                      <span>
+                        {t(
+                          phase === 'downloading'
+                            ? 'recordingOpening'
+                            : phase === 'inspecting'
+                              ? 'artifactInspecting'
+                              : 'recordingVerifying',
+                        )}
+                      </span>
+                      <ReadProgress value={progress} />
+                    </div>
+                  ) : (
+                    <span>{t('playbackVerificationRequired')}</span>
+                  )}
+                </div>
+                <div className="recording-controls">
+                  <div className="recording-control-row">{verificationControls}</div>
+                </div>
+              </section>
+            )}
           {received && (
             <>
-              {!managed &&
-                !optionsOpen &&
-                (verified === null || candidate) &&
-                level === 'private' &&
-                encrypted && (
-                  <form
-                    ref={form}
-                    method="dialog"
-                    className="stack artifact-key"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void recheck();
-                    }}
-                  >
-                    <p>{t(cached && !candidate ? 'artifactUsingCachedKey' : 'artifactKeyLocal')}</p>
-                    <label htmlFor={inputID}>{t('artifactKeyFile')}</label>
-                    <input
-                      key={keyRevision}
-                      ref={keyInput}
-                      id={inputID}
-                      name="evidence-private"
-                      type="file"
-                      disabled={locked}
-                      onChange={(event) => {
-                        const chosen = (event.currentTarget.files?.length ?? 0) > 0;
-                        setCandidate(chosen);
-                        const password = form.current?.querySelector<HTMLInputElement>(
-                          '[name="evidence-passphrase"]',
-                        );
-                        if (password) {
-                          password.value = '';
-                        }
-                      }}
-                    />
-                    {candidate && (
-                      <PasswordInput
-                        id={passwordID}
-                        name="evidence-passphrase"
-                        label={t('artifactPassphrase')}
-                        autoComplete="off"
-                        disabled={locked}
-                      />
-                    )}
-                    <div className="actions">
-                      <Button type="submit" disabled={locked || !ready}>
-                        {t('artifactUnlock')}
-                      </Button>
-                      {cached && (
-                        <Button
-                          variant="subtle"
-                          disabled={locked}
-                          onClick={() => {
-                            secrets.clear();
-                            setCacheRevision((value) => value + 1);
-                          }}
-                        >
-                          {t('artifactForgetKey')}
-                        </Button>
-                      )}
-                    </div>
-                  </form>
-                )}
               {!flowMismatch &&
                 verified?.output &&
                 metadata?.kind === 'recording' &&
@@ -1115,6 +1068,7 @@ export function ArtifactEvidencePanel({
                     disabled={disabled}
                     active={active && (!managed || auditView?.local === true)}
                     autoPrepare
+                    verificationControls={verificationControls}
                   />
                 )}
               {verified?.output &&
@@ -1222,9 +1176,6 @@ export function ArtifactEvidencePanel({
             {t(notice)}
           </Alert>
         )}
-        {managed && (route?.flow || route?.sessionId) && !effectiveSensitive && (
-          <Alert color="blue">{t('auditScopeNeedsPrivateDetails')}</Alert>
-        )}
         <Select
           label={t('artifactLevel')}
           value={level}
@@ -1278,16 +1229,7 @@ export function ArtifactEvidencePanel({
         {producerSource === 'reported' && (
           <p className="caption subtle">{t('artifactSuggestedSigner')}</p>
         )}
-        {view === 'auditlogs' && (
-          <PrivateDetailsButton
-            checked={effectiveSensitive}
-            disabled={locked}
-            onChange={() =>
-              auditView ? auditView.toggleSensitive() : setSensitive((value) => !value)
-            }
-          />
-        )}
-        {(managed || (optionsOpen && encrypted && (verified === null || candidate))) &&
+        {(managed || (optionsOpen && (protection === null || encrypted))) &&
           level === 'private' && (
             <form
               ref={form}
@@ -1323,16 +1265,6 @@ export function ArtifactEvidencePanel({
                   disabled={locked}
                 />
               )}
-              {!managed && (
-                <Button
-                  disabled={locked || !ready}
-                  onClick={() => {
-                    void recheck();
-                  }}
-                >
-                  {t('artifactUnlock')}
-                </Button>
-              )}
             </form>
           )}
         {encrypted && verified !== null && (
@@ -1354,6 +1286,30 @@ export function ArtifactEvidencePanel({
       >
         <div className="stack">
           {notice && <Alert color="red">{t(notice)}</Alert>}
+          {received && (
+            <Button
+              variant="default"
+              disabled={locked}
+              onClick={() => {
+                setDetails(false);
+                clearInputs();
+                setOptionsOpen(true);
+              }}
+            >
+              {t('recordingChangeVerification')}
+            </Button>
+          )}
+          {notice && received === null && opened && (
+            <Button
+              disabled={locked || remoteDisabled}
+              onClick={() => {
+                setDetails(false);
+                void open(opened, selection ?? undefined);
+              }}
+            >
+              {t('recordingRetryOpen')}
+            </Button>
+          )}
           <dl className="metadata-grid">
             <dt>{t('artifactDiagnosticCode')}</dt>
             <dd>{errorCode || '—'}</dd>

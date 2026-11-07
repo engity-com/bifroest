@@ -162,10 +162,10 @@ A second management tab requires a separate explicit sign-in; **Duplicate**
 opens sign-in rather than sharing another tab's admitted channel.
 
 **Sessions** loads its first page when opened. Use the Data Grid's **Filters**
-button or a column menu to choose a field, operator and value. The quick search,
-sorting and pagination also use the grid's native controls. Filters apply on the
+button or a column menu to choose a field, operator and value. Sorting and
+pagination also use the grid's native controls. There is no quick-search control. Filters apply on the
 server before pagination, not just to the visible page. The Community grid
-supports one column filter at a time, in addition to quick search. Then open a
+supports one column filter at a time. Then open a
 session's details by clicking a row or the magnifier in its last **Actions**
 column. **Disconnect connections**
 keeps the session reusable; **End session** revokes it and runs cleanup. Both
@@ -180,9 +180,12 @@ without a release version use the unversioned public documentation. Unknown
 features remain text. A short-version-only grant still cannot obtain long build
 metadata.
 
-The grids have native refresh controls, disabled during a read, and retain the
-same grid while its custom loading overlay displays the phase, counts and progress
-bar. Outside audit events, the eye switches between core fields and available
+The refresh button becomes the cancel button during a read, without an additional
+button or empty slot. The same grid displays placeholders instead of data while
+its loading overlay shows phase, counts and progress. Only the corresponding
+cancel button remains operable; rows, filters, sorting and paging are locked.
+The eye always shows the next action, with a tooltip describing current visibility.
+Outside audit events, it switches between core fields and available
 details; this presentation preference is saved for the origin. It does not grant
 access to withheld fields, credentials or decrypted content.
 Returning to an otherwise unchanged loaded view does not repeat its reads.
@@ -207,18 +210,20 @@ source; the current page and filters do not narrow it. Recording full
 verification reads all contents afresh, not a stamp-only cache. Its result is a
 server report, not independent browser evidence; encrypted recordings can have
 their envelopes checked without claiming private-content verification. The normal
-list remains usable while this runs. Per-artifact limits still apply; use the
+list is locked behind placeholders while this runs. Per-artifact limits still apply; use the
 [CLI](../reference/cli/verification.md) for larger or independent forensic checks.
 
 While verification runs, the initiating toolbar action becomes a `cancel` icon.
 The custom overlay stays inside that DataGrid and shows the actual work phase and
-counts; unknown totals use an indeterminate bar. Retained rows, filters and paging
-remain usable. There is no separate page-level spinner or cancellation block.
+counts; unknown totals use an indeterminate bar. Only cancellation remains usable.
+After completion, a green check or red cross beside the verification action opens
+a compact result dialog. Returning to server data hides the result icon.
+There is no separate page-level spinner or cancellation block.
 
 Opening an auditlog normally loads a small, server-reported event page, **not** a
 download or complete verification of the journal. The overview is explicitly
-labelled as such. Its **Include private details** eye is an explicit opt-in for
-this actor/source, shared by the grid and verification dialog. It includes private
+labelled as such. Its eye is an explicit opt-in for
+this actor/source, controlled only in the grid, not duplicated in the verification dialog. It includes private
 fields in clear server reads and in locally checked audit exports, without a
 second checkbox. A saved origin-wide display preference never activates this
 opt-in. Encrypted private fields stay unavailable to the server; the same eye can
@@ -232,7 +237,7 @@ downloading a fresh source snapshot from checking the downloaded snapshot again.
 Only a completed local verification and bounded event index may publish a new
 local grid. Its toolbar action then becomes `123`, **Direct data from the server**:
 that action returns to the operational view, not a new verification. Provenance
-and signer trust remain visible; there are no separate Overview/Local verification
+and signer trust are available in the result dialog; there are no separate Overview/Local verification
 buttons or options disclosure below the grid.
 
 Audit downloads show transfer progress, followed by local integrity/private-event
@@ -248,13 +253,17 @@ Counts are provisional status, not a partial result or successful completion.
 The grid stays loading until its complete, policy-projected page is ready. Only
 the explicitly selected local audit view claims completed local verification.
 Failed or cancelled page reads discard provisional rows/cursors. A separate full
-check leaves the prior overview available and never adopts an incomplete new
+check retains the prior overview behind placeholders and never adopts an incomplete new
 verification result. Server logs retain the actual failure and, for WebSocket operations,
 its correlated request ID without exposing private causes in the browser.
 
 **Recordings** and **Audit logs** are separate navigation entries and keep their
-own selections and results. Opening a Recording prepares local playback after
-verification; opening an audit log shows the operational event overview, not an
+own selections and results. Opening a Recording downloads bytes but does not
+inspect signatures or verify contents. Playback stays locked until the user
+explicitly starts verification and it succeeds. Loading, decrypting and verifying
+keep the video box visible with status and progress. The playbar shows the result
+as an icon; its details are available only in a modal. Clicking verification again
+runs a fresh local check, rather than switching views. Opening an audit log shows the operational event overview, not an
 inventory of raw files. Explicit local verification on both pages uses the same
 tab-local decryption-key cache described in
 [HTTP security and limits](../reference/connection/http/security.md#management-and-evidence).

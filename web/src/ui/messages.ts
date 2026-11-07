@@ -307,8 +307,7 @@ export const messages = {
   artifactCheckAgain: 'Check again',
   artifactVerificationOptions: 'Verification options',
   artifactCheckSigner: 'Check the signing identity against this ID',
-  artifactSuggestedSigner:
-    'Signing ID suggested by the signed file header; not independently confirmed. You may replace it with an independently obtained ID.',
+  artifactSuggestedSigner: 'Signing identity not independently confirmed.',
   artifactSignerNotPinned: 'No independent signing ID was selected',
   artifactDiagnosticCode: 'Diagnostic code',
   artifactDiagnosticStage: 'Stage',
@@ -330,6 +329,13 @@ export const messages = {
     'Local playback preparation could not verify the exact Cast/recording ID/independent producer. No playback data was released.',
   playbackUnavailable:
     'Local playback preparation or renderer initialization failed. No complete playback was claimed.',
+  adminGridHideDetails: 'Hide sensitive data – currently visible',
+  adminGridShowDetails: 'Show sensitive data – currently hidden',
+  verificationSelectedSourceOnly: 'Only this source will be checked.',
+  verificationServerReported: 'Server-reported; not independently verified',
+  verificationCompleted: 'Completed',
+  verificationCheckedRecordings: 'Checked recordings',
+  playbackVerificationRequired: 'Verify to enable playback.',
   artifactIntroduction:
     'Find a recording, open it and check its signing identity before playback. Recordings and keys stay in this tab.',
   artifactCatalog: 'Artifact catalog (server metadata)',
@@ -361,8 +367,7 @@ export const messages = {
   locallyChecked: 'Locally checked · signer trust is separate',
   privateDetails: 'Include private details',
   auditPrivateNotIncluded: 'Not included',
-  auditPrivateNotice:
-    'Private context is not included in this view. Use the eye in the list or verification options to include it.',
+  auditPrivateNotice: 'Private context is hidden. Use the eye in the list to include it.',
   verifyAllTitle: 'Verify the entire selected source?',
   verifyAllRecordingsScope:
     'This reads every sealed recording in the selected source, not only this page or its filters. It runs on the server: clear contents are checked fully; encrypted recordings have only their signed envelopes checked. No decryption keys are uploaded. Recordings and workloads are unchanged. Use the CLI for larger or independent full archive checks.',
@@ -436,7 +441,8 @@ export const messages = {
   artifactAudit: 'Audit inventory',
   artifactAuditlog: 'Auditlog Name',
   artifactEventID: 'Event ID',
-  artifactFlowMismatch: 'The verified recording does not belong to the flow selected in this URL.',
+  artifactFlowMismatch:
+    'The verified recording does not match the flow/session selected in this URL.',
   artifactRecordingID: 'Recording ID',
   artifactDownload: 'Download into this tab',
   artifactDownloading: 'Receiving artifact; waiting for complete audited transfer…',
@@ -473,8 +479,7 @@ export const messages = {
   artifactPrefix: 'Captured signed prefix (not the latest head)',
   artifactPrepareExport: 'Prepare a verified local export after full success',
   artifactSensitive: 'Include sensitive fields in audit export (default is redacted)',
-  artifactKeyLocal:
-    'Select an Ed25519/RSA PEM/OpenSSH recipient key after choosing expectations. Keys (maximum 64 KiB) and passphrases stay in this tab and are cleared from these inputs on submit/change/cancel. Reselect for each attempt. RememberMe never saves them; physical memory erasure is not guaranteed.',
+  artifactKeyLocal: 'Local PEM/OpenSSH key, up to 64 KiB. Never uploaded.',
   artifactKeyFile: 'Decryption key file (local only)',
   artifactPassphrase: 'Decryption passphrase (optional, local only)',
   artifactVerify: 'Check and open',

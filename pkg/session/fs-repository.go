@@ -592,8 +592,8 @@ func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.Flow
 			byId, hasById := byFlow[id]
 			if hasById {
 				// Tell all active interceptors, that nothing is allowed from now on.
-				byId.disposed.Store(true)
-				disposed = byId.active.Load() > 0
+				alreadyDisposed := byId.disposed.Swap(true)
+				disposed = !alreadyDisposed && byId.active.Load() > 0
 			}
 		}
 	}
@@ -610,13 +610,12 @@ func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.Flow
 		return fail(err)
 	}
 
-	if sess.info.VState == StateDisposed {
-		disposed = true
-	} else {
+	if sess.info.VState != StateDisposed {
 		sess.info.VState = StateDisposed
 		if err := sess.info.save(); err != nil {
 			return fail(err)
 		}
+		disposed = true
 	}
 
 	return disposed, nil

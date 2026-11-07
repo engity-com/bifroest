@@ -100,45 +100,43 @@ export function AdminDataGrid<R extends GridValidRowModel>({
 }) {
   const inheritedWork = useContext(GridWorkContext);
   const gridWork = work ?? inheritedWork;
+  const loading = busy || gridWork?.mode === 'cancel';
+  const container = useRef<HTMLDivElement>(null);
   const apiRef = useGridApiRef();
   useLayoutEffect(() => {
-    if (!active || disabled) {
-      pending.current = null;
+    if (!active || disabled || loading) {
       apiRef.current?.hideFilterPanel?.();
       apiRef.current?.hideColumnMenu?.();
     }
-  }, [active, disabled, apiRef]);
+    const main = container.current?.querySelector<HTMLElement>('.MuiDataGrid-main');
+    if (main) {
+      main.inert = disabled || !active;
+    }
+    // Leave the progress live region accessible. Only the data, headers,
+    // scrollbars and footer become inert during an owned operation.
+    for (const element of container.current?.querySelectorAll<HTMLElement>(
+      '.MuiDataGrid-columnHeaders, .MuiDataGrid-virtualScrollerRenderZone, .MuiDataGrid-footerContainer, .MuiDataGrid-scrollbar',
+    ) ?? []) {
+      element.inert = loading || disabled || !active;
+    }
+  }, [active, disabled, loading, apiRef]);
   const [model, setModel] = useState<GridFilterModel>(() => gridModel(query, columnFilter));
   const [filterInvalid, setFilterInvalid] = useState(false);
   const currentColumns = useRef(columns);
   currentColumns.current = columns;
-  const pending = useRef<GridSearch | null>(null);
-  const send = useRef((value: GridSearch) =>
-    onSearch ? onSearch(value.query, value.filter) : onQuery(value.query),
-  );
-  send.current = (value) => (onSearch ? onSearch(value.query, value.filter) : onQuery(value.query));
   const sent = useRef(JSON.stringify({ query, filter: columnFilter }));
   useEffect(() => {
-    if (pending.current === null) {
-      sent.current = JSON.stringify({ query, filter: columnFilter });
-      setModel((current) => {
-        try {
-          return JSON.stringify(gridSearch(current, currentColumns.current)) === sent.current
-            ? current
-            : gridModel(query, columnFilter);
-        } catch {
-          return current;
-        }
-      });
-    }
+    sent.current = JSON.stringify({ query, filter: columnFilter });
+    setModel((current) => {
+      try {
+        return JSON.stringify(gridSearch(current, currentColumns.current)) === sent.current
+          ? current
+          : gridModel(query, columnFilter);
+      } catch {
+        return current;
+      }
+    });
   }, [query, columnFilter]);
-  useEffect(() => {
-    if (!busy && !disabled && active && pending.current !== null) {
-      const next = pending.current;
-      pending.current = null;
-      send.current(next);
-    }
-  }, [busy, disabled, active]);
   const order: GridSortModel = useMemo(
     () => [{ field: sortField, sort: sortDirection }],
     [sortField, sortDirection],
@@ -155,7 +153,7 @@ export function AdminDataGrid<R extends GridValidRowModel>({
         value={{
           active,
           disabled,
-          busy,
+          busy: loading,
           filterable: !!onSearch,
           onRefresh,
           refreshLabel,
@@ -166,14 +164,14 @@ export function AdminDataGrid<R extends GridValidRowModel>({
           onCancelRead,
         }}
       >
-        <div className="admin-data-grid">
+        <div className="admin-data-grid" ref={container}>
           <DataGrid<R>
             apiRef={apiRef}
             nonce={
               document.querySelector<HTMLMetaElement>('meta[name="bifroest-nonce"]')?.content ?? ''
             }
             aria-label={label}
-            aria-busy={busy}
+            aria-busy={loading}
             rows={rows}
             columns={[
               ...columns.filter((column) => column.field !== actionField),
@@ -221,13 +219,13 @@ export function AdminDataGrid<R extends GridValidRowModel>({
               sortable: column.field === sortField,
             }))}
             {...(getRowId ? { getRowId } : {})}
-            loading={busy || gridWork?.mode === 'cancel'}
+            loading={loading}
             localeText={resultAvailable ? {} : { noRowsLabel: t('scanNoResult') }}
             hideFooterPagination={!resultAvailable}
             onRowClick={(params, event) => {
               if (
                 !disabled &&
-                !busy &&
+                !loading &&
                 active &&
                 canOpen?.(params.row) !== false &&
                 !(event.target as Element).closest('button,a,input,[role="button"]')
@@ -241,7 +239,7 @@ export function AdminDataGrid<R extends GridValidRowModel>({
                 params.field !== 'actions' &&
                 onOpen &&
                 !disabled &&
-                !busy &&
+                !loading &&
                 active &&
                 canOpen?.(params.row) !== false
               ) {
@@ -259,10 +257,9 @@ export function AdminDataGrid<R extends GridValidRowModel>({
             showToolbar
             slots={{ toolbar: AdminGridToolbar, loadingOverlay: GridLoadingOverlay }}
             slotProps={{
-              main: { 'aria-busy': busy },
-              // Skeleton mode hides the virtualized rows even with a custom
-              // slot. Verification must leave retained rows usable.
-              loadingOverlay: { variant: 'linear-progress', noRowsVariant: 'linear-progress' },
+              basePagination: { disabled: loading || disabled || !active },
+              main: { 'aria-busy': loading },
+              loadingOverlay: { variant: 'skeleton', noRowsVariant: 'skeleton' },
               filterPanel: {
                 filterFormProps: {
                   valueInputProps: {
@@ -294,13 +291,13 @@ export function AdminDataGrid<R extends GridValidRowModel>({
             }
             pageSizeOptions={[20]}
             onPaginationModelChange={(model) => {
-              if (active && !disabled && !busy && resultAvailable && model.page !== page) {
+              if (active && !disabled && !loading && resultAvailable && model.page !== page) {
                 onPage(model.page);
               }
             }}
             filterModel={model}
             onFilterModelChange={(nextModel) => {
-              if (disabled || !active) {
+              if (disabled || !active || loading) {
                 return;
               }
               setModel(nextModel);
@@ -315,10 +312,10 @@ export function AdminDataGrid<R extends GridValidRowModel>({
               const key = JSON.stringify(next);
               if (key !== sent.current) {
                 sent.current = key;
-                if (busy) {
-                  pending.current = next;
+                if (onSearch) {
+                  onSearch(next.query, next.filter);
                 } else {
-                  send.current(next);
+                  onQuery(next.query);
                 }
               }
             }}
@@ -329,7 +326,7 @@ export function AdminDataGrid<R extends GridValidRowModel>({
               if (
                 active &&
                 !disabled &&
-                !busy &&
+                !loading &&
                 (next === 'asc' || next === 'desc') &&
                 next !== sortDirection
               ) {

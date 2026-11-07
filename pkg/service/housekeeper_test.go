@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/echocat/slf4g"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/audit"
@@ -44,6 +45,30 @@ func TestHouseKeeperFinalRetentionDeleteWaitsForSuccessfulAuthorizationDispose(t
 	require.Equal(t, audit.EventNameHousekeepingSessionDisposeCompleted, events[1].Name)
 	require.Equal(t, audit.EventOutcomeFailure, events[1].Outcome)
 	require.Equal(t, events[0].OperationId, events[1].OperationId)
+}
+
+func TestHouseKeeperDisposalRemainsIdempotentWithPersistedSession(t *testing.T) {
+	ctx := t.Context()
+	conf := &configuration.SessionFs{}
+	require.NoError(t, conf.SetDefaults())
+	conf.Storage = t.TempDir()
+	repository, err := session.NewFsRepository(ctx, conf)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	sess, err := repository.Create(ctx, "current", associationAdapterRemote("alice"), nil)
+	require.NoError(t, err)
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+	logger := log.GetLogger("housekeeping-idempotence-test")
+	changed, err := hk.dispose(ctx, logger, sess, false, nil)
+	require.NoError(t, err)
+	require.True(t, changed)
+	changed, err = hk.dispose(ctx, logger, sess, false, nil)
+	require.NoError(t, err)
+	require.False(t, changed)
+	// The housekeeping pass still attempts outstanding environment cleanup.
+	require.Equal(t, 2, hk.service.environments.(*houseKeeperTestEnvironmentRepository).findCalls)
+	_, err = repository.FindBy(ctx, "current", sess.Id(), nil)
+	require.NoError(t, err)
 }
 
 func TestHouseKeeperClearsPermanentlyUnusableAuthorizationBeforeRetentionDelete(t *testing.T) {

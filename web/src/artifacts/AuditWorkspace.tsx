@@ -62,6 +62,7 @@ export function AuditWorkspace({
     }
   };
   const [mode, setMode] = useState<'overview' | 'local'>('overview');
+  const [resultVisible, setResultVisible] = useState(true);
   const evidence = useRef<ArtifactEvidenceControl | null>(null);
   const [state, setState] = useState<ArtifactEvidenceState>({
     phase: null,
@@ -85,6 +86,7 @@ export function AuditWorkspace({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Actor/source boundaries retire their verification controller and local result rather than rebinding it.
   useEffect(() => {
     setMode('overview');
+    setResultVisible(true);
     setState({ phase: null, progress: null, hasGrid: false, received: false, status: undefined });
   }, [access, source]);
   // Only an explicit verification's completed result may switch the source.
@@ -92,17 +94,25 @@ export function AuditWorkspace({
   const showLocal = useCallback(() => setMode('local'), []);
   const local = mode === 'local' && state.hasGrid;
   const work: GridWork = {
-    mode: state.phase !== null ? 'cancel' : local ? 'server' : 'verify',
+    mode:
+      state.phase !== null
+        ? 'cancel'
+        : local || (resultVisible && state.result)
+          ? 'server'
+          : 'verify',
     disabled: disabled || !active || (!local && remoteDisabled && !state.received),
     progress: state.progress,
     status: state.status,
+    result: resultVisible && state.phase === null ? state.result : undefined,
     onStatusClick: () => evidence.current?.showDetails(),
     onClick: () => {
       if (state.phase !== null) {
         evidence.current?.cancel();
-      } else if (local) {
+      } else if (local || (resultVisible && state.result)) {
         setMode('overview');
+        setResultVisible(false);
       } else {
+        setResultVisible(true);
         evidence.current?.openOptions();
       }
     },

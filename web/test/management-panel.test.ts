@@ -252,6 +252,8 @@ describe('management view read intent and retained ownership', () => {
     expect(container.querySelector('.session-details')).toBeNull();
     expect(container.textContent).not.toContain('verified-issuer');
     expect(container.textContent).not.toContain('Bifröst test');
+    expect(document.querySelector('[role="dialog"] input')).toBeNull();
+    await openSessionTarget(container);
     expect(document.querySelector<HTMLInputElement>('[role="dialog"] input')?.value).toBe('');
     expect(next.api.managementSessions).toHaveBeenCalledTimes(1);
   });

@@ -159,11 +159,18 @@ export async function exerciseManagementForced(page, file, logout) {
     .getByRole('textbox', { name: 'Recording ID', exact: true })
     .fill('34e34ab8-7457-4d88-a5e4-c57791775c3a');
   await selector.getByRole('button', { name: 'Go', exact: true }).click();
-  await artifacts
+  await artifacts.locator('.recording-video [data-verification-result="failure"]').click();
+  const denied = page.getByRole('dialog', {
+    name: 'Signature, source and export details',
+    exact: true,
+  });
+  await denied
     .getByText('This sign-in is not permitted to open this recording or audit log.', {
       exact: false,
     })
     .waitFor();
+  await denied.getByRole('button', { name: 'Close', exact: true }).click();
+  await denied.waitFor({ state: 'hidden' });
   assert.equal(
     await artifacts.getByRole('heading', { name: 'Check the recording', exact: true }).count(),
     0,
@@ -293,12 +300,18 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     'opening the source never implicitly transfers its journal',
   );
   await confirmFullVerification(page, artifacts, 'default');
-  await artifacts
-    .getByRole('button', { name: 'Signature, source and export details', exact: true })
+  await artifacts.locator('[data-verification-result="failure"]:visible').click();
+  const denied = page.getByRole('dialog', {
+    name: 'Signature, source and export details',
+    exact: true,
+  });
+  await denied
     .getByText('This sign-in is not permitted to open this recording or audit log.', {
       exact: false,
     })
     .waitFor();
+  await denied.getByRole('button', { name: 'Close', exact: true }).click();
+  await denied.waitFor({ state: 'hidden' });
   assert.equal(calls.filter((path) => path.endsWith('/artifacts/audit')).length, 1);
   assert.equal(
     await artifacts
@@ -320,8 +333,11 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     await artifacts
       .getByRole('button', { name: 'Direct data from the server', exact: true })
       .count(),
-    0,
+    1,
   );
+  await artifacts.getByRole('button', { name: 'Direct data from the server', exact: true }).click();
+  assert.equal(await artifacts.locator('[data-verification-result="failure"]:visible').count(), 0);
+  assert.equal(calls.filter((path) => path.endsWith('/artifacts/audit')).length, 1);
   for (const secret of [
     'private audit directory',
     'private identity file',

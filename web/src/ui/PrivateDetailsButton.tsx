@@ -12,15 +12,15 @@ export function PrivateDetailsButton({
   onChange(): void;
 }) {
   return (
-    <Tooltip title={t('privateDetails')}>
+    <Tooltip title={t(checked ? 'adminGridHideDetails' : 'adminGridShowDetails')}>
       <span>
         <IconButton
-          aria-label={t('privateDetails')}
+          aria-label={t(checked ? 'adminGridHideDetails' : 'adminGridShowDetails')}
           aria-pressed={checked}
           disabled={disabled}
           onClick={onChange}
         >
-          {checked ? <VisibilityIcon /> : <VisibilityOffIcon />}
+          {checked ? <VisibilityOffIcon /> : <VisibilityIcon />}
         </IconButton>
       </span>
     </Tooltip>

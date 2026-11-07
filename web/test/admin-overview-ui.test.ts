@@ -151,7 +151,7 @@ it('opens audit events as a server overview without downloading or automatically
   expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledOnce();
   expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
   expect(WebAccess.prototype.managementVerifyRecordings).not.toHaveBeenCalled();
-  expect(host.textContent).toContain(t('auditOverviewWarning'));
+  expect(host.textContent).not.toContain(t('auditOverviewWarning'));
   expect(host.textContent).not.toContain('Integrity OK');
   await click(button(host, `${t('auditEventDetails')} ${id}`));
   await vi.waitFor(() => expect(host.querySelector('[aria-current="page"]')?.textContent).toBe(id));
@@ -204,17 +204,18 @@ it('starts a local full audit check only after confirmation and keeps the operat
   expect(host.querySelector(`[aria-label="${t('auditOverviewMode')}"]`)).toBeNull();
   expect(artifactSignal?.aborted).toBe(false);
   const before = vi.mocked(WebAccess.prototype.managementAuditEvents).mock.calls.length;
-  await click(button(host, t('auditRefreshEvents')));
-  await vi.waitFor(() =>
-    expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledTimes(before + 1),
+  expect(button(host, t('auditRefreshEvents')).disabled).toBe(true);
+  expect(host.querySelector<HTMLElement>('.MuiDataGrid-virtualScrollerRenderZone')?.inert).toBe(
+    true,
   );
+  expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledTimes(before);
   expect(artifactSignal?.aborted).toBe(false);
   await click(button(host, t('verifyAllCancel')));
   await vi.waitFor(() => expect(artifactSignal?.aborted).toBe(true));
   expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledOnce();
 });
 
-it('keeps recording paging independent of its explicit whole-source verification job', async () => {
+it('locks recording paging during explicit verification and restores it after cancellation', async () => {
   restoreViewport = [window.innerWidth, window.innerHeight];
   await browserPage.viewport(1440, 900);
   vi.mocked(WebAccess.prototype.managementRecordings)
@@ -249,12 +250,19 @@ it('keeps recording paging independent of its explicit whole-source verification
   expect(vi.mocked(WebAccess.prototype.managementVerifyRecordings).mock.calls[0]?.[0]).toBe(
     'default',
   );
+  expect(button(host, 'Go to next page').disabled).toBe(true);
+  expect(host.querySelector<HTMLElement>('.MuiDataGrid-virtualScrollerRenderZone')?.inert).toBe(
+    true,
+  );
+  expect(signal?.aborted).toBe(false);
+  await click(button(host, t('verifyAllCancel')));
+  await vi.waitFor(() => expect(signal?.aborted).toBe(true));
   await act(async () => userEvent.click(button(host, 'Go to next page')));
   await vi.waitFor(() => expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledTimes(2));
   expect(vi.mocked(WebAccess.prototype.managementRecordings).mock.calls[1]?.[1]).toMatchObject({
     after: 'bmp1.next',
   });
-  expect(signal?.aborted).toBe(false);
+  expect(signal?.aborted).toBe(true);
   await vi.waitFor(() => expect(button(host, t('recordingRefresh')).disabled).toBe(false));
   const grid = browserPage.getByRole('grid', {
     name: `${t('recordingList')} · default`,
@@ -262,10 +270,59 @@ it('keeps recording paging independent of its explicit whole-source verification
   });
   await act(async () => userEvent.click(grid.getByRole('gridcell', { name: id, exact: true })));
   expect(onSelect).toHaveBeenCalledOnce();
-  expect(signal?.aborted).toBe(false);
-  await click(button(host, t('verifyAllCancel')));
-  await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+  expect(signal?.aborted).toBe(true);
 });
+
+it.each(['success', 'failure'] as const)(
+  'shows the %s recording verification result only as an icon and opens compact details on click',
+  async (outcome) => {
+    if (outcome === 'success') {
+      vi.mocked(WebAccess.prototype.managementVerifyRecordings).mockResolvedValue({
+        checked: 3,
+        full: 2,
+        outer: 1,
+        auditlog: 'default',
+        independent: false,
+      });
+    } else {
+      vi.mocked(WebAccess.prototype.managementVerifyRecordings).mockRejectedValue(
+        new RememberMeError('denied'),
+      );
+    }
+    const host = await mount(
+      createElement(ArtifactCatalog, {
+        access: access(),
+        active: true,
+        disabled: false,
+        onSelect: vi.fn(),
+      }),
+    );
+    await vi.waitFor(() => expect(button(host, t('verifyOpen')).disabled).toBe(false));
+    await confirmVerify(host);
+    await vi.waitFor(() =>
+      expect(host.querySelector(`[data-verification-result="${outcome}"]`)).not.toBeNull(),
+    );
+    const result = button(host, t('recordingVerificationDetails'));
+    expect(result.textContent).toBe('');
+    expect(result.closest('[role="toolbar"]')).not.toBeNull();
+    expect(host.querySelector('[role="toolbar"]')?.textContent).not.toContain(
+      t('verifyAllServerDone'),
+    );
+    await click(result);
+    const dialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((node) =>
+      node.checkVisibility({ visibilityProperty: true }),
+    );
+    expect(dialog?.querySelector('dl')?.textContent).toContain('default');
+    expect(dialog?.textContent).toContain(t('verificationServerReported'));
+    if (!dialog) {
+      throw new Error('Missing result dialog');
+    }
+    await click(button(dialog, t('close')));
+    await click(button(host, t('directServerData')));
+    expect(host.querySelector('[data-verification-result]')).toBeNull();
+    expect(WebAccess.prototype.managementVerifyRecordings).toHaveBeenCalledOnce();
+  },
+);
 
 it('keeps encrypted overview fields private and erases the owned view on profile reset without starting a new read', async () => {
   vi.mocked(WebAccess.prototype.managementAuditEvents).mockResolvedValue({
@@ -281,9 +338,10 @@ it('keeps encrypted overview fields private and erases the owned view on profile
     }),
   );
   await click(button(host, 'Open audit log default'));
-  await vi.waitFor(() => expect(host.textContent).toContain(t('auditOverviewEncrypted')));
+  await vi.waitFor(() => expect(WebAccess.prototype.managementAuditEvents).toHaveBeenCalledOnce());
+  expect(host.textContent).not.toContain(t('auditOverviewEncrypted'));
   expect(host.querySelector<HTMLInputElement>('input[type="checkbox"]')).toBeNull();
-  await click(button(host, t('privateDetails')));
+  await click(button(host, t('adminGridShowDetails')));
   expect(
     vi
       .mocked(WebAccess.prototype.managementAuditEvents)

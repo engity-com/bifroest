@@ -1,4 +1,4 @@
-import { act, createElement, StrictMode } from 'react';
+import { act, createElement, type ReactNode, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactEvidencePanel as ArtifactPanel } from '../src/artifacts/ArtifactPanel';
@@ -76,10 +76,12 @@ vi.mock('../src/artifacts/RecordingPlayer', async () => {
       autoPrepare,
       disabled,
       expected,
+      verificationControls,
     }: {
       autoPrepare: boolean;
       disabled: boolean;
       expected: { producer: string; allowUntrusted: boolean };
+      verificationControls?: ReactNode;
     }) => {
       useEffect(() => {
         players.mounted++;
@@ -88,11 +90,15 @@ vi.mock('../src/artifacts/RecordingPlayer', async () => {
           players.retired++;
         };
       }, [expected]);
-      return createElement('section', {
-        'aria-label': 'Fixture player',
-        'data-auto-prepare': autoPrepare,
-        'data-disabled': disabled,
-      });
+      return createElement(
+        'section',
+        {
+          'aria-label': 'Fixture player',
+          'data-auto-prepare': autoPrepare,
+          'data-disabled': disabled,
+        },
+        verificationControls,
+      );
     },
   };
 });
@@ -256,7 +262,9 @@ async function mount(selected = access()) {
 }
 function button(name: string, parent: ParentNode = document) {
   const node = [...parent.querySelectorAll<HTMLButtonElement>('button')].find(
-    (node) => node.textContent === name || node.getAttribute('aria-label') === name,
+    (node) =>
+      node.checkVisibility({ visibilityProperty: true }) &&
+      (node.textContent === name || node.getAttribute('aria-label') === name),
   );
   if (!node) {
     throw new Error(`Missing button ${name}`);
@@ -267,7 +275,13 @@ async function click(node: HTMLElement) {
   await act(async () => node.click());
 }
 async function options(parent: ParentNode = document) {
-  await click(button(t('verifyOpen'), parent));
+  await vi.waitFor(() => expect(button(t('verifyOpen'), parent).disabled).toBe(false));
+  if (parent.querySelector('[data-verification-result]')) {
+    await click(button(t('recordingVerificationDetails'), parent));
+    await click(button(t('recordingChangeVerification')));
+  } else {
+    await click(button(t('verifyOpen'), parent));
+  }
   await vi.waitFor(() =>
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
       t('artifactVerificationOptions'),
@@ -309,6 +323,12 @@ describe('usable local evidence without manual protection guesses', () => {
       expect.any(AbortSignal),
       expect.any(Function),
     );
+    expect(inspectProtection).not.toHaveBeenCalled();
+    expect(verifyArtifact).not.toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="Fixture player"]')).toBeNull();
+    expect(document.querySelector(`[aria-label="${t('playbackVideo')}"]`)).not.toBeNull();
+    await options();
+    await click(button(t('verifyStart')));
     expect(inspectProtection).toHaveBeenCalledOnce();
     expect(verifyArtifact).toHaveBeenCalledExactlyOnceWith(
       image(recording),
@@ -355,7 +375,7 @@ describe('usable local evidence without manual protection guesses', () => {
     await fill(pin, 'c'.repeat(64));
     await click(button(t('verifyStart')));
     expect(document.querySelector('[aria-label="Fixture player"]')).toBeNull();
-    expect(document.body.textContent).toContain(t('artifactVerificationFailed'));
+    expect(document.querySelector('[data-verification-result="failure"]')).not.toBeNull();
     await options();
     const validPin = document.querySelector<HTMLInputElement>(
       '[role="dialog"] input[maxlength="64"]',
@@ -376,9 +396,13 @@ describe('usable local evidence without manual protection guesses', () => {
   it('keeps the outer page frameless, actions text-sized, and recording metadata structured below the content', async () => {
     const app = await mount();
     await click(button('Open fixture recording'));
+    await options();
+    await click(button(t('verifyStart')));
+    await vi.waitFor(() => expect(button(t('verifyOpen')).disabled).toBe(false));
     const optionsButton = button(t('verifyOpen'));
     const status = button(t('recordingVerificationDetails'));
-    expect(optionsButton.parentElement).toBe(status.parentElement);
+    expect(optionsButton.closest('section')).toBe(status.closest('section'));
+    expect(status.textContent).toBe('');
     expect(document.querySelector(`[aria-label="${t('artifactBackToList')}"]`)).toBeNull();
     expect(optionsButton.getBoundingClientRect().width).toBeLessThan(300);
     expect(status.getBoundingClientRect().width).toBeLessThan(350);
@@ -400,6 +424,8 @@ describe('usable local evidence without manual protection guesses', () => {
   it('retains local verified output through hiding and remote expiry without another download or verification', async () => {
     const app = await mount();
     await click(button('Open fixture recording'));
+    await options();
+    await click(button(t('verifyStart')));
     await vi.waitFor(() =>
       expect(document.querySelector('[aria-label="Fixture player"]')).not.toBeNull(),
     );
@@ -411,6 +437,26 @@ describe('usable local evidence without manual protection guesses', () => {
     expect(verifyArtifact).toHaveBeenCalledTimes(calls);
     await click(button(t('workspaceRecordings')));
     expect(button('Open fixture recording').disabled).toBe(true);
+  });
+  it('runs a fresh local verification on a second playbar click, without a dialog or another transfer', async () => {
+    await mount();
+    await click(button('Open fixture recording'));
+    await options();
+    await click(button(t('verifyStart')));
+    await vi.waitFor(() => expect(button(t('verifyOpen')).disabled).toBe(false));
+    expect(verifyArtifact).toHaveBeenCalledOnce();
+    await click(button(t('verifyOpen')));
+    await vi.waitFor(() => expect(verifyArtifact).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(button(t('verifyOpen')).disabled).toBe(false));
+    expect(document.querySelector('[data-verification-result="success"]')).not.toBeNull();
+    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[role="dialog"]')].some((node) =>
+          node.checkVisibility({ visibilityProperty: true }),
+        ),
+      ).toBe(false),
+    );
   });
   it('retires old actor output and selected expectations, and cannot adopt a late old download', async () => {
     const app = await mount();
@@ -430,9 +476,13 @@ describe('usable local evidence without manual protection guesses', () => {
     await fill(pin, 'c'.repeat(64));
     await app.render({ access: access('bob') });
     expect(document.querySelector('[aria-label="Fixture player"]')).toBeNull();
-    expect(
-      document.querySelector('[role="dialog"]')?.closest('[aria-hidden="true"]'),
-    ).not.toBeNull();
+    await vi.waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[role="dialog"]')].some((node) =>
+          node.checkVisibility({ visibilityProperty: true }),
+        ),
+      ).toBe(false),
+    );
     expect(document.querySelector<HTMLInputElement>('input[maxlength="64"]')?.value).toBe('');
     const deferred = Promise.withResolvers<ReceivedArtifact>();
     vi.mocked(WebAccess.prototype.downloadArtifact).mockReturnValueOnce(deferred.promise);
@@ -502,22 +552,23 @@ it('remembers only a successfully decrypted key across Recording/Audit pages, ho
   }
   await click(button('Open fixture recording', recordings));
   expect(verifyArtifact).not.toHaveBeenCalled();
-  await selectKey(recordings, 'GOOD-KEY', 'wrong');
-  await click(button(t('artifactUnlock'), recordings));
-  await vi.waitFor(() => expect(recordings.textContent).toContain(t('artifactKeyFailed')));
-  expect(recordings.querySelector<HTMLInputElement>('input[type="file"]')?.files).toHaveLength(1);
-  await fill(
-    recordings.querySelector<HTMLInputElement>('[name="evidence-passphrase"]') as HTMLInputElement,
-    'tab secret',
+  expect(inspectProtection).not.toHaveBeenCalled();
+  await options(recordings);
+  await selectKey(document, 'GOOD-KEY', 'wrong');
+  await click(button(t('verifyStart')));
+  await vi.waitFor(() =>
+    expect(recordings.querySelector('[data-verification-result="failure"]')).not.toBeNull(),
   );
-  await click(button(t('artifactUnlock'), recordings));
+  await options(recordings);
+  await selectKey(document, 'GOOD-KEY', 'tab secret');
+  await click(button(t('verifyStart')));
   await vi.waitFor(() =>
     expect(recordings.querySelector('[aria-label="Fixture player"]')).not.toBeNull(),
   );
   await render('auditlogs');
   await click(button('Open fixture audit', audit));
   await vi.waitFor(() => expect(audit.textContent).toContain('session.task.completed'));
-  expect(audit.querySelector('input[type="file"]')).toBeNull();
+  expect(audit.querySelector('input[type="file"]')?.getClientRects().length ?? 0).toBe(0);
   expect(vi.mocked(verifyArtifact).mock.calls.at(-1)?.[2]?.passphrase).toBe('tab secret');
   await render('recordings');
   await options(recordings);
@@ -527,22 +578,31 @@ it('remembers only a successfully decrypted key across Recording/Audit pages, ho
   }
   await click(button(t('artifactReplaceKey'), optionsDialog));
   await selectKey(optionsDialog, 'WRONG-KEY', 'wrong');
-  await click(button(t('artifactUnlock'), optionsDialog));
-  await vi.waitFor(() => expect(recordings.textContent).toContain(t('artifactKeyFailed')));
+  await click(button(t('verifyStart'), optionsDialog));
+  await vi.waitFor(() =>
+    expect(recordings.querySelector('[data-verification-result="failure"]')).not.toBeNull(),
+  );
   const beforeRetry = vi.mocked(verifyArtifact).mock.calls.length;
-  await click(button(t('artifactUnlock'), optionsDialog));
+  await options(recordings);
+  await selectKey(document, 'WRONG-KEY', 'wrong');
+  await click(button(t('verifyStart'), optionsDialog));
   await vi.waitFor(() => expect(verifyArtifact).toHaveBeenCalledTimes(beforeRetry + 1));
-  await vi.waitFor(() => expect(recordings.textContent).toContain(t('artifactKeyFailed')));
+  await vi.waitFor(() =>
+    expect(recordings.querySelector('[data-verification-result="failure"]')).not.toBeNull(),
+  );
   expect(await vi.mocked(verifyArtifact).mock.calls.at(-1)?.[2]?.file.text()).toBe('WRONG-KEY');
+  await options(recordings);
   await selectKey(optionsDialog, 'GOOD-KEY-SECOND', 'second secret');
-  await click(button(t('artifactUnlock'), optionsDialog));
+  await click(button(t('verifyStart'), optionsDialog));
   await vi.waitFor(() =>
     expect(recordings.querySelector('[aria-label="Fixture player"]')).not.toBeNull(),
   );
   const beforeReopen = vi.mocked(verifyArtifact).mock.calls.length;
-  await click(button(t('cancel'), optionsDialog));
   await click(button(t('workspaceRecordings'), recordings));
   await click(button('Open fixture recording', recordings));
+  expect(verifyArtifact).toHaveBeenCalledTimes(beforeReopen);
+  await options(recordings);
+  await click(button(t('verifyStart')));
   await vi.waitFor(() => expect(verifyArtifact).toHaveBeenCalledTimes(beforeReopen + 1));
   await vi.waitFor(() =>
     expect(vi.mocked(verifyArtifact).mock.calls.at(-1)?.[2]?.passphrase).toBe('second secret'),
@@ -555,6 +615,7 @@ it('remembers only a successfully decrypted key across Recording/Audit pages, ho
   await click(button(t('workspaceRecordings'), recordings));
   const count = vi.mocked(verifyArtifact).mock.calls.length;
   await click(button('Open fixture recording', recordings));
-  expect(recordings.querySelector('input[type="file"]')).not.toBeNull();
   expect(verifyArtifact).toHaveBeenCalledTimes(count);
+  await options(recordings);
+  expect(document.querySelector('input[type="file"]')).not.toBeNull();
 });

@@ -105,8 +105,10 @@ Artifact download additionally requires
 [`allowArtifactTransfer`](../../environment/management.md#property-allowArtifactTransfer).
 The first active view loads only its authorized metadata, not recording content.
 **Open recording** explicitly downloads the selected original into this tab.
-The signed header determines encryption automatically. A matching previously
-verified tab key can be reused; otherwise **Unlock and open** asks for a local key
+No header or content verification starts on open. Use the playbar's **Verify**
+action explicitly; playback remains locked until full verification succeeds.
+During that check the signed header determines encryption. A matching previously
+verified tab key can be reused; otherwise verification options accept a local key
 and passphrase. Recipient fingerprints are derived locally. Full verification
 prepares playback or an audit-event list; **Play** remains a separate local action.
 Verification, decryption, export preparation and playback run locally. Private

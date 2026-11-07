@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { type ReactNode, useRef } from 'react';
 import { t } from '../ui/messages';
 import type { PlaybackState } from './playback';
 import { playbackClock, playbackSpeeds } from './playback-view';
@@ -40,6 +40,7 @@ export function PlaybackControls({
   onFullscreen,
   onHelp,
   onClose,
+  verificationControls,
 }: {
   state: PlaybackState | null;
   durationUs: number;
@@ -56,6 +57,7 @@ export function PlaybackControls({
   onFullscreen(): void;
   onHelp(): void;
   onClose(): void;
+  verificationControls?: ReactNode;
 }) {
   const pointer = useRef(false);
   const playing = state?.phase === 'playing';
@@ -131,6 +133,7 @@ export function PlaybackControls({
         }}
       />
       <div className="recording-control-row">
+        {verificationControls}
         <button
           type="button"
           className="recording-control"
@@ -174,7 +177,7 @@ export function PlaybackControls({
           className="recording-control"
           aria-label={t('playbackHelp')}
           title={t('playbackHelp')}
-          disabled={state === null}
+          disabled={disabled || state === null}
           onClick={onHelp}
         >
           <Icon kind="help" />
@@ -185,7 +188,7 @@ export function PlaybackControls({
           aria-label={t(fullscreen ? 'playbackExitFullscreen' : 'playbackFullscreen')}
           title={`${t(fullscreen ? 'playbackExitFullscreen' : 'playbackFullscreen')} (F)`}
           aria-keyshortcuts="F"
-          disabled={!canFullscreen}
+          disabled={disabled || !canFullscreen}
           onClick={onFullscreen}
         >
           <Icon kind={fullscreen ? 'exit-fullscreen' : 'fullscreen'} />
@@ -195,6 +198,7 @@ export function PlaybackControls({
           className="recording-control"
           aria-label={t('playbackDiscard')}
           title={t('playbackDiscard')}
+          disabled={disabled}
           onClick={onClose}
         >
           <Icon kind="close" />

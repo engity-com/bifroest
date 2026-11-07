@@ -12,13 +12,14 @@ import '../src/ui/app.css';
 
 const rows = [{ id: 'row1', name: 'Core field', extra: 'Additional metadata' }];
 
-it('keeps the source-switch action in place while search expands and read cancellation becomes available', async () => {
+it('replaces reload in place with cancellation, without a second stop or a gap, and locks other controls', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   const host = document.createElement('div');
   host.style.width = '1200px';
   document.body.append(host);
   const root = createRoot(host);
   const switchSource = vi.fn();
+  const cancel = vi.fn();
   const render = async (busy = false) =>
     act(async () =>
       root.render(
@@ -38,7 +39,7 @@ it('keeps the source-switch action in place while search expands and read cancel
           onSort: vi.fn(),
           onSearch: vi.fn(),
           onRefresh: vi.fn(),
-          onCancelRead: vi.fn(),
+          onCancelRead: cancel,
           work: { mode: 'server', onClick: switchSource },
         }),
       ),
@@ -53,13 +54,34 @@ it('keeps the source-switch action in place while search expands and read cancel
   try {
     await render();
     const action = button(t('directServerData'));
+    const reload = button(t('adminGridRefresh'));
+    const count = host.querySelectorAll('[role="toolbar"] button').length;
     const before = Math.round(action.getBoundingClientRect().x);
-    await act(async () => button('Search').click());
-    await vi.waitFor(() =>
-      expect(host.querySelector('input[placeholder="Search…"]')?.getClientRects().length).toBe(1),
-    );
+    expect(host.querySelector('button[aria-label="Search"]')).toBeNull();
     expect(Math.round(action.getBoundingClientRect().x)).toBe(before);
     await render(true);
+    expect(button(t('artifactCatalogCancel'))).toBe(reload);
+    expect(host.querySelectorAll('[role="toolbar"] button')).toHaveLength(count);
+    expect(action.disabled).toBe(true);
+    expect(button('Filters').disabled).toBe(true);
+    expect(host.querySelector<HTMLElement>('.MuiDataGrid-virtualScrollerRenderZone')?.inert).toBe(
+      true,
+    );
+    expect(host.querySelector<HTMLElement>('.MuiDataGrid-columnHeaders')?.inert).toBe(true);
+    expect(host.querySelector<HTMLElement>('.MuiDataGrid-footerContainer')?.inert).toBe(true);
+    expect(
+      host.querySelector('[data-testid="GridLoadingOverlay"] .MuiSkeleton-root'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('[data-testid="GridLoadingOverlay"] [role="status"]')?.closest('[inert]'),
+    ).toBeNull();
+    expect(
+      host
+        .querySelector('[role="gridcell"][data-field="name"]')
+        ?.checkVisibility({ visibilityProperty: true }) ?? false,
+    ).toBe(false);
+    await act(async () => reload.click());
+    expect(cancel).toHaveBeenCalledOnce();
     expect(host.querySelector(`button[aria-label="${t('directServerData')}"]`)).toBe(action);
     expect(Math.round(action.getBoundingClientRect().x)).toBe(before);
     await render(false);
@@ -130,7 +152,7 @@ it('retains the same grid while loading, disables refresh, and opens rows or the
         host.querySelector('[data-testid="GridLoadingOverlay"]')?.closest('[role="grid"]'),
       ).toBe(grid),
     );
-    expect(host.querySelector('[data-testid="VisibilityOffIcon"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="VisibilityIcon"]')).not.toBeNull();
   } finally {
     await act(async () => root.unmount());
     host.remove();
@@ -174,14 +196,17 @@ it('defaults to full details and persists the eye for the origin, reloading and 
     const grid = host.querySelector('[role="grid"]');
     expect(host.textContent).toContain('Additional metadata');
     const eye = host.querySelector<HTMLButtonElement>(
-      'button[aria-label="Show all available details"]',
+      `button[aria-label="${t('adminGridHideDetails')}"]`,
     );
     if (!eye) {
       throw new Error('Missing eye');
     }
     expect(eye.getAttribute('aria-pressed')).toBe('true');
+    expect(eye.querySelector('[data-testid="VisibilityOffIcon"]')).not.toBeNull();
     await act(async () => eye.click());
     expect(localStorage.getItem(detailPreferenceKey)).toBe('compact');
+    expect(eye.getAttribute('aria-label')).toBe(t('adminGridShowDetails'));
+    expect(eye.querySelector('[data-testid="VisibilityIcon"]')).not.toBeNull();
     expect(reload).toHaveBeenCalledOnce();
     expect(host.textContent).not.toContain('Additional metadata');
     expect(host.querySelector('[role="grid"]')).toBe(grid);
@@ -206,7 +231,7 @@ it('still switches the display in memory when browser preference storage is unav
   try {
     await act(async () => root.render(createElement(DetailFixture, { reload })));
     const eye = host.querySelector<HTMLButtonElement>(
-      'button[aria-label="Show all available details"]',
+      `button[aria-label="${t('adminGridHideDetails')}"]`,
     );
     if (!eye) {
       throw new Error('Missing eye');

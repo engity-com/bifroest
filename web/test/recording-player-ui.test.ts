@@ -1,4 +1,4 @@
-import { act, createElement, StrictMode } from 'react';
+import { act, createElement, type ReactNode, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
@@ -89,7 +89,7 @@ afterEach(async () => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
-async function mount(strict = false) {
+async function mount(strict = false, verificationControls?: ReactNode) {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
@@ -101,6 +101,7 @@ async function mount(strict = false) {
         expected,
         disabled: false,
         autoPrepare: true,
+        verificationControls,
         ...options,
       });
       root.render(strict ? createElement(StrictMode, null, content) : content);
@@ -141,7 +142,27 @@ async function parkPointerOutsidePlayer() {
   expect(document.querySelector('.recording-video')?.matches(':hover')).toBe(false);
 }
 
-describe('preparing a player as part of the explicit open-recording task', () => {
+describe('preparing a player after explicit recording verification', () => {
+  it('keeps verification reachable after closing, without a separate preparation bypass', async () => {
+    const verify = vi.fn();
+    await mount(
+      false,
+      createElement('button', { type: 'button', onClick: verify }, t('verifyOpen')),
+    );
+    await ready();
+    const stage = document.querySelector('.recording-video');
+    await click(button(t('playbackDiscard')));
+    expect(document.querySelector('.recording-video')).toBe(stage);
+    expect(
+      [...document.querySelectorAll('button')].some(
+        (node) => node.textContent === t('playbackPrepare'),
+      ),
+    ).toBe(false);
+    expect(button(t('playbackPlay')).disabled).toBe(true);
+    await click(button(t('verifyOpen')));
+    expect(verify).toHaveBeenCalledOnce();
+    expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+  });
   it('uses a fixed 16:9 stage with bottom controls rather than external playback buttons', async () => {
     await mount();
     await ready();

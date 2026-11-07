@@ -55,6 +55,18 @@ try {
   assert.equal(calls.filter((path) => path.endsWith('/recordings/list')).length, 1);
   const retained = await grid.elementHandle();
   await open.click();
+  await panel
+    .and(page.locator('[data-evidence-phase="idle"][data-evidence-input="true"]'))
+    .waitFor();
+  assert.equal(
+    await panel.getByRole('region', { name: 'Recording playback', exact: true }).count(),
+    0,
+  );
+  await panel.getByRole('button', { name: 'Verify …', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Verification options', exact: true })
+    .getByRole('button', { name: 'Start verification', exact: true })
+    .click();
   const playback = panel.getByRole('region', { name: 'Recording playback', exact: true });
   await playback.locator('[data-playback-phase="paused"]').waitFor();
   await playback.getByRole('button', { name: 'Play', exact: true }).click();

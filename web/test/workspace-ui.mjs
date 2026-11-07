@@ -445,5 +445,8 @@ export async function gridColumnFilter(page, grid, column, operator, value) {
   } else {
     await input.locator('input').fill(value);
   }
-  await frame.getByRole('button', { name: 'Filters', exact: true }).click();
+  // Loading now closes/locks the panel. Close it only if it remained open.
+  if (await page.locator('.MuiDataGrid-filterFormColumnInput').isVisible()) {
+    await frame.getByRole('button', { name: 'Filters', exact: true }).click();
+  }
 }

@@ -3,6 +3,7 @@ import type { CatalogVerification } from '../management/audit-overview';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { WebAccess } from '../remember';
 import type { GridWork } from '../ui/GridWork';
+import { Modal } from '../ui/material';
 import { t } from '../ui/messages';
 import { VerificationDialog } from './VerificationDialog';
 
@@ -27,6 +28,7 @@ export function useRecordingVerification({
   const [failed, setFailed] = useState(false);
   const [cancelled, setCancelled] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reset the entire explicit job at its actor/source boundary, never replay it after navigation.
   useEffect(() => {
     generation.current++;
@@ -36,6 +38,7 @@ export function useRecordingVerification({
     setFailed(false);
     setCancelled(false);
     setOptionsOpen(false);
+    setDetailsOpen(false);
     return () => {
       generation.current++;
       controller.current?.abort();
@@ -87,10 +90,22 @@ export function useRecordingVerification({
     }
   }
   const work: GridWork = {
-    mode: busy ? 'cancel' : 'verify',
+    mode: busy ? 'cancel' : result || failed ? 'server' : 'verify',
     disabled: disabled || !active || source === '',
     progress,
-    onClick: () => (busy ? controller.current?.abort() : setOptionsOpen(true)),
+    onClick: () => {
+      if (busy) {
+        controller.current?.abort();
+      } else if (result || failed) {
+        setResult(null);
+        setFailed(false);
+        setDetailsOpen(false);
+      } else {
+        setOptionsOpen(true);
+      }
+    },
+    result: result ? 'success' : failed ? 'failure' : undefined,
+    onStatusClick: () => setDetailsOpen(true),
     status: failed
       ? t('verifyAllServerFailed')
       : cancelled
@@ -100,17 +115,39 @@ export function useRecordingVerification({
           : undefined,
   };
   const dialog = (
-    <VerificationDialog
-      open={optionsOpen && active && !disabled}
-      source={source}
-      kind="recordings"
-      disabled={busy || source === ''}
-      onClose={() => setOptionsOpen(false)}
-      onStart={() => {
-        setOptionsOpen(false);
-        void verify(source);
-      }}
-    />
+    <>
+      <VerificationDialog
+        open={optionsOpen && active && !disabled}
+        source={source}
+        kind="recordings"
+        disabled={busy || source === ''}
+        onClose={() => setOptionsOpen(false)}
+        onStart={() => {
+          setOptionsOpen(false);
+          void verify(source);
+        }}
+      />
+      <Modal
+        opened={detailsOpen && active && !disabled}
+        onClose={() => setDetailsOpen(false)}
+        title={t('recordingVerificationDetails')}
+      >
+        <dl className="metadata-grid">
+          <dt>{t('verifyAllSource')}</dt>
+          <dd>{source}</dd>
+          <dt>{t('auditEventOutcome')}</dt>
+          <dd>{t(failed ? 'artifactVerificationError' : 'verificationCompleted')}</dd>
+          <dt>{t('verificationCheckedRecordings')}</dt>
+          <dd>{result?.checked ?? '—'}</dd>
+          <dt>{t('verifyAllFull')}</dt>
+          <dd>{result?.full ?? '—'}</dd>
+          <dt>{t('verifyAllOuter')}</dt>
+          <dd>{result?.outer ?? '—'}</dd>
+          <dt>{t('artifactTrust')}</dt>
+          <dd>{t('verificationServerReported')}</dd>
+        </dl>
+      </Modal>
+    </>
   );
   return { work, dialog };
 }

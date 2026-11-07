@@ -88,7 +88,9 @@ export async function exerciseManagementRelations(page, login) {
   await events.locator('[role="row"][data-id]').first().waitFor();
   const toolbar = events.locator('xpath=ancestor::div[@class="admin-data-grid"][1]');
   const privateReply = captureJsonResponse(page, '/_bifroest/api/v1/management/audit-events/list');
-  await toolbar.getByRole('button', { name: 'Include private details', exact: true }).click();
+  await toolbar
+    .getByRole('button', { name: 'Show sensitive data – currently hidden', exact: true })
+    .click();
   const privateEvents = await privateReply;
   assert.equal(privateEvents.error, undefined);
   assert.equal(privateEvents.status, 200);
@@ -110,6 +112,11 @@ export async function exerciseManagementRelations(page, login) {
     .first()
     .click();
   const recordingPanel = pane.getByRole('region', { name: 'Recordings', exact: true });
+  await recordingPanel.getByRole('button', { name: 'Verify …', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Verification options', exact: true })
+    .getByRole('button', { name: 'Start verification', exact: true })
+    .click();
   await recordingPanel.getByRole('region', { name: 'Recording playback', exact: true }).waitFor();
   const metadata = recordingPanel.locator('.recording-evidence');
   await metadata.getByRole('heading', { name: 'Details', exact: true }).waitFor();

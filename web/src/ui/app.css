@@ -112,8 +112,6 @@ h3.recording-heading { font-size: 1.125rem; }
 .admin-shell .MuiListItemButton-root { border-radius:6px; margin-block:4px; padding-block:10px; }
 .admin-shell nav { padding:8px; }
 .admin-shell .MuiListItemButton-root.Mui-selected::before { content:""; position:absolute; left:4px; top:30%; height:40%; width:3px; border-radius:2px; background:currentColor; }
-.admin-quick-filter-hidden { display:none !important; }
-.admin-quick-filter { max-width:15rem; }
 .metadata-pair { display:contents; }
 .session-details > .section-heading, .artifact-panel > .section-heading, .audit-event-details > .section-heading { justify-content:flex-end; }
 .admin-data-grid { height: clamp(22rem, 62dvh, 42rem); min-height: 0; width: 100%; min-width: 0; border: 1px solid var(--app-border); border-radius: 6px; overflow: hidden; }

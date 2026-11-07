@@ -9,6 +9,7 @@ import {
   assertUiPreferences,
   captureLayout,
   confirmFullVerification,
+  gridColumnFilter,
   logoutAccess,
   notification,
   reauthenticate,
@@ -265,6 +266,20 @@ try {
       await direct.click();
       await state('after-direct');
     }
+    if (
+      (await current.locator('.recording-evidence').count()) &&
+      (await current.locator('[data-verification-result]').isVisible())
+    ) {
+      await current
+        .getByRole('button', { name: 'Signature, source and export details', exact: true })
+        .click();
+      await page
+        .getByRole('dialog', { name: 'Signature, source and export details', exact: true })
+        .getByRole('button', { name: 'Change verification settings', exact: true })
+        .click();
+      await dialog.waitFor();
+      return dialog;
+    }
     try {
       await verify.click();
     } catch (cause) {
@@ -316,7 +331,7 @@ try {
   };
   const key = async (current, password = 'tab fixture secret') => {
     const dialog = page.getByRole('dialog', { name: 'Verification options', exact: true });
-    const owner = (await dialog.isVisible()) ? dialog : current;
+    const owner = (await dialog.isVisible()) ? dialog : await options(current);
     await owner.getByLabel('Decryption key file (local only)', { exact: true }).setInputFiles({
       name: 'local-key.pem',
       mimeType: 'application/octet-stream',
@@ -335,7 +350,7 @@ try {
     try {
       await status.waitFor();
       await page.waitForFunction(
-        (node) => /^(?:Integrity OK|Verification OK)/u.test(node.textContent ?? ''),
+        (node) => node.dataset.verificationResult === 'success',
         await status.elementHandle(),
       );
     } catch (cause) {
@@ -403,10 +418,31 @@ try {
   await panel()
     .getByRole('button', { name: `Open recording ${entry.id}`, exact: true })
     .click();
+  await panel()
+    .and(page.locator('[data-evidence-phase="idle"][data-evidence-input="true"]'))
+    .waitFor();
+  assert.equal(
+    await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.evaluate(
+      () =>
+        window.ownedWorkers.filter((worker) => worker.workerName === 'bifroest-evidence').length,
+    ),
+    0,
+    'opening never starts even header verification',
+  );
+  if (!encrypted || scenario === 'cancel') {
+    await checkAgain(panel());
+  }
   if (scenario === 'cancel') {
     await enteredModule;
     await panel().getByRole('button', { name: 'Cancel artifact operation', exact: true }).click();
-    await panel().getByText('Artifact operation cancelled.', { exact: false }).waitFor();
+    await panel().locator('[data-verification-result="failure"]').waitFor();
+    const cancelled = await openDetails(panel());
+    await cancelled.getByText('Artifact operation cancelled.', { exact: false }).waitFor();
+    await closeDetails();
     const count = await page.evaluate(
       () =>
         window.ownedWorkers.filter((worker) => worker.workerName === 'bifroest-evidence').length,
@@ -447,7 +483,11 @@ try {
     'the header and local key, not manual guesses, determine protection',
   );
   if (encrypted) {
-    await panel().getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
+    await options(panel());
+    await page
+      .getByRole('dialog', { name: 'Verification options', exact: true })
+      .getByLabel('Decryption key file (local only)', { exact: true })
+      .waitFor();
     assert.equal(
       await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
       0,
@@ -460,7 +500,7 @@ try {
         'Outer signatures/container only — no private verification',
       );
       await checkAgain(panel());
-      await panel().getByText('Signatures OK · decryption not checked', { exact: true }).waitFor();
+      await panel().locator('[data-verification-result="success"]').waitFor();
       assert.equal(
         await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
         0,
@@ -476,12 +516,15 @@ try {
       );
     }
     await key(panel(), 'wrong fixture secret');
-    await (await localControls(panel()))
-      .getByRole('button', { name: 'Unlock and open', exact: true })
-      .click();
-    await (await localControls(panel()))
+    await checkAgain(panel());
+    await panel().locator('[data-verification-result="failure"]').waitFor();
+    const failedKey = await openDetails(panel());
+    await failedKey
       .getByText('The local decryption key could not be imported', { exact: false })
       .waitFor();
+    await closeDetails();
+    await options(panel());
+    await key(panel(), 'wrong fixture secret');
     assert.equal(
       await (await localControls(panel()))
         .getByLabel('Decryption key file (local only)', { exact: true })
@@ -489,12 +532,8 @@ try {
       1,
       'a failed candidate remains editable, never silently replaced by an older cache',
     );
-    await (await localControls(panel()))
-      .getByLabel('Decryption passphrase (optional, local only)', { exact: true })
-      .fill('tab fixture secret');
-    await (await localControls(panel()))
-      .getByRole('button', { name: 'Unlock and open', exact: true })
-      .click();
+    await key(panel(), 'tab fixture secret');
+    await checkAgain(panel());
   }
   await successful(panel());
   await captureLayout(page, `artifact-${mode}-opened`);
@@ -532,7 +571,7 @@ try {
     await trustOptions.getByLabel('Trusted signing ID', { exact: false }).fill('1'.repeat(64));
     const before = transfers.length;
     await checkAgain(panel());
-    await panel().getByText('Evidence verification failed.', { exact: false }).waitFor();
+    await panel().locator('[data-verification-result="failure"]').waitFor();
     assert.equal(
       await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
       0,
@@ -619,7 +658,7 @@ try {
     await events.waitFor();
     const beforeLocal = apiRequests.length;
     const controls = events.locator('xpath=ancestor::div[@class="admin-data-grid"][1]');
-    const eye = controls.getByRole('button', { name: 'Include private details', exact: true });
+    const eye = controls.getByRole('button', { name: /^(Show|Hide) sensitive data/u });
     assert.equal(await eye.getAttribute('aria-pressed'), 'false');
     const presentationBefore = await page.evaluate(() =>
       localStorage.getItem('bifroest-ui-v1:details'),
@@ -651,8 +690,7 @@ try {
       presentationBefore,
       'private-field opt-in is never an origin-wide persisted display preference',
     );
-    await controls.getByRole('button', { name: 'Search', exact: true }).click();
-    await controls.getByPlaceholder('Search…', { exact: true }).fill('session');
+    await gridColumnFilter(page, events, 'Event', 'contains', 'session');
     await page.waitForFunction(() => {
       const rows = [
         ...document.querySelectorAll(
@@ -687,13 +725,19 @@ try {
       await workspace(page, 'Recordings');
       const bobGrid = panel().getByRole('grid', { name: 'Recordings · default', exact: true });
       await bobGrid.waitFor();
-      const frame = bobGrid.locator('xpath=ancestor::div[@class="admin-data-grid"][1]');
-      await frame.getByRole('button', { name: 'Search', exact: true }).click();
-      await frame.getByPlaceholder('Search…', { exact: true }).fill(entry.id);
+      await gridColumnFilter(page, bobGrid, 'Recording ID', 'equals', entry.id);
       await panel()
         .getByRole('button', { name: `Open recording ${entry.id}`, exact: true })
         .click();
-      await panel().getByLabel('Decryption key file (local only)', { exact: true }).waitFor();
+      await panel()
+        .and(page.locator('[data-evidence-phase="idle"][data-evidence-input="true"]'))
+        .waitFor();
+      await options(panel());
+      await page
+        .getByRole('dialog', { name: 'Verification options', exact: true })
+        .getByLabel('Decryption key file (local only)', { exact: true })
+        .waitFor();
+      await closeOptions();
       assert.equal(
         await panel().getByRole('region', { name: 'Recording playback', exact: true }).count(),
         0,

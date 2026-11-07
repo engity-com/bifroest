@@ -146,8 +146,11 @@ export async function exerciseArtifactPlayback({
   assert.equal((await preparations()).length, 1);
   assert.equal(await playback.locator('.xterm').count(), 0);
   assert.equal(apiRequests.length, before);
-  await playback.getByRole('button', { name: 'Prepare player', exact: true }).click();
-  await playback.locator('[data-playback-phase="paused"]').waitFor();
+  await playback.getByRole('button', { name: 'Verify …', exact: true }).click();
+  await panel
+    .getByRole('region', { name: 'Recording playback', exact: true })
+    .locator('[data-playback-phase="paused"]')
+    .waitFor();
   assert.equal((await preparations()).length, 2);
   assert.equal(apiRequests.length, before);
 }
