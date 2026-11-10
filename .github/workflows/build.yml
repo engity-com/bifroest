@@ -77,7 +77,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
 
       - &install-go-dependencies
         name: Install dependencies
@@ -134,7 +134,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
 
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"
@@ -195,7 +195,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
 
       - *install-go-dependencies
 
@@ -251,7 +251,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
 
       - *install-go-dependencies
 
@@ -307,7 +307,7 @@ jobs:
           restore-keys: images-dependencies
 
       - name: Install MISE
-        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
 
       - name: Lint licenses
         if: inputs.lint_reuse
