@@ -70,6 +70,25 @@ jobs:
         run: |
           mise run ci:evaluate-environment
 
+  biome:
+    name: Biome
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install MISE
+        uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        with:
+          install_args: biome
+
+      - name: Check repository formatting and lint
+        run: mise run lint:biome
+
   reuse:
     name: REUSE lint ${{ matrix.os }}
     needs: evaluate
@@ -98,7 +117,7 @@ jobs:
 
   build:
     name: Build packages
-    needs: [ evaluate, files-changed ]
+    needs: [evaluate, files-changed]
     if: needs.files-changed.outputs.go == 'true'
     permissions:
       contents: write
@@ -114,7 +133,7 @@ jobs:
 
   documentation:
     name: Documentation
-    needs: [ evaluate, files-changed ]
+    needs: [evaluate, files-changed]
     if: needs.files-changed.outputs.docs == 'true'
     runs-on: ubuntu-latest
     permissions:

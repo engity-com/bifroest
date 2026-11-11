@@ -24,6 +24,13 @@ type FacadeRepository struct {
 	CloseableRepository
 }
 
+func (this *FacadeRepository) ResolveAssociatedSession(ctx context.Context, request AssociationRequest) (Session, bool, error) {
+	if repository, ok := this.CloseableRepository.(AssociatedRepository); ok {
+		return repository.ResolveAssociatedSession(ctx, request)
+	}
+	return nil, false, ErrAssociationUnavailable
+}
+
 func newRepositoryInstance(ctx context.Context, conf *configuration.Session) (CloseableRepository, error) {
 	fail := func(err error) (CloseableRepository, error) {
 		return nil, fmt.Errorf("cannot initizalize session repository: %w", err)

@@ -12,6 +12,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
 	bbi "github.com/engity-com/bifroest/internal/build"
+	"github.com/engity-com/bifroest/internal/build/browser"
 	"github.com/engity-com/bifroest/pkg/common"
 )
 
@@ -25,6 +26,8 @@ type buildArtifact struct {
 	filepath                   string
 	thirdPartyNoticesFilepath  string
 	thirdPartyLicenseInventory *thirdPartyLicenseInventory
+	browserManifest            *browser.Manifest
+	browserManifestRaw         []byte
 	sbom                       *buildArtifactSbom
 	ociImage                   v1.Image
 	ociIndex                   v1.ImageIndex

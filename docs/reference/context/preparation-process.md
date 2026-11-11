@@ -8,6 +8,12 @@ Holds the information about a [Preparation Process](../connection/ssh.md#prepara
 
 ## Properties
 
+<<property("connection", "Connection", "connection.md")>>
+
+The current incoming connection inherited from the environment request. Its
+transport remains `http` for browser execution; it is not the transport of a
+downstream SSH, Docker or Kubernetes target.
+
 <<property("id", "string")>>
 
 Each preparation process has its own unique ID (like [`pull-image`](../environment/docker.md#preparationProcess-pull-image) of the [docker environment](../environment/docker.md)).

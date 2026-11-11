@@ -5,7 +5,7 @@ description: Authorize certificate-based delegation from another Bifröst instan
 
 # Bifröst authorization
 
-Authorizes an SSH connection delegated by another Bifröst instance. This authorization accepts only OpenSSH user certificates carrying Bifröst's signed delegation evidence. Password and keyboard-interactive authentication are always rejected.
+Authorizes access delegated by another Bifröst instance. This authorization accepts only OpenSSH user certificates carrying Bifröst's signed delegation evidence. Password and keyboard-interactive authentication are always rejected.
 
 ## Properties
 
@@ -29,7 +29,7 @@ Maximum interval from the evidence issuance time to the certificate's immutable 
 The presented credential has to satisfy all of these conditions:
 
 * It is a current OpenSSH user certificate signed by a configured immediately upstream CA.
-* The requested SSH username is one of its principals.
+* The requesting name is one of its principals.
 * Its only critical option is `bifroest-delegation@bifroest.engity.org` with an empty value.
 * It contains canonical `bifroest.authorization-evidence/v1` under `evidence-v1@bifroest.engity.org`.
 * The final evidence hop matches the certificate CA, subject key, serial, key ID, validity, target user and effective forwarding capabilities.
@@ -37,9 +37,15 @@ The presented credential has to satisfy all of these conditions:
 * The evidence is at most 4 KiB, has at most eight hops and contains no repeated subject-key fingerprint.
 * Every downstream hop can only shorten validity and remove PTY, port-forwarding or agent-forwarding capabilities.
 
-The evidence is verified again after the SSH client proves possession of the certificate subject key. No session is created before that proof succeeds.
+The evidence is verified again after the client proves possession of the certificate subject key. No session is created before that proof succeeds.
 
-## Example: Entry Gateway to Target Gateway
+## Context
+
+This authorization produces a context of type [Authorization Bifröst](../context/authorization.md#bifroest).
+
+## Examples
+
+### Entry Gateway to Target Gateway {: #example-entry-gateway-to-target-gateway }
 
 **Bifröst A** sits between the Internet and the internal network. It authenticates `alice` with `simple`; internal **Bifröst B** is not Internet-accessible and trusts delegations from A.
 
@@ -69,7 +75,7 @@ The evidence is verified again after the SSH client proves possession of the cer
     !!! warning
          The plain password is only for this minimal example. Use a password hash or another authorization in production.
 
-2. Configure B:
+2. Configure B with an existing local `alice` account:
     ```yaml title="/etc/engity/bifroest/configuration.yaml"
     flows:
       - name: from-entry
@@ -78,6 +84,7 @@ The evidence is verified again after the SSH client proves possession of the cer
           trustedUserCAsFile: /etc/engity/bifroest/trusted-cas
         environment:
           type: local
+          name: '{{ .authentication.principal }}'
     ```
 
 3. Run on B:
@@ -119,10 +126,6 @@ The evidence is verified again after the SSH client proves possession of the cer
     ```
 
 B verifies A's CA signature, the `from-entry` audience, the signed evidence and possession of A's persistent `client-key`.
-
-## Context
-
-This authorization produces a context of type [Authorization Bifröst](../context/authorization.md#bifroest).
 
 ## Compatibility
 

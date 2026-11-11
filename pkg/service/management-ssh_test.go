@@ -38,6 +38,10 @@ func TestServiceOwnsManagementApplication(t *testing.T) {
 
 func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
+		auditlog := configureDefaultTestAuditlog(conf)
+		root := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
+		auditlog.IdentityFile = filepath.Join(root, "audit-key")
+		auditlog.Directory = filepath.Join(root, "journal")
 		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 	})
 	client, err := gossh.Dial("tcp", server.address, &gossh.ClientConfig{
@@ -138,7 +142,7 @@ func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
 		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
 		parent := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
-		conf.Auditlogs[0].Enabled = true
+		configureDefaultTestAuditlog(conf)
 		conf.Auditlogs[0].IdentityFile = filepath.Join(parent, "management-audit-signing-key")
 		conf.Auditlogs[0].Directory = filepath.Join(parent, "management-audit")
 	})
@@ -187,6 +191,8 @@ func TestManagementSSHStreamsSignedRecordingWithoutPrivateKeys(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
 		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
 		parent := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
+		configureDefaultTestAuditlog(conf)
+		conf.Auditlogs[0].Directory = filepath.Join(parent, "management-audit")
 		conf.Auditlogs[0].IdentityFile = filepath.Join(parent, "management-signing-key")
 		conf.Auditlogs[0].Recording.Enabled = true
 		conf.Auditlogs[0].Recording.Directory = filepath.Join(parent, "management-recordings")
@@ -240,6 +246,8 @@ func TestManagementRecordingShowIgnoresUnrelatedCorruptArtifact(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
 		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 		parent := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
+		configureDefaultTestAuditlog(conf)
+		conf.Auditlogs[0].Directory = filepath.Join(parent, "management-audit")
 		conf.Auditlogs[0].IdentityFile = filepath.Join(parent, "management-signing-key")
 		conf.Auditlogs[0].Recording.Enabled = true
 		conf.Auditlogs[0].Recording.Directory = filepath.Join(parent, "management-recordings")

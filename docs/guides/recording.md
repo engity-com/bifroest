@@ -13,9 +13,8 @@ This Linux example adds audit logging and session recording to a local-account h
 1. Add the auditlog and flow to the host configuration. This complete example uses the named `default` audit log:
 
     ```yaml title="Bifröst host: /etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - name: default
-        enabled: true
+    auditlogs:
+      default:
         recording:
           enabled: true
 
@@ -29,7 +28,7 @@ This Linux example adds audit logging and session recording to a local-account h
           portForwardingAllowed: false
     ```
 
-    The flow selects `default` automatically. Audit journals and Recordings are enabled independently; the default strict failure policy stops an affected task if local persistence fails. See [audit configuration](../reference/auditlog/index.md) and [Recording configuration](../reference/auditlog/recording.md).
+    The flow selects the explicitly defined `default` logger automatically; `recording.enabled: true` adds output recording. Without a defined default or explicit logger selection, neither runs. The default strict failure policy stops an affected task if local persistence fails. See [audit configuration](../reference/auditlog/index.md) and [Recording configuration](../reference/auditlog/recording.md).
 
 2. Restart Bifröst using the host's service manager. For a fresh installation, the default signing key, audit journal and Recording repository are created when enabled.
 
@@ -80,6 +79,16 @@ This Linux example adds audit logging and session recording to a local-account h
     ```
 
     Recording exports are complete, sensitive plaintext and are never redacted. Without an encryption recipient, signatures protect integrity but not confidentiality of the stored original either.
+
+## Browser alternative
+
+The same settings capture output from [browser shells](browser-access.md). With a management flow and `allowArtifactTransfer: true`:
+
+1. Choose **Audit logs**, select `default`, then open **Recordings**.
+2. Choose **Open recording**. For encrypted content, select your local recipient key and enter its passphrase to unlock it. Opening a Recording does not itself verify its signatures.
+3. Use **Verify** with an independently obtained producer ID to check signatures, then choose **Play**. The player's help button lists playback controls.
+
+Decryption and playback run locally; the private key is not uploaded. See [encrypted evidence](evidence.md) for trust setup and [browser compatibility](../reference/connection/http/index.md#compatibility) for supported Recording sizes.
 
 ## Next steps
 

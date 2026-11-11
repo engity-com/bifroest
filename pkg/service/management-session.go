@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/audit"
@@ -18,7 +19,7 @@ import (
 // Bound to the authorized invocation, not to the shared application schema.
 type managementSessionControl struct {
 	service *service
-	task    environment.Task
+	task    environment.TaskContext
 }
 
 func (this managementSessionControl) Disconnect(ctx context.Context, id session.Id) (model.SessionActionResult, error) {
@@ -49,6 +50,14 @@ func (this managementSessionControl) perform(ctx context.Context, id session.Id,
 	if target == nil {
 		return result, fmt.Errorf("session %q: %w", id, session.ErrNoSuchSession)
 	}
+	return this.performTarget(ctx, target, dispose, nil)
+}
+
+// Both SSH and structured operations converge here. A structured confirmation
+// supplies an additional generation check after the started audit, before any
+// disconnect/revocation/disposal. SSH keeps its existing ID ambiguity behavior.
+func (this managementSessionControl) performTarget(ctx context.Context, target session.Session, dispose bool, check func(context.Context) error) (result model.SessionActionResult, resultErr error) {
+	id := target.Id()
 	caller := this.task.Authorization().FindSession()
 	if caller == nil {
 		return result, fmt.Errorf("management invocation has no authorized session")
@@ -68,7 +77,7 @@ func (this managementSessionControl) perform(ctx context.Context, id session.Id,
 	}
 	event := audit.Event{
 		Name: startedName, Domain: audit.EventDomainSession,
-		Flow: result.Flow, SessionId: result.ID, OperationId: operationID.String(),
+		Flow: result.Flow, SessionId: result.ID, OperationId: uuidtext.Format(operationID),
 		ConnectionId: this.task.Connection().Id().String(),
 	}
 	// Record the target and initiating connection in both flows. The initiating
@@ -98,6 +107,11 @@ func (this managementSessionControl) perform(ctx context.Context, id session.Id,
 	}()
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+	if check != nil {
+		if err := check(ctx); err != nil {
+			return result, err
+		}
 	}
 	if !dispose {
 		return result, this.service.sessionConnections.disconnect(target.Flow(), target.Id())

@@ -25,6 +25,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/uuidpath"
 )
 
 const (
@@ -117,30 +118,46 @@ type FsRepository struct {
 
 	connectionInterceptors fsConnectionInterceptors
 
-	mutex       sync.RWMutex
-	closeOnce   sync.Once
-	closeErr    error
-	processLock *fsRepositoryProcessLock
+	mutex            sync.RWMutex
+	closeOnce        sync.Once
+	closeErr         error
+	processLock      *fsRepositoryProcessLock
+	associationMutex sync.Mutex
+	associationLocks map[associationSubject]*associationLock
 }
 
 func (this *FsRepository) dir(flow configuration.FlowName, id Id) (string, error) {
-	fs, err := flow.MarshalText()
+	if err := flow.Validate(); err != nil {
+		return "", err
+	}
+	// Reject invalid flows before any normalization. UUID.String reconstructs the
+	// canonical component from 16 bytes, never directly from request text. Enforce
+	// locality here too, rather than relying only on validation by callers/codecs.
+	flowName, sessionID := flow.String(), id.String()
+	if !filepath.IsLocal(flowName) || !filepath.IsLocal(sessionID) {
+		return "", fmt.Errorf("invalid session path component")
+	}
+	path, err := uuidpath.Resolve(filepath.Join(this.storage, flowName), id, "")
 	if err != nil {
 		return "", err
 	}
-	is, err := id.MarshalText()
-	if err != nil {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("session directory must not be a symbolic link")
+	} else if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
-	return filepath.Join(this.storage, string(fs), string(is)), nil
+	return path, nil
 }
 
 func (this *FsRepository) file(flow configuration.FlowName, id Id, kind string) (string, error) {
+	if kind == "." || !filepath.IsLocal(kind) || strings.ContainsAny(kind, "/\\:\x00") {
+		return "", fmt.Errorf("invalid session file kind")
+	}
 	dir, err := this.dir(flow, id)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, kind), nil
+	return filepath.Join(dir, filepath.Base(kind)), nil
 }
 
 func (this *FsRepository) openRead(flow configuration.FlowName, id Id, kind string) (*os.File, string, error) {
@@ -201,18 +218,34 @@ func (this *FsRepository) dirFileMode() sys.FileMode {
 func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte) (Session, error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
+	return this.create(ctx, flow, remote, authToken, Id{}, nil)
+}
+
+// create holds mutex through publication of metadata, tokens and association.
+func (this *FsRepository) create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte, id Id, association *Association, creationTimes ...time.Time) (Session, error) {
 
 	fail := func(err error) (Session, error) {
 		return nil, fmt.Errorf("cannot create session for user %v at flow %v: %w", remote, flow, err)
 	}
 
-	vid, err := uuid.NewUUID()
+	if id.IsZero() {
+		vid, err := uuid.NewUUID()
+		if err != nil {
+			return fail(err)
+		}
+		id = Id(vid)
+	}
+	dir, err := this.dir(flow, id)
 	if err != nil {
 		return fail(err)
 	}
-	id := Id(vid)
-	dir, err := this.dir(flow, id)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), os.FileMode(this.dirFileMode())); err != nil {
+		return fail(err)
+	}
+	if err := os.Mkdir(dir, os.FileMode(this.dirFileMode())); err != nil {
 		return fail(err)
 	}
 	committed := false
@@ -225,6 +258,9 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 	var sess fs
 	sess.info.VState = StateNew
 	sess.info.createdAt = time.Now().Truncate(time.Millisecond)
+	if len(creationTimes) > 0 {
+		sess.info.createdAt = creationTimes[0]
+	}
 	sess.info.VRemoteUser = remote.User()
 	sess.info.VRemoteHost = remote.Host()
 	sess.init(this, flow, id)
@@ -236,6 +272,11 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 	}
 	if len(authToken) > 0 {
 		if err := sess.setAuthorizationToken(ctx, authToken); err != nil {
+			return fail(err)
+		}
+	}
+	if association != nil {
+		if err := this.writeAssociation(ctx, flow, id, *association); err != nil {
 			return fail(err)
 		}
 	}
@@ -275,6 +316,10 @@ func (this *FsRepository) loadAndMatch(ctx context.Context, flow configuration.F
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			this.mutex.Unlock()
 			return nil, ctxErr
+		}
+		if err := this.persistentSessionProtection(flow, id); err != nil {
+			this.mutex.Unlock()
+			return nil, err
 		}
 		fn, pathErr := this.file(flow, id, FsFileEnvironmentToken)
 		if pathErr != nil {
@@ -325,9 +370,12 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 		return nil, err
 	}
 
-	f, _, err := this.openRead(flow, id, FsFileSession)
+	f, metadataPath, err := this.openRead(flow, id, FsFileSession)
 	if err != nil {
 		if sys.IsNotExist(err) {
+			if err := this.persistentSessionProtection(flow, id); err != nil {
+				return nil, err
+			}
 			if expectedToExist {
 				this.doFindAutoCleanIfAllowed(ctx, flow, id, opts, "found broken session directory; it was removed entirely", err)
 				return nil, fmt.Errorf("%w: session metadata of %v/%v is missing", ErrCorruptSession, flow, id)
@@ -340,11 +388,19 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 
 	var buf fs
 	if err := json.NewDecoder(f).Decode(&buf.info); err != nil {
+		if bindingErr := validateFsStoredIdentity(ctx, id, metadataPath, nil); bindingErr != nil {
+			return nil, bindingErr
+		}
 		var readError *os.PathError
 		if !errors.As(err, &readError) {
 			err = fmt.Errorf("%w: %w", ErrCorruptSession, err)
 		}
 		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot decode session %v/%v: %w", flow, id, err))
+	}
+	if err := validateFsStoredIdentity(ctx, id, metadataPath, buf.info.VId); err != nil {
+		// Identity mismatches are not repairable corrupt-session notifications.
+		// In particular, automatic cleanup must never delete a case-fold alias.
+		return nil, err
 	}
 	fi, err := f.Stat()
 	if err != nil {
@@ -356,6 +412,9 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 		buf.info.createdAt = buf.info.VCreatedAt
 	}
 	buf.init(this, flow, id)
+	if _, err := this.readAssociation(flow, id); err != nil {
+		return nil, err
+	}
 
 	this.doAutoCleanUnexpectedFilesIfAllowed(ctx, &buf, opts)
 
@@ -551,8 +610,8 @@ func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.Flow
 			byId, hasById := byFlow[id]
 			if hasById {
 				// Tell all active interceptors, that nothing is allowed from now on.
-				byId.disposed.Store(true)
-				disposed = byId.active.Load() > 0
+				alreadyDisposed := byId.disposed.Swap(true)
+				disposed = !alreadyDisposed && byId.active.Load() > 0
 			}
 		}
 	}
@@ -569,13 +628,12 @@ func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.Flow
 		return fail(err)
 	}
 
-	if sess.info.VState == StateDisposed {
-		disposed = true
-	} else {
+	if sess.info.VState != StateDisposed {
 		sess.info.VState = StateDisposed
 		if err := sess.info.save(); err != nil {
 			return fail(err)
 		}
+		disposed = true
 	}
 
 	return disposed, nil
@@ -585,6 +643,10 @@ func (this *FsRepository) doFindAutoCleanIfAllowed(ctx context.Context, flow con
 	if opts.IsAutoCleanUpAllowedFor(ctx, flow, id) {
 		logger := opts.GetLogger(this.logger).
 			Withf("sesion", "%v/%v", flow, id)
+		if err := this.persistentSessionProtection(flow, id); err != nil {
+			logger.Warn("preserving session ownership/browser binding state for operator inspection")
+			return
+		}
 		if err := this.deleteBy(ctx, flow, id); err != nil {
 			logger.
 				WithError(err).
@@ -630,7 +692,7 @@ func (this *FsRepository) deleteUnexpectedFiles(logger log.Logger, sess *fs) err
 	for _, entry := range entries {
 		name := entry.Name()
 		switch name {
-		case FsFileSession, FsFileLastAccessed, FsFileAccessToken, FsFileEnvironmentToken:
+		case FsFileSession, FsFileLastAccessed, FsFileAccessToken, FsFileEnvironmentToken, FsFileAssociation, FsFileBrowserBindings:
 			// Valid filename
 			continue
 		}
@@ -685,6 +747,10 @@ func fsPathContainsEnvironmentToken(path string) (bool, error) {
 		if walkErr != nil {
 			return walkErr
 		}
+		if entry.Name() == FsFileAssociation || entry.Name() == FsFileBrowserBindings {
+			present = true
+			return iofs.SkipAll
+		}
 		if entry.Name() != FsFileEnvironmentToken {
 			return nil
 		}
@@ -711,7 +777,7 @@ func (this *FsRepository) doFindAutoCleanFlowContentIfAllowed(ctx context.Contex
 			With("path", fn)
 		present, err := fsPathContainsEnvironmentToken(fn)
 		if err != nil || present {
-			logger.WithError(err).Warn("preserving unexpected session storage path: environment token may require operator inspection")
+			logger.WithError(err).Warn("preserving unexpected session storage path: environment token or session association may require operator inspection")
 			return
 		}
 		if err := os.RemoveAll(fn); err != nil && !os.IsNotExist(err) {
@@ -735,7 +801,7 @@ func (this *FsRepository) doFindAutoCleanRootContentIfAllowed(_ context.Context,
 			With("path", fn)
 		present, err := fsPathContainsEnvironmentToken(fn)
 		if err != nil || present {
-			logger.WithError(err).Warn("preserving unexpected session storage path: environment token may require operator inspection")
+			logger.WithError(err).Warn("preserving unexpected session storage path: environment token or session association may require operator inspection")
 			return
 		}
 		if err := os.RemoveAll(fn); err != nil && !os.IsNotExist(err) {
@@ -855,6 +921,9 @@ func (this *FsRepository) iterateFlowDirs(ctx context.Context, flow configuratio
 	}
 
 	dirName := filepath.Join(this.storage, string(fs))
+	if err := uuidpath.CheckAliases(ctx, dirName, ""); err != nil {
+		return err
+	}
 	var entries []os.DirEntry
 	defer func() {
 		if rErr == nil && len(entries) == 0 && opts.IsAutoCleanUpAllowedFor(ctx, flow, Id{}) {

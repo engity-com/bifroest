@@ -1059,7 +1059,7 @@ func (this *sshTestTask) GetField(name string) (any, bool, error) {
 }
 
 func (this *sshTestTask) Connection() connection.Connection          { return this.connection }
-func (this *sshTestTask) Context() essh.Context                      { return this.context }
+func (this *sshTestTask) Context() context.Context                   { return this.context }
 func (this *sshTestTask) Authorization() authorization.Authorization { return this.authorization }
 func (this *sshTestTask) SshSession() essh.Session                   { return this.session }
 func (this *sshTestTask) TaskType() TaskType                         { return this.taskType }

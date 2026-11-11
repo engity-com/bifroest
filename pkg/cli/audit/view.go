@@ -12,6 +12,7 @@ import (
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementview "github.com/engity-com/bifroest/pkg/management/view"
 )
 
 type AuditEventsOptions struct {
@@ -34,9 +35,10 @@ func ListAuditlogs(output io.Writer, selected cliformat.Format, conf *configurat
 	}
 	entries := make([]model.AuditlogSummary, 0, len(conf.Auditlogs))
 	for _, current := range conf.Auditlogs {
+		view := managementview.Auditlog(current)
 		entries = append(entries, model.AuditlogSummary{
-			Name: current.Name, Enabled: current.Enabled, RecordingEnabled: current.Recording.Enabled,
-			Encrypted: !current.EncryptionPublicKey.IsZero() || !current.EncryptionPublicKeyFile.IsZero(),
+			Name: configuration.AuditlogName(view.Name), Enabled: view.Enabled, RecordingEnabled: view.RecordingEnabled,
+			Encrypted: view.Encrypted,
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
@@ -59,6 +61,7 @@ func ShowAuditlog(output io.Writer, selected cliformat.Format, conf *configurati
 		if err := yaml.Unmarshal(encoded, &settings); err != nil {
 			return err
 		}
+		settings["name"] = current.Name.String()
 		flow.RedactSettings(settings, "name", "targets.[].name", "targets.[].type",
 			"recording.targets.[].name", "recording.targets.[].type")
 		return cliformat.WriteSettings(output, selected, settings)

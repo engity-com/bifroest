@@ -12,6 +12,7 @@ import (
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 )
 
 // NativeRecoveryFile must be exclusively locked by its owner. The writer uses
@@ -231,7 +232,11 @@ func RecoverNativeRecording(file NativeRecoveryFile, identity *audit.Identity, r
 		}
 		_, _ = continuation.Write(resultLine)
 		copy(digest[:], continuation.Sum(nil))
-		castSignatureValue, err := identity.NewSessionRecordingCastSignature(Id(header.RecordingId).String(), CastDigest(digest).String())
+		id := uuidtext.Format(header.RecordingId)
+		if header.Version == 1 {
+			id = uuidtext.Classic(header.RecordingId)
+		}
+		castSignatureValue, err := identity.NewSessionRecordingCastSignature(id, CastDigest(digest).String())
 		if err != nil {
 			return nil, err
 		}
@@ -285,7 +290,7 @@ func RecoverNativeRecording(file NativeRecoveryFile, identity *audit.Identity, r
 		copy(contentHash[:], h.Sum(nil))
 	}
 	seal := nativeRecordingSeal{Status: status, ChunkCount: count, LastUnitHash: previous, ContentHash: contentHash, CastDigest: digest, CastSignature: castSignature, CastBytes: castBytes, EndedAt: endedAt}
-	sealPayload, err := signer.Seal(seal, Id(header.RecordingId))
+	sealPayload, err := signer.seal(seal, Id(header.RecordingId), header.Version)
 	if err != nil {
 		return nil, err
 	}

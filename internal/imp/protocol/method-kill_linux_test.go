@@ -5,6 +5,7 @@ package protocol
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,22 @@ import (
 
 const boundedPidfdsHelper = "BIFROEST_BOUNDED_PIDFDS_HELPER"
 
+func TestMain(m *testing.M) {
+	// Keep the legacy fixture's reference epoch deterministic even when the
+	// dependency reconstructs container boot time from wall clock and uptime.
+	// Warm it before worker goroutines; do not alter production identity guards.
+	process.EnableBootTimeCache(true)
+	candidate, err := process.NewProcess(int32(os.Getpid()))
+	if err == nil {
+		_, err = candidate.CreateTime()
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot initialize legacy process test clock")
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
 func mustGetProcessGroup(t *testing.T, pid int) int {
 	t.Helper()
 	pgid, err := syscall.Getpgid(pid)
@@ -43,7 +60,7 @@ func processIsGoneOrZombie(pid int) bool {
 }
 
 func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
-	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"
+	expectedEnv := "BIFROEST_TEST_EXECUTION=owned-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	start := func(pgid int) *exec.Cmd {
 		cmd := exec.Command("sleep", "30")
 		cmd.Env = append(os.Environ(), expectedEnv)
@@ -62,8 +79,14 @@ func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
 	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, leader.Process.Pid))
 	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, target.Process.Pid))
 	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, sibling.Process.Pid))
-	require.True(t, processHasEnvironment(leader.Process.Pid, expectedEnv))
-	require.True(t, processHasEnvironment(target.Process.Pid, expectedEnv))
+	// Start establishes the process/group, not successful observation of its
+	// environment through the process library. Require ownership readiness for
+	// every fixture member before exercising kill; never relax the real guard.
+	require.Eventually(t, func() bool {
+		return processHasEnvironment(leader.Process.Pid, expectedEnv) &&
+			processHasEnvironment(target.Process.Pid, expectedEnv) &&
+			processHasEnvironment(sibling.Process.Pid, expectedEnv)
+	}, 2*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{
 		pid:              target.Process.Pid,
@@ -91,6 +114,11 @@ func TestLegacyProcessIdentityRequiresEnvironment(t *testing.T) {
 		expectedIdentity: &identity,
 		expectedEnv:      os.Environ()[0],
 	}).matchesIdentity())
+	require.False(t, (processTarget{pid: os.Getpid(), expectedIdentity: &identity, expectedEnv: "BIFROEST_TEST_LEGACY_IDENTITY=not-owned"}).matchesIdentity())
+	for _, difference := range []int64{-1000, -1, 1, 1000} {
+		wrong := strconv.FormatInt(createdAt+difference, 10)
+		require.False(t, (processTarget{pid: os.Getpid(), expectedIdentity: &wrong, expectedEnv: os.Environ()[0]}).matchesIdentity())
+	}
 }
 
 func TestLegacyStartingProcessMatchesIdentity(t *testing.T) {

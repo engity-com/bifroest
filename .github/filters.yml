@@ -1,33 +1,34 @@
 # This is used by the action https://github.com/dorny/paths-filter
 
 go: &go
-  - 'go.mod'
-  - 'go.sum'
-  - '.golangci.yml'
-  - '.syft.yaml'
-  - 'REUSE.toml'
-  - 'LICENSE'
-  - 'LICENSES/**'
-  - 'pkg/**'
-  - 'docs/assets/audit-format-vectors/**'
-  - 'docs/assets/recording-format-vectors/**'
-  - 'cmd/**'
-  - 'internal/**'
-  - 'contrib/**'
-  - 'test/**'
-  - '.github/**'
-  - 'mise.toml'
-  - '.tool-versions'
+  - "go.mod"
+  - "go.sum"
+  - ".golangci.yml"
+  - ".syft.yaml"
+  - "REUSE.toml"
+  - "LICENSE"
+  - "LICENSES/**"
+  - "pkg/**"
+  - "web/**"
+  - "docs/assets/audit-format-vectors/**"
+  - "docs/assets/recording-format-vectors/**"
+  - "cmd/**"
+  - "internal/**"
+  - "contrib/**"
+  - "test/**"
+  - ".github/**"
+  - "mise.toml"
+  - ".tool-versions"
 
 docs: &docs
-  - 'mkdocs.yml'
-  - 'docs/**'
-  - 'contrib/**'
-  - '**/*.md'
-  - 'LICENSE'
-  - '.github/**'
-  - 'mise.toml'
-  - '.tool-versions'
+  - "mkdocs.yml"
+  - "docs/**"
+  - "contrib/**"
+  - "**/*.md"
+  - "LICENSE"
+  - ".github/**"
+  - "mise.toml"
+  - ".tool-versions"
 
 any:
   - *go

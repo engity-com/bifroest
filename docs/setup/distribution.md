@@ -189,6 +189,8 @@ relates every artifact to its platform, edition, media type and SHA-256 digest.
 Use [the checksum file](<<release_asset_url("bifroest-checksums.txt")>>) to verify
 all downloadable release assets.
 
+The included license notices also cover the [browser components](../legal/license.md#embedded-browser-components).
+
 <<compliance_matrix()>>
 
 OCI entries link to the container package. The abbreviated digest identifies

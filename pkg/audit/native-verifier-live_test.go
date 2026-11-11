@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
@@ -23,13 +24,12 @@ func TestNativeLiveCapturedHeadSurvivesAppendAndRotation(t *testing.T) {
 			headPath := filepath.Join(r.headDirectory, nativeHeadFileName)
 			original, _, err := readVerifierFile(headPath, nativeformat.MaxMetadataPayload)
 			require.NoError(t, err)
-			head, err := decodeNativeAuditHead(original, id)
+			head, err := evidence.CaptureAuditProducerHead(original, id.ProducerId(), false)
 			require.NoError(t, err)
-			checkpoint := journalHash(head.LastRecordHash)
 			assertCaptured := func() {
 				t.Helper()
 				budget := &verifierBudget{}
-				records, _, err := verifyLiveProducer(context.Background(), source, r.headDirectory, id, nil, checkpoint, true, budget, []string{conf.Directory})
+				records, _, err := verifyLiveProducer(context.Background(), source, r.headDirectory, head, nil, true, budget, []string{conf.Directory})
 				require.NoError(t, err)
 				require.Len(t, records, 1)
 				require.Equal(t, "first", records[0].Event.Name)

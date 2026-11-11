@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/engity-com/bifroest/pkg/crypto"
+	crypto "github.com/engity-com/bifroest/pkg/crypto/keydata"
 )
 
 // EncodeStoredPayload produces a separate Zstd frame and optional age message

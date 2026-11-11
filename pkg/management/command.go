@@ -11,7 +11,8 @@ import (
 	cli "github.com/echocat/cli4g"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/cli/transport"
+	managementclient "github.com/engity-com/bifroest/pkg/management/client"
+	transport "github.com/engity-com/bifroest/pkg/management/wire"
 )
 
 // sshCommand owns one invocation's connection, session and diagnostics. Callers
@@ -23,6 +24,7 @@ type sshCommand struct {
 	stderr      diagnosticOutput
 	diagnostics io.Writer
 	release     func()
+	closeOnce   sync.Once
 }
 
 func (target Target) startWireCommand(ctx context.Context, command string, args ...string) (*sshCommand, error) {
@@ -63,10 +65,12 @@ func (target Target) startCommand(ctx context.Context, command string, input io.
 }
 
 func (this *sshCommand) close() {
-	if this.session != nil {
-		_ = this.session.Close()
-	}
-	this.release()
+	this.closeOnce.Do(func() {
+		if this.session != nil {
+			_ = this.session.Close()
+		}
+		this.release()
+	})
 }
 
 func (this *sshCommand) failure(operation string, err error) error {
@@ -80,27 +84,29 @@ func (this *sshCommand) wait(operation string) error {
 	return this.stderr.forwardTo(this.diagnostics)
 }
 
-// Stop the peer before waiting when a streaming decoder or local writer fails.
-// Otherwise a producer still writing stdout/stderr could keep Wait blocked.
-func (this *sshCommand) abort(operation string, err error) error {
-	_ = this.client.Close()
-	_ = this.session.Wait()
-	return this.failure(operation, err)
-}
-
-func (this *sshCommand) readResponse(maximum int64, description, operation string) ([]byte, error) {
-	content, err := io.ReadAll(io.LimitReader(this.stdout, maximum+1))
+func (this *sshCommand) readResponse(ctx context.Context, maximum int64, description, operation string) ([]byte, error) {
+	content, err := managementclient.ReadBytes(ctx, this.response(operation), maximum)
 	if err != nil {
-		return nil, err
-	}
-	if int64(len(content)) > maximum {
-		return nil, fmt.Errorf("%s exceeds %d bytes", description, maximum)
-	}
-	if err := this.wait(operation); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", description, err)
 	}
 	return content, nil
 }
+
+func (this *sshCommand) response(operation string) *sshResponse {
+	return &sshResponse{command: this, operation: operation}
+}
+
+// Only this adapter knows SSH exit status, connection ownership and bounded
+// diagnostics. Abort stops I/O without Wait; Complete owns the single Wait/drain.
+type sshResponse struct {
+	command   *sshCommand
+	operation string
+}
+
+func (this *sshResponse) Read(data []byte) (int, error) { return this.command.stdout.Read(data) }
+func (this *sshResponse) Complete() error               { return this.command.wait(this.operation) }
+func (this *sshResponse) Abort() error                  { return this.command.client.Close() }
+func (this *sshResponse) Close() error                  { this.command.close(); return nil }
 
 // diagnosticOutput captures a bounded stderr prefix while SSH may still be writing.
 type diagnosticOutput struct {

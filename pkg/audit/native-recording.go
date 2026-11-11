@@ -66,7 +66,7 @@ type NativeRecordingHeadContent struct {
 }
 
 func (this *Identity) SignNativeRecordingHeader(value NativeRecordingHeaderContent) ([]byte, error) {
-	if this == nil || this.PublicKey() == nil || value.Version != 1 || value.ProducerId != [32]byte(this.ProducerId()) || !bytes.Equal(value.PublicKey, this.PublicKey().Marshal()) || value.Encryption > 1 || (value.Encryption == 1) != (value.Recipient != "") {
+	if this == nil || this.PublicKey() == nil || (value.Version != 1 && value.Version != 2) || value.ProducerId != [32]byte(this.ProducerId()) || !bytes.Equal(value.PublicKey, this.PublicKey().Marshal()) || value.Encryption > 1 || (value.Encryption == 1) != (value.Recipient != "") {
 		return nil, fmt.Errorf("native recording header does not match signing identity or mode")
 	}
 	return this.signNativeRecordingContent(nativeRecordingHeaderSignatureDomain, value, nativeformat.MaxMetadataPayload)

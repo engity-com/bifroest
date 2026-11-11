@@ -8,6 +8,28 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestBoolStaticValueDoesNotExecuteTemplates(t *testing.T) {
+	for _, entry := range []struct {
+		name           string
+		value          Bool
+		known, enabled bool
+	}{
+		{name: "zero", known: true},
+		{name: "true", value: BoolOf(true), known: true, enabled: true},
+		{name: "false", value: BoolOf(false), known: true},
+		{name: "true alias", value: MustNewBool("yes"), known: true, enabled: true},
+		{name: "false alias", value: MustNewBool("disabled"), known: true},
+		{name: "context required", value: MustNewBool("{{.missing}}")},
+		{name: "file expression", value: MustNewBool("{{`not-read` | file}}")},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			enabled, known := entry.value.StaticValue()
+			assert.Equal(t, entry.known, known)
+			assert.Equal(t, entry.enabled, enabled)
+		})
+	}
+}
+
 func TestBool(t *testing.T) {
 	cases := []struct {
 		plain             string

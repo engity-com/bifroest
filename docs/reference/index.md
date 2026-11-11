@@ -7,7 +7,7 @@ description: Reference of Bifröst, how it can be configured and operated.
 
 Bifröst does have the following important entities:
 
-1. [**Connection**](connection/index.md) which is established by the user's SSH client to Bifröst.
+1. [**Connection**](connection/index.md) which is established by an SSH client or the HTTPS browser interface.
 
 2. [**Authorization**](authorization/index.md) are used to authorize the user and acquire more relevant information, needed for successful execution.
 

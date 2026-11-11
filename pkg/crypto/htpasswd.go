@@ -18,6 +18,10 @@ func (this Htpasswd) Match(username, password string) bool {
 	return false
 }
 
+func (this Htpasswd) Contains(username string) bool {
+	return this.file != nil && this.file.Exists(username)
+}
+
 func (this Htpasswd) MarshalText() (text []byte, err error) {
 	return []byte(this.String()), nil
 }

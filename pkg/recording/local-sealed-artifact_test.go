@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"io"
@@ -36,7 +37,7 @@ func TestLocalNativeRepositoryListsAndOpensSealedArtifacts(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	sort.Slice(ids, func(left, right int) bool { return ids[left].String() < ids[right].String() })
+	sort.Slice(ids, func(left, right int) bool { return bytes.Compare(ids[left][:], ids[right][:]) < 0 })
 	listed, err := repository.ListSealed(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, ids, listed)

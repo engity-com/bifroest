@@ -1,8 +1,13 @@
 var
 .cache
+web/node_modules/
+web/.vitest/
+pkg/webui/assets/*
+!pkg/webui/assets/README.txt
 __pycache__/
 .env
 docs/versions.json
 docs/versions-v2.json
 docs/release.json
-docs/v1.0.0-beta1/release.json
+docs/**/release.json
+AGENTS.md

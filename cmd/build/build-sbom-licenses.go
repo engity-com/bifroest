@@ -51,14 +51,19 @@ var bundledLicenseComponents = []bundledLicenseComponent{
 }
 
 func enrichSbomLicenses(document map[string]any, format, subjectName string, inventory *thirdPartyLicenseInventory) error {
+	var err error
 	switch format {
 	case "spdx-json@2.3":
-		return enrichSpdxSbomLicenses(document, subjectName, inventory)
+		err = enrichSpdxSbomLicenses(document, subjectName, inventory)
 	case "cyclonedx-json@1.6":
-		return enrichCycloneDxSbomLicenses(document, subjectName, inventory)
+		err = enrichCycloneDxSbomLicenses(document, subjectName, inventory)
 	default:
 		return fmt.Errorf("unsupported SBOM format %q", format)
 	}
+	if err != nil {
+		return err
+	}
+	return enrichBrowserSbom(document, format, subjectName, inventory)
 }
 
 func enrichSpdxSbomLicenses(document map[string]any, subjectName string, inventory *thirdPartyLicenseInventory) error {

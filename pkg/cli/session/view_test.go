@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -80,4 +82,36 @@ func TestManagementSessionSelection(t *testing.T) {
 	require.Contains(t, output.String(), "carol")
 	require.Contains(t, output.String(), "other")
 	require.NotContains(t, output.String(), "authorizationToken")
+}
+
+func TestSessionListUsesUUIDByteOrderForEqualCreationTimes(t *testing.T) {
+	var input []testSessionInfo
+	var want []string
+	for number := 1; number <= 20; number++ {
+		var id session.Id
+		require.NoError(t, id.Set(fmt.Sprintf("%08x-0000-4000-8000-000000000000", number)))
+		input = append(input, testSessionInfo{id: id, flow: "work", state: session.StateAuthorized, user: "alice"})
+		want = append(want, id.String())
+	}
+	textOrder := append([]string(nil), want...)
+	sort.Strings(textOrder)
+	require.NotEqual(t, want, textOrder, "fixture must distinguish byte order from Base58 text")
+	source := func(ctx context.Context, consume func(context.Context, session.Info) (bool, error), _ session.FindDiagnosticConsumer) error {
+		for number := len(input) - 1; number >= 0; number-- {
+			cont, err := consume(ctx, input[number])
+			if err != nil || !cont {
+				return err
+			}
+		}
+		return nil
+	}
+	var output bytes.Buffer
+	require.NoError(t, ListSessions(t.Context(), &output, cliformat.Json, source, "", "", "all", nil))
+	var rows []model.SessionView
+	require.NoError(t, json.Unmarshal(output.Bytes(), &rows))
+	var got []string
+	for _, row := range rows {
+		got = append(got, row.ID)
+	}
+	require.Equal(t, want, got)
 }

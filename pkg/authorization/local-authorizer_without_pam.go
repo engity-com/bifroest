@@ -8,6 +8,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+const localPamAuthenticationAvailable = false
+
 func (this *LocalAuthorizer) checkPassword(req PasswordRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
 	if err := this.assertNoPamServiceConfigured(); err != nil {
 		return "", nil, false, err

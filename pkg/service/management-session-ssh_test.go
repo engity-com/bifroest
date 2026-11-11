@@ -46,7 +46,7 @@ environment:
   type: dummy
 `, bfcrypto.MarshalPublicKey(login.PublicKey()))), &workload))
 		conf.Flows = append(conf.Flows, workload)
-		conf.Auditlogs[0].Enabled = true
+		configureDefaultTestAuditlog(conf)
 		conf.Auditlogs[0].IdentityFile = filepath.Join(directory, "audit-key")
 		conf.Auditlogs[0].Directory = filepath.Join(directory, "audit")
 	})

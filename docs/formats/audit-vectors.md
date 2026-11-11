@@ -115,6 +115,13 @@ signatures and hashes without a key, verify and export private fields using
 the published test key, and reject missing or wrong keys in full mode. Normal
 tests never rewrite fixtures.
 
+`mise exec -- go test ./pkg/audit/evidence -count=1` exercises the same shared
+Header/Record/Seal/Head decoders directly against the unchanged clear and frozen
+encrypted units. Native and Go/WASM tests also verify producer snapshots and
+compare JSONL exports byte-for-byte with these fixtures. Browser transport and
+native filesystem checks are tested separately; these vectors describe the
+artifact bytes.
+
 Age encryption consumes fresh randomness. The encrypted `.beaudit`, its head
 (which signs its ciphertext-dependent chain tip), both JSONL exports, and the
 encrypted record and seal units have `reproducible: false`: they are **frozen

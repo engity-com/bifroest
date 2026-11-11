@@ -17,19 +17,19 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
 2. Configure two audit logs and two flows:
 
     ```yaml title="Bifröst host: /etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - name: workload
-        enabled: true
+    auditlogs:
+      workload:
         identityFile: /etc/engity/bifroest/workload-signing-key
         directory: /var/lib/engity/bifroest/workload-audit
         recording:
           enabled: true
           directory: /var/lib/engity/bifroest/workload-recordings
 
-      - name: administration
-        enabled: true
+      administration:
         identityFile: /etc/engity/bifroest/administration-signing-key
         directory: /var/lib/engity/bifroest/administration-audit
+        recording:
+          directory: /var/lib/engity/bifroest/administration-recordings
 
     flows:
       - name: administration
@@ -83,7 +83,7 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
     bifroest @bifroest-admin audit events administration --limit=20
     ```
 
-    Settings are redacted. Metadata and public event queries work with `allowArtifactTransfer: false`. This does not make the flow read-only: all authorized management users can also disconnect and dispose of sessions.
+    Settings are redacted. Metadata and public event queries work with `allowArtifactTransfer: false`. This does not make the flow read-only: an unrestricted management login can also disconnect and dispose of sessions.
 
 ### Find a workload session and its Recording
 
@@ -132,7 +132,7 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
 
 Find the workload session with `session ls`, then choose **one** action:
 
-* Close its current SSH connections but keep the session reusable:
+* Close its current SSH and browser connections but keep the session reusable:
 
     ```shell
     bifroest @bifroest-admin session disconnect SESSION_UUID
@@ -144,7 +144,17 @@ Find the workload session with `session ls`, then choose **one** action:
     bifroest @bifroest-admin session dispose SESSION_UUID
     ```
 
-Disposal can remove containers, Pods or managed accounts and home directories, depending on the environment. Neither command requires an additional permission. A command cannot target its own executing management session. See [`disconnect`](../reference/cli/session/disconnect.md) and [`dispose`](../reference/cli/session/dispose.md) for details and failure behavior.
+Disposal can remove containers, Pods or managed accounts and home directories, depending on the environment. For this unrestricted management login, neither command requires an additional permission. A command cannot target its own executing management session. See [`disconnect`](../reference/cli/session/disconnect.md) and [`dispose`](../reference/cli/session/dispose.md) for details and failure behavior.
+
+## Browser alternative
+
+Enable HTTPS as in [Browser access](browser-access.md). Publish the administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`, keeping its existing requesting-name requirement.
+
+1. Open `https://bifroest.example.org/#Admin`, choose **SSH key** and sign in as `management` with the workstation's login key.
+2. Choose **Sessions**, filter for the workload flow and open the desired session.
+3. Choose **Disconnect connections** or **End session** and confirm the exact target. These perform the same operations as the CLI commands above.
+
+This example keeps `allowArtifactTransfer: false`. Browser event/Recording views and original downloads require enabling it separately; follow [encrypted evidence](evidence.md).
 
 ## Next steps
 

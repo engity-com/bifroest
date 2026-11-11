@@ -82,7 +82,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	u, err := this.userRepository.LookupByName(req.Context(), req.Connection().Remote().User())
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return fail(err)
+	}
+	u, err := this.userRepository.LookupByName(req.Context(), remoteName)
 	if errors.Is(err, user.ErrNoSuchUser) {
 		req.Connection().Logger().Debug("local user not found")
 		return Forbidden(req.Connection().Remote()), nil
@@ -105,7 +109,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	} else if !ok {
 		return Forbidden(req.Connection().Remote()), nil
 	}
-	policy, accepted, isCertificate, err := this.authorizedKeyPolicy(req, u)
+	policy, accepted, isCertificate, err := this.authorizedKeyPolicy(req, u, remoteName)
 	if err != nil {
 		return fail(err)
 	}
@@ -114,11 +118,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	}
 	candidate.authorizedKeyPolicy = policy
 
+	if !isPublicKeyVerified(req) {
+		return &candidate, nil
+	}
 	if isCertificate {
-		if !isPublicKeyVerified(req) {
-			return &candidate, nil
-		}
-		sess, err := this.ensureSessionFor(req, u)
+		sess, err := this.ensureSessionFor(req, &candidate)
 		if err != nil {
 			return fail(err)
 		}
@@ -130,9 +134,17 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		session.IsFlow(this.flow),
 		session.IsStillValid,
 		session.IsRemoteName(req.Connection().Remote().User()),
+		func(ctx context.Context, candidate session.Session) (bool, error) {
+			raw, err := candidate.AuthorizationToken(ctx)
+			if err != nil {
+				return false, err
+			}
+			var token localToken
+			return json.Unmarshal(raw, &token) == nil && token.User.Name == u.Name && token.User.Uid != nil && *token.User.Uid == u.Uid, nil
+		},
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		sess, err = this.ensureSessionFor(req, u)
+		sess, err = this.ensureSessionFor(req, &candidate)
 		if err != nil {
 			return fail(err)
 		}
@@ -148,7 +160,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	return &candidate, nil
 }
 
-func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.User) (*AuthorizedKeyPolicy, bool, bool, error) {
+func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.User, remoteName string) (*AuthorizedKeyPolicy, bool, bool, error) {
 	fail := func(err error) (*AuthorizedKeyPolicy, bool, bool, error) {
 		return nil, false, false, err
 	}
@@ -166,7 +178,7 @@ func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.U
 	}
 
 	policy, accepted, err := evaluatePublicKeyCredential(
-		req.RemotePublicKey(), req.Connection().Remote().User(), req.Connection().Remote().Host(), this.trustedUserCAs,
+		req.RemotePublicKey(), remoteName, req.Connection().Remote().Host(), this.trustedUserCAs,
 		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
 			_, err := crypto.DoWithEachAuthorizedKey[bool](false, func(candidate ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, bool, error) {
 				canContinue, err := consumer(candidate, options)
@@ -191,12 +203,12 @@ type userEnabledRequest struct {
 	user *user.User
 }
 
-func (this *userEnabledRequest) GetField(name string) (any, bool) {
+func (this *userEnabledRequest) GetField(name string) (any, bool, error) {
 	switch name {
 	case "user":
-		return this.user, true
+		return this.user, true, nil
 	default:
-		return nil, false
+		return (remoteNameRequest{this.Request}).GetField(name)
 	}
 }
 
@@ -207,7 +219,7 @@ func (this *LocalAuthorizer) getAuthorizedKeysFilesOf(req PublicKeyRequest, u *u
 	})
 }
 
-func (this *LocalAuthorizer) ensureSessionFor(req Request, u *user.User) (session.Session, error) {
+func (this *LocalAuthorizer) ensureSessionFor(req Request, auth *local) (session.Session, error) {
 	fail := func(err error) (session.Session, error) {
 		return nil, err
 	}
@@ -217,14 +229,17 @@ func (this *LocalAuthorizer) ensureSessionFor(req Request, u *user.User) (sessio
 
 	buf := localToken{
 		User: localTokenUser{
-			Name: u.Name,
-			Uid:  common.P(u.Uid),
+			Name: auth.user.Name,
+			Uid:  common.P(auth.user.Uid),
 		},
 		EnvVars: nil,
 	}
 	at, err := json.Marshal(buf)
 	if err != nil {
 		return failf("cannot marshal authorization token: %w", err)
+	}
+	if sess, handled, err := resolveAuthenticatedSession(req, auth, at); handled || err != nil {
+		return sess, err
 	}
 
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), at, (&session.FindOpts{}).WithPredicate(
@@ -259,7 +274,11 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	username, ev, ok, err := this.checkPassword(req, req.Connection().Remote().User(), this.validatePassword)
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return fail(err)
+	}
+	username, ev, ok, err := this.checkPassword(req, remoteName, this.validatePassword)
 	if err != nil {
 		return failf("cannot validate password: %w", err)
 	}
@@ -291,7 +310,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req, u)
+	sess, err := this.ensureSessionFor(req, &candidate)
 	if err != nil {
 		return failf("cannot create session: %w", err)
 	}
@@ -318,7 +337,11 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	username, ev, ok, err := this.checkInteractive(req, req.Connection().Remote().User(), this.validatePassword)
+	remoteName, err := resolveRemoteName(req, this.conf.RemoteName)
+	if err != nil {
+		return fail(err)
+	}
+	username, ev, ok, err := this.checkInteractive(req, remoteName, this.validatePassword)
 	if err != nil {
 		return failf("cannot validate password: %w", err)
 	}
@@ -350,7 +373,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req, u)
+	sess, err := this.ensureSessionFor(req, &candidate)
 	if err != nil {
 		return failf("cannot create session: %w", err)
 	}
