@@ -25,7 +25,7 @@ const (
 	ImageScratch = "scratch"
 
 	fromMinimalLinux   = "docker.io/library/alpine:latest@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf"
-	fromMinimalWindows = "mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:62d28cb7771b0cf1b37db2662e468dad76e7ef15ca4ef52b2ab73c102a23da98"
+	fromMinimalWindows = "mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:5a1c3c8308f8f5c9b67d21d2332a449d4ab8f9a6cf277f07d4aeac27ff2a0213"
 )
 
 var (
