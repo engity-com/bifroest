@@ -136,6 +136,8 @@ The effective remote address from the SSH context is used. With `proxyProtocol: 
 
 ## Keys
 
+Key-type restrictions also apply to [browser SSH-key login](http/index.md), including saved public-key access and both the subject and CA keys of user certificates.
+
 ### Configuration {: #keys-configuration }
 
 <<property("hostKeys", array_ref("File Path", "../data-type.md#file-path"), default=['<defaultLocation>'], heading=4, id_prefix="keys-")>>
@@ -164,7 +166,7 @@ Restrict which ED25519 keys are allowed to be used.
 
 <<property("rememberMeNotification", "string", template_context="../context/authorization.md", default="If you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly log in again.\n\n", heading=4, id_prefix="keys-")>>
 
-Banner which will be shown if the connection was based on an authentication method (like OIDC) which does not have its own public key authentication. At this point, the authentication was successful AND the client submitted at least one public key (as authentication try). This key will be used and this message will be shown to the client to inform that this key will be used for the session from now on. As a result, the original authentication will be skipped (like OIDC) as long as it is not expired and the client presents the same public key. For OIDC, a remembered key does not bypass the session's refresh-token checks or prevent its disposal after lost access.
+Shown when the authorization's [RememberMe](../data-type.md#rememberme) setting permits registration and a client key was remembered after successful login. Returning with that key can skip repeated password/MFA authentication while the session remains valid. Current access checks, including configured OIDC refresh checks, still apply.
 
 ### Examples {: #keys-examples }
 

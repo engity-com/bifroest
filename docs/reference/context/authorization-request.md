@@ -14,9 +14,17 @@ There are more specialized variants of the authorization request available, base
 
 ## Properties
 
+<<property("connection", "Connection", "connection.md")>>
+
+The incoming connection.
+
 <<property("remote", "Remote", "remote.md")>>
 
-Identifies the user with its host and username.
+The requesting peer and original username.
+
+<<property("authentication", "Authentication", "authentication.md")>>
+
+The current authentication candidate; anonymous before a candidate is resolved.
 
 ## Public Key
 

@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	gos "os"
+	"path/filepath"
 	"time"
 
 	bib "github.com/engity-com/bifroest/internal/build"
+	"github.com/engity-com/bifroest/internal/build/browser"
 )
 
-const binaryBuildMetadataVersion = 1
+const binaryBuildMetadataVersion = 2
 
 type binaryBuildMetadata struct {
 	SchemaVersion int                        `json:"schemaVersion"`
@@ -24,6 +26,7 @@ type binaryBuildMetadata struct {
 	BinaryDigest  string                     `json:"binaryDigest"`
 	NoticeDigest  string                     `json:"noticeDigest"`
 	Licenses      []binaryBuildLicenseModule `json:"licenses"`
+	BrowserDigest string                     `json:"browserDigest"`
 }
 
 type binaryBuildLicenseModule struct {
@@ -39,6 +42,16 @@ func (this *buildBinary) metadataFilepath(binary *buildArtifact) string {
 func (this *buildBinary) save(binary, notice *buildArtifact) error {
 	if binary.thirdPartyLicenseInventory == nil || binary.thirdPartyNoticesFilepath != notice.filepath {
 		return fmt.Errorf("binary %s has no matching third-party license data", binary.Platform)
+	}
+	if binary.browserManifest == nil {
+		return fmt.Errorf("binary has no browser build manifest")
+	}
+	if err := binary.browserManifest.Validate(); err != nil {
+		return err
+	}
+	storedBrowserRaw, err := gos.ReadFile(browserBuildPath(binary))
+	if err != nil || !bytes.Equal(storedBrowserRaw, binary.browserManifestRaw) {
+		return fmt.Errorf("binary browser build manifest changed")
 	}
 	binaryDigest, err := sha256File(binary.filepath)
 	if err != nil {
@@ -57,6 +70,7 @@ func (this *buildBinary) save(binary, notice *buildArtifact) error {
 		BuildTime:     binary.time,
 		BinaryDigest:  binaryDigest,
 		NoticeDigest:  noticeDigest,
+		BrowserDigest: browserManifestDigest(binary.browserManifestRaw),
 	}
 	for _, module := range binary.thirdPartyLicenseInventory.modules {
 		metadata.Licenses = append(metadata.Licenses, binaryBuildLicenseModule{
@@ -104,6 +118,7 @@ func (this *buildBinary) load(ctx context.Context, p *bib.Platform) (*buildArtif
 	for _, item := range []struct{ filename, expected string }{
 		{binary.filepath, metadata.BinaryDigest},
 		{notice.filepath, metadata.NoticeDigest},
+		{browserBuildPath(binary), metadata.BrowserDigest},
 	} {
 		actual, err := sha256File(item.filename)
 		if err != nil {
@@ -113,7 +128,19 @@ func (this *buildBinary) load(ctx context.Context, p *bib.Platform) (*buildArtif
 			return nil, nil, fmt.Errorf("binary build file %q has digest %s instead of %s", item.filename, actual, item.expected)
 		}
 	}
+	manifest, browserRaw, err := browser.Read(gos.DirFS(filepath.Dir(browserBuildPath(binary))), filepath.Base(browserBuildPath(binary)))
+	if err != nil {
+		return nil, nil, err
+	}
+	if manifest.Revision != binary.revision {
+		return nil, nil, fmt.Errorf("binary browser build revision does not match")
+	}
+	if gos.Getenv("GITHUB_ACTIONS") == "true" && manifest.Dirty {
+		return nil, nil, fmt.Errorf("CI requires clean browser source inputs")
+	}
+	binary.browserManifest, binary.browserManifestRaw = manifest, browserRaw
 	inventory := &thirdPartyLicenseInventory{}
+	inventory.browser, inventory.browserDigest = manifest, metadata.BrowserDigest
 	for _, module := range metadata.Licenses {
 		if len(module.Names) == 0 || module.Expression == "" {
 			return nil, nil, fmt.Errorf("binary build metadata %q has incomplete license data", filename)

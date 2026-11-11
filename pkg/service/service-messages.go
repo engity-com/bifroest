@@ -12,7 +12,7 @@ import (
 )
 
 func (this *service) handleBanner(ctx essh.Context, _ gossh.ConnMetadata) (string, error) {
-	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{ctx}); err != nil {
+	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{Context: ctx, connection: this.connection(ctx)}); err != nil {
 		return "", errors.Newf(errors.System, "cannot retrieve SSH banner: %w", err)
 	} else {
 		return b, nil
@@ -27,8 +27,17 @@ func (this *service) showRememberMe(sshSess essh.Session, auth authorization.Aut
 		pub, _ = ctx.Value(handshakeKeyCtxKey).(essh.PublicKey)
 	}
 	if pub != nil {
+		registered, err := auth.FindSession().HasPublicKey(ctx, pub)
+		if err != nil {
+			return err
+		}
+		if !registered || !this.rememberMePolicy(auth.Flow()).Allowed() {
+			return nil
+		}
 		if v := this.Configuration.Ssh.Keys.RememberMeNotification; !v.IsZero() {
-			buf, err := v.Render(newRememberMeNotificationContext(ctx, auth, state == session.StateNew, pub))
+			notificationContext := newRememberMeNotificationContext(ctx, auth, state == session.StateNew, pub)
+			notificationContext.authentication = (&environmentContext{service: this, connection: this.connection(ctx), authorization: auth}).Authentication
+			buf, err := v.Render(notificationContext)
 			if err != nil {
 				return errors.Newf(errors.System, "cannot render remember me notification: %w", err)
 			}

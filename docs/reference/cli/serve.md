@@ -14,6 +14,8 @@ bifroest serve
 
 <<cli_syntax("serve", flag_prefix="run")>>
 
+`run` is an alias of `serve`.
+
 ## Arguments
 
 None.
@@ -32,7 +34,7 @@ The default depends on the platform:
 * Windows: `C:\ProgramData\Engity\Bifroest\configuration.yaml`
 
 <<flag("serviceName", "string", default="engity-bifroest", id_prefix="run-", heading=3)>>
-Windows only. Name used when `serve` is launched by the Windows Service Control Manager.
+Windows only. Name registered with SCM; supplied by [`service install`](service/install.md).
 
 ## Output
 
@@ -50,8 +52,6 @@ Logs are written to stderr. Startup failure returns a nonzero exit status. An in
     ```
 
     For an installed system service, use its service manager instead of starting a second process on the same address and repositories.
-
-Also accepted as `run`.
 
 ## Availability
 

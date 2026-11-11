@@ -56,8 +56,6 @@ TCP, SSH and SFTP setup timeout. `0s` disables this **additional** limit; negati
 
 Host-key trust binds to inline `knownHosts` **entries**, `knownHostsFile` **contents** (not its path), and the `acceptAllHostKeys` setting. Changing trust under the same target name rejects an existing cursor or outstanding Recording receipt. Moving an unchanged file does not; SSH credentials may rotate without changing the destination identity.
 
-This fingerprint differs from the earlier unreleased format. Existing development cursors and pending receipts are not migrated. Settle them with the previous build or use a new empty repository while retaining old artifacts; merely renaming a target does not discharge pending receipts.
-
 ## Publication
 
 * Upload to a deterministic hidden temporary name, verify its bytes, then publish with `hardlink@openssh.com` version `1`. **No rename or overwrite.** The server must also support permission changes via `SETSTAT` and `FSETSTAT`.
@@ -71,8 +69,8 @@ The SFTP account needs to inspect the root; create producer directories; set dir
 ## Example
 
 ```yaml
-auditlog:
-  - enabled: true
+auditlogs:
+  default:
     targets:
       - name: sftp-archive
         type: sftp

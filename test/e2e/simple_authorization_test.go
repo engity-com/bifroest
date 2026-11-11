@@ -26,6 +26,7 @@ func TestSimpleRememberMe(t *testing.T) {
 		t.Fatal(err)
 	}
 	authorization := fmt.Sprintf(`      type: simple
+      rememberMe: allowedAndEnabledByDefault
       entries:
         - name: %s
           password: %s

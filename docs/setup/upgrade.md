@@ -30,6 +30,10 @@ Flow names must be unique, may not be `.` or `..`, and may not exceed 255 bytes.
 
 ## Authorizations
 
+### RememberMe
+
+RememberMe now defaults to `forbidden` for `local`, `simple`, `htpasswd` and `oidcDeviceAuth`. Previously remembered SSH keys cannot resume access unless you enable it. Set `rememberMe: allowedAndEnabledByDefault` on the relevant authorization to retain automatic registration and reuse. Ordinary configured SSH keys remain valid. See [RememberMe](../reference/data-type.md#rememberme).
+
 ### OIDC Device Auth
 
 OIDC now defaults to `forceDisposeSessionOn: lostAccess` and `refreshToken.mode: proactive`. Before upgrading, ensure your identity provider issues refresh tokens for the configured client and scopes (often requiring `offline_access`). Otherwise, new OIDC logins will be rejected. Bifröst does not add provider-specific scopes automatically.

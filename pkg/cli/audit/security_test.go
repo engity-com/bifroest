@@ -28,10 +28,13 @@ func createAuditOutputProtectionFixture(t *testing.T) auditOutputProtectionFixtu
 	root := t.TempDir()
 	selected := createAuditCliTestJournal(t, root, "selected", "test.selected")
 	other := createAuditCliTestJournal(t, root, "other", "test.other")
-	recordingOnly := configuration.Auditlog{
-		Name: "recording-only", IdentityFile: filepath.Join(root, "recording-signing-key"),
-		Recording: configuration.AuditlogRecording{Enabled: true, Directory: filepath.Join(root, "recordings")},
-	}
+	var recordingOnly configuration.Auditlog
+	require.NoError(t, recordingOnly.SetDefaults())
+	recordingOnly.Name = "recording"
+	recordingOnly.IdentityFile = filepath.Join(root, "recording-signing-key")
+	recordingOnly.Directory = filepath.Join(root, "recording-journal")
+	recordingOnly.Recording.Enabled = true
+	recordingOnly.Recording.Directory = filepath.Join(root, "recordings")
 	_, err := bfAudit.EnsureIdentity(&recordingOnly)
 	require.NoError(t, err)
 	key, publicPath := createAuditCliTestKeyPair(t, root, "recipient")

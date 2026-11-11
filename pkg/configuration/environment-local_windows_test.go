@@ -108,3 +108,34 @@ func TestEnvironmentLocalWindowsManagementTemplates(t *testing.T) {
 	require.Equal(t, template.BoolOf(true), local.CreateIfAbsent)
 	require.Equal(t, template.BoolOf(true), local.DeleteOnDispose)
 }
+
+func TestEnvironmentLocalWindowsRoundTripRetainsEffectiveAccountSelectors(t *testing.T) {
+	for _, test := range []struct{ name, input string }{
+		{"name", "type: local\nname: selected-user\n"},
+		{"sid", "type: local\nuid: S-1-5-21-1-2-3-1001\n"},
+		{"pinned-and-policy", "type: local\nname: selected-user\nuid: S-1-5-21-1-2-3-1001\ndisplayName: Selected User\nskel: 'C:\\profiles\\selected'\ngroups:\n  - name: selected-group\nloginAllowed: false\nportForwardingAllowed: false\nvariables:\n  EDITOR: vi\n"},
+		{"templates", "type: local\nname: '{{ .remote.user }}'\nuid: '{{ .user.uid }}'\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var original Environment
+			require.NoError(t, yaml.Unmarshal([]byte(test.input), &original))
+			encoded, err := yaml.Marshal(original)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, yaml.Unmarshal(encoded, &fields))
+			require.NotContains(t, fields, "user")
+			var restored Environment
+			require.NoError(t, yaml.Unmarshal(encoded, &restored), string(encoded))
+			require.True(t, original.IsEqualTo(restored), "Windows target/config changed: %s", encoded)
+			local := original.V.(*EnvironmentLocal)
+			if !local.Name.IsZero() {
+				require.Contains(t, fields, "name")
+			}
+			direct, err := yaml.Marshal(local)
+			require.NoError(t, err)
+			var directRestored EnvironmentLocal
+			require.NoError(t, yaml.Unmarshal(direct, &directRestored), string(direct))
+			require.True(t, local.IsEqualTo(directRestored))
+		})
+	}
+}

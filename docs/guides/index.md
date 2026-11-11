@@ -1,5 +1,5 @@
 ---
-description: Practical guides for SSH gateways, OIDC login, remote administration and verifiable audit and Recording evidence.
+description: Practical guides for SSH gateways, OIDC login, browser access, remote administration and verifiable audit and Recording evidence.
 ---
 
 # Guides
@@ -8,6 +8,7 @@ Choose the task you want to accomplish:
 
 * [SSH gateway to an OpenSSH server](ssh-gateway.md): authenticate at Bifröst, then connect to a private SSH target.
 * [OIDC login with a standard SSH client](oidc.md): approve a Device Authorization in the browser and open a container session.
+* [Browser access](browser-access.md): enable HTTPS and open a browser shell as an existing local account.
 * [Manage a Bifröst host remotely](management.md): configure workload and administration flows, then inspect live state from a workstation.
 * [Export server public keys remotely](keys.md): retrieve configured public SSH identities, certificate authorities and active host keys through management access.
 * [Record, find and replay a session](recording.md): capture terminal output, find the sealed original and verify, play or export it.

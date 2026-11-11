@@ -4,16 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"time"
-
-	"github.com/google/uuid"
-
-	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type JournalSource struct {
@@ -25,17 +22,7 @@ type JournalSource struct {
 	WithSensitive               bool
 }
 
-type VerifiedRecord struct {
-	Auditlog           string     `json:"auditlog"`
-	ProducerId         ProducerId `json:"producerId"`
-	SegmentSequence    uint64     `json:"segmentSequence"`
-	SegmentRecordIndex uint64     `json:"segmentRecordIndex"`
-	Id                 uuid.UUID  `json:"id"`
-	RecordedAt         time.Time  `json:"recordedAt"`
-	Event              Event      `json:"event"`
-	PreviousHash       string     `json:"previousHash"`
-	Hash               string     `json:"hash"`
-}
+type VerifiedRecord = evidence.VerifiedRecord
 
 type VerifiedJournal struct {
 	Name          string `json:"name"`
@@ -52,8 +39,8 @@ type Verification struct {
 }
 
 const (
-	maxMaterializedVerifiedRecords = 250_000
-	maxMaterializedVerifiedBytes   = 64 << 20
+	maxMaterializedVerifiedRecords = evidence.MaxMaterializedAuditRecords
+	maxMaterializedVerifiedBytes   = evidence.MaxMaterializedAuditBytes
 )
 
 type verifierBudget struct {
@@ -63,13 +50,11 @@ type verifierBudget struct {
 }
 
 func (this *verifierBudget) consume(payloadBytes int64, materialize bool) error {
-	if materialize && (this.records >= maxMaterializedVerifiedRecords || payloadBytes > maxMaterializedVerifiedBytes-this.bytes) {
-		return errors.System.Newf("verified audit output exceeds the materialization limit of %d records or %d bytes", maxMaterializedVerifiedRecords, maxMaterializedVerifiedBytes)
+	records, retained, err := evidence.ConsumeRecordBudget(this.records, this.bytes, payloadBytes, materialize)
+	if err != nil {
+		return err
 	}
-	this.records++
-	if materialize {
-		this.bytes += payloadBytes
-	}
+	this.records, this.bytes = records, retained
 	return nil
 }
 

@@ -34,7 +34,7 @@ Result format: `table`, `json`, `yaml` or `cbor`.
 
 ## Output
 
-Redacted settings, including the auditlog name, enablement, Recording configuration and delivery targets. Declared target names and types remain visible; arbitrary strings such as paths, endpoints, credentials and templates are redacted. Audit-log settings remain redacted even when the management flow enables `includingCredentials` for `flow show`.
+Redacted settings, including the auditlog name, journal and Recording configuration and delivery targets. Declared target names and types remain visible; arbitrary strings such as paths, endpoints, credentials and templates are redacted. Audit-log settings remain redacted even when the management flow enables `includingCredentials` for `flow show`.
 
 ## Examples
 

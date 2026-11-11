@@ -14,21 +14,21 @@ import (
 	berrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
-func TestEnsureIdentityDoesNothingWhenDisabled(t *testing.T) {
+func TestEnsureIdentityConfiguredLogAlwaysCreatesIdentity(t *testing.T) {
 	directory := t.TempDir()
-	conf := auditIdentityTestConfiguration(directory, false)
+	conf := auditIdentityTestConfiguration(directory)
 
 	identity, err := EnsureIdentity(&conf)
 
 	require.NoError(t, err)
-	require.Nil(t, identity)
-	require.NoFileExists(t, conf.IdentityFile)
+	require.NotNil(t, identity)
+	require.FileExists(t, conf.IdentityFile)
 	require.NoDirExists(t, conf.Directory)
 }
 
 func TestEnsureIdentityCreatesAndReusesDedicatedKey(t *testing.T) {
 	directory := t.TempDir()
-	conf := auditIdentityTestConfiguration(directory, true)
+	conf := auditIdentityTestConfiguration(directory)
 
 	first, err := EnsureIdentity(&conf)
 	require.NoError(t, err)
@@ -47,8 +47,8 @@ func TestEnsureIdentityCreatesAndReusesDedicatedKey(t *testing.T) {
 	require.Equal(t, first.Fingerprint(), second.Fingerprint())
 }
 
-func TestEnsureIdentityRecordingOnlyDoesNotCreateJournal(t *testing.T) {
-	conf := auditIdentityTestConfiguration(t.TempDir(), false)
+func TestEnsureIdentityRecordingDoesNotCreateJournalButRequiresItsPath(t *testing.T) {
+	conf := auditIdentityTestConfiguration(t.TempDir())
 	conf.Recording.Enabled = true
 	conf.Recording.Directory = filepath.Join(filepath.Dir(conf.IdentityFile), "recordings")
 	first, err := EnsureIdentity(&conf)
@@ -60,14 +60,14 @@ func TestEnsureIdentityRecordingOnlyDoesNotCreateJournal(t *testing.T) {
 
 	conf.Directory = ""
 	second, err := EnsureIdentity(&conf)
-	require.NoError(t, err)
-	require.Equal(t, first.ProducerId(), second.ProducerId())
+	require.ErrorContains(t, err, "audit journal directory is empty")
+	require.Nil(t, second)
 }
 
 func TestEnsureIdentityRecordingOnlyRejectsMissingKeyWithEvidence(t *testing.T) {
 	for _, kind := range []string{"journal", "journal workspace", "recording"} {
 		t.Run(kind, func(t *testing.T) {
-			conf := auditIdentityTestConfiguration(t.TempDir(), false)
+			conf := auditIdentityTestConfiguration(t.TempDir())
 			conf.Recording.Enabled = true
 			conf.Recording.Directory = filepath.Join(filepath.Dir(conf.IdentityFile), "recordings")
 			path := conf.Directory
@@ -89,53 +89,52 @@ func TestEnsureIdentityRecordingOnlyRejectsMissingKeyWithEvidence(t *testing.T) 
 	}
 }
 
-func TestEnsureIdentityRecordingOnlySharedJournal(t *testing.T) {
+func TestEnsureIdentityRecordingRejectsSharedJournalHistory(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		prepare   func(*testing.T, configuration.Auditlog, *configuration.Auditlog)
-		wantError bool
+		name    string
+		prepare func(*testing.T, configuration.Auditlog, *configuration.Auditlog)
 	}{
-		{"other journal history", nil, false},
+		{"other journal history", nil},
 		{"symlink to other journal", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
 			alias := filepath.Join(filepath.Dir(owner.Directory), "journal-alias")
 			if err := os.Symlink(owner.Directory, alias); err != nil {
 				t.Skipf("journal symlink unavailable: %v", err)
 			}
 			recording.Directory = alias
-		}, false},
+		}},
 		{"other journal delivery state", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
 			key, err := LoadExistingIdentityPublicKey(owner.IdentityFile)
 			require.NoError(t, err)
 			path := filepath.Join(owner.Directory, remoteDeliveryStateDirectoryName, newProducerId(key.Marshal()).String())
 			require.NoError(t, os.MkdirAll(path, 0700))
-		}, false},
+		}},
 		{"old own journal history", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
 			other, err := auditIdentityKeyRequirement.GenerateKey(nil)
 			require.NoError(t, err)
 			id, err := NewIdentity(other)
 			require.NoError(t, err)
 			require.NoError(t, os.Mkdir(filepath.Join(owner.Directory, id.ProducerId().String()), 0700))
-		}, true},
+		}},
 		{"old own delivery state", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
 			path := filepath.Join(owner.Directory, remoteDeliveryStateDirectoryName, "old-producer")
 			require.NoError(t, os.MkdirAll(path, 0700))
-		}, true},
+		}},
 		{"old own workspace", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
 			path := filepath.Join(owner.Directory, journalWorkDirectoryName)
 			require.NoError(t, os.Mkdir(path, 0700))
 			require.NoError(t, os.WriteFile(filepath.Join(path, "state"), nil, 0600))
-		}, true},
+		}},
 		{"existing recording", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
 			require.NoError(t, os.Mkdir(recording.Recording.Directory, 0700))
 			require.NoError(t, os.WriteFile(filepath.Join(recording.Recording.Directory, "sealed"), nil, 0600))
-		}, true},
+		}},
 		{"missing owner key", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
 			require.NoError(t, os.Remove(owner.IdentityFile))
-		}, true},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			owner := auditIdentityTestConfiguration(root, true)
+			owner := auditIdentityTestConfiguration(root)
 			owner.Name = "owner"
 			owner.IdentityFile = filepath.Join(root, "owner-key")
 			ownerIdentity, err := EnsureIdentity(&owner)
@@ -143,7 +142,7 @@ func TestEnsureIdentityRecordingOnlySharedJournal(t *testing.T) {
 			require.NoError(t, os.Mkdir(owner.Directory, 0700))
 			require.NoError(t, os.Mkdir(filepath.Join(owner.Directory, ownerIdentity.ProducerId().String()), 0700))
 			require.NoError(t, os.WriteFile(filepath.Join(owner.Directory, ownerIdentity.ProducerId().String(), "segment"), nil, 0600))
-			recording := auditIdentityTestConfiguration(root, false)
+			recording := auditIdentityTestConfiguration(root)
 			recording.Name = "recording"
 			require.NoError(t, recording.Recording.SetDefaults())
 			recording.Recording.Enabled = true
@@ -152,29 +151,21 @@ func TestEnsureIdentityRecordingOnlySharedJournal(t *testing.T) {
 				tc.prepare(t, owner, &recording)
 			}
 			logs := configuration.Auditlogs{owner, recording}
-			require.NoError(t, logs.Validate())
 			// A direct call without the complete configuration must remain fail-closed.
 			plain, err := EnsureIdentity(&recording)
 			require.Nil(t, plain)
 			require.ErrorContains(t, err, "is missing while journal")
 			identity, err := EnsureIdentityWithAuditlogs(&recording, logs)
-			if tc.wantError {
-				require.Nil(t, identity)
-				require.Error(t, err)
-				require.NoFileExists(t, recording.IdentityFile)
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, identity)
-				require.NotEqual(t, ownerIdentity.ProducerId(), identity.ProducerId())
-				require.NoDirExists(t, recording.Recording.Directory)
-			}
+			require.Nil(t, identity)
+			require.ErrorContains(t, err, "is missing while journal")
+			require.NoFileExists(t, recording.IdentityFile)
 		})
 	}
 }
 
 func TestEnsureIdentityCreatesKeyForEmptyJournal(t *testing.T) {
 	directory := t.TempDir()
-	conf := auditIdentityTestConfiguration(directory, true)
+	conf := auditIdentityTestConfiguration(directory)
 	require.NoError(t, os.MkdirAll(conf.Directory, 0700))
 
 	identity, err := EnsureIdentity(&conf)
@@ -186,7 +177,7 @@ func TestEnsureIdentityCreatesKeyForEmptyJournal(t *testing.T) {
 
 func TestEnsureIdentityIgnoresPersistentJournalLock(t *testing.T) {
 	directory := t.TempDir()
-	conf := auditIdentityTestConfiguration(directory, true)
+	conf := auditIdentityTestConfiguration(directory)
 	require.NoError(t, os.MkdirAll(conf.Directory, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(conf.Directory, journalLockFileName), nil, 0600))
 
@@ -199,7 +190,7 @@ func TestEnsureIdentityIgnoresPersistentJournalLock(t *testing.T) {
 
 func TestEnsureIdentityRejectsMissingKeyForExistingJournal(t *testing.T) {
 	directory := t.TempDir()
-	conf := auditIdentityTestConfiguration(directory, true)
+	conf := auditIdentityTestConfiguration(directory)
 	require.NoError(t, os.MkdirAll(conf.Directory, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(conf.Directory, "existing-segment"), []byte("history"), 0600))
 
@@ -216,7 +207,7 @@ func TestEnsureIdentityRejectsMissingKeyForRecordingState(t *testing.T) {
 		for _, recordingEnabled := range []bool{false, true} {
 			t.Run(map[bool]string{false: "missing journal", true: "empty journal"}[journalExists]+map[bool]string{false: "/disabled Recording", true: "/enabled Recording"}[recordingEnabled], func(t *testing.T) {
 				root := t.TempDir()
-				conf := auditIdentityTestConfiguration(root, true)
+				conf := auditIdentityTestConfiguration(root)
 				conf.Recording.Enabled = recordingEnabled
 				conf.Recording.Directory = filepath.Join(root, "recordings")
 				if journalExists {
@@ -265,7 +256,7 @@ func TestLoadExistingIdentityPublicKeyIsReadOnly(t *testing.T) {
 }
 
 func TestEnsureIdentityAllowsEmptyRecordingDirectory(t *testing.T) {
-	conf := auditIdentityTestConfiguration(t.TempDir(), true)
+	conf := auditIdentityTestConfiguration(t.TempDir())
 	conf.Recording.Enabled = true
 	conf.Recording.Directory = filepath.Join(filepath.Dir(conf.IdentityFile), "recordings")
 	require.NoError(t, os.Mkdir(conf.Recording.Directory, 0700))
@@ -277,7 +268,7 @@ func TestEnsureIdentityAllowsEmptyRecordingDirectory(t *testing.T) {
 
 func TestEnsureIdentityDoesNotReplaceInvalidKey(t *testing.T) {
 	directory := t.TempDir()
-	conf := auditIdentityTestConfiguration(directory, true)
+	conf := auditIdentityTestConfiguration(directory)
 	expected := []byte("invalid")
 	require.NoError(t, os.WriteFile(conf.IdentityFile, expected, 0600))
 
@@ -306,7 +297,7 @@ func TestEnsureIdentityRejectsNonRegularAndOversizedKeyFiles(t *testing.T) {
 		}, "exceeds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			conf := auditIdentityTestConfiguration(t.TempDir(), true)
+			conf := auditIdentityTestConfiguration(t.TempDir())
 			tc.prepare(t, conf.IdentityFile)
 
 			identity, err := EnsureIdentity(&conf)
@@ -319,7 +310,7 @@ func TestEnsureIdentityRejectsNonRegularAndOversizedKeyFiles(t *testing.T) {
 
 func TestEnsureIdentityDoesNotReplaceWrongKeyType(t *testing.T) {
 	directory := t.TempDir()
-	conf := auditIdentityTestConfiguration(directory, true)
+	conf := auditIdentityTestConfiguration(directory)
 	_, err := (bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEcdsa}).CreateFile(nil, conf.IdentityFile)
 	require.NoError(t, err)
 	expected, err := os.ReadFile(conf.IdentityFile)
@@ -388,9 +379,8 @@ func TestProducerIdTextRoundTrip(t *testing.T) {
 	require.True(t, berrors.Config.IsErr(err))
 }
 
-func auditIdentityTestConfiguration(directory string, enabled bool) configuration.Auditlog {
+func auditIdentityTestConfiguration(directory string) configuration.Auditlog {
 	return configuration.Auditlog{
-		Enabled:      enabled,
 		IdentityFile: filepath.Join(directory, "auditlog-key"),
 		Directory:    filepath.Join(directory, "journal"),
 	}

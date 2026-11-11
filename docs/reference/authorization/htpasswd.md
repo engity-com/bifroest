@@ -12,6 +12,12 @@ Authorizes a user request via credentials stored in [htpasswd format](#format).
 <<property("type", "Authorization Type", default="htpasswd", required=True)>>
 Has to be set to `htpasswd` to enable the htpasswd authorization.
 
+<<property("rememberMe", "RememberMe", "../data-type.md#rememberme", default="forbidden")>>
+Controls saved browser and SSH access.
+
+<<property("remoteName", "string", template_context="../context/authorization-request.md", default="{{.remote.user}}")>>
+Name used for case-sensitive lookup in the htpasswd file or inline entries. The original requesting name remains unchanged in flow requirements and audit records; see the [example](#login-name-with-an-ssh-suffix).
+
 <<property("file", "File Path", "../data-type.md#file-path", default="<os specific>")>>
 A file where each line contains an entry in [htpasswd format](#format).
 
@@ -35,6 +41,7 @@ This is similar to [`file`](#property-file), but does contain the [htpasswd entr
 ```yaml
 authorization:
   type: htpasswd
+  rememberMe: allowedAndEnabledByDefault
   entries: |
     foo:$apr1$zapgfl56$eXIHR/wBYFypkUEXWdCZN/
     bar:$apr1$wqkvo7c2$dqi5g.hK67jLMY4SJzrjq.
@@ -69,19 +76,40 @@ This authorization will produce a context of type [Authorization Htpasswd](../co
 1. Using [dedicated file](#property-file) from default location:
    ```yaml
    type: htpasswd
+   rememberMe: allowedAndEnabledByDefault
    ```
 2. Using [dedicated file](#property-file) from custom location:
    ```yaml
    type: htpasswd
+   rememberMe: allowedAndEnabledByDefault
    file: /etc/foo/bar
    ```
 3. Using [embedded entries](#property-entries):
    ```yaml
    type: htpasswd
+   rememberMe: allowedAndEnabledByDefault
    entries: |
      foo:$apr1$zapgfl56$eXIHR/wBYFypkUEXWdCZN/
      bar:$apr1$wqkvo7c2$dqi5g.hK67jLMY4SJzrjq.
    ```
+
+### Login name with an SSH suffix
+
+Authenticate SSH login `foo@bar` against htpasswd entry `foo`, while keeping HTTP login names unchanged:
+
+```yaml
+type: htpasswd
+rememberMe: allowedAndEnabledByDefault
+file: /etc/engity/bifroest/htpasswd
+remoteName: >
+  {{- if eq .connection.transport "ssh" -}}
+    {{- regexReplaceAll "@[^@]+$" .remote.user "" -}}
+  {{- else -}}
+    {{- .remote.user -}}
+  {{- end -}}
+```
+
+[Flow requirements](../flow.md#requirement) still match the original name: use `requirement.ssh.includedRequestingName: '@bar$'` for this suffix and, for example, `requirement.http.includedSlug: '^docker$'` for the browser link. Connect with `ssh -l 'foo@bar' bifroest.example.org`, or open `/#docker` and enter `foo`. Sharing credentials across flows does not merge their sessions.
 
 ## Compatibility
 

@@ -669,6 +669,7 @@ func newOIDCAuthorizationFixtureWithOptions(t *testing.T, opts oidcFixtureOption
 	}
 	t.Cleanup(func() { provider.assertNoErrors(t) })
 	authorization := fmt.Sprintf(`      type: oidcDeviceAuth
+      rememberMe: allowedAndEnabledByDefault
       issuer: %s
       clientId: %s
       clientSecret: %s

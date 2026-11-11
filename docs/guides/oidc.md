@@ -19,6 +19,7 @@ flows:
   - name: oidc-shell
     authorization:
       type: oidcDeviceAuth
+      rememberMe: allowedAndEnabledByDefault
       issuer: https://idp.example.org/realms/YOUR_REALM
       clientId: YOUR_CLIENT_ID
       clientSecret: YOUR_CLIENT_SECRET

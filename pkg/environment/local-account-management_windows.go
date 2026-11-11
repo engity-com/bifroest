@@ -61,6 +61,10 @@ func localSAMProc(name string) (*windows.LazyProc, error) {
 	return nil, errors.Join(errs...)
 }
 
+// Preserve pointer liveness and address stability across lazy DLL resolution,
+// including native out-parameters held in otherwise movable Go stack frames.
+//
+//go:uintptrescapes
 func localSAMCall(name string, args ...uintptr) error {
 	proc, err := localSAMProc(name)
 	if err != nil {

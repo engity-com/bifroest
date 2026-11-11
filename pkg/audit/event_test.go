@@ -22,6 +22,17 @@ func TestLegacyAuditEventEncodingRemainsCanonical(t *testing.T) {
 	require.Equal(t, Event{Name: "test.legacy"}, decoded)
 }
 
+func TestBrowserRememberMeMethodIsDistinctAndCanonical(t *testing.T) {
+	event := Event{Name: EventNameAuthenticationCompleted, Domain: EventDomainAuthentication, Outcome: EventOutcomeSuccess, AuthenticationMethod: AuthenticationMethodBrowserRememberMe, AuthenticationPhase: AuthenticationPhaseVerified, AuthorizationKind: "oidc-device-auth"}
+	require.NoError(t, validateAuditEventForWrite(event))
+	raw, err := json.Marshal(event)
+	require.NoError(t, err)
+	var restored Event
+	require.NoError(t, decodeCanonicalJournalPayload(raw, &restored))
+	require.Equal(t, event, restored)
+	require.Contains(t, string(raw), `"authenticationMethod":"browser-remember-me"`)
+}
+
 func TestAuditEventEncodingIncludesStructuredFields(t *testing.T) {
 	exitCode := 0
 	bytesRead := int64(1)
@@ -166,7 +177,7 @@ func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {
 		"reason":                  {Name: "test.event", Reason: "invalid reason"},
 		"connection ID":           {Name: "test.event", ConnectionId: "not-an-id"},
 		"nil connection ID":       {Name: "test.event", ConnectionId: uuid.Nil.String()},
-		"noncanonical ID":         {Name: "test.event", ConnectionId: "34E34AB8-7457-4D88-A5E4-C57791775C3A"},
+		"noncanonical Base58 ID":  {Name: "test.event", ConnectionId: "17Xng23oeg4L1zHaZfeX6wB"},
 		"session ID":              {Name: "test.event", SessionId: "not-an-id"},
 		"operation ID":            {Name: "test.event", OperationId: "not-an-id"},
 		"exit code":               {Name: "test.event", ExitCode: &negativeInt},
@@ -183,6 +194,7 @@ func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {
 	}
 
 	require.NoError(t, validateAuditEvent(Event{Name: "test.event", ConnectionId: validId, SessionId: validId, OperationId: validId}))
+	require.NoError(t, validateAuditEvent(Event{Name: "test.event", ConnectionId: "34E34AB8-7457-4D88-A5E4-C57791775C3A", SessionId: "34e34ab874574d88a5e4c57791775c3a", OperationId: "7Xng23oeg4L1zHaZfeX6wB"}))
 	require.NoError(t, validateAuditEvent(Event{Name: "test.event", SessionTask: SessionTaskSubsystem, SessionSubsystem: "netconf"}))
 }
 
@@ -194,12 +206,14 @@ func TestAuditEventFlowEnforcesConfiguredByteLengthLimit(t *testing.T) {
 func TestAuditEventRecordingIdValidation(t *testing.T) {
 	valid := "fd70203b-ea19-4288-8ec2-577b623e92d0"
 	require.NoError(t, validateAuditEvent(Event{Name: "test.event", RecordingId: valid}))
+	for _, value := range []string{"FD70203B-EA19-4288-8EC2-577B623E92D0", "fd70203bea1942888ec2577b623e92d0"} {
+		require.NoError(t, validateAuditEvent(Event{Name: "test.event", RecordingId: value}))
+	}
 
 	invalid := []string{
 		"not-an-id",
 		uuid.Nil.String(),
-		"FD70203B-EA19-4288-8EC2-577B623E92D0",
-		"fd70203bea1942888ec2577b623e92d0",
+		"17Xng23oeg4L1zHaZfeX6wB",
 		"fd70203b-ea19-1288-8ec2-577b623e92d0",
 		"fd70203b-ea19-4288-6ec2-577b623e92d0",
 	}

@@ -4,7 +4,7 @@ description: List configured audit logs and their journal, Recording and encrypt
 
 # `bifroest audit ls`
 
-Lists the audit logs in the selected configuration, including disabled and Recording-only entries.
+Lists the named entries in the selected configuration's `auditlogs` map.
 
 ```shell
 bifroest audit ls

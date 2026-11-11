@@ -54,7 +54,6 @@ func createAuditCliTestJournalWithEncryption(t *testing.T, parent, name, eventNa
 	t.Helper()
 	configured := configuration.Auditlog{
 		Name:                configuration.AuditlogName(name),
-		Enabled:             true,
 		IdentityFile:        filepath.Join(parent, name+"-key"),
 		EncryptionPublicKey: encryptionPublicKey,
 		Directory:           filepath.Join(parent, name+"-journal"),
@@ -83,8 +82,8 @@ func auditCliTestProducerId(t *testing.T, identityFile string) bfAudit.ProducerI
 func writeAuditCliTestConfiguration(t *testing.T, directory string, auditlogs ...configuration.Auditlog) string {
 	t.Helper()
 	raw, err := yaml.Marshal(map[string]any{
-		"auditlog": auditlogs,
-		"session":  map[string]string{"type": "fs", "storage": filepath.ToSlash(filepath.Join(directory, "sessions"))},
+		"auditlogs": configuration.Auditlogs(auditlogs),
+		"session":   map[string]string{"type": "fs", "storage": filepath.ToSlash(filepath.Join(directory, "sessions"))},
 		"flows": []map[string]any{{
 			"name": "flow", "auditlog": auditlogs[0].Name,
 			"authorization": map[string]string{"type": "simple"},

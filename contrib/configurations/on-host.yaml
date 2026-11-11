@@ -4,6 +4,7 @@ flows:
   - name: local
     authorization:
       type: local
+      rememberMe: allowedAndEnabledByDefault
     environment:
       type: local
       name: "{{.authorization.user.name}}"

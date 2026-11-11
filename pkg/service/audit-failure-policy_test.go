@@ -180,7 +180,7 @@ func TestPrepareBestEffortDisablesAuditlogWithUnavailableJournal(t *testing.T) {
 	journal := filepath.Join(directory, "journal")
 	require.NoError(t, os.WriteFile(journal, []byte("not a directory"), 0600))
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		conf.Auditlogs[0].Enabled = true
+		configureDefaultTestAuditlog(conf)
 		conf.Auditlogs[0].FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
 		conf.Auditlogs[0].IdentityFile = filepath.Join(directory, "identity")
 		conf.Auditlogs[0].Directory = journal

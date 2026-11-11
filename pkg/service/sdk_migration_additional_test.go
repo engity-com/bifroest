@@ -221,6 +221,7 @@ func TestSdkMigrationBannerAndRememberMeAreWrittenToClient(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", testEnvironment, func(conf *configuration.Configuration) {
 		conf.Ssh.Banner = btemplate.MustNewString("sdk-migration-banner")
 		conf.Ssh.Keys.RememberMeNotification = btemplate.MustNewString("sdk-migration-remember-me\n")
+		conf.Flows[0].Authorization.RememberMe = configuration.RememberMeAllowedAndEnabledByDefault
 		simpleAuthorization := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 		require.NoError(t, simpleAuthorization.Entries[0].Password.Set("plain:"+password))
 	})

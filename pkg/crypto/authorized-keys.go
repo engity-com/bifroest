@@ -9,11 +9,12 @@ import (
 	"io"
 	"strings"
 
+	"github.com/engity-com/bifroest/pkg/crypto/keydata"
 	"golang.org/x/crypto/ssh"
 )
 
 var (
-	ErrIllegalSshKey               = errors.New("illegal ssh key found")
+	ErrIllegalSshKey               = keydata.ErrIllegalSshKey
 	ErrIllegalAuthorizedKeysFormat = errors.New("illegal authorized keys format")
 )
 

@@ -50,7 +50,7 @@ Verification of large journals may require temporary disk space. Use a private t
 
 ## Protected destinations
 
-Export files must be outside managed journal, Recording and filesystem session-storage directories. Destination checks protect the loaded configuration, signing identities, referenced encryption public keys, SFTP known-hosts files and SFTP identities, as well as supplied decryption identities. They cover active configured entries beyond the selected sources, including Recording-only entries, and apply with `--force`.
+Export files must be outside managed journal, Recording and filesystem session-storage directories. Destination checks protect the loaded configuration, signing identities, referenced encryption public keys, SFTP known-hosts files and SFTP identities, as well as supplied decryption identities. They cover active configured entries beyond the selected sources, including their Recording repositories, and apply with `--force`.
 
 Local metadata and configured evidence-output commands also protect statically configured SSH host keys and SSH-flow login/certificate/CA identities, together with known-hosts files, authorized-keys files and trusted user-CA files. The checks inspect file identities without loading or generating keys. Session-dependent file templates are not evaluated by metadata queries and cannot supply additional protected paths for that query.
 

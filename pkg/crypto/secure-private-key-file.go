@@ -10,6 +10,21 @@ import (
 // replacing it. The path must identify one stable, privately owned regular
 // file throughout the read.
 func LoadSecurePrivateKeyFile(path string, maximumSize int64) (PrivateKey, error) {
+	raw, err := ReadSecurePrivateFile(path, maximumSize)
+	if err != nil {
+		return nil, err
+	}
+	key, err := ParsePrivateKeyBytes(raw)
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse private key %q: %w", path, err)
+	}
+	return key, nil
+}
+
+// ReadSecurePrivateFile reads bounded opaque private state using the same
+// stable-file, owner, permission/ACL and single-link policy as private keys.
+// It never creates, repairs or replaces a file.
+func ReadSecurePrivateFile(path string, maximumSize int64) ([]byte, error) {
 	if maximumSize <= 0 {
 		return nil, fmt.Errorf("illegal maximum private key size %d", maximumSize)
 	}
@@ -68,9 +83,5 @@ func LoadSecurePrivateKeyFile(path string, maximumSize int64) (PrivateKey, error
 	if err := file.Close(); err != nil {
 		return nil, fmt.Errorf("cannot close private key %q: %w", path, err)
 	}
-	key, err := ParsePrivateKeyBytes(raw)
-	if err != nil {
-		return nil, fmt.Errorf("cannot parse private key %q: %w", path, err)
-	}
-	return key, nil
+	return raw, nil
 }

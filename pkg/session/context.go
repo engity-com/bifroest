@@ -1,9 +1,7 @@
 package session
 
-import (
-	essh "github.com/engity-com/ssh-server-go"
-)
+import "context"
 
 type contextEnabled interface {
-	Context() essh.Context
+	Context() context.Context
 }

@@ -27,7 +27,7 @@ func TestHtpasswdAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorization := fmt.Sprintf("      type: htpasswd\n      entries: |\n        %s:%s\n        %s:%s", username, hash, rememberUsername, hash)
+	authorization := fmt.Sprintf("      type: htpasswd\n      rememberMe: allowedAndEnabledByDefault\n      entries: |\n        %s:%s\n        %s:%s", username, hash, rememberUsername, hash)
 	if err := startAuthorizationService(f, authorization); err != nil {
 		t.Fatal(err)
 	}

@@ -107,9 +107,8 @@ func configureRecordingFixture(t *testing.T, fixture recordingFixture) (*configu
 	input := filepath.Join(sealed, fixture.id.String()+".bcast")
 	require.NoError(t, os.WriteFile(input, content, 0600))
 	path := filepath.Join(root, "configuration.yaml")
-	configurationText := fmt.Sprintf(`auditlog:
-  - name: default
-    enabled: false
+	configurationText := fmt.Sprintf(`auditlogs:
+  default:
     identityFile: %q
     recording:
       enabled: true

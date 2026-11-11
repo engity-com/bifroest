@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"bytes"
 	"context"
 	goerrors "errors"
 	"fmt"
@@ -140,19 +141,24 @@ func writeRecordingPage(ctx context.Context, opts listOptions, selected format.F
 		return err
 	}
 	var count uint
-	var previous string
+	var previous recording.Id
 	if err := visit(func(entry RecordingView) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if count >= opts.Limit || previous != "" && entry.ID <= previous {
+		var id recording.Id
+		if err := id.UnmarshalText([]byte(entry.ID)); err != nil {
+			return err
+		}
+		if count >= opts.Limit || count > 0 && bytes.Compare(id[:], previous[:]) <= 0 {
 			return fmt.Errorf("recording stream violates its page limit or ID order")
 		}
+		entry.ID = id.String()
 		if err := stream.Write(entry); err != nil {
 			return err
 		}
 		count++
-		previous = entry.ID
+		previous = id
 		return nil
 	}); err != nil {
 		return err

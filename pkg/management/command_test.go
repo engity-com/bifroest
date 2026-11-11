@@ -335,3 +335,81 @@ func TestManagementCommandsPropagateDiagnosticOutputFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestManagementMalformedResponsesAbortBeforeWaitingForRemoteExit(t *testing.T) {
+	for _, test := range managementCommandTestCases(t) {
+		if test.name == "version" {
+			continue
+		} // Fixed human-readable version output has no framed decoder.
+		t.Run(test.name, func(t *testing.T) {
+			target, done := managementSSHTestServer(t, test.command, func(channel ssh.Channel) error {
+				if err := checkManagementCommandRequest(channel, test.args); err != nil {
+					return err
+				}
+				if _, err := io.WriteString(channel.Stderr(), "malformed transfer diagnostic\n"); err != nil {
+					return err
+				}
+				if _, err := channel.Write([]byte{0xff}); err != nil {
+					return err
+				}
+				if err := channel.CloseWrite(); err != nil {
+					return err
+				}
+				// Stdout is finished, but the operation deliberately has no exit.
+				// Unknown requests are refused by the normal client until it aborts.
+				for {
+					if _, err := channel.SendRequest("bifroest-test-pending", true, nil); err != nil {
+						return nil
+					}
+				}
+			})
+			var output bytes.Buffer
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			ctx = cli.ContextWithStdio(ctx, nil, &output, nil)
+			err := test.run(ctx, target, &output, t.TempDir())
+			require.Error(t, err)
+			require.ErrorContains(t, err, "malformed transfer diagnostic")
+			require.NoError(t, ctx.Err(), "malformed data must abort before waiting for remote exit")
+			require.Empty(t, output.Bytes())
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-ctx.Done():
+				t.Fatal("malformed response producer was not stopped")
+			}
+		})
+	}
+}
+
+func TestManagementCompletePayloadWithoutSSHExitStatusIsNeverSuccess(t *testing.T) {
+	for _, test := range managementCommandTestCases(t) {
+		t.Run(test.name, func(t *testing.T) {
+			target, done := managementSSHTestServer(t, test.command, func(channel ssh.Channel) error {
+				if err := checkManagementCommandRequest(channel, test.args); err != nil {
+					return err
+				}
+				return test.response(channel) // Channel closes without exit-status.
+			})
+			var output bytes.Buffer
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			ctx = cli.ContextWithStdio(ctx, nil, &output, nil)
+			err := test.run(ctx, target, &output, t.TempDir())
+			require.Error(t, err)
+			var missing *ssh.ExitMissingError
+			require.ErrorAs(t, err, &missing)
+			if test.buffered {
+				require.Empty(t, output.Bytes())
+			} else if test.name == "recording-list" {
+				require.False(t, json.Valid(output.Bytes()), "valid rows/end/EOF alone must not complete a streamed result")
+			}
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-ctx.Done():
+				t.Fatal("missing-exit response was not released")
+			}
+		})
+	}
+}

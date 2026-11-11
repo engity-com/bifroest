@@ -19,6 +19,10 @@ func validateSecurePrivateKeyFile(path string, file *os.File, _ os.FileInfo) err
 	if fileInfo.NumberOfLinks != 1 {
 		return fmt.Errorf("private key %q has %d hard links instead of one", path, fileInfo.NumberOfLinks)
 	}
+	return validatePrivateWindowsAccess(path, file)
+}
+
+func validatePrivateWindowsAccess(path string, file *os.File) error {
 	descriptor, err := windows.GetSecurityInfo(windows.Handle(file.Fd()), windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {

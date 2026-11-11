@@ -173,6 +173,7 @@ variables:
       - name: openssh
         authorization:
           type: simple
+          rememberMe: allowedAndEnabledByDefault
           entries:
             - name: alice
               password: plain:change-me

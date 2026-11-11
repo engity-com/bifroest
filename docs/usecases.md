@@ -1,10 +1,10 @@
 ---
 toc_depth: 2
-description: "Use Bifröst for time-bound SSH off-boarding, OIDC login, SSH gateways and isolated sessions."
+description: "Use Bifröst for time-bound SSH off-boarding, OIDC login, SSH gateways, isolated sessions and browser access."
 ---
 # Use cases
 
-Bifröst can combine SSH authorization with different session environments. The following examples illustrate configurations for specific access problems; their security properties depend on the identity provider, session settings, target permissions and deployment.
+Bifröst can combine authorization with different session environments over SSH or optional HTTPS browser access. The following examples illustrate configurations for specific access problems; their security properties depend on the identity provider, session settings, target permissions and deployment.
 
 1. [Meet a defined off-boarding deadline](#offboard)
 2. [On-board users with an identity provider](#onboard)
@@ -13,6 +13,7 @@ Bifröst can combine SSH authorization with different session environments. The 
 5. [Isolated Demo/Training environments](#demos)
 6. [Different rules for different user groups per host](#multi-environment)
 7. [Migrating from sshd](#drop-in-replacement)
+8. [Open a shell without installing an SSH client](#browser-access)
 
 !!! tip
 
@@ -148,6 +149,17 @@ For local-account SSH access, use the << asset_link("contrib/configurations/on-h
 
 Test your particular `sshd` configuration: Bifröst does not implement every OpenSSH extension or [`authorized_keys` option](reference/data-type.md#authorized-keys), such as `no-touch-required`.
 
+## Open a shell without installing an SSH client {: #browser-access}
+
+### Problem
+
+You need shell access from a machine with a browser but no SSH client.
+
+### Solution
+
+Follow the [browser access guide](guides/browser-access.md) to enable HTTPS, publish a terminal flow and sign in with an existing local account. Browser access uses the configured authorization and session environment; it does not require an SSH tunnel.
+
+Authenticated SSH and browser connections can reuse a compatible session and its workspace, but they do not share a running terminal. Reloading requires a new sign-in or an explicit saved-access action and opens a new shell. Browser logout does not dispose of the session or its workspace.
 
 ## More topics
 * [Configuration](reference/configuration.md)

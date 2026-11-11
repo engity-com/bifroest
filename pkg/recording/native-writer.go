@@ -11,6 +11,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
+	portablecast "github.com/engity-com/bifroest/pkg/recording/cast"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 )
 
 const DefaultNativeRecordingChunkTarget = 256 << 10
@@ -35,6 +37,12 @@ type NativeRecordingSummary struct {
 	CastBytes            uint64
 	Digest               CastDigest
 	Bytes                uint64
+	// Verified catalog context, never populated from journals or live sessions.
+	StartedAt time.Time
+	EndedAt   time.Time
+	Flow      string
+	SessionID string
+	User      string
 }
 
 // NativeRecordingWriter emits signed framed units. Plain io.Writer is only for
@@ -43,6 +51,7 @@ type NativeRecordingSummary struct {
 // each unit before the writer updates its hash chain. The repository still
 // owns locking, quota, signed-head replacement and directory sync.
 type NativeRecordingWriter struct {
+	legacyUUIDs  bool
 	output       io.Writer
 	signer       *NativeRecordingSigner
 	identity     *audit.Identity
@@ -76,6 +85,12 @@ func (c *nativeCastCounter) Write(value []byte) (int, error) {
 }
 
 func NewNativeRecordingWriter(output io.Writer, identity *audit.Identity, recipient *bfcrypto.AgeSshRecipient, header CastHeader, metadata CastMetadata, chunkTarget int, options NativeRecordingWriterLimits) (*NativeRecordingWriter, error) {
+	return newNativeRecordingWriter(output, identity, recipient, header, metadata, chunkTarget, options, false)
+}
+
+// The legacy branch only reproduces immutable v1 format vectors. All public
+// recording writers select the signed Base58 header version.
+func newNativeRecordingWriter(output io.Writer, identity *audit.Identity, recipient *bfcrypto.AgeSshRecipient, header CastHeader, metadata CastMetadata, chunkTarget int, options NativeRecordingWriterLimits, legacy bool) (*NativeRecordingWriter, error) {
 	if output == nil || identity == nil || identity.PublicKey() == nil {
 		return nil, fmt.Errorf("missing native recording output or signing identity")
 	}
@@ -106,7 +121,13 @@ func NewNativeRecordingWriter(output io.Writer, identity *audit.Identity, recipi
 		return nil, err
 	}
 	count := &nativeCastCounter{maximum: limits.maximumCastBytes}
-	cast, err := NewCastWriter(count, identity, header, metadata)
+	factory := NewCastWriter
+	if legacy {
+		factory = func(output io.Writer, identity *audit.Identity, header CastHeader, metadata CastMetadata) (*CastWriter, error) {
+			return portablecast.NewLegacyCastWriter(output, identity, header, metadata)
+		}
+	}
+	cast, err := factory(count, identity, header, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +135,11 @@ func NewNativeRecordingWriter(output io.Writer, identity *audit.Identity, recipi
 	if recipient != nil {
 		fingerprint = recipient.Fingerprint()
 	}
-	headerPayload, err := signer.Header(metadata.RecordingId, metadata.StartedAt, fingerprint)
+	version := uint8(2)
+	if legacy {
+		version = 1
+	}
+	headerPayload, err := signer.header(metadata.RecordingId, metadata.StartedAt, fingerprint, version)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +165,8 @@ func NewNativeRecordingWriter(output io.Writer, identity *audit.Identity, recipi
 	_, _ = contentHash.Write([]byte(nativeRecordingContentDomain))
 	_, _ = contentHash.Write(prefix)
 	return &NativeRecordingWriter{
-		output: output, signer: signer, identity: identity, recipient: recipient,
+		legacyUUIDs: legacy,
+		output:      output, signer: signer, identity: identity, recipient: recipient,
 		metadata: metadata, cast: cast, castCounter: count, target: chunkTarget, limits: limits,
 		contentHash: contentHash, prefixBytes: uint64(len(prefix)),
 		previousHash: nativeRecordingHash(nativeRecordingUnitDomain, frame),
@@ -208,10 +234,10 @@ func (w *NativeRecordingWriter) WriteOutput(elapsed time.Duration, stream Output
 	if err := w.ready(); err != nil {
 		return err
 	}
-	if err := w.cast.validateOutputStream(stream); err != nil {
+	if err := w.cast.ValidateOutputStream(stream); err != nil {
 		return err
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	for offset := 0; offset < len(data); {
@@ -236,7 +262,7 @@ func (w *NativeRecordingWriter) WriteResize(elapsed time.Duration, columns, rows
 	if !w.metadata.Pty || columns == 0 || rows == 0 || columns > MaximumCastTerminalDimension || rows > MaximumCastTerminalDimension {
 		return fmt.Errorf("invalid native recording resize")
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	event := NativeCastEvent{Kind: NativeEventResize, Elapsed: elapsed, Columns: columns, Rows: rows}
@@ -254,7 +280,7 @@ func (w *NativeRecordingWriter) WriteMarker(elapsed time.Duration, label string)
 	if err := w.ready(); err != nil {
 		return err
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	event := NativeCastEvent{Kind: NativeEventMarker, Elapsed: elapsed, Label: label}
@@ -289,7 +315,7 @@ func (w *NativeRecordingWriter) Flush() error {
 	if err != nil {
 		return w.poison(err)
 	}
-	lastElapsed := uint64(w.cast.lastElapsed)
+	lastElapsed := uint64(w.cast.LastElapsed())
 	chunk := nativeRecordingChunk{Sequence: w.chunkCount + 1, PreviousUnitHash: w.previousHash, DecodedLength: uint32(len(decoded)), CastHashState: checkpoint.State, CastHashBytes: checkpoint.Bytes, LastElapsedNanos: &lastElapsed}
 	if err := w.writeChunk(decoded, chunk); err != nil {
 		return w.poison(err)
@@ -344,7 +370,11 @@ func (w *NativeRecordingWriter) Seal(elapsed time.Duration, result CastResult, e
 	if err != nil {
 		return NativeRecordingSummary{}, w.poison(err)
 	}
-	castSignature, err := w.identity.NewSessionRecordingCastSignature(w.metadata.RecordingId.String(), digest.String())
+	id := w.metadata.RecordingId.String()
+	if w.legacyUUIDs {
+		id = uuidtext.Classic(w.metadata.RecordingId)
+	}
+	castSignature, err := w.identity.NewSessionRecordingCastSignature(id, digest.String())
 	if err != nil {
 		return NativeRecordingSummary{}, w.poison(err)
 	}
@@ -366,7 +396,11 @@ func (w *NativeRecordingWriter) Seal(elapsed time.Duration, result CastResult, e
 		ContentHash: contentHash, CastDigest: finalDigest, CastSignature: castSignature.Signature,
 		CastBytes: castBytes, EndedAt: endedAt,
 	}
-	sealPayload, err := w.signer.Seal(seal, w.metadata.RecordingId)
+	version := uint8(2)
+	if w.legacyUUIDs {
+		version = 1
+	}
+	sealPayload, err := w.signer.seal(seal, w.metadata.RecordingId, version)
 	if err != nil {
 		return NativeRecordingSummary{}, w.poison(err)
 	}
@@ -383,11 +417,16 @@ func (w *NativeRecordingWriter) Seal(elapsed time.Duration, result CastResult, e
 	if w.recipient != nil {
 		fingerprint = w.recipient.Fingerprint()
 	}
+	flow, sessionID, requestingUser := "", "", ""
+	if w.recipient == nil {
+		flow, sessionID, requestingUser = w.metadata.Flow.String(), w.metadata.SessionId.String(), w.metadata.User
+	}
 	return NativeRecordingSummary{
 		RecordingId: w.metadata.RecordingId, ProducerId: w.metadata.ProducerId,
 		RecipientFingerprint: fingerprint,
 		Status:               result.Status, ChunkCount: w.chunkCount, CastBytes: castBytes,
 		Digest: digest, Bytes: w.prefixBytes,
+		StartedAt: w.metadata.StartedAt, EndedAt: result.EndedAt, Flow: flow, SessionID: sessionID, User: requestingUser,
 	}, nil
 }
 

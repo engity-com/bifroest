@@ -24,6 +24,7 @@ flows:
   - name: default
     authorization:
       type: simple
+      rememberMe: allowedAndEnabledByDefault
       entries:
         - name: demo
           passwordFile: "/etc/engity/bifroest/passwords/dummy"

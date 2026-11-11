@@ -25,9 +25,8 @@ The management login uses a separate SSH identity and trusted host key as in [th
 3. Configure the evidence and administration flows:
 
     ```yaml title="Bifröst host: /etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - name: evidence
-        enabled: true
+    auditlogs:
+      evidence:
         identityFile: /etc/engity/bifroest/evidence-signing-key
         directory: /var/lib/engity/bifroest/evidence-audit
         encryptionPublicKeyFile: /etc/engity/bifroest/evidence-recipient.pub
@@ -35,10 +34,11 @@ The management login uses a separate SSH identity and trusted host key as in [th
           enabled: true
           directory: /var/lib/engity/bifroest/evidence-recordings
 
-      - name: administration
-        enabled: true
+      administration:
         identityFile: /etc/engity/bifroest/administration-signing-key
         directory: /var/lib/engity/bifroest/administration-audit
+        recording:
+          directory: /var/lib/engity/bifroest/administration-recordings
 
     flows:
       - name: administration
@@ -164,6 +164,16 @@ The management login uses a separate SSH identity and trusted host key as in [th
     ```
 
     `play` outputs terminal content; `export` writes a signed asciicast file. Both fully verify the encrypted content before playback or export.
+
+## Browser alternative
+
+Enable HTTPS as in [Browser access](browser-access.md), then publish the administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`. Keep its requesting-name requirement and `allowArtifactTransfer: true`.
+
+1. Open `https://bifroest.example.org/#Admin` and sign in through **SSH key** as `management`.
+2. Choose **Audit logs**, select `evidence`, then open **Events** or **Recordings**.
+3. Start local verification, select the recipient key and enter its passphrase. Enable signing-ID validation with your independently retained producer ID, not merely the suggested server value.
+
+The decryption key stays in this management tab and is discarded when it closes. Browser code is served by the server; use the CLI workflow above when the verification tool must be independently trusted.
 
 ## Offline alternatives
 

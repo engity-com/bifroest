@@ -4,10 +4,27 @@ description: How to access context information about an user's connection within
 
 # Context Connection
 
-Represents a connection of a user who is currently connected to Bifröst.
+Information about the incoming connection, available as `.connection`.
 
 ## Properties
 
+<<property("id", "string")>>
+
+The connection UUID, distinct from the session ID.
+
+<<property("transport", "string")>>
+
+Incoming transport: `ssh` or `http`.
+
 <<property("remote", "Remote", "remote.md")>>
 
-Identifies the user with its host and username.
+The requesting username and direct peer IP address.
+
+<<property("http", "object", optional=True)>>
+
+Present for HTTP and null for SSH:
+
+| Property | Meaning |
+| --- | --- |
+| `.connection.http.host` | Incoming HTTP hostname, without its port. |
+| `.connection.http.slug` | Selected slug, case-sensitive; empty for the root. |

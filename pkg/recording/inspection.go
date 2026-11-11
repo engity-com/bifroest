@@ -31,6 +31,8 @@ type Inspection struct {
 	Format Format
 	Cast   *CastVerification
 	Native *NativeRecordingVerification
+	// Metadata is absent for encrypted native artifacts inspected without keys.
+	Metadata *CastMetadata
 }
 
 // Inspect verifies one Recording artifact and identifies its format.
@@ -58,10 +60,12 @@ func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspectio
 	}
 	switch format {
 	case FormatBcast, FormatBECastCBOR:
+		var metadata *CastMetadata
 		nativeOptions := NativeRecordingVerifyOptions{
 			Context: options.Context, MaximumContainerBytes: options.MaximumContainerBytes,
 			MaximumCastBytes: options.MaximumCastBytes, MaximumChunks: options.MaximumChunks,
 			ExpectedProducerId: options.ExpectedProducerId, AllowUntrusted: options.AllowUntrusted,
+			VerifiedMetadata: func(value CastMetadata) { metadata = &value },
 		}
 		var native *NativeRecordingVerification
 		if format == FormatBcast {
@@ -75,7 +79,7 @@ func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspectio
 		if (native.Header.Encryption == 1) != (format == FormatBECastCBOR) {
 			return nil, errors.Config.Newf("native Recording format does not match encryption mode")
 		}
-		return &Inspection{Format: format, Native: native}, nil
+		return &Inspection{Format: format, Native: native, Metadata: metadata}, nil
 	case FormatCast:
 		maximumContainerBytes := options.MaximumContainerBytes
 		if maximumContainerBytes == 0 {

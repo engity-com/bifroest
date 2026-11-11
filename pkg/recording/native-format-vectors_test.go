@@ -92,7 +92,7 @@ func buildNativeRecordingVector(t *testing.T, recipient *bfcrypto.AgeSshRecipien
 	t.Helper()
 	identity, header, metadata := castTestValues(t, true)
 	var output bytes.Buffer
-	writer, err := NewNativeRecordingWriter(&output, identity, recipient, header, metadata, 0, NativeRecordingWriterLimits{})
+	writer, err := newNativeRecordingWriter(&output, identity, recipient, header, metadata, 0, NativeRecordingWriterLimits{}, true)
 	require.NoError(t, err)
 	require.NoError(t, writer.WriteOutput(248*time.Millisecond, OutputStreamTerminal, []byte{'W', 'e', 'l', 'c', 'o', 'm', 'e', '\r', '\n', 0xff}))
 	require.NoError(t, writer.WriteResize(1001*time.Millisecond, 132, 43))

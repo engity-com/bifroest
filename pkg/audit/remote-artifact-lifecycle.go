@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 )
 
 const (
@@ -178,7 +180,7 @@ func (this *remoteArtifactReceiptStore) beginLifecycle(ctx context.Context, file
 		return err
 	}
 	if exists {
-		if existing.State == remoteArtifactLifecycleStateIntent && existing.StartedAt == canonicalStartedAt && reflect.DeepEqual(existing.Event, event) {
+		if existing.State == remoteArtifactLifecycleStateIntent && existing.StartedAt == canonicalStartedAt && sameLifecycleEvent(existing.Event, event) {
 			return nil
 		}
 		return errors.Config.Newf("session Recording lifecycle intent for %q already exists", fileName)
@@ -223,7 +225,7 @@ func (this *remoteArtifactReceiptStore) stageLifecycle(ctx context.Context, file
 	if !exists {
 		return errors.Config.Newf("session Recording lifecycle intent for %q is missing", fileName)
 	}
-	if marker.State == remoteArtifactLifecycleStateStaged && reflect.DeepEqual(marker.Event, event) {
+	if marker.State == remoteArtifactLifecycleStateStaged && sameLifecycleEvent(marker.Event, event) {
 		return nil
 	}
 	if marker.State != remoteArtifactLifecycleStateIntent && marker.State != remoteArtifactLifecycleStateStaged {
@@ -412,7 +414,7 @@ func (this *remoteArtifactReceiptStore) completeLifecycle(ctx context.Context, p
 	if err != nil || !exists {
 		return err
 	}
-	if marker.State != remoteArtifactLifecycleStatePending || marker.ArtifactDigest != pending.ArtifactDigest || !reflect.DeepEqual(marker.Event, pending.Event) {
+	if marker.State != remoteArtifactLifecycleStatePending || marker.ArtifactDigest != pending.ArtifactDigest || !sameLifecycleEvent(marker.Event, pending.Event) {
 		return errors.Config.Newf("pending session Recording lifecycle event changed")
 	}
 	receipt, receiptExists, err := this.loadSnapshotLocked(pending.FileName, nil)
@@ -561,7 +563,7 @@ func validateRemoteArtifactLifecycleContent(content remoteArtifactLifecycleConte
 		return errors.Config.Newf("session Recording lifecycle state has an illegal start time: %w", err)
 	}
 	recordingId := strings.TrimSuffix(strings.TrimSuffix(content.FileName, ".bcast"), ".becast")
-	if recordingId == content.FileName || content.Event.RecordingId != recordingId {
+	if recordingId == content.FileName || !uuidtext.Equal(content.Event.RecordingId, recordingId) {
 		return errors.Config.Newf("session Recording lifecycle event does not match its artifact name")
 	}
 	switch content.State {
@@ -667,9 +669,19 @@ func isRemoteArtifactLifecycleSuccessor(current, next remoteArtifactLifecycle) b
 	return current.State == remoteArtifactLifecycleStatePrepared && (next.State == remoteArtifactLifecycleStatePrepared || next.State == remoteArtifactLifecycleStatePending)
 }
 
+func sameLifecycleEvent(left, right Event) bool {
+	a, err := evidence.NormalizeEventIDs(left)
+	if err != nil {
+		return false
+	}
+	b, err := evidence.NormalizeEventIDs(right)
+	return err == nil && reflect.DeepEqual(a, b)
+}
+
 func sameRemoteArtifactLifecycleCorrelation(left, right Event) bool {
-	return left.Domain == right.Domain && left.Flow == right.Flow && left.ConnectionId == right.ConnectionId &&
-		left.SessionId == right.SessionId && left.OperationId == right.OperationId && left.RecordingId == right.RecordingId &&
+	sameID := func(a, b string) bool { return a == b || uuidtext.Equal(a, b) }
+	return left.Domain == right.Domain && left.Flow == right.Flow && sameID(left.ConnectionId, right.ConnectionId) &&
+		sameID(left.SessionId, right.SessionId) && sameID(left.OperationId, right.OperationId) && sameID(left.RecordingId, right.RecordingId) &&
 		left.SessionTask == right.SessionTask && left.SessionSubsystem == right.SessionSubsystem
 }
 

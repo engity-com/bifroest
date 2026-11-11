@@ -9,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -58,6 +59,13 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 		l.Debug("public key rejected")
 		return false, nil
 	}
+	if !verified {
+		// An accepted eligibility probe is not authentication. In particular, do
+		// not publish it in the connection context, track the session, schedule
+		// OIDC refresh or emit authentication-completed events here.
+		l.Debug("public key candidate accepted; awaiting possession proof")
+		return true, nil
+	}
 	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
 		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
 	} else if !compatible {
@@ -69,6 +77,7 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 	}
 
 	ctx.SetValue(authorizationCtxKey, auth)
+	prepareSSHRemember(ctx, auth, "public-key", key)
 	if this.sessions != nil {
 		if sess := auth.FindSession(); sess != nil {
 			this.sessionConnections.track(conn, sess)
@@ -84,14 +93,14 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 
 func (this *service) verifiedPublicKeyAuditCallback(ctx essh.Context) func(gossh.ConnMetadata, gossh.PublicKey, *gossh.Permissions, string) (*gossh.Permissions, error) {
 	return func(_ gossh.ConnMetadata, key gossh.PublicKey, permissions *gossh.Permissions, _ string) (*gossh.Permissions, error) {
-		if _, isCertificate := key.(*gossh.Certificate); isCertificate {
-			accepted, err := this.authorizePublicKey(ctx, key, true)
-			if err != nil {
-				return nil, err
-			}
-			if !accepted {
-				return nil, errors.User.Newf("user certificate rejected after public key verification")
-			}
+		// x/crypto may cache the unsigned callback result. Always resolve again
+		// after its signature check, for raw keys as well as user certificates.
+		accepted, err := this.authorizePublicKey(ctx, key, true)
+		if err != nil {
+			return nil, err
+		}
+		if !accepted {
+			return nil, errors.User.Newf("public key rejected after possession verification")
 		}
 		auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 		if auth == nil {
@@ -149,6 +158,7 @@ func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, pass
 	}
 
 	l.Debug("password accepted")
+	prepareSSHRemember(ctx, auth, "password", nil)
 	return true, nil
 }
 
@@ -197,6 +207,7 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 	}
 
 	l.Debug("interactive accepted")
+	prepareSSHRemember(ctx, auth, "keyboard-interactive", nil)
 	return true, nil
 }
 
@@ -235,21 +246,12 @@ func flowAuthorizationObservationIsUnauthenticated(observation authorization.Flo
 }
 
 func (this *service) recordAuthenticationCompleted(ctx essh.Context, auth authorization.Authorization, method audit.AuthenticationMethod, outcome audit.EventOutcome, reason audit.EventReason) error {
-	event := audit.Event{
-		Name:                 audit.EventNameAuthenticationCompleted,
-		Domain:               audit.EventDomainAuthentication,
-		Outcome:              outcome,
-		Flow:                 auth.Flow().String(),
-		AuthenticationMethod: method,
-		AuthorizationKind:    authorization.KindOf(auth),
-		Reason:               reason,
-	}
-	if conn := this.connection(ctx); conn != nil {
-		event.ConnectionId = conn.Id().String()
-	}
-	if sess := auth.FindSession(); sess != nil {
-		event.SessionId = sess.Id().String()
-	}
+	return this.recordAuthenticationCompletedFor(ctx, this.connection(ctx), auth, method, outcome, reason)
+}
+
+func (this *service) recordAuthenticationCompletedFor(ctx context.Context, conn bconn.Connection, auth authorization.Authorization, method audit.AuthenticationMethod, outcome audit.EventOutcome, reason audit.EventReason) error {
+	event := authorizationAuditEventFor(conn, auth, audit.EventNameAuthenticationCompleted, audit.EventDomainAuthentication)
+	event.Outcome, event.AuthenticationMethod, event.Reason = outcome, method, reason
 	return this.recordFlowAudit(ctx, auth.Flow(), event)
 }
 
@@ -272,12 +274,8 @@ func (this *service) resolveAuthorizationAndSession(ctx essh.Context) (authoriza
 	if oldState, err = sess.NotifyLastAccess(ctx, &remote{ctx}, session.StateAuthorized); err != nil {
 		return failf(errors.System, "cannot update session sate: %w", err)
 	}
-	if oldState == session.StateNew {
-		if pub, _ := ctx.Value(handshakeKeyCtxKey).(essh.PublicKey); pub != nil {
-			if err := sess.AddPublicKey(ctx, pub); err != nil {
-				return failf(errors.System, "cannot add public key to session: %w", err)
-			}
-		}
+	if err := this.rememberSSHClient(ctx, auth, nil); err != nil {
+		return failf(errors.System, "cannot update SSH RememberMe: %w", err)
 	}
 
 	return auth, sess, oldState, nil

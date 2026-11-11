@@ -4,13 +4,13 @@ description: Find commands for audit-log settings, event queries and signed jour
 
 # `bifroest audit` {: #audit-journals }
 
-Inspect configured audit logs, query verified events, or verify and export signed journal evidence. Audit logging is configured separately under the root [`auditlog`](../../auditlog/index.md) list.
+Inspect configured audit logs, query verified events, or verify and export signed journal evidence. Audit logging is configured separately in the root [`auditlogs`](../../auditlog/index.md) map.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| [`ls`](ls.md) | List configured audit logs and their enabled, Recording and encryption settings. |
+| [`ls`](ls.md) | List configured audit logs and their journal, Recording and encryption settings. |
 | [`show`](show.md) | Show redacted settings of one audit log. |
 | [`events`](events.md) | Query verified events with filters and a result limit. |
 | [`producer-id`](producer-id.md) | Print the selected signing producer ID. |

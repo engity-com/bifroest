@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"testing"
 
-	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -21,7 +20,7 @@ type windowsLocalManagedContext struct {
 	bound   bool
 }
 
-func (*windowsLocalManagedContext) Context() essh.Context { return nil }
+func (*windowsLocalManagedContext) Context() context.Context { return nil }
 
 func (this *windowsLocalManagedContext) GetField(name string) (any, bool, error) {
 	if name == "authorization" {

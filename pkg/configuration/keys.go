@@ -67,9 +67,30 @@ func (this *Keys) Validate() error {
 
 func (this *Keys) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Keys, node *yaml.Node) error {
+		fields, err := effectiveHttpFields(node)
+		if err != nil {
+			return err
+		}
+		if _, exists := fields["exchanges"]; exists {
+			target.Exchanges = nil
+		}
 		type raw Keys
 		return node.Decode((*raw)(target))
 	})
+}
+
+func (this Keys) MarshalYAML() (any, error) {
+	type raw Keys
+	var result yaml.Node
+	if err := result.Encode(raw(this)); err != nil {
+		return nil, err
+	}
+	for index := 0; index < len(result.Content); index += 2 {
+		if result.Content[index].Value == "rememberMeNotification" {
+			result.Content[index+1] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Style: yaml.DoubleQuotedStyle, Value: this.RememberMeNotification.String()}
+		}
+	}
+	return &result, nil
 }
 
 func (this Keys) IsEqualTo(other any) bool {

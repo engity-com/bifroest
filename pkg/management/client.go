@@ -1,7 +1,6 @@
 package management
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	cli "github.com/echocat/cli4g"
 	"github.com/kevinburke/ssh_config"
@@ -21,7 +21,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/cli/model"
-	"github.com/engity-com/bifroest/pkg/cli/transport"
+	managementclient "github.com/engity-com/bifroest/pkg/management/client"
+	transport "github.com/engity-com/bifroest/pkg/management/wire"
 )
 
 type Target struct {
@@ -204,80 +205,76 @@ func (target Target) Run(ctx context.Context, args ...string) error {
 		if err != nil {
 			return err
 		}
-		if err := transport.DecodeRecordingListStream(command.stdout, writer.Write); err != nil {
-			return command.abort("remote recording stream failed", err)
-		}
-		if err := command.wait("remote recording stream failed"); err != nil {
+		if err := managementclient.ReadRecordingList(ctx, command.response("remote recording stream failed"), writer.Write); err != nil {
 			return err
 		}
 		return writer.Close()
 	}
-	stdout, err := command.readResponse(transport.MaxWireResultBytes, "remote management response", "remote management command failed")
-	if err != nil {
-		return err
-	}
 	switch wireArgs[0] + " " + wireArgs[1] {
 	case "audit producer-id":
-		var producer cliformat.ProducerView
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &producer); err != nil {
+		producer, err := managementclient.ReadWireResult[cliformat.ProducerView](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteProducerID(output, format, producer.ProducerID)
 	case "recording show":
-		var entry model.RecordingView
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {
+		entry, err := managementclient.ReadWireResult[model.RecordingView](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteRecordingDetail(output, format, entry)
 	case "audit ls":
-		var entries []model.AuditlogSummary
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
+		entries, err := managementclient.ReadWireResult[[]model.AuditlogSummary](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteAuditlogList(output, format, entries)
 	case "audit show":
-		var settings map[string]any
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &settings); err != nil {
+		settings, err := managementclient.ReadWireResult[map[string]any](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteSettings(output, format, settings)
 	case "audit events":
-		var records []audit.VerifiedRecord
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &records); err != nil {
+		records, err := managementclient.ReadWireResult[[]audit.VerifiedRecord](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteAuditEvents(output, format, records, containsArg(args, "--with-sensitive"))
 	case "flow ls":
-		var entries []model.FlowSummary
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
+		entries, err := managementclient.ReadWireResult[[]model.FlowSummary](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteFlowList(output, format, entries)
 	case "flow show":
-		var settings map[string]any
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &settings); err != nil {
+		settings, err := managementclient.ReadWireResult[map[string]any](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteSettings(output, format, settings)
 	case "session ls":
-		var entries []model.SessionView
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
+		entries, err := managementclient.ReadWireResult[[]model.SessionView](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteSessionList(output, format, entries)
 	case "session show":
-		var entry model.SessionView
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {
+		entry, err := managementclient.ReadWireResult[model.SessionView](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteSessionDetail(output, format, entry)
 	case "session disconnect", "session dispose":
-		var result model.SessionActionResult
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &result); err != nil {
+		result, err := managementclient.ReadWireResult[model.SessionActionResult](ctx, command.response("remote management command failed"))
+		if err != nil {
 			return err
 		}
 		return cliformat.WriteSessionAction(output, format, result)
 	default:
+		if _, err := command.readResponse(ctx, transport.MaxWireResultBytes, "remote management response", "remote management command failed"); err != nil {
+			return err
+		}
 		return fmt.Errorf("unsupported management command %q", strings.Join(wireArgs[:2], " "))
 	}
 }
@@ -300,7 +297,7 @@ func (target Target) RunDirect(ctx context.Context, command string) error {
 	}
 	defer invocation.close()
 	const maximumVersionOutput = 64 << 10
-	content, err := invocation.readResponse(maximumVersionOutput, "remote version response", "remote version command failed")
+	content, err := invocation.readResponse(ctx, maximumVersionOutput, "remote version response", "remote version command failed")
 	if err != nil {
 		return err
 	}
@@ -409,15 +406,26 @@ func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resul
 			_ = conn.Close()
 		}
 	}()
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	cancelDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(cancelDone); _ = conn.Close() })
+	var stopOnce sync.Once
+	stopAndJoin := func() {
+		stopOnce.Do(func() {
+			if !stop() {
+				<-cancelDone
+			}
+		})
+	}
 	clientConn, chans, requests, err := ssh.NewClientConn(conn, address, &ssh.ClientConfig{User: conf.user, Auth: auth, HostKeyCallback: hostKeys})
 	if err != nil {
-		stop()
+		stopAndJoin()
 		return nil, nil, err
 	}
 	client := ssh.NewClient(clientConn, chans, requests)
 	return client, func() {
-		stop()
+		// The handshake/start watcher remains owned until response cleanup; join
+		// it as well as the portable receiver's separate cancellation callback.
+		stopAndJoin()
 		_ = client.Close()
 		_ = conn.Close()
 		if agentCloser != nil {

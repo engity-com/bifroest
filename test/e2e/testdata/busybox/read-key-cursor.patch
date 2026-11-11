@@ -1,0 +1,16 @@
+Subject: [test image only] Parse an already complete cursor report before reading ahead
+
+BusyBox 1.37.0 read_key() can read all of ESC[1;5R while trying the
+Ctrl-arrow key table. The cursor-report parser must examine those bytes
+before another read, or it consumes the following command as an unknown
+escape sequence. Keep all bytes, bounds, key mappings and timeouts unchanged.
+
+--- a/libbb/read_key.c
++++ b/libbb/read_key.c
+@@ -223,0 +224,4 @@
++	/* The known-key matcher may already have read a complete cursor report.
++	 * Recognize it before consuming any following user input.
++	 */
++	goto check_cursor_pos;
+@@ -240,0 +245 @@
++ check_cursor_pos:

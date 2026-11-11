@@ -57,8 +57,8 @@ func TestLocalMetadataCommandsProtectConfiguredFiles(t *testing.T) {
 	}
 	raw, err := yaml.Marshal(map[string]any{
 		"ssh": map[string]any{"keys": map[string]any{"hostKeys": []string{sshFiles["host-key"], sshFiles["second-host-key"]}}},
-		"auditlog": []map[string]any{{
-			"name": "default", "enabled": true, "identityFile": key, "directory": journal,
+		"auditlogs": map[string]any{"default": map[string]any{
+			"identityFile": key, "directory": journal,
 			"recording": map[string]any{"enabled": true, "directory": recordings},
 		}},
 		"session": map[string]string{"type": "fs", "storage": sessions},

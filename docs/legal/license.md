@@ -55,3 +55,7 @@ does not provide a conclusion.
 
 The documentation build toolchain is not embedded in or distributed with
 Bifröst artifacts and is therefore outside this artifact license policy.
+
+## Embedded browser components
+
+The browser includes third-party components under their respective licenses. Their license texts and notices are included with the release.

@@ -39,7 +39,12 @@ func main() {
 		cancelFunc()
 	}()
 
-	b.init(ctx, app)
+	if len(gos.Args) > 1 && gos.Args[1] == "browser-licenses" {
+		// Local license collection must not require GitHub API credentials.
+		initBrowserLicenses(ctx, app)
+	} else {
+		b.init(ctx, app)
+	}
 
 	if _, err := app.Parse(gos.Args[1:]); err != nil {
 		log.WithError(err).Error("execution failed")

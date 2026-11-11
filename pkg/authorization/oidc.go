@@ -10,6 +10,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/oauth2"
 
+	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -24,6 +25,7 @@ type oidc struct {
 	flow              configuration.FlowName
 	session           session.Session
 	sessionsPublicKey ssh.PublicKey
+	identity          authentication.Identity
 }
 
 func (*oidc) AuthorizationKind() string { return "oidc-device-auth" }

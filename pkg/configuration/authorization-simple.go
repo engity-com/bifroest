@@ -2,6 +2,8 @@ package configuration
 
 import (
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 var (
@@ -12,12 +14,14 @@ var (
 
 type AuthorizationSimple struct {
 	UserCertificateAuthorityProperties `yaml:",inline"`
+	RemoteName                         template.String            `yaml:"remoteName,omitempty"`
 	Entries                            AuthorizationSimpleEntries `yaml:"entries,omitempty"`
 }
 
 func (this *AuthorizationSimple) SetDefaults() error {
 	return setDefaults(this,
 		func(v *AuthorizationSimple) (string, defaulter) { return "", &v.UserCertificateAuthorityProperties },
+		fixedDefault("remoteName", func(v *AuthorizationSimple) *template.String { return &v.RemoteName }, DefaultAuthorizationRemoteName),
 		func(v *AuthorizationSimple) (string, defaulter) { return "entries", &v.Entries },
 	)
 }
@@ -25,6 +29,7 @@ func (this *AuthorizationSimple) SetDefaults() error {
 func (this *AuthorizationSimple) Trim() error {
 	return trim(this,
 		func(v *AuthorizationSimple) (string, trimmer) { return "", &v.UserCertificateAuthorityProperties },
+		noopTrim[AuthorizationSimple]("remoteName"),
 		func(v *AuthorizationSimple) (string, trimmer) { return "entries", &v.Entries },
 	)
 }
@@ -32,11 +37,17 @@ func (this *AuthorizationSimple) Trim() error {
 func (this *AuthorizationSimple) Validate() error {
 	return validate(this,
 		func(v *AuthorizationSimple) (string, validator) { return "", &v.UserCertificateAuthorityProperties },
+		func(v *AuthorizationSimple) (string, validator) {
+			return "remoteName", validatorFunc(func() error { return validateAuthorizationRemoteName(v.RemoteName) })
+		},
 		func(v *AuthorizationSimple) (string, validator) { return "entries", &v.Entries },
 	)
 }
 
 func (this *AuthorizationSimple) UnmarshalYAML(node *yaml.Node) error {
+	if err := validateAuthorizationRemoteNameYAML(node); err != nil {
+		return err
+	}
 	return unmarshalYAML(this, node, func(target *AuthorizationSimple, node *yaml.Node) error {
 		type raw AuthorizationSimple
 		return node.Decode((*raw)(target))
@@ -59,6 +70,7 @@ func (this AuthorizationSimple) IsEqualTo(other any) bool {
 
 func (this AuthorizationSimple) isEqualTo(other *AuthorizationSimple) bool {
 	return isEqual(&this.UserCertificateAuthorityProperties, &other.UserCertificateAuthorityProperties) &&
+		isEqual(&this.RemoteName, &other.RemoteName) &&
 		isEqual(&this.Entries, &other.Entries)
 }
 

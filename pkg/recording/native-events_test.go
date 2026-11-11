@@ -48,7 +48,7 @@ func TestNativeCastRendererMatchesCastWriter(t *testing.T) {
 			require.NoError(t, err)
 			sig, err := identity.NewSessionRecordingCastSignature(metadata.RecordingId.String(), digest.String())
 			require.NoError(t, err)
-			signedHeader := NativeRecordingHeader{Version: 1, RecordingId: [16]byte(metadata.RecordingId), ProducerId: [32]byte(metadata.ProducerId), PublicKey: identity.PublicKey().Marshal(), StartedAt: nativeformat.TimestampOf(metadata.StartedAt)}
+			signedHeader := NativeRecordingHeader{Version: 2, RecordingId: [16]byte(metadata.RecordingId), ProducerId: [32]byte(metadata.ProducerId), PublicKey: identity.PublicKey().Marshal(), StartedAt: nativeformat.TimestampOf(metadata.StartedAt)}
 			seal := NativeRecordingSeal{Status: 1, ChunkCount: 2, CastDigest: [32]byte(digest), CastSignature: sig.Signature, CastBytes: uint64(expected.Len()), EndedAt: nativeformat.TimestampOf(result.EndedAt)}
 			actual, err := RenderNativeRecordingCast([][]byte{first, second}, signedHeader, seal, int64(expected.Len()))
 			require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestNativeEventRejectsInvalidOrderingAndShape(t *testing.T) {
 	require.NoError(t, err)
 	final, err := EncodeNativeRecordingEvents([]NativeCastEvent{{Kind: NativeEventResult, Elapsed: time.Second, Result: result, ExitStatus: &exit}})
 	require.NoError(t, err)
-	signedHeader := NativeRecordingHeader{Version: 1, RecordingId: [16]byte(metadata.RecordingId), ProducerId: [32]byte(metadata.ProducerId), PublicKey: identity.PublicKey().Marshal(), StartedAt: nativeformat.TimestampOf(metadata.StartedAt)}
+	signedHeader := NativeRecordingHeader{Version: 2, RecordingId: [16]byte(metadata.RecordingId), ProducerId: [32]byte(metadata.ProducerId), PublicKey: identity.PublicKey().Marshal(), StartedAt: nativeformat.TimestampOf(metadata.StartedAt)}
 	seal := NativeRecordingSeal{Status: 1, ChunkCount: 2, CastDigest: [32]byte(digest), CastSignature: signature.Signature, CastBytes: uint64(cast.Len()), EndedAt: nativeformat.TimestampOf(result.EndedAt)}
 	_, err = RenderNativeRecordingCast([][]byte{good}, signedHeader, seal, 100000)
 	require.Error(t, err)
@@ -187,7 +187,7 @@ func TestNativeCastRendererPreservesUTF8OutputSplit(t *testing.T) {
 	require.NoError(t, err)
 	sig, err := identity.NewSessionRecordingCastSignature(metadata.RecordingId.String(), digest.String())
 	require.NoError(t, err)
-	signedHeader := NativeRecordingHeader{Version: 1, RecordingId: [16]byte(metadata.RecordingId), ProducerId: [32]byte(metadata.ProducerId), PublicKey: identity.PublicKey().Marshal(), StartedAt: nativeformat.TimestampOf(metadata.StartedAt)}
+	signedHeader := NativeRecordingHeader{Version: 2, RecordingId: [16]byte(metadata.RecordingId), ProducerId: [32]byte(metadata.ProducerId), PublicKey: identity.PublicKey().Marshal(), StartedAt: nativeformat.TimestampOf(metadata.StartedAt)}
 	seal := NativeRecordingSeal{Status: 2, ChunkCount: 2, CastDigest: [32]byte(digest), CastSignature: sig.Signature, CastBytes: uint64(expected.Len()), EndedAt: nativeformat.TimestampOf(result.EndedAt)}
 	actual, err := RenderNativeRecordingCast([][]byte{group, final}, signedHeader, seal, int64(expected.Len()))
 	require.NoError(t, err)
