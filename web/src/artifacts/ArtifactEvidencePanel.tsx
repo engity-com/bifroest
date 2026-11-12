@@ -7,7 +7,7 @@ import {
     useEffectEvent,
     useId,
     useImperativeHandle,
-    useReducer,
+    useMemo,
     useRef,
     useState,
     useSyncExternalStore,
@@ -42,14 +42,12 @@ import { useAuditView } from './AuditViewContext';
 import type { AuditEventRow } from './audit-events';
 import { EvidenceDetailsDialog } from './EvidenceDetailsDialog';
 import type { EvidenceFailure, SigningExpectation as UsedExpectation } from './evidence-details';
+import { EvidenceDocument } from './evidence-document';
 import { EvidenceJob } from './evidence-job';
 import { EvidenceError, type EvidenceMetadata } from './evidence-protocol';
-import { emptyEvidenceResult, evidenceResultTransition } from './evidence-result';
 import type { ArtifactEvidencePanelProps, ArtifactPhase as Phase } from './evidence-view';
 import { LocalArtifactDownload } from './local-download';
 import { readEvidenceKey } from './local-key-input';
-import type { RecordingInfo } from './open-recording';
-import { PreparedPlayback } from './prepared-playback';
 import { inspectProtection } from './protection';
 import { type ArtifactRequest, artifactFields, type ReceivedArtifact } from './protocol';
 import { RecordingPlayer } from './RecordingPlayer';
@@ -123,11 +121,19 @@ export function ArtifactEvidencePanel({
     const returnRoute = useRef<ManagementLocation | null>(null);
     const routeKey = JSON.stringify(route);
     const routedSummary = useRef<RecordingSummary | null>(null);
-    const [receipt, updateReceipt] = useReducer(
-        evidenceResultTransition,
-        undefined,
-        emptyEvidenceResult,
+    const document = useMemo(
+        () =>
+            new EvidenceDocument(
+                (request) =>
+                    !disabled &&
+                    access.status() !== 'closed' &&
+                    request.kind === (view === 'recordings' ? 'recording' : 'audit'),
+            ),
+        [access, disabled, view],
     );
+    const { opened, selection, received, protection, recordingInfo, playback, receipt } =
+        useSyncExternalStore(document.subscribe, document.getSnapshot);
+    const updateReceipt = document.updateReceipt;
     const { recordingFlow, recordingSession, verified, auditIndex, verifiedSensitive, used } =
         receipt;
     const [auditEvent, setAuditEvent] = useState<AuditEventRow | null>(null);
@@ -135,10 +141,6 @@ export function ArtifactEvidencePanel({
     const passwordID = useId();
     const decryptInputID = useId();
     const decryptPasswordID = useId();
-    const [opened, setOpened] = useState<ArtifactRequest | null>(null);
-    const [selection, setSelection] = useState<RecordingSummary | null>(null);
-    const [received, setReceived] = useState<ReceivedArtifact | null>(null);
-    const [protection, setProtection] = useState<EvidenceMetadata | null>(null);
     const sourceVerification = useRef<{
         access: WebAccess;
         index: LocalRecordingIndex | null;
@@ -157,20 +159,12 @@ export function ArtifactEvidencePanel({
         return () => window.removeEventListener(profileResetEvent, clear);
     }, [access]);
     const attemptedVerification = useRef(false);
-    const [playback, setPlayback] = useState<{ source: Blob; image: PreparedPlayback } | null>(
-        null,
-    );
-    const [recordingInfo, setRecordingInfo] = useState<RecordingInfo | null>(null);
     const [decryptOpen, setDecryptOpen] = useState(false);
-    useEffect(
-        () => () => {
-            playback?.image.dispose();
-        },
-        [playback],
+    const job = useMemo(
+        () => new EvidenceJob(() => document.getSnapshot().opened !== null),
+        [document],
     );
-    const [job] = useState(() => new EvidenceJob());
     const { phase, progress } = useSyncExternalStore(job.subscribe, job.getSnapshot);
-    const setProgress = job.progress;
     useEffect(() => {
         onPhaseChange?.(phase);
     }, [onPhaseChange, phase]);
@@ -244,17 +238,11 @@ export function ArtifactEvidencePanel({
         job.retire();
         downloads.current.clear();
         clearInputs();
-        setOpened(null);
-        setSelection(null);
-        setReceived(null);
+        document.close();
         attemptedVerification.current = false;
-        setPlayback(null);
-        setRecordingInfo(null);
         setDecryptOpen(false);
         seeded.current = '';
         expectedSource.current = '';
-        setProtection(null);
-        updateReceipt({ type: 'clear' });
         setVerificationFailure(null);
         setNotice(null);
         setDetails(false);
@@ -309,22 +297,16 @@ export function ArtifactEvidencePanel({
         retireRecordingRuntime();
         job.retire();
         downloads.current.clear();
-        setOpened(null);
-        setSelection(null);
+        document.close();
         consumedRoute.current = null;
         consumedSelection.current = null;
         returnRoute.current = null;
         routedSummary.current = null;
         setAuditEvent(null);
-        setReceived(null);
         attemptedVerification.current = false;
-        setPlayback(null);
-        setRecordingInfo(null);
         setDecryptOpen(false);
         seeded.current = '';
         expectedSource.current = '';
-        setProtection(null);
-        updateReceipt({ type: 'clear' });
         setVerificationFailure(null);
         setNotice(null);
         setDetails(false);
@@ -342,6 +324,7 @@ export function ArtifactEvidencePanel({
             retireRecordingRuntime();
             job.retire();
             downloads.current.clear();
+            document.close();
         };
     }, [access, disabled, view]);
     useEffect(() => {
@@ -476,7 +459,7 @@ export function ArtifactEvidencePanel({
                 matches: () => matchesRoute(image.request),
                 target: () => routeRef.current,
                 recording: runtimeFor,
-                progress: setProgress,
+                progress: (value) => job.progress(token, value),
             },
         );
         if (!current(token, signal)) {
@@ -555,18 +538,8 @@ export function ArtifactEvidencePanel({
         if (!managed) {
             clearInputs();
         }
-        setReceived(null);
-        setPlayback(null);
-        setRecordingInfo(null);
+        document.open(request, summary);
         setDecryptOpen(false);
-        setProtection(null);
-        setOpened(request);
-        setSelection(summary ?? null);
-        updateReceipt({
-            type: 'relation',
-            flow: summary?.flow ?? '',
-            session: summary?.sessionId ?? '',
-        });
         setFilePage(0);
         if (!managed) {
             setSensitive(false);
@@ -579,7 +552,7 @@ export function ArtifactEvidencePanel({
             artifactFields(request);
             const report = (value: Progress) => {
                 if (current(token, signal)) {
-                    setProgress(value);
+                    job.progress(token, value);
                 }
             };
             const image = await access.downloadArtifact(request, signal, report);
@@ -589,7 +562,7 @@ export function ArtifactEvidencePanel({
             if (!matchesRoute(request)) {
                 throw new EvidenceError('cancelled');
             }
-            setReceived(image);
+            document.receive(image);
             seedSigner(
                 'ProducerID' in image.metadata
                     ? image.metadata.ProducerID.toLowerCase()
@@ -636,7 +609,7 @@ export function ArtifactEvidencePanel({
             if (!current(token, signal)) {
                 return;
             }
-            setProtection(header);
+            document.inspect(header);
             let key =
                 level === 'outer' || header.expectedRecipient === ''
                     ? null
@@ -681,7 +654,7 @@ export function ArtifactEvidencePanel({
         updateReceipt({ type: 'expectation', value: expected });
         const hadPlayback = playback !== null;
         if (image.request.kind === 'recording') {
-            setPlayback(null);
+            document.clearPlayback();
         }
         await run(
             previousHeader || recordingInfo ? 'verifying' : 'inspecting',
@@ -695,14 +668,14 @@ export function ArtifactEvidencePanel({
                         : (previousHeader ??
                           (await inspectProtection(image, signal, scope, (value) => {
                               if (current(token, signal)) {
-                                  setProgress(value);
+                                  job.progress(token, value);
                               }
                           })));
                 if (!current(token, signal)) {
                     return;
                 }
                 if ('validation' in header) {
-                    setProtection(header as EvidenceMetadata);
+                    document.inspect(header as EvidenceMetadata);
                 }
                 let key =
                     level === 'outer' || header.expectedRecipient === ''
@@ -736,14 +709,14 @@ export function ArtifactEvidencePanel({
         signal: AbortSignal,
         token: OperationLease,
     ) {
-        setProgress(null);
+        job.progress(token, null);
         const runtime = await runtimeFor(image, signal);
         const result = await prepareRecordingPreview(runtime, image, key, {
             signal,
             current: () => current(token, signal),
             target: () => routeRef.current,
             keys: secrets,
-            information: setRecordingInfo,
+            information: document.information,
             keyRemembered: () => setCacheRevision((value) => value + 1),
         });
         // The controller's result crosses an await boundary. A route/access reset
@@ -758,7 +731,7 @@ export function ArtifactEvidencePanel({
             setDecryptOpen(true);
         } else if (result?.kind === 'ready') {
             setDecryptOpen(false);
-            setPlayback({ source: result.source, image: new PreparedPlayback(result.image) });
+            document.preview(result.source, result.image);
         }
     }
     async function decodeRecording() {
@@ -775,7 +748,7 @@ export function ArtifactEvidencePanel({
             if (file) {
                 key = await readEvidenceKey(file, passphrase, signal);
             }
-            setPlayback(null);
+            document.clearPlayback();
             await prepareRecording(image, key, signal, token);
         });
     }
@@ -784,13 +757,8 @@ export function ArtifactEvidencePanel({
         job.retire();
         resetResult();
         clearInputs();
-        setReceived(null);
-        setPlayback(null);
-        setRecordingInfo(null);
+        document.close();
         setDecryptOpen(false);
-        setProtection(null);
-        setOpened(null);
-        setSelection(null);
         setDetails(false);
     }
     function close() {
@@ -909,7 +877,7 @@ export function ArtifactEvidencePanel({
                     ((route.flow && route.flow !== recordingInfo.flow) ||
                         (route.sessionId && !uuidEqual(route.sessionId, recordingInfo.sessionId)))
                 ) {
-                    setPlayback(null);
+                    document.clearPlayback();
                 }
                 if (
                     view === 'recordings' &&
@@ -1534,7 +1502,7 @@ export function ArtifactEvidencePanel({
                               auditScope: scope,
                               onAuditScope: (value: 'complete' | 'captured-prefix') => {
                                   setScope(value);
-                                  setProtection(null);
+                                  document.forgetProtection();
                                   resetResult();
                               },
                           }

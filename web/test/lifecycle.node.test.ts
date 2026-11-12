@@ -3,6 +3,7 @@ import { EvidenceJob } from '../src/artifacts/evidence-job';
 import type { PlaybackImage } from '../src/artifacts/playback-protocol';
 import { PreparedPlayback } from '../src/artifacts/prepared-playback';
 import { CursorPages } from '../src/shared/cursor-pages';
+import type { OperationLease } from '../src/shared/operation';
 import { OperationSlot } from '../src/shared/operation';
 
 it('retires an operation before abort observers run, and stale completion cannot free its replacement', () => {
@@ -81,4 +82,66 @@ it('transfers a prepared image once and never disposes a renderer-owned image fr
     abandoned.dispose();
     abandoned.dispose();
     expect(dispose).toHaveBeenCalledOnce();
+});
+
+it('binds progress to its operation lease instead of accepting an older worker update', async () => {
+    const job = new EvidenceJob();
+    let oldLease: OperationLease | undefined;
+    const first = Promise.withResolvers<void>();
+    const old = job.run(
+        'downloading',
+        async (lease) => {
+            oldLease = lease;
+            await first.promise;
+        },
+        vi.fn(),
+        vi.fn(),
+    );
+    job.retire();
+    const second = Promise.withResolvers<void>();
+    const next = job.run('preparing', () => second.promise, vi.fn(), vi.fn());
+    if (!oldLease) {
+        throw new Error('Missing old lease');
+    }
+    job.progress(oldLease, { phase: 'verifying', completed: 1, total: 1 });
+    expect(job.getSnapshot()).toEqual({ phase: 'preparing', progress: null });
+    first.resolve();
+    second.resolve();
+    await Promise.all([old, next]);
+});
+it('cannot clear a replacement started synchronously by cleanup or an abort observer', async () => {
+    const job = new EvidenceJob();
+    const pending = Promise.withResolvers<void>();
+    let replacement: Promise<void> | undefined;
+    await job.run(
+        'verifying',
+        async () => {},
+        vi.fn(),
+        () => {
+            job.retire();
+            replacement = job.run('preparing', () => pending.promise, vi.fn(), vi.fn());
+        },
+    );
+    expect(job.getSnapshot().phase).toBe('preparing');
+    pending.resolve();
+    await replacement;
+    const stopped = Promise.withResolvers<void>();
+    const newer = Promise.withResolvers<void>();
+    const old = job.run(
+        'downloading',
+        async (lease) => {
+            lease.signal.addEventListener('abort', () => {
+                replacement = job.run('inspecting', () => newer.promise, vi.fn(), vi.fn());
+            });
+            await stopped.promise;
+        },
+        vi.fn(),
+        vi.fn(),
+    );
+    job.retire();
+    expect(job.getSnapshot().phase).toBe('inspecting');
+    stopped.resolve();
+    newer.resolve();
+    await old;
+    await replacement;
 });

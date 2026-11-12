@@ -1,22 +1,10 @@
+import type { LinkMetadata, LoginMethod, LoginOption } from '../application/link-metadata';
 import type { Scope } from '../remember';
 import { RememberMeError, validateScope } from '../remember/protocol';
 import { parseHashTarget } from './hash-route';
 import { parseManagementLocation } from './management-location';
 
-export type LoginMethod = 'password' | 'keyboard-interactive' | 'public-key' | 'none';
-
-export interface LoginOption {
-    readonly method: LoginMethod;
-    readonly requestUser: boolean;
-    readonly certificateRequired: boolean;
-}
-
-export interface LinkMetadata {
-    readonly scope: Scope;
-    readonly loginOptions: readonly LoginOption[];
-    readonly publishedSlugs: readonly string[];
-    readonly rootAvailable: boolean;
-}
+export type { LinkMetadata, LoginMethod, LoginOption } from '../application/link-metadata';
 
 // The directory itself is never a selectable root access. Only the explicit
 // configuration-derived flag permits '', including for old root tab scopes.

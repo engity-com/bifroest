@@ -10,6 +10,7 @@ export type EvidenceJobState =
 // Execution ownership only. Results, keys, routes and UI messages are not kept
 // here. Retiring a source makes every outstanding lease permanently stale.
 export class EvidenceJob {
+    constructor(private readonly allowed: () => boolean = () => true) {}
     #state: EvidenceJobState = { phase: null, progress: null };
     readonly #slot = new OperationSlot();
     readonly #listeners = new Set<() => void>();
@@ -29,17 +30,17 @@ export class EvidenceJob {
             listener();
         }
     }
-    readonly progress = (value: ReadProgress | null): void => {
-        if (this.#state.phase !== null) {
+    progress(lease: OperationLease, value: ReadProgress | null): void {
+        if (this.allowed() && lease.current() && this.#state.phase !== null) {
             this.#publish({ ...this.#state, progress: value });
         }
-    };
+    }
     cancel(): void {
         this.#slot.cancel();
     }
     retire(): void {
-        this.#slot.retire();
         this.#publish({ phase: null, progress: null });
+        this.#slot.retire();
     }
     async run(
         phase: ArtifactPhase,
@@ -47,6 +48,9 @@ export class EvidenceJob {
         failure: (error: unknown, phase: ArtifactPhase) => void,
         cleanup: () => void,
     ): Promise<void> {
+        if (!this.allowed()) {
+            return;
+        }
         const lease = this.#slot.start();
         if (!lease) {
             return;
@@ -69,8 +73,10 @@ export class EvidenceJob {
                 try {
                     cleanup();
                 } finally {
-                    lease.finish();
-                    this.#publish({ phase: null, progress: null });
+                    if (lease.owned()) {
+                        lease.finish();
+                        this.#publish({ phase: null, progress: null });
+                    }
                 }
             }
         }

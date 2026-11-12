@@ -9,6 +9,7 @@ import {
     useState,
     useSyncExternalStore,
 } from 'react';
+import { ApplicationNavigation } from '../application/navigation';
 import type { ProfileResetResult } from '../application/reset-contracts';
 import { ApplicationResetOwner, type ResetBoundary } from '../application/reset-owner';
 import { LoginAttempt } from '../login/attempt';
@@ -67,15 +68,15 @@ export function App({
     const savedHandle = useRef<BrowserBinding | null>(null);
     const confirmationHandle = useRef<BrowserBinding | null>(null);
     const operation = useRef<AbortController | null>(null);
-    const routeOperation = useRef<AbortController | null>(null);
+    const [navigation] = useState(() => new ApplicationNavigation(loadLinkMetadata));
+    const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot);
+    const routing = navigationState.phase === 'loading';
+    const routeFailed = navigationState.phase === 'failed';
     const automaticSelection = useRef<string | null>(null);
-    const seenRoute = useRef<{ key: string; revision: number } | null>(null);
     const generation = useRef(0);
     const [snapshot, setSnapshot] = useState<AccessSnapshot | null>(null);
     const [saved, setSaved] = useState<Saved>('loading');
     const [busy, setBusy] = useState(false);
-    const [routing, setRouting] = useState(false);
-    const [routeFailed, setRouteFailed] = useState(false);
     const [routeRevision, setRouteRevision] = useState(0);
     const [closing, setClosing] = useState(false);
     const [managementLocked, setManagementLocked] = useState(false);
@@ -200,145 +201,92 @@ export function App({
     }, []);
 
     useLayoutEffect(() => {
-        if (
-            seenRoute.current?.key === slugRoute.key &&
-            seenRoute.current.revision === routeRevision
-        ) {
-            return;
-        }
-        // Normalize before discovery: the replacement must not abort/reissue a
-        // public read or apply a pending target to an old owner behind sign-in.
-        if (slugRoute.canonicalizing) {
-            routeOperation.current?.abort();
-            routeOperation.current = null;
-            setRouting(false);
-            setLoginOpen(true);
-            return;
-        }
-        const initial = seenRoute.current === null;
-        const retry = seenRoute.current !== null && seenRoute.current.revision !== routeRevision;
-        seenRoute.current = { key: slugRoute.key, revision: routeRevision };
-        const selected = views.current.find(
-            (view) =>
-                view.id === slugRoute.view &&
-                view.scope.origin === routeOrigin &&
-                view.scope.slug === routeSlug,
+        return navigation.reconcile(
+            {
+                key: slugRoute.key,
+                revision: routeRevision,
+                canonicalizing: slugRoute.canonicalizing,
+                scope:
+                    routeOrigin === null || routeSlug === null
+                        ? null
+                        : { origin: routeOrigin, slug: routeSlug },
+                view: slugRoute.view,
+                management: slugRoute.management,
+            },
+            {
+                views: views.current,
+                metadataScope: link.current.scope,
+                canonicalizing: () => setLoginOpen(true),
+                mismatch: () => {
+                    setNotice({ key: 'managementRouteMismatch', color: 'red' });
+                    setLoginOpen(true);
+                },
+                invalidateDiscovery: () => {
+                    generation.current++;
+                },
+                activate: (selected, location) => {
+                    if (location) {
+                        setViewLocations((previous) =>
+                            new Map(previous).set(selected.id, Object.freeze({ ...location })),
+                        );
+                    }
+                    access.current = selected.access;
+                    if (candidate.current === selected.access) {
+                        candidate.current = null;
+                    }
+                    setSnapshot(selected.access.snapshot());
+                    setActiveView(selected.id);
+                    setLoginOpen(false);
+                    setTerminalLogin(null);
+                },
+                releaseStoppedAuthentication: () => {
+                    if (operation.current === null) {
+                        setTerminalLogin(null);
+                        attempt.cancel();
+                    }
+                },
+                reuse: (initial) => {
+                    if (!initial) {
+                        setLoginOpen(true);
+                        setPasswordKey((value) => value + 1);
+                        setOptIn(false);
+                        void readSaved();
+                    }
+                },
+                discover: (scope) => {
+                    const current = ++generation.current;
+                    setLoginOpen(true);
+                    setPasswordKey((value) => value + 1);
+                    setOptIn(false);
+                    attempt.clearProvider();
+                    // Keep an exact scope's authoritative logout/cleanup receipt.
+                    setNotice((previous) =>
+                        previous?.context !== undefined &&
+                        scope !== null &&
+                        previous.context.scope.origin === scope.origin &&
+                        previous.context.scope.slug === scope.slug &&
+                        ['loggedOut', 'newerKept', 'localCleanupFailed'].includes(previous.key)
+                            ? previous
+                            : null,
+                    );
+                    savedHandle.current = null;
+                    setSaved('loading');
+                    return {
+                        current: () => current === generation.current,
+                        accepted: (next) => {
+                            link.current = next;
+                            client.current = new BrowserClient(next.scope);
+                            setLoginMetadata(next);
+                            const option = next.loginOptions[0] ?? null;
+                            setLoginChoice(option ? loginOptionKey(option) : '');
+                            setLoginUser(option?.requestUser ? preferredUsername(next.scope) : '');
+                            void readSaved(current);
+                        },
+                        failed: (error) => reportUiError('application', error),
+                    };
+                },
+            },
         );
-        if (selected) {
-            if (
-                slugRoute.management &&
-                (selected.access.snapshot().environment !== 'management' ||
-                    (slugRoute.management.managementFlow !== '' &&
-                        (selected.access.snapshot().flow?.name ?? 'management') !==
-                            slugRoute.management.managementFlow))
-            ) {
-                setNotice({ key: 'managementRouteMismatch', color: 'red' });
-                setLoginOpen(true);
-                return;
-            }
-            if (slugRoute.management) {
-                const location = Object.freeze({ ...slugRoute.management });
-                setViewLocations((previous) => new Map(previous).set(selected.id, location));
-            }
-            // View navigation only selects a still-owned local view. In particular it
-            // must not enter routing/blocked, reload discovery or touch saved access.
-            if (routeOperation.current !== null) {
-                generation.current++;
-                routeOperation.current.abort();
-                routeOperation.current = null;
-            }
-            access.current = selected.access;
-            if (candidate.current === selected.access) {
-                candidate.current = null;
-            }
-            setSnapshot(selected.access.snapshot());
-            setActiveView(selected.id);
-            setLoginOpen(false);
-            setTerminalLogin(null);
-            setRouting(false);
-            setRouteFailed(false);
-            return;
-        }
-        // Active/uncertain operations are blocked by the router. A stopped local
-        // authentication console has no operation left to cancel and must not keep
-        // the new route behind an old generation's unresponsive close callback.
-        if (operation.current === null) {
-            setTerminalLogin(null);
-            attempt.cancel();
-        }
-        routeOperation.current?.abort();
-        routeOperation.current = null;
-        if (
-            !retry &&
-            routeOrigin === link.current.scope.origin &&
-            routeSlug === link.current.scope.slug
-        ) {
-            setRouting(false);
-            setRouteFailed(false);
-            if (!initial) {
-                setLoginOpen(true);
-                setPasswordKey((value) => value + 1);
-                setOptIn(false);
-                void readSaved();
-            }
-            return;
-        }
-        const current = ++generation.current;
-        setLoginOpen(true);
-        setPasswordKey((value) => value + 1);
-        setOptIn(false);
-        attempt.clearProvider();
-        // Retiring the last tab can rediscover its scope after sign-in was opened
-        // for another link. Do not erase that exact scope's completed logout receipt
-        // (or local-cleanup warning) while loading its public metadata.
-        setNotice((previous) =>
-            previous?.context?.scope.origin === routeOrigin &&
-            previous.context.scope.slug === routeSlug &&
-            ['loggedOut', 'newerKept', 'localCleanupFailed'].includes(previous.key)
-                ? previous
-                : null,
-        );
-        savedHandle.current = null;
-        setSaved('loading');
-        if (routeOrigin === null || routeSlug === null) {
-            setRouting(false);
-            setRouteFailed(true);
-            reportUiError('application', new RememberMeError('unavailable'));
-            return;
-        }
-        const controller = new AbortController();
-        routeOperation.current = controller;
-        setRouting(true);
-        setRouteFailed(false);
-        void loadLinkMetadata({ origin: routeOrigin, slug: routeSlug }, controller.signal)
-            .then((next) => {
-                if (current !== generation.current || controller.signal.aborted) {
-                    return;
-                }
-                link.current = next;
-                client.current = new BrowserClient(next.scope);
-                setLoginMetadata(next);
-                const option = next.loginOptions[0] ?? null;
-                setLoginChoice(option ? loginOptionKey(option) : '');
-                setLoginUser(option?.requestUser ? preferredUsername(next.scope) : '');
-                void readSaved(current);
-            })
-            .catch((error) => {
-                if (current !== generation.current || controller.signal.aborted) {
-                    return;
-                }
-                setRouteFailed(true);
-                reportUiError('application', error);
-            })
-            .finally(() => {
-                if (current === generation.current && routeOperation.current === controller) {
-                    routeOperation.current = null;
-                    setRouting(false);
-                }
-            });
-        return () => {
-            controller.abort();
-        };
     }, [
         slugRoute.key,
         slugRoute.canonicalizing,
@@ -349,16 +297,17 @@ export function App({
         routeRevision,
         readSaved,
         attempt,
+        navigation,
     ]);
     useEffect(() => {
         void readSaved();
         return () => {
             generation.current++;
             operation.current?.abort();
-            routeOperation.current?.abort();
+            navigation.retire();
             attempt.cancel();
         };
-    }, [readSaved, attempt]);
+    }, [readSaved, attempt, navigation]);
 
     const selectAccess = useCallback((selected: WebAccess | null) => {
         if (candidate.current !== null && candidate.current !== selected) {
@@ -493,7 +442,7 @@ export function App({
     async function run(action: (signal: AbortSignal, current: number) => Promise<void>) {
         if (
             operation.current !== null ||
-            routeOperation.current !== null ||
+            navigation.busy ||
             !metadataReady ||
             managementLocked ||
             rememberUncertain ||
@@ -712,7 +661,7 @@ export function App({
     }
 
     async function logout(selected = access.current) {
-        if (managementLocked || routeOperation.current !== null) {
+        if (managementLocked || navigation.busy) {
             return;
         }
         if (selected === null) {
@@ -825,8 +774,7 @@ export function App({
                 attempt.cancel();
                 operation.current?.abort();
                 operation.current = null;
-                routeOperation.current?.abort();
-                routeOperation.current = null;
+                navigation.retire();
                 setBulkConfirm(null);
                 setConfirm(null);
                 setApplicationMenuOpen(false);

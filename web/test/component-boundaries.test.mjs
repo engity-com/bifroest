@@ -52,7 +52,7 @@ test('transport, storage, workers and shared primitives do not import presentati
                 name.startsWith('application/') ||
                 name === 'login/attempt.ts' ||
                 /management\/(?:client|session-action-owner)\.ts$/u.test(name) ||
-                /artifacts\/(?:evidence-job|evidence-result|prepared-playback|verify-evidence|recording-source-verification)\.ts$/u.test(
+                /artifacts\/(?:evidence-job|evidence-document|evidence-result|prepared-playback|verify-evidence|recording-source-verification)\.ts$/u.test(
                     name,
                 ) ||
                 /workspace\/(?:controller|connections|state|policy)\.ts$/u.test(name) ||
@@ -67,10 +67,13 @@ test('transport, storage, workers and shared primitives do not import presentati
         'remember/client.ts',
         'shared/uuid.ts',
         'application/reset-owner.ts',
+        'application/navigation.ts',
+        'application/link-metadata.ts',
         'login/attempt.ts',
         'management/client.ts',
         'management/session-action-owner.ts',
         'artifacts/evidence-job.ts',
+        'artifacts/evidence-document.ts',
         'artifacts/evidence-result.ts',
         'artifacts/prepared-playback.ts',
         'artifacts/verify-evidence.ts',

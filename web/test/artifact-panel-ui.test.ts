@@ -1,4 +1,4 @@
-import { act, createElement, type ReactNode, StrictMode } from 'react';
+import { act, createElement, type ReactNode, StrictMode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactEvidencePanel as ArtifactPanel } from '../src/artifacts/ArtifactEvidencePanel';
@@ -305,27 +305,72 @@ afterEach(async () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
 });
+type ArtifactOptions = {
+    access?: WebAccess;
+    active?: boolean;
+    remoteDisabled?: boolean;
+    disabled?: boolean;
+};
+type EvidenceCommit = { input: string | undefined; phase: string | undefined };
+function ArtifactFrame({
+    selected,
+    options,
+    container,
+    commits,
+}: {
+    selected: WebAccess;
+    options: ArtifactOptions;
+    container: HTMLElement;
+    commits: EvidenceCommit[];
+}) {
+    useLayoutEffect(() => {
+        const panel = container.querySelector<HTMLElement>('[data-evidence-input]');
+        commits.push({ input: panel?.dataset.evidenceInput, phase: panel?.dataset.evidencePhase });
+    });
+    return createElement(ArtifactPanel, { access: selected, disabled: false, ...options });
+}
 async function mount(selected = access()) {
     const container = document.createElement('div');
     container.style.width = '1000px';
     document.body.append(container);
     const root = createRoot(container);
+    const commits: EvidenceCommit[] = [];
     cleanups.push(() => {
         root.unmount();
         container.remove();
     });
-    async function render(
-        options: { access?: WebAccess; active?: boolean; remoteDisabled?: boolean } = {},
-    ) {
+    async function render(options: ArtifactOptions = {}) {
         await act(async () =>
-            root.render(
-                createElement(ArtifactPanel, { access: selected, disabled: false, ...options }),
-            ),
+            root.render(createElement(ArtifactFrame, { selected, options, container, commits })),
         );
     }
     await render();
-    return { container, render };
+    return { container, render, commits };
 }
+
+it('does not render a former actor document even for the commit before passive boundary cleanup', async () => {
+    const panel = await mount(access('alice'));
+    await click(button('Open fixture recording', panel.container));
+    await vi.waitFor(() =>
+        expect(panel.container.querySelector('[data-evidence-input="true"]')).not.toBeNull(),
+    );
+    await panel.render({ access: access('bob') });
+    expect(panel.commits.at(-1)).toEqual({ input: 'false', phase: 'idle' });
+    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
+});
+
+it('retires local document visibility at the committed availability boundary without reopening on reactivation', async () => {
+    const panel = await mount();
+    await click(button('Open fixture recording', panel.container));
+    await vi.waitFor(() =>
+        expect(panel.container.querySelector('[data-evidence-input="true"]')).not.toBeNull(),
+    );
+    await panel.render({ disabled: true });
+    expect(panel.commits.at(-1)).toEqual({ input: 'false', phase: 'idle' });
+    await panel.render({ disabled: false });
+    expect(panel.commits.at(-1)).toEqual({ input: 'false', phase: 'idle' });
+    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledTimes(1);
+});
 function button(name: string, parent: ParentNode = document) {
     const node = [...parent.querySelectorAll<HTMLButtonElement>('button,a[href]')].find(
         (node) =>
