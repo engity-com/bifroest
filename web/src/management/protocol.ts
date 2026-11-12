@@ -3,564 +3,568 @@ import { RememberMeError } from '../remember/protocol';
 import { resourceID } from '../shared/uuid';
 
 export interface PageOptions {
-  readonly limit?: number;
-  readonly after?: string;
-  readonly query?: string;
-  readonly sort?: string;
-  readonly filter?: ColumnFilter | null;
+    readonly limit?: number;
+    readonly after?: string;
+    readonly query?: string;
+    readonly sort?: string;
+    readonly filter?: ColumnFilter | null;
 }
 export interface ColumnFilter {
-  readonly field: string;
-  readonly operator: string;
-  readonly value: string;
+    readonly field: string;
+    readonly operator: string;
+    readonly value: string;
 }
 export interface SessionOptions extends PageOptions {
-  readonly flow?: string;
-  readonly user?: string;
-  readonly state?: 'active' | 'all' | 'new' | 'authorized' | 'disposed';
+    readonly flow?: string;
+    readonly user?: string;
+    readonly state?: 'active' | 'all' | 'new' | 'authorized' | 'disposed';
 }
 export interface FlowSummary {
-  readonly name: string;
-  readonly auditlog: string;
-  readonly authorization: string;
-  readonly environment: string;
+    readonly name: string;
+    readonly auditlog: string;
+    readonly authorization: string;
+    readonly environment: string;
 }
 export interface VersionInfo {
-  readonly detail: 'long' | 'short';
-  readonly text: string;
-  readonly build?: VersionBuild;
+    readonly detail: 'long' | 'short';
+    readonly text: string;
+    readonly build?: VersionBuild;
 }
 export interface VersionBuild {
-  readonly title: string;
-  readonly version: string;
-  readonly revision: string;
-  readonly edition: string;
-  readonly buildAt: string;
-  readonly vendor: string;
-  readonly go: string;
-  readonly platform: string;
-  readonly features: readonly { readonly name: string; readonly entries: readonly string[] }[];
+    readonly title: string;
+    readonly version: string;
+    readonly revision: string;
+    readonly edition: string;
+    readonly buildAt: string;
+    readonly vendor: string;
+    readonly go: string;
+    readonly platform: string;
+    readonly features: readonly { readonly name: string; readonly entries: readonly string[] }[];
 }
 
 export function versionInfo(value: unknown, long: boolean): VersionInfo {
-  const envelope = object(value, ['version', 'operation', 'versionInfo']);
-  const result = object(envelope.versionInfo, [
-    'detail',
-    'text',
-    ...(envelope.versionInfo !== null &&
-    typeof envelope.versionInfo === 'object' &&
-    Object.hasOwn(envelope.versionInfo, 'build')
-      ? ['build']
-      : []),
-  ]);
-  if (
-    envelope.version !== 1 ||
-    envelope.operation !== 'version.show' ||
-    result.detail !== (long ? 'long' : 'short') ||
-    typeof result.text !== 'string' ||
-    !result.text.isWellFormed() ||
-    result.text.length === 0 ||
-    new TextEncoder().encode(result.text).length > 64 << 10 ||
-    /[\p{Cc}]/u.test(result.text.replace(/[\n\t]/gu, ''))
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  let build: VersionBuild | undefined;
-  if (result.build !== undefined) {
-    if (new TextEncoder().encode(JSON.stringify(result.build)).byteLength > 64 << 10) {
-      throw new RememberMeError('unavailable');
-    }
-    if (!long) {
-      throw new RememberMeError('unavailable');
-    }
-    const fields = object(result.build, [
-      'title',
-      'version',
-      'revision',
-      'edition',
-      'buildAt',
-      'vendor',
-      'go',
-      'platform',
-      'features',
+    const envelope = object(value, ['version', 'operation', 'versionInfo']);
+    const result = object(envelope.versionInfo, [
+        'detail',
+        'text',
+        ...(envelope.versionInfo !== null &&
+        typeof envelope.versionInfo === 'object' &&
+        Object.hasOwn(envelope.versionInfo, 'build')
+            ? ['build']
+            : []),
     ]);
-    const text = (value: unknown): string => {
-      if (
-        typeof value !== 'string' ||
-        !value.isWellFormed() ||
-        new TextEncoder().encode(value).byteLength > 2048 ||
-        /[\p{Cc}]/u.test(value)
-      ) {
+    if (
+        envelope.version !== 1 ||
+        envelope.operation !== 'version.show' ||
+        result.detail !== (long ? 'long' : 'short') ||
+        typeof result.text !== 'string' ||
+        !result.text.isWellFormed() ||
+        result.text.length === 0 ||
+        new TextEncoder().encode(result.text).length > 64 << 10 ||
+        /[\p{Cc}]/u.test(result.text.replace(/[\n\t]/gu, ''))
+    ) {
         throw new RememberMeError('unavailable');
-      }
-      return value;
-    };
-    if (!Array.isArray(fields.features) || fields.features.length > 64) {
-      throw new RememberMeError('unavailable');
     }
-    build = Object.freeze({
-      title: text(fields.title),
-      version: text(fields.version),
-      revision: text(fields.revision),
-      edition: text(fields.edition),
-      buildAt: text(fields.buildAt),
-      vendor: text(fields.vendor),
-      go: text(fields.go),
-      platform: text(fields.platform),
-      features: Object.freeze(
-        fields.features.map((value) => {
-          const group = object(value, ['name', 'entries']);
-          if (!Array.isArray(group.entries) || group.entries.length > 128) {
+    let build: VersionBuild | undefined;
+    if (result.build !== undefined) {
+        if (new TextEncoder().encode(JSON.stringify(result.build)).byteLength > 64 << 10) {
             throw new RememberMeError('unavailable');
-          }
-          return Object.freeze({
-            name: text(group.name),
-            entries: Object.freeze(group.entries.map(text)),
-          });
-        }),
-      ),
+        }
+        if (!long) {
+            throw new RememberMeError('unavailable');
+        }
+        const fields = object(result.build, [
+            'title',
+            'version',
+            'revision',
+            'edition',
+            'buildAt',
+            'vendor',
+            'go',
+            'platform',
+            'features',
+        ]);
+        const text = (value: unknown): string => {
+            if (
+                typeof value !== 'string' ||
+                !value.isWellFormed() ||
+                new TextEncoder().encode(value).byteLength > 2048 ||
+                /[\p{Cc}]/u.test(value)
+            ) {
+                throw new RememberMeError('unavailable');
+            }
+            return value;
+        };
+        if (!Array.isArray(fields.features) || fields.features.length > 64) {
+            throw new RememberMeError('unavailable');
+        }
+        build = Object.freeze({
+            title: text(fields.title),
+            version: text(fields.version),
+            revision: text(fields.revision),
+            edition: text(fields.edition),
+            buildAt: text(fields.buildAt),
+            vendor: text(fields.vendor),
+            go: text(fields.go),
+            platform: text(fields.platform),
+            features: Object.freeze(
+                fields.features.map((value) => {
+                    const group = object(value, ['name', 'entries']);
+                    if (!Array.isArray(group.entries) || group.entries.length > 128) {
+                        throw new RememberMeError('unavailable');
+                    }
+                    return Object.freeze({
+                        name: text(group.name),
+                        entries: Object.freeze(group.entries.map(text)),
+                    });
+                }),
+            ),
+        });
+    }
+    return Object.freeze({
+        detail: result.detail as VersionInfo['detail'],
+        text: result.text,
+        ...(build ? { build } : {}),
     });
-  }
-  return Object.freeze({
-    detail: result.detail as VersionInfo['detail'],
-    text: result.text,
-    ...(build ? { build } : {}),
-  });
 }
 // Server metadata only, never independent browser evidence or trust pins.
 export interface AuditlogSummary {
-  readonly name: string;
-  readonly enabled: boolean;
-  readonly recordingEnabled: boolean;
-  readonly encrypted: boolean;
-  readonly producerId?: string;
+    readonly name: string;
+    readonly enabled: boolean;
+    readonly recordingEnabled: boolean;
+    readonly encrypted: boolean;
+    readonly producerId?: string;
 }
 export interface RecordingSummary {
-  readonly auditlog: string;
-  readonly id: string;
-  readonly producerId: string;
-  readonly format: 'bcast/v1' | 'becast-cbor/v1';
-  readonly status: 'completed' | 'failed' | 'incomplete';
-  readonly startedAt: string;
-  readonly endedAt: string;
-  readonly containerBytes: number;
-  readonly chunkCount: number;
-  readonly encrypted: boolean;
-  readonly recipientFingerprint?: string;
-  readonly verificationScope: 'outer' | 'full';
-  readonly flow?: string;
-  readonly sessionId?: string;
-  readonly user?: string;
-  readonly target?: string;
-  readonly metadataUnavailable?: true;
+    readonly auditlog: string;
+    readonly id: string;
+    readonly producerId: string;
+    readonly format: 'bcast/v1' | 'becast-cbor/v1';
+    readonly status: 'completed' | 'failed' | 'incomplete';
+    readonly startedAt: string;
+    readonly endedAt: string;
+    readonly containerBytes: number;
+    readonly chunkCount: number;
+    readonly encrypted: boolean;
+    readonly recipientFingerprint?: string;
+    readonly verificationScope: 'outer' | 'full';
+    readonly flow?: string;
+    readonly sessionId?: string;
+    readonly user?: string;
+    readonly target?: string;
+    readonly metadataUnavailable?: true;
 }
 export interface RecordingOptions extends PageOptions {
-  readonly flow?: string;
-  readonly sessionId?: string;
-  readonly user?: string;
-  readonly target?: string;
-  readonly startedFrom?: string;
-  readonly startedUntil?: string;
-  readonly status?: 'all' | RecordingSummary['status'];
-  readonly sort?: 'started-desc' | 'started-asc';
+    readonly flow?: string;
+    readonly sessionId?: string;
+    readonly user?: string;
+    readonly target?: string;
+    readonly startedFrom?: string;
+    readonly startedUntil?: string;
+    readonly status?: 'all' | RecordingSummary['status'];
+    readonly sort?: 'started-desc' | 'started-asc';
 }
 
 export function recordingTime(value: unknown): string {
-  if (typeof value !== 'string') {
-    throw new RememberMeError('unavailable');
-  }
-  const match = /^(\d{4})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d{1,9}))?Z$/u.exec(value);
-  if (
-    match === null ||
-    Number(match[1]) < 1970 ||
-    !Number.isFinite(Date.parse(value)) ||
-    new Date(value).toISOString().slice(0, 19) !== value.slice(0, 19)
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  return value;
+    if (typeof value !== 'string') {
+        throw new RememberMeError('unavailable');
+    }
+    const match = /^(\d{4})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d{1,9}))?Z$/u.exec(value);
+    if (
+        match === null ||
+        Number(match[1]) < 1970 ||
+        !Number.isFinite(Date.parse(value)) ||
+        new Date(value).toISOString().slice(0, 19) !== value.slice(0, 19)
+    ) {
+        throw new RememberMeError('unavailable');
+    }
+    return value;
 }
 function recordingTimeKey(value: string): string {
-  return `${value.slice(0, 19)}.${value.slice(19, -1).replace('.', '').padEnd(9, '0')}`;
+    return `${value.slice(0, 19)}.${value.slice(19, -1).replace('.', '').padEnd(9, '0')}`;
 }
 export function recordingFields(options: RecordingOptions): Record<string, string> {
-  const status = options.status ?? 'all';
-  const sort = options.sort ?? 'started-desc';
-  const startedFrom = options.startedFrom ?? '';
-  const startedUntil = options.startedUntil ?? '';
-  if (startedFrom !== '') {
-    recordingTime(startedFrom);
-  }
-  if (startedUntil !== '') {
-    recordingTime(startedUntil);
-  }
-  if (
-    !['all', 'completed', 'failed', 'incomplete'].includes(status) ||
-    !['started-desc', 'started-asc'].includes(sort) ||
-    (startedFrom !== '' &&
-      startedUntil !== '' &&
-      recordingTimeKey(startedFrom) > recordingTimeKey(startedUntil))
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  return {
-    ...pageFields(options, ['started-desc', 'started-asc']),
-    flow: text(options.flow ?? '', 255),
-    ...(options.sessionId === undefined ? {} : { sessionId: sessionID(options.sessionId) }),
-    user: text(options.user ?? '', 256),
-    target: text(options.target ?? '', 1024),
-    startedFrom,
-    startedUntil,
-    status,
-    sort,
-  };
+    const status = options.status ?? 'all';
+    const sort = options.sort ?? 'started-desc';
+    const startedFrom = options.startedFrom ?? '';
+    const startedUntil = options.startedUntil ?? '';
+    if (startedFrom !== '') {
+        recordingTime(startedFrom);
+    }
+    if (startedUntil !== '') {
+        recordingTime(startedUntil);
+    }
+    if (
+        !['all', 'completed', 'failed', 'incomplete'].includes(status) ||
+        !['started-desc', 'started-asc'].includes(sort) ||
+        (startedFrom !== '' &&
+            startedUntil !== '' &&
+            recordingTimeKey(startedFrom) > recordingTimeKey(startedUntil))
+    ) {
+        throw new RememberMeError('unavailable');
+    }
+    return {
+        ...pageFields(options, ['started-desc', 'started-asc']),
+        flow: text(options.flow ?? '', 255),
+        ...(options.sessionId === undefined ? {} : { sessionId: sessionID(options.sessionId) }),
+        user: text(options.user ?? '', 256),
+        target: text(options.target ?? '', 1024),
+        startedFrom,
+        startedUntil,
+        status,
+        sort,
+    };
 }
 export interface SessionItem {
-  readonly id: string;
-  readonly flow: string;
-  readonly state: string;
-  readonly user: string;
-  readonly remote: string;
-  readonly createdAt: string;
-  readonly lastAccessed?: string;
-  readonly validUntil?: string;
-  readonly owner: { readonly issuer: string; readonly subject: string } | null;
-  readonly policyLimited?: boolean;
-  readonly auditlog?: string;
+    readonly id: string;
+    readonly flow: string;
+    readonly state: string;
+    readonly user: string;
+    readonly remote: string;
+    readonly createdAt: string;
+    readonly lastAccessed?: string;
+    readonly validUntil?: string;
+    readonly owner: { readonly issuer: string; readonly subject: string } | null;
+    readonly policyLimited?: boolean;
+    readonly auditlog?: string;
 }
 
 export function sessionID(value: unknown): string {
-  if (typeof value !== 'string' || !resourceID(value)) {
-    throw new RememberMeError('unavailable');
-  }
-  return value;
+    if (typeof value !== 'string' || !resourceID(value)) {
+        throw new RememberMeError('unavailable');
+    }
+    return value;
 }
 export interface Page<T> {
-  readonly items: readonly T[];
-  readonly next: string;
-  readonly skipped: number;
-  // Present only after a correlated scan count AND its completed page receipt.
-  readonly total?: number;
+    readonly items: readonly T[];
+    readonly next: string;
+    readonly skipped: number;
+    // Present only after a correlated scan count AND its completed page receipt.
+    readonly total?: number;
 }
 
 function text(value: unknown, maximum: number): string {
-  if (
-    typeof value !== 'string' ||
-    !value.isWellFormed() ||
-    new TextEncoder().encode(value).length > maximum ||
-    /[\p{Cc}]/u.test(value)
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  return value;
+    if (
+        typeof value !== 'string' ||
+        !value.isWellFormed() ||
+        new TextEncoder().encode(value).length > maximum ||
+        /[\p{Cc}]/u.test(value)
+    ) {
+        throw new RememberMeError('unavailable');
+    }
+    return value;
 }
 export function pageFields(
-  options: PageOptions,
-  sorts: readonly string[] = ['name-asc', 'name-desc'],
+    options: PageOptions,
+    sorts: readonly string[] = ['name-asc', 'name-desc'],
 ): Record<string, string> {
-  const limit = options.limit ?? 20;
-  const after = options.after ?? '';
-  if (
-    !Number.isInteger(limit) ||
-    limit < 1 ||
-    limit > 20 ||
-    typeof after !== 'string' ||
-    after.length > 4096 ||
-    (after !== '' && !/^bmp1\.[A-Za-z0-9_-]+$/u.test(after)) ||
-    (options.sort !== undefined && !sorts.includes(options.sort))
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  const query = text(options.query ?? '', 256);
-  const filter = options.filter;
-  if (filter !== undefined && filter !== null) {
-    object(filter, ['field', 'operator', 'value']);
-    text(filter.field, 64);
-    text(filter.operator, 32);
-    text(filter.value, 2048);
+    const limit = options.limit ?? 20;
+    const after = options.after ?? '';
     if (
-      !/^[A-Za-z][A-Za-z0-9]*$/u.test(filter.field) ||
-      ![
-        'contains',
-        'doesNotContain',
-        'equals',
-        'doesNotEqual',
-        'startsWith',
-        'endsWith',
-        'isEmpty',
-        'isNotEmpty',
-        'isAnyOf',
-        'is',
-        'not',
-        '=',
-        '!=',
-        '>',
-        '>=',
-        '<',
-        '<=',
-        'after',
-        'onOrAfter',
-        'before',
-        'onOrBefore',
-      ].includes(filter.operator)
+        !Number.isInteger(limit) ||
+        limit < 1 ||
+        limit > 20 ||
+        typeof after !== 'string' ||
+        after.length > 4096 ||
+        (after !== '' && !/^bmp1\.[A-Za-z0-9_-]+$/u.test(after)) ||
+        (options.sort !== undefined && !sorts.includes(options.sort))
     ) {
-      throw new RememberMeError('unavailable');
+        throw new RememberMeError('unavailable');
     }
-  }
-  return {
-    limit: String(limit),
-    after,
-    ...(query !== '' ? { query } : {}),
-    ...(options.sort ? { sort: options.sort } : {}),
-    ...(filter
-      ? { filterField: filter.field, filterOperator: filter.operator, filterValue: filter.value }
-      : {}),
-  };
+    const query = text(options.query ?? '', 256);
+    const filter = options.filter;
+    if (filter !== undefined && filter !== null) {
+        object(filter, ['field', 'operator', 'value']);
+        text(filter.field, 64);
+        text(filter.operator, 32);
+        text(filter.value, 2048);
+        if (
+            !/^[A-Za-z][A-Za-z0-9]*$/u.test(filter.field) ||
+            ![
+                'contains',
+                'doesNotContain',
+                'equals',
+                'doesNotEqual',
+                'startsWith',
+                'endsWith',
+                'isEmpty',
+                'isNotEmpty',
+                'isAnyOf',
+                'is',
+                'not',
+                '=',
+                '!=',
+                '>',
+                '>=',
+                '<',
+                '<=',
+                'after',
+                'onOrAfter',
+                'before',
+                'onOrBefore',
+            ].includes(filter.operator)
+        ) {
+            throw new RememberMeError('unavailable');
+        }
+    }
+    return {
+        limit: String(limit),
+        after,
+        ...(query !== '' ? { query } : {}),
+        ...(options.sort ? { sort: options.sort } : {}),
+        ...(filter
+            ? {
+                  filterField: filter.field,
+                  filterOperator: filter.operator,
+                  filterValue: filter.value,
+              }
+            : {}),
+    };
 }
 export function sessionFields(options: SessionOptions): Record<string, string> {
-  const state = options.state ?? 'active';
-  if (!['active', 'all', 'new', 'authorized', 'disposed'].includes(state)) {
-    throw new RememberMeError('unavailable');
-  }
-  return {
-    ...pageFields(options, ['flow-asc', 'flow-desc']),
-    flow: text(options.flow ?? '', 255),
-    user: text(options.user ?? '', 256),
-    state,
-  };
+    const state = options.state ?? 'active';
+    if (!['active', 'all', 'new', 'authorized', 'disposed'].includes(state)) {
+        throw new RememberMeError('unavailable');
+    }
+    return {
+        ...pageFields(options, ['flow-asc', 'flow-desc']),
+        flow: text(options.flow ?? '', 255),
+        user: text(options.user ?? '', 256),
+        state,
+    };
 }
 export function auditlogName(value: unknown): string {
-  if (
-    typeof value !== 'string' ||
-    !/^[A-Za-z0-9.-]{1,128}$/u.test(value) ||
-    value === '.' ||
-    value === '..'
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  return value;
+    if (
+        typeof value !== 'string' ||
+        !/^[A-Za-z0-9.-]{1,128}$/u.test(value) ||
+        value === '.' ||
+        value === '..'
+    ) {
+        throw new RememberMeError('unavailable');
+    }
+    return value;
 }
 function auditlog(value: unknown): AuditlogSummary {
-  const row = object(value, [
-    'name',
-    'enabled',
-    'recordingEnabled',
-    'encrypted',
-    ...(value !== null && typeof value === 'object' && Object.hasOwn(value, 'producerId')
-      ? ['producerId']
-      : []),
-  ]);
-  if (
-    typeof row.enabled !== 'boolean' ||
-    typeof row.recordingEnabled !== 'boolean' ||
-    typeof row.encrypted !== 'boolean' ||
-    (row.producerId !== undefined &&
-      (typeof row.producerId !== 'string' ||
-        !/^[0-9a-f]{64}$/u.test(row.producerId) ||
-        /^0+$/u.test(row.producerId)))
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  return Object.freeze({
-    name: auditlogName(row.name),
-    enabled: row.enabled,
-    recordingEnabled: row.recordingEnabled,
-    encrypted: row.encrypted,
-    ...(typeof row.producerId === 'string' ? { producerId: row.producerId } : {}),
-  });
+    const row = object(value, [
+        'name',
+        'enabled',
+        'recordingEnabled',
+        'encrypted',
+        ...(value !== null && typeof value === 'object' && Object.hasOwn(value, 'producerId')
+            ? ['producerId']
+            : []),
+    ]);
+    if (
+        typeof row.enabled !== 'boolean' ||
+        typeof row.recordingEnabled !== 'boolean' ||
+        typeof row.encrypted !== 'boolean' ||
+        (row.producerId !== undefined &&
+            (typeof row.producerId !== 'string' ||
+                !/^[0-9a-f]{64}$/u.test(row.producerId) ||
+                /^0+$/u.test(row.producerId)))
+    ) {
+        throw new RememberMeError('unavailable');
+    }
+    return Object.freeze({
+        name: auditlogName(row.name),
+        enabled: row.enabled,
+        recordingEnabled: row.recordingEnabled,
+        encrypted: row.encrypted,
+        ...(typeof row.producerId === 'string' ? { producerId: row.producerId } : {}),
+    });
 }
 function recording(value: unknown): RecordingSummary {
-  const optional = [
-    'recipientFingerprint',
-    'flow',
-    'sessionId',
-    'user',
-    'target',
-    'metadataUnavailable',
-  ].filter((field) => value !== null && typeof value === 'object' && Object.hasOwn(value, field));
-  const row = object(value, [
-    'auditlog',
-    'id',
-    'producerId',
-    'format',
-    'status',
-    'startedAt',
-    'endedAt',
-    'containerBytes',
-    'chunkCount',
-    'encrypted',
-    'verificationScope',
-    ...optional,
-  ]);
-  if (
-    typeof row.id !== 'string' ||
-    !resourceID(row.id) ||
-    typeof row.producerId !== 'string' ||
-    !/^[0-9a-f]{64}$/u.test(row.producerId) ||
-    /^0+$/u.test(row.producerId) ||
-    typeof row.status !== 'string' ||
-    !['completed', 'failed', 'incomplete'].includes(row.status) ||
-    typeof row.encrypted !== 'boolean' ||
-    row.format !== (row.encrypted ? 'becast-cbor/v1' : 'bcast/v1') ||
-    row.verificationScope !== (row.encrypted ? 'outer' : 'full') ||
-    !Number.isSafeInteger(row.containerBytes) ||
-    (row.containerBytes as number) < 1 ||
-    (row.containerBytes as number) > 32 * 2 ** 30 ||
-    !Number.isSafeInteger(row.chunkCount) ||
-    (row.chunkCount as number) < 1 ||
-    (row.chunkCount as number) > 2 ** 18 ||
-    (row.encrypted &&
-      (typeof row.recipientFingerprint !== 'string' ||
-        !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(row.recipientFingerprint))) ||
-    (!row.encrypted && row.recipientFingerprint !== undefined) ||
-    (optional.includes('metadataUnavailable') && row.metadataUnavailable !== true) ||
-    ((row.encrypted || row.metadataUnavailable === true) &&
-      ['flow', 'sessionId', 'user', 'target'].some((field) => optional.includes(field))) ||
-    (optional.includes('sessionId') &&
-      (typeof row.sessionId !== 'string' ||
-        !resourceID(row.sessionId) ||
-        /^0{8}-(?:0{4}-){3}0{12}$/u.test(row.sessionId)))
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  const startedAt = recordingTime(row.startedAt);
-  const endedAt = recordingTime(row.endedAt);
-  if (recordingTimeKey(endedAt) < recordingTimeKey(startedAt)) {
-    throw new RememberMeError('unavailable');
-  }
-  const context: { flow?: string; user?: string; target?: string } = {};
-  for (const [field, maximum] of [
-    ['flow', 255],
-    ['user', 256],
-    ['target', 1024],
-  ] as const) {
-    if (optional.includes(field)) {
-      const selected = text(row[field], maximum);
-      if (selected === '') {
+    const optional = [
+        'recipientFingerprint',
+        'flow',
+        'sessionId',
+        'user',
+        'target',
+        'metadataUnavailable',
+    ].filter((field) => value !== null && typeof value === 'object' && Object.hasOwn(value, field));
+    const row = object(value, [
+        'auditlog',
+        'id',
+        'producerId',
+        'format',
+        'status',
+        'startedAt',
+        'endedAt',
+        'containerBytes',
+        'chunkCount',
+        'encrypted',
+        'verificationScope',
+        ...optional,
+    ]);
+    if (
+        typeof row.id !== 'string' ||
+        !resourceID(row.id) ||
+        typeof row.producerId !== 'string' ||
+        !/^[0-9a-f]{64}$/u.test(row.producerId) ||
+        /^0+$/u.test(row.producerId) ||
+        typeof row.status !== 'string' ||
+        !['completed', 'failed', 'incomplete'].includes(row.status) ||
+        typeof row.encrypted !== 'boolean' ||
+        row.format !== (row.encrypted ? 'becast-cbor/v1' : 'bcast/v1') ||
+        row.verificationScope !== (row.encrypted ? 'outer' : 'full') ||
+        !Number.isSafeInteger(row.containerBytes) ||
+        (row.containerBytes as number) < 1 ||
+        (row.containerBytes as number) > 32 * 2 ** 30 ||
+        !Number.isSafeInteger(row.chunkCount) ||
+        (row.chunkCount as number) < 1 ||
+        (row.chunkCount as number) > 2 ** 18 ||
+        (row.encrypted &&
+            (typeof row.recipientFingerprint !== 'string' ||
+                !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(row.recipientFingerprint))) ||
+        (!row.encrypted && row.recipientFingerprint !== undefined) ||
+        (optional.includes('metadataUnavailable') && row.metadataUnavailable !== true) ||
+        ((row.encrypted || row.metadataUnavailable === true) &&
+            ['flow', 'sessionId', 'user', 'target'].some((field) => optional.includes(field))) ||
+        (optional.includes('sessionId') &&
+            (typeof row.sessionId !== 'string' ||
+                !resourceID(row.sessionId) ||
+                /^0{8}-(?:0{4}-){3}0{12}$/u.test(row.sessionId)))
+    ) {
         throw new RememberMeError('unavailable');
-      }
-      context[field] = selected;
     }
-  }
-  return Object.freeze({
-    auditlog: auditlogName(row.auditlog),
-    id: row.id,
-    producerId: row.producerId,
-    format: row.format as RecordingSummary['format'],
-    status: row.status as RecordingSummary['status'],
-    startedAt,
-    endedAt,
-    containerBytes: row.containerBytes as number,
-    chunkCount: row.chunkCount as number,
-    encrypted: row.encrypted,
-    verificationScope: row.verificationScope as RecordingSummary['verificationScope'],
-    ...(row.recipientFingerprint === undefined
-      ? {}
-      : { recipientFingerprint: row.recipientFingerprint as string }),
-    ...context,
-    ...(optional.includes('sessionId') ? { sessionId: row.sessionId as string } : {}),
-    ...(row.metadataUnavailable === true ? { metadataUnavailable: true as const } : {}),
-  });
+    const startedAt = recordingTime(row.startedAt);
+    const endedAt = recordingTime(row.endedAt);
+    if (recordingTimeKey(endedAt) < recordingTimeKey(startedAt)) {
+        throw new RememberMeError('unavailable');
+    }
+    const context: { flow?: string; user?: string; target?: string } = {};
+    for (const [field, maximum] of [
+        ['flow', 255],
+        ['user', 256],
+        ['target', 1024],
+    ] as const) {
+        if (optional.includes(field)) {
+            const selected = text(row[field], maximum);
+            if (selected === '') {
+                throw new RememberMeError('unavailable');
+            }
+            context[field] = selected;
+        }
+    }
+    return Object.freeze({
+        auditlog: auditlogName(row.auditlog),
+        id: row.id,
+        producerId: row.producerId,
+        format: row.format as RecordingSummary['format'],
+        status: row.status as RecordingSummary['status'],
+        startedAt,
+        endedAt,
+        containerBytes: row.containerBytes as number,
+        chunkCount: row.chunkCount as number,
+        encrypted: row.encrypted,
+        verificationScope: row.verificationScope as RecordingSummary['verificationScope'],
+        ...(row.recipientFingerprint === undefined
+            ? {}
+            : { recipientFingerprint: row.recipientFingerprint as string }),
+        ...context,
+        ...(optional.includes('sessionId') ? { sessionId: row.sessionId as string } : {}),
+        ...(row.metadataUnavailable === true ? { metadataUnavailable: true as const } : {}),
+    });
 }
 function flow(value: unknown): FlowSummary {
-  const row = object(value, ['name', 'auditlog', 'authorization', 'environment']);
-  return Object.freeze({
-    name: text(row.name, 255),
-    auditlog: text(row.auditlog, 255),
-    authorization: text(row.authorization, 255),
-    environment: text(row.environment, 255),
-  });
+    const row = object(value, ['name', 'auditlog', 'authorization', 'environment']);
+    return Object.freeze({
+        name: text(row.name, 255),
+        auditlog: text(row.auditlog, 255),
+        authorization: text(row.authorization, 255),
+        environment: text(row.environment, 255),
+    });
 }
 export function session(value: unknown): SessionItem {
-  const optional = ['lastAccessed', 'validUntil', 'policyLimited', 'auditlog'].filter(
-    (field) => value !== null && typeof value === 'object' && Object.hasOwn(value, field),
-  );
-  const row = object(value, [
-    'id',
-    'flow',
-    'state',
-    'user',
-    'remote',
-    'createdAt',
-    'owner',
-    ...optional,
-  ]);
-  if (
-    typeof row.id !== 'string' ||
-    !resourceID(row.id) ||
-    !['new', 'authorized', 'disposed'].includes(row.state as string)
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  let owner: SessionItem['owner'] = null;
-  if (row.policyLimited !== undefined && row.policyLimited !== true) {
-    throw new RememberMeError('unavailable');
-  }
-  if (row.policyLimited === true && (row.owner !== null || row.auditlog !== undefined)) {
-    throw new RememberMeError('unavailable');
-  }
-  if (row.owner !== null) {
-    const selected = object(row.owner, ['issuer', 'subject']);
-    owner = Object.freeze({
-      issuer: text(selected.issuer, 1024),
-      subject: text(selected.subject, 1024),
-    });
-    if (owner.issuer === '' || owner.subject === '') {
-      throw new RememberMeError('unavailable');
+    const optional = ['lastAccessed', 'validUntil', 'policyLimited', 'auditlog'].filter(
+        (field) => value !== null && typeof value === 'object' && Object.hasOwn(value, field),
+    );
+    const row = object(value, [
+        'id',
+        'flow',
+        'state',
+        'user',
+        'remote',
+        'createdAt',
+        'owner',
+        ...optional,
+    ]);
+    if (
+        typeof row.id !== 'string' ||
+        !resourceID(row.id) ||
+        !['new', 'authorized', 'disposed'].includes(row.state as string)
+    ) {
+        throw new RememberMeError('unavailable');
     }
-  }
-  return Object.freeze({
-    id: row.id,
-    flow: text(row.flow, 255),
-    state: row.state as string,
-    user: text(row.user, 8192),
-    remote: text(row.remote, 8192),
-    createdAt: time(row.createdAt),
-    owner,
-    ...(row.lastAccessed === undefined ? {} : { lastAccessed: time(row.lastAccessed) }),
-    ...(row.validUntil === undefined ? {} : { validUntil: time(row.validUntil) }),
-    ...(row.policyLimited === true ? { policyLimited: true } : {}),
-    ...(row.auditlog === undefined ? {} : { auditlog: auditlogName(row.auditlog) }),
-  });
+    let owner: SessionItem['owner'] = null;
+    if (row.policyLimited !== undefined && row.policyLimited !== true) {
+        throw new RememberMeError('unavailable');
+    }
+    if (row.policyLimited === true && (row.owner !== null || row.auditlog !== undefined)) {
+        throw new RememberMeError('unavailable');
+    }
+    if (row.owner !== null) {
+        const selected = object(row.owner, ['issuer', 'subject']);
+        owner = Object.freeze({
+            issuer: text(selected.issuer, 1024),
+            subject: text(selected.subject, 1024),
+        });
+        if (owner.issuer === '' || owner.subject === '') {
+            throw new RememberMeError('unavailable');
+        }
+    }
+    return Object.freeze({
+        id: row.id,
+        flow: text(row.flow, 255),
+        state: row.state as string,
+        user: text(row.user, 8192),
+        remote: text(row.remote, 8192),
+        createdAt: time(row.createdAt),
+        owner,
+        ...(row.lastAccessed === undefined ? {} : { lastAccessed: time(row.lastAccessed) }),
+        ...(row.validUntil === undefined ? {} : { validUntil: time(row.validUntil) }),
+        ...(row.policyLimited === true ? { policyLimited: true } : {}),
+        ...(row.auditlog === undefined ? {} : { auditlog: auditlogName(row.auditlog) }),
+    });
 }
 export function page<T>(
-  value: unknown,
-  kind: 'flows' | 'sessions' | 'auditlogs' | 'recordings',
-  maximum: number,
+    value: unknown,
+    kind: 'flows' | 'sessions' | 'auditlogs' | 'recordings',
+    maximum: number,
 ): Page<T> {
-  const envelope = object(value, ['version', 'operation', kind]);
-  if (envelope.version !== 1 || envelope.operation !== `${kind}.list`) {
-    throw new RememberMeError('unavailable');
-  }
-  const result = object(envelope[kind], ['items', 'next', 'skipped']);
-  if (
-    !Array.isArray(result.items) ||
-    result.items.length > maximum ||
-    typeof result.next !== 'string' ||
-    result.next.length > 4096 ||
-    (result.next !== '' && !/^bmp1\.[A-Za-z0-9_-]+$/u.test(result.next)) ||
-    !Number.isSafeInteger(result.skipped) ||
-    (result.skipped as number) < 0
-  ) {
-    throw new RememberMeError('unavailable');
-  }
-  const items = Object.freeze(
-    result.items.map((value) =>
-      kind === 'flows'
-        ? flow(value)
-        : kind === 'sessions'
-          ? session(value)
-          : kind === 'auditlogs'
-            ? auditlog(value)
-            : recording(value),
-    ),
-  ) as readonly T[];
-  return Object.freeze({ items, next: result.next, skipped: result.skipped as number });
+    const envelope = object(value, ['version', 'operation', kind]);
+    if (envelope.version !== 1 || envelope.operation !== `${kind}.list`) {
+        throw new RememberMeError('unavailable');
+    }
+    const result = object(envelope[kind], ['items', 'next', 'skipped']);
+    if (
+        !Array.isArray(result.items) ||
+        result.items.length > maximum ||
+        typeof result.next !== 'string' ||
+        result.next.length > 4096 ||
+        (result.next !== '' && !/^bmp1\.[A-Za-z0-9_-]+$/u.test(result.next)) ||
+        !Number.isSafeInteger(result.skipped) ||
+        (result.skipped as number) < 0
+    ) {
+        throw new RememberMeError('unavailable');
+    }
+    const items = Object.freeze(
+        result.items.map((value) =>
+            kind === 'flows'
+                ? flow(value)
+                : kind === 'sessions'
+                  ? session(value)
+                  : kind === 'auditlogs'
+                    ? auditlog(value)
+                    : recording(value),
+        ),
+    ) as readonly T[];
+    return Object.freeze({ items, next: result.next, skipped: result.skipped as number });
 }
 export function detail(value: unknown): SessionItem {
-  const result = object(value, ['version', 'operation', 'session']);
-  if (result.version !== 1 || result.operation !== 'sessions.show') {
-    throw new RememberMeError('unavailable');
-  }
-  return session(result.session);
+    const result = object(value, ['version', 'operation', 'session']);
+    if (result.version !== 1 || result.operation !== 'sessions.show') {
+        throw new RememberMeError('unavailable');
+    }
+    return session(result.session);
 }

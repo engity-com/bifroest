@@ -7,85 +7,87 @@ import type { EvidenceKey } from './verify';
 // Owned by one management tab, shared ONLY by its Recording/Audit pages. Never
 // indexed by username/origin, persisted, serialized, or used for authentication.
 export class ArtifactSessionSecrets {
-  readonly #owner: WebAccess | undefined;
-  #retired = false;
-  constructor(owner?: WebAccess) {
-    this.#owner = owner;
-  }
-  #key: { file: Blob; passphrase: Uint8Array; fingerprint: string } | null = null;
-  remember(key: EvidenceKey, verified: VerifiedArtifact): void {
-    if (this.#retired || this.#owner?.status() === 'closed') {
-      throw new EvidenceError('cancelled');
+    readonly #owner: WebAccess | undefined;
+    #retired = false;
+    constructor(owner?: WebAccess) {
+        this.#owner = owner;
     }
-    const metadata = verified.metadata;
-    if (
-      verified.provenance !== 'bytes-only' ||
-      metadata.validation !== 'private' ||
-      !['authenticated', 'no-private-records'].includes(metadata.decryption) ||
-      !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(metadata.expectedRecipient) ||
-      key.file.size < 1 ||
-      key.file.size > 64 << 10
-    ) {
-      throw new EvidenceError('key');
+    #key: { file: Blob; passphrase: Uint8Array; fingerprint: string } | null = null;
+    remember(key: EvidenceKey, verified: VerifiedArtifact): void {
+        if (this.#retired || this.#owner?.status() === 'closed') {
+            throw new EvidenceError('cancelled');
+        }
+        const metadata = verified.metadata;
+        if (
+            verified.provenance !== 'bytes-only' ||
+            metadata.validation !== 'private' ||
+            !['authenticated', 'no-private-records'].includes(metadata.decryption) ||
+            !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(metadata.expectedRecipient) ||
+            key.file.size < 1 ||
+            key.file.size > 64 << 10
+        ) {
+            throw new EvidenceError('key');
+        }
+        const passphrase = new TextEncoder().encode(key.passphrase);
+        if (passphrase.byteLength > 4096) {
+            passphrase.fill(0);
+            throw new EvidenceError('key');
+        }
+        this.clear();
+        this.#key = { file: key.file, passphrase, fingerprint: metadata.expectedRecipient };
     }
-    const passphrase = new TextEncoder().encode(key.passphrase);
-    if (passphrase.byteLength > 4096) {
-      passphrase.fill(0);
-      throw new EvidenceError('key');
+    matching(fingerprint: string): EvidenceKey | null {
+        if (this.#retired || this.#owner?.status() === 'closed') {
+            this.retire();
+            return null;
+        }
+        const cached = this.#key;
+        if (cached === null || cached.fingerprint !== fingerprint) {
+            return null;
+        }
+        return { file: cached.file, passphrase: new TextDecoder().decode(cached.passphrase) };
     }
-    this.clear();
-    this.#key = { file: key.file, passphrase, fingerprint: metadata.expectedRecipient };
-  }
-  matching(fingerprint: string): EvidenceKey | null {
-    if (this.#retired || this.#owner?.status() === 'closed') {
-      this.retire();
-      return null;
+    rememberDecryption(key: EvidenceKey, info: RecordingInfo): void {
+        if (this.#retired || this.#owner?.status() === 'closed') {
+            throw new EvidenceError('cancelled');
+        }
+        if (
+            !info.encrypted ||
+            info.requiresKey ||
+            info.decryption !== 'authenticated' ||
+            !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(info.recipient) ||
+            key.file.size < 1 ||
+            key.file.size > 64 << 10
+        ) {
+            throw new EvidenceError('key');
+        }
+        const passphrase = new TextEncoder().encode(key.passphrase);
+        if (passphrase.byteLength > 4096) {
+            passphrase.fill(0);
+            throw new EvidenceError('key');
+        }
+        this.clear();
+        this.#key = { file: key.file, passphrase, fingerprint: info.recipient };
     }
-    const cached = this.#key;
-    if (cached === null || cached.fingerprint !== fingerprint) {
-      return null;
+    has(fingerprint: string): boolean {
+        return (
+            this.#key?.fingerprint === fingerprint &&
+            !this.#retired &&
+            this.#owner?.status() !== 'closed'
+        );
     }
-    return { file: cached.file, passphrase: new TextDecoder().decode(cached.passphrase) };
-  }
-  rememberDecryption(key: EvidenceKey, info: RecordingInfo): void {
-    if (this.#retired || this.#owner?.status() === 'closed') {
-      throw new EvidenceError('cancelled');
+    fingerprint(): string | null {
+        return this.#key?.fingerprint ?? null;
     }
-    if (
-      !info.encrypted ||
-      info.requiresKey ||
-      info.decryption !== 'authenticated' ||
-      !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(info.recipient) ||
-      key.file.size < 1 ||
-      key.file.size > 64 << 10
-    ) {
-      throw new EvidenceError('key');
+    clear(): void {
+        this.#key?.passphrase.fill(0);
+        this.#key = null;
     }
-    const passphrase = new TextEncoder().encode(key.passphrase);
-    if (passphrase.byteLength > 4096) {
-      passphrase.fill(0);
-      throw new EvidenceError('key');
+    retire(): void {
+        this.#retired = true;
+        this.clear();
     }
-    this.clear();
-    this.#key = { file: key.file, passphrase, fingerprint: info.recipient };
-  }
-  has(fingerprint: string): boolean {
-    return (
-      this.#key?.fingerprint === fingerprint && !this.#retired && this.#owner?.status() !== 'closed'
-    );
-  }
-  fingerprint(): string | null {
-    return this.#key?.fingerprint ?? null;
-  }
-  clear(): void {
-    this.#key?.passphrase.fill(0);
-    this.#key = null;
-  }
-  retire(): void {
-    this.#retired = true;
-    this.clear();
-  }
-  toJSON(): object {
-    return { available: this.#key !== null };
-  }
+    toJSON(): object {
+        return { available: this.#key !== null };
+    }
 }

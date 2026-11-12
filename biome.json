@@ -28,6 +28,7 @@
   },
   "javascript": {
     "formatter": {
+      "indentWidth": 4,
       "quoteStyle": "single",
       "jsxQuoteStyle": "double",
       "semicolons": "always"

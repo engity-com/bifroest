@@ -10,6 +10,10 @@ trim_trailing_whitespace = true
 indent_style = tab
 indent_size = 4
 
-[*.{yaml,yml,json,jsonc,ts,js,mts,mjs}]
+[*.{yaml,yml,json,jsonc}]
 indent_style = space
 indent_size = 2
+
+[*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}]
+indent_style = space
+indent_size = 4
