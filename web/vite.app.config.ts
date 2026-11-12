@@ -45,6 +45,15 @@ export default defineConfig({
                 codeSplitting: {
                     groups: [
                         {
+                            // Split only the startup UI runtimes, not lazy-only views.
+                            // Leave room for the protocol and bundler helpers inside
+                            // the existing four-file initial dependency budget.
+                            name: 'ui-runtime',
+                            test: /[/\\]node_modules[/\\](?:(?:react|react-dom|react-router|scheduler)|@emotion[/\\][^/\\]+)[/\\]/,
+                            tags: ['$initial'],
+                            priority: 20,
+                        },
+                        {
                             name: 'browser-protocol',
                             test: /[/\\]src[/\\](?:remember[/\\]|login[/\\]diagnostic\.ts$|artifacts[/\\]evidence-protocol\.ts$)/,
                         },

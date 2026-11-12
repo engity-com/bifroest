@@ -20,10 +20,7 @@ import { completeReviewedInventory } from '../scripts/reviewed-go-modules.mjs';
 const output = fileURLToPath(new URL('../../pkg/webui/assets/', import.meta.url));
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-test('initial JavaScript graph fits the existing four-worker admission budget without eager xterm or grid loading', () => {
-    const html = readFileSync(join(output, 'index.html'), 'utf8');
-    const entry = /src="\/_bifroest\/files\/(assets\/[A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
-    assert(entry, 'built document must name its same-origin module entry');
+function staticJavaScriptGraph(entry) {
     const visited = new Set();
     function visit(file) {
         if (visited.has(file)) {
@@ -32,12 +29,20 @@ test('initial JavaScript graph fits the existing four-worker admission budget wi
         visited.add(file);
         const text = readFileSync(join(output, file), 'utf8');
         for (const match of text.matchAll(
-            /(?:from|import)\s*["'](\.\/[A-Za-z0-9_.-]+\.js)["']/gu,
+            /(?:from|import)\s*["'](\.\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.js)["']/gu,
         )) {
             visit(join(dirname(file), match[1]));
         }
     }
     visit(entry);
+    return visited;
+}
+
+test('initial JavaScript graph fits the existing four-worker admission budget without eager xterm or grid loading', () => {
+    const html = readFileSync(join(output, 'index.html'), 'utf8');
+    const entry = /src="\/_bifroest\/files\/(assets\/[A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
+    assert(entry, 'built document must name its same-origin module entry');
+    const visited = staticJavaScriptGraph(entry);
     assert(visited.size <= 4, `initial module graph must stay bounded: ${[...visited].join(', ')}`);
     assert(
         [...visited].every(
@@ -45,6 +50,40 @@ test('initial JavaScript graph fits the existing four-worker admission budget wi
         ),
         'heavy views remain explicit lazy imports',
     );
+});
+
+test('production JavaScript chunks stay below 500 kB without hiding Vite size warnings', () => {
+    const manifest = JSON.parse(readFileSync(join(output, 'browser-build.json')));
+    for (const asset of manifest.assets.filter((asset) => asset.name.endsWith('.js'))) {
+        const bytes = readFileSync(join(output, asset.name)).length;
+        assert(
+            bytes <= 500_000,
+            `${asset.name} exceeds the 500 kB JavaScript chunk budget: ${bytes} bytes`,
+        );
+    }
+});
+
+test('worker dependency graphs never pull in the application or UI runtime', () => {
+    for (const worker of [
+        'browser-key-worker.js',
+        'browser-transfer-worker.js',
+        'browser-evidence-worker.js',
+    ]) {
+        const graph = staticJavaScriptGraph(worker);
+        assert(
+            [...graph].some((file) => /browser-protocol-[A-Za-z0-9_-]+\.js$/u.test(file)),
+            `${worker} must include its actual shared protocol dependencies`,
+        );
+        assert(
+            [...graph].every(
+                (file) =>
+                    !/(?:ui-runtime|index|xterm|AdminDataGrid|ArtifactPanel|ManagementPanel)-/u.test(
+                        file,
+                    ),
+            ),
+            `${worker} must stay independent of the DOM/UI runtime: ${[...graph].join(', ')}`,
+        );
+    }
 });
 
 test('reviewed Go module alternatives still require one exact version per complete module path', () => {
