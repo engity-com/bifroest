@@ -494,6 +494,31 @@ describe('browser HTTP RememberMe orchestration', () => {
         expect(server.requests.filter((request) => request.action === 'logout')).toHaveLength(1);
     });
 
+    it('completes logout and storage cleanup even when both an observer and the diagnostic sink fail', async () => {
+        const server = new Server();
+        const access = await server.client().password('alice', 'correct');
+        await access.remember({ explicitOptIn: true });
+        const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {
+            throw new Error('Diagnostic failure');
+        });
+        const observed = vi.fn();
+        access.subscribeStatus(() => {
+            throw new Error('PRIVATE-OBSERVER-FAILURE');
+        });
+        access.subscribeStatus(observed);
+        try {
+            await expect(access.logout()).resolves.toEqual({ localState: 'removed' });
+            expect(observed).toHaveBeenCalledOnce();
+            expect(server.bindings.size).toBe(0);
+            expect(await BrowserBinding.load(scope)).toBeNull();
+            expect(server.requests.filter((request) => request.action === 'logout')).toHaveLength(
+                1,
+            );
+        } finally {
+            diagnostics.mockRestore();
+        }
+    });
+
     it('does not revoke sibling grants or discard remembered state when a late resume is cancelled', async () => {
         const server = new Server();
         const client = server.client();

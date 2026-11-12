@@ -1,4 +1,5 @@
 import type { RecordingSummary } from '../management/protocol';
+import { SnapshotObservers } from '../shared/snapshot-observers';
 import { uuidEqual } from '../shared/uuid';
 import { EvidenceError, type EvidenceMetadata } from './evidence-protocol';
 import {
@@ -45,23 +46,16 @@ function sameRequest(a: ArtifactRequest | null, b: ArtifactRequest): boolean {
 export class EvidenceDocument {
     constructor(private readonly accepts: (request: ArtifactRequest) => boolean = () => true) {}
     #state = empty();
-    readonly #listeners = new Set<() => void>();
+    readonly #observers = new SnapshotObservers();
     readonly getSnapshot = () => this.#state;
-    readonly subscribe = (listener: () => void) => {
-        this.#listeners.add(listener);
-        return () => {
-            this.#listeners.delete(listener);
-        };
-    };
+    readonly subscribe = this.#observers.subscribe;
     #publish(state: EvidenceDocumentState): void {
         const previous = this.#state;
         this.#state = Object.freeze(state);
         if (previous.playback !== state.playback) {
             previous.playback?.image.dispose();
         }
-        for (const listener of this.#listeners) {
-            listener();
-        }
+        this.#observers.notify();
     }
     open(request: ArtifactRequest, summary?: RecordingSummary): void {
         if (!this.accepts(request)) {
@@ -83,6 +77,11 @@ export class EvidenceDocument {
     }
     receive(image: ReceivedArtifact): void {
         if (!this.accepts(image.request) || !sameRequest(this.#state.opened, image.request)) {
+            throw new EvidenceError('input');
+        }
+        // A receipt belongs to one immutable completed image. Another receive,
+        // even for the same selector, requires an explicit new open operation.
+        if (this.#state.received !== null) {
             throw new EvidenceError('input');
         }
         this.#publish({ ...this.#state, received: image });

@@ -1,6 +1,7 @@
 import type { BrowserClient, LoginStep, Scope, WebAccess } from '../remember';
 import { RememberMeError } from '../remember/protocol';
 import { OperationSlot } from '../shared/operation';
+import { SnapshotObservers } from '../shared/snapshot-observers';
 import { keyLoginError } from './diagnostic';
 import { verificationLink } from './links';
 
@@ -41,19 +42,12 @@ export class LoginAttempt {
     #state: LoginAttemptState = { phase: 'idle', prompt: null, provider: null };
     #pending: { readonly step: LoginStep; answer(value: string): void } | null = null;
     readonly #slot = new OperationSlot();
-    readonly #listeners = new Set<() => void>();
+    readonly #observers = new SnapshotObservers();
     readonly getSnapshot = () => this.#state;
-    readonly subscribe = (listener: () => void) => {
-        this.#listeners.add(listener);
-        return () => {
-            this.#listeners.delete(listener);
-        };
-    };
+    readonly subscribe = this.#observers.subscribe;
     #publish(state: LoginAttemptState): void {
         this.#state = Object.freeze(state);
-        for (const listener of this.#listeners) {
-            listener();
-        }
+        this.#observers.notify();
     }
     clearProvider(): void {
         this.#publish({ ...this.#state, provider: null });
@@ -135,8 +129,28 @@ export class LoginAttempt {
         }
         const signal = AbortSignal.any([ports.signal, operation.signal]);
         const current = () => operation.current() && !signal.aborted && ports.current();
-        this.#publish({ phase: 'authenticating', prompt: null, provider: null });
+        const aborted = () => {
+            if (!operation.owned()) {
+                return;
+            }
+            const uncertain =
+                this.#state.phase === 'enrolling' || this.#state.phase === 'uncertain';
+            // Retain this slot until its promise settles; a cancelled request
+            // may still be committing. Only an explicit retirement frees it.
+            this.#pending = null;
+            this.#publish({
+                phase: uncertain ? 'uncertain' : 'cancelled',
+                prompt: null,
+                provider: null,
+            });
+        };
+        signal.addEventListener('abort', aborted, { once: true });
         try {
+            if (signal.aborted) {
+                aborted();
+                throw new RememberMeError('cancelled');
+            }
+            this.#publish({ phase: 'authenticating', prompt: null, provider: null });
             let access: WebAccess;
             if (request.method === 'public-key') {
                 const file = request.privateFile;
@@ -188,8 +202,14 @@ export class LoginAttempt {
                 throw new RememberMeError('cancelled');
             }
             if (!ports.admit(access)) {
+                if (!current()) {
+                    throw new RememberMeError('cancelled');
+                }
                 this.#publish({ phase: 'authorized', prompt: null, provider: null });
                 return { kind: 'mismatch', access };
+            }
+            if (!current()) {
+                throw new RememberMeError('cancelled');
             }
             let enrollment: 'none' | 'registered' | 'failed' | 'unknown' = 'none';
             let failure: unknown;
@@ -226,7 +246,8 @@ export class LoginAttempt {
             }
             throw error;
         } finally {
-            if (operation.current()) {
+            signal.removeEventListener('abort', aborted);
+            if (operation.owned()) {
                 this.#pending = null;
             }
             operation.finish();

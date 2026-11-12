@@ -66,6 +66,7 @@ test('transport, storage, workers and shared primitives do not import presentati
     for (const required of [
         'remember/client.ts',
         'shared/uuid.ts',
+        'shared/snapshot-observers.ts',
         'application/reset-owner.ts',
         'application/navigation.ts',
         'application/link-metadata.ts',

@@ -10,6 +10,7 @@ import { ManagementClient } from '../management/client';
 import type { ProgressListener } from '../management/progress';
 import { auditlogName } from '../management/protocol';
 import type { RecordingSourceImages } from '../management/source-transfer';
+import { SnapshotObservers } from '../shared/snapshot-observers';
 import { uuidEqual } from '../shared/uuid';
 import { type KeepAlivePolicy, keepAlivePolicy } from '../terminal/keepalive';
 import type { SocketFactory, TerminalState } from '../terminal/socket';
@@ -165,7 +166,7 @@ export class WebAccess {
     #response: AccessResponse;
     #forgotten = false;
     #closed = false;
-    readonly #statusListeners = new Set<() => void>();
+    readonly #statusObservers = new SnapshotObservers('access-status');
     readonly #resetCleanups = new Set<() => void>();
     #binding: BrowserBinding | null;
     #enrollment: {
@@ -223,10 +224,7 @@ export class WebAccess {
     }
 
     subscribeStatus(listener: () => void): () => void {
-        this.#statusListeners.add(listener);
-        return () => {
-            this.#statusListeners.delete(listener);
-        };
+        return this.#statusObservers.subscribe(listener);
     }
     registerResetCleanup(cleanup: () => void): () => void {
         this.#resetCleanups.add(cleanup);
@@ -267,13 +265,7 @@ export class WebAccess {
             this,
             (state) => {
                 changed(state);
-                for (const listener of [...this.#statusListeners]) {
-                    try {
-                        listener();
-                    } catch {
-                        console.error('[Bifröst/access-status]', 'listener-failed');
-                    }
-                }
+                this.#statusObservers.notify();
             },
             factory,
             options,
@@ -605,15 +597,7 @@ export class WebAccess {
             return forgetOwned(handle);
         })();
         void operation.then(complete, fail);
-        for (const listener of [...this.#statusListeners]) {
-            try {
-                listener();
-            } catch {
-                // A subscriber may hold arbitrary private data in its error. Report
-                // only the fixed diagnostic; cleanup and other observers still run.
-                console.error('[Bifröst/access-status]', 'listener-failed');
-            }
-        }
+        this.#statusObservers.notify();
         try {
             return await shared;
         } catch (error) {
@@ -648,13 +632,7 @@ export class WebAccess {
         } catch {
             failed = true;
         }
-        for (const listener of [...this.#statusListeners]) {
-            try {
-                listener();
-            } catch {
-                console.error('[Bifröst/access-status]', 'listener-failed');
-            }
-        }
+        this.#statusObservers.notify();
         await Promise.allSettled([enrollment?.done, artifact?.done, this.#logout]);
         this.#binding = null;
         this.#enrollment = null;

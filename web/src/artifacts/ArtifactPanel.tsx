@@ -11,10 +11,18 @@ import { ArtifactEvidencePanel } from './ArtifactEvidencePanel';
 import { AuditSourceContext } from './AuditSourceContext';
 import { AuditWorkspace } from './AuditWorkspace';
 import type { ArtifactPanelProps } from './evidence-view';
+import { ArtifactSecretsBoundary } from './session-secrets';
 
 // Routing/composition only. Both pages retain their own selection, workers,
 // result and plaintext; the tab provider owns their shared volatile key cache.
 export function ArtifactPanel(props: ArtifactPanelProps) {
+    return (
+        <ArtifactSecretsBoundary access={props.access}>
+            <ArtifactPanelContents {...props} />
+        </ArtifactSecretsBoundary>
+    );
+}
+function ArtifactPanelContents(props: ArtifactPanelProps) {
     const external = useManagementNavigation();
     const embedded = useContext(AdminDetailContext) !== null;
     const [sourceHint, setSourceHint] = useState<{

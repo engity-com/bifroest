@@ -111,3 +111,30 @@ it('does not retain byte-derived data or dispose renderer-owned bytes after clos
     expect(document.getSnapshot().received).toBeNull();
     prepared.dispose();
 });
+
+it('accepts exactly one completed image per open, never keeping an old receipt for replacement bytes', () => {
+    const document = new EvidenceDocument();
+    document.open(artifact.request);
+    document.receive(artifact);
+    document.updateReceipt({
+        type: 'verified',
+        value: result,
+        index: null,
+        sensitive: false,
+        expectation: { enabled: false, producer: '', source: 'reported' },
+        flow: '',
+        session: '',
+    });
+    const original = document.getSnapshot();
+    const replacement = {
+        ...artifact,
+        files: [{ name: 'recording', data: new Blob(['OTHER-BYTES']) }],
+    };
+    expect(() => document.receive(replacement)).toThrow();
+    expect(() => document.receive(artifact)).toThrow();
+    expect(document.getSnapshot()).toBe(original);
+    document.open(artifact.request);
+    expect(document.getSnapshot().receipt.verified).toBeNull();
+    document.receive(replacement);
+    expect(document.getSnapshot().received).toBe(replacement);
+});

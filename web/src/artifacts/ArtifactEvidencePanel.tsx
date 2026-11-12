@@ -54,7 +54,7 @@ import { RecordingPlayer } from './RecordingPlayer';
 import { type LocalRecordingIndex, recordingVerificationFromIndex } from './recording-index';
 import { prepareRecordingPreview } from './recording-preview';
 import { RecordingRuntimeOwner } from './recording-runtime-owner';
-import { useArtifactSecrets } from './session-secrets';
+import { ArtifactSecretsBoundary, useArtifactSecrets } from './session-secrets';
 import { validSigningID } from './signing-id';
 import { VerificationDialog } from './VerificationDialog';
 import { LocalKeyFields, VerificationFields } from './VerificationFields';
@@ -85,7 +85,14 @@ function failure(error: unknown): Message {
           : 'artifactDownloadFailed';
 }
 
-export function ArtifactEvidencePanel({
+export function ArtifactEvidencePanel(props: ArtifactEvidencePanelProps) {
+    return (
+        <ArtifactSecretsBoundary access={props.access}>
+            <OwnedArtifactEvidencePanel {...props} />
+        </ArtifactSecretsBoundary>
+    );
+}
+function OwnedArtifactEvidencePanel({
     access,
     disabled,
     remoteDisabled = false,
@@ -106,6 +113,7 @@ export function ArtifactEvidencePanel({
     const sourceHints = useContext(AuditSourceContext);
     const managed = mode === 'audit-verification';
     const secrets = useArtifactSecrets(access);
+    const cacheRevision = secrets.getSnapshot().revision;
     const navigation = useManagementNavigation();
     const route = navigation?.location.page === view ? navigation.location : null;
     const routeRef = useRef(route);
@@ -177,7 +185,6 @@ export function ArtifactEvidencePanel({
     const [filePage, setFilePage] = useState(0);
     const [candidate, setCandidate] = useState(false);
     const [keyRevision, setKeyRevision] = useState(0);
-    const [cacheRevision, setCacheRevision] = useState(0);
     const [validateIdentity, setValidateIdentity] = useState(false);
     const [producer, setProducer] = useState('');
     const [producerSource, setProducerSource] = useState<'reported' | 'user'>('reported');
@@ -201,6 +208,7 @@ export function ArtifactEvidencePanel({
     const [optionsOpen, setOptionsOpen] = useState(false);
     const [verificationInput, setVerificationInput] = useState<'fresh' | 'received'>('fresh');
     const effectiveSensitive = auditView?.sensitive ?? sensitive;
+    const appliedSensitive = useRef(effectiveSensitive);
     const [auditlog, setAuditlog] = useState('');
     const [id, setID] = useState('');
     const heading = useRef<HTMLDivElement | null>(null);
@@ -233,6 +241,7 @@ export function ArtifactEvidencePanel({
     }
     const downloads = useRef(new LocalArtifactDownload());
     const forgetEvidence = useEffectEvent(() => {
+        appliedSensitive.current = effectiveSensitive;
         retireRecordingRuntime();
         setOptionsOpen(false);
         job.retire();
@@ -278,8 +287,12 @@ export function ArtifactEvidencePanel({
         setCandidate(false);
         setKeyRevision((value) => value + 1);
     };
-    const cancelFromOutside = useEffectEvent(() => {
+    const cancelJob = () => {
+        appliedSensitive.current = effectiveSensitive;
         job.cancel();
+    };
+    const cancelFromOutside = useEffectEvent(() => {
+        cancelJob();
         clearInputs();
         if (job.busy) {
             setNotice('artifactCancelled');
@@ -294,6 +307,7 @@ export function ArtifactEvidencePanel({
     }, [verificationCancel]);
     // biome-ignore lint/correctness/useExhaustiveDependencies: Actor/page/availability boundaries retire local output and unvalidated input, never a replacement login.
     useEffect(() => {
+        appliedSensitive.current = effectiveSensitive;
         retireRecordingRuntime();
         job.retire();
         downloads.current.clear();
@@ -345,7 +359,7 @@ export function ArtifactEvidencePanel({
             setOptionsOpen(false);
             setDecryptOpen(false);
             if (!backgroundAllowed) {
-                job.cancel();
+                cancelJob();
             }
             clearInputs();
             setDetails(false);
@@ -470,7 +484,6 @@ export function ArtifactEvidencePanel({
         const target = routeRef.current;
         if (key !== null) {
             secrets.remember(key, result);
-            setCacheRevision((value) => value + 1);
         }
         resetResult();
         updateReceipt({
@@ -717,7 +730,6 @@ export function ArtifactEvidencePanel({
             target: () => routeRef.current,
             keys: secrets,
             information: document.information,
-            keyRemembered: () => setCacheRevision((value) => value + 1),
         });
         // The controller's result crosses an await boundary. A route/access reset
         // in that interval still must not publish the decoded image to a new owner.
@@ -753,6 +765,7 @@ export function ArtifactEvidencePanel({
         });
     }
     function closeLocal() {
+        appliedSensitive.current = effectiveSensitive;
         retireRecordingRuntime();
         job.retire();
         resetResult();
@@ -981,7 +994,7 @@ export function ArtifactEvidencePanel({
             setOptionsOpen(true);
         },
         cancel: () => {
-            job.cancel();
+            cancelJob();
             clearInputs();
         },
     }));
@@ -1027,11 +1040,13 @@ export function ArtifactEvidencePanel({
         verificationFailure,
         success,
     ]);
-    const appliedSensitive = useRef(effectiveSensitive);
     const applySensitive = useEffectEvent(() => {
         if (appliedSensitive.current !== effectiveSensitive) {
+            if (view === 'auditlogs' && received !== null && job.busy) {
+                return; // Retain the explicit intent until this owned job settles.
+            }
             appliedSensitive.current = effectiveSensitive;
-            if (view === 'auditlogs' && received !== null && !job.busy) {
+            if (view === 'auditlogs' && received !== null) {
                 if (!managed || auditView?.local) {
                     void recheck();
                 } else {
@@ -1040,10 +1055,10 @@ export function ArtifactEvidencePanel({
             }
         }
     });
-    // biome-ignore lint/correctness/useExhaustiveDependencies: Only an explicit, actor/source-owned eye change may reproject existing local bytes, never unrelated state or route activation.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: Completion may wake a queued explicit eye change; only a changed actor/source-owned intent can reproject existing bytes. Cancel/source retirement consume it; phase changes alone never retry work.
     useEffect(() => {
         applySensitive();
-    }, [effectiveSensitive]);
+    }, [effectiveSensitive, phase, received]);
     const openByID = (
         <ArtifactOpenByID
             view={view}
@@ -1101,7 +1116,7 @@ export function ArtifactEvidencePanel({
                             disabled={disabled || (!phase && received === null)}
                             onClick={() => {
                                 if (phase) {
-                                    job.cancel();
+                                    cancelJob();
                                     clearInputs();
                                 } else if (
                                     (protection !== null || recordingInfo !== null) &&
@@ -1431,7 +1446,6 @@ export function ArtifactEvidencePanel({
                                 disabled={locked}
                                 onClick={() => {
                                     secrets.clear();
-                                    setCacheRevision((value) => value + 1);
                                 }}
                             >
                                 {t('artifactForgetKey')}

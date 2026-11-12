@@ -1,5 +1,6 @@
 import { RememberMeError, type Scope } from '../remember/protocol';
 import { OperationSlot } from '../shared/operation';
+import { SnapshotObservers } from '../shared/snapshot-observers';
 import type { ManagementLocation } from '../ui/management-location';
 import type { ConnectionView } from '../workspace/model';
 import type { LinkMetadata } from './link-metadata';
@@ -37,17 +38,12 @@ export class ApplicationNavigation {
     #state: NavigationState = { phase: 'ready' };
     #seen: { key: string; revision: number } | null = null;
     readonly #operation = new OperationSlot();
-    readonly #listeners = new Set<() => void>();
+    readonly #observers = new SnapshotObservers();
     constructor(
         private readonly load: (scope: Scope, signal: AbortSignal) => Promise<LinkMetadata>,
     ) {}
     readonly getSnapshot = () => this.#state;
-    readonly subscribe = (listener: () => void) => {
-        this.#listeners.add(listener);
-        return () => {
-            this.#listeners.delete(listener);
-        };
-    };
+    readonly subscribe = this.#observers.subscribe;
     get busy(): boolean {
         return this.#operation.busy;
     }
@@ -56,9 +52,7 @@ export class ApplicationNavigation {
             return;
         }
         this.#state = Object.freeze({ phase });
-        for (const listener of this.#listeners) {
-            listener();
-        }
+        this.#observers.notify();
     }
     retire(): void {
         const pending = this.#operation.busy;

@@ -20,10 +20,12 @@ import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button } from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
+import { useOwnerKey } from '../ui/use-owner-key';
 import { AuditSourceContext } from './AuditSourceContext';
 import type { ArtifactRequest } from './protocol';
 import { RecordingVerificationDialogs } from './RecordingVerificationDialogs';
 import { type LocalRecordingIndex, localRecordingPage } from './recording-index';
+import { ArtifactSecretsBoundary } from './session-secrets';
 import { useRecordingVerification } from './use-recording-verification';
 
 const when = (value: Date) =>
@@ -44,16 +46,7 @@ function bytes(size: number): string {
     return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(size / divisor)} ${unit}`;
 }
 
-export function ArtifactCatalog({
-    access,
-    disabled,
-    active = true,
-    ownerActive,
-    onSelect,
-    openByID,
-    onSource,
-    onVerificationIndex,
-}: {
+interface ArtifactCatalogProps {
     access: WebAccess;
     disabled: boolean;
     active?: boolean;
@@ -63,7 +56,25 @@ export function ArtifactCatalog({
     openByID?: ReactNode;
     onSource?: (name: string) => void;
     onVerificationIndex?: (index: LocalRecordingIndex | null) => void;
-}) {
+}
+export function ArtifactCatalog(props: ArtifactCatalogProps) {
+    const ownerKey = useOwnerKey(props.access);
+    return (
+        <ArtifactSecretsBoundary access={props.access}>
+            <OwnedArtifactCatalog key={ownerKey} {...props} />
+        </ArtifactSecretsBoundary>
+    );
+}
+function OwnedArtifactCatalog({
+    access,
+    disabled,
+    active = true,
+    ownerActive,
+    onSelect,
+    openByID,
+    onSource,
+    onVerificationIndex,
+}: ArtifactCatalogProps) {
     const navigation = useManagementNavigation();
     const sourceHints = useContext(AuditSourceContext);
     const route = navigation?.location.page === 'recordings' ? navigation.location : null;
@@ -151,31 +162,15 @@ export function ArtifactCatalog({
     const cursors = useRef(new CursorPages());
     const available = useRef(active && !disabled);
     available.current = active && !disabled;
-    // biome-ignore lint/correctness/useExhaustiveDependencies: Reset at the actor boundary, never retain another access's metadata.
+    // Actor replacement is a new component lifetime, not a passive reset of
+    // already-rendered metadata belonging to a previous owner.
     useEffect(() => {
-        generation.current++;
-        attempted.current = false;
-        consumedRoute.current = null;
-        loadedScope.current = null;
-        nativeFilterIntent.current = null;
-        cursors.current.reset();
-        setSources(null);
-        setSourceAccess('pending');
-        setSource('');
-        setRows(null);
-        setPage(0);
-        setQuery('');
-        setSort('desc');
-        setFilter(null);
-        setBusy(false);
-        setFailed(null);
-        failedRoute.current = null;
         return () => {
             generation.current++;
             request.current?.abort();
             request.current = null;
         };
-    }, [access]);
+    }, []);
     useEffect(() => {
         if (disabled || !active) {
             request.current?.abort();

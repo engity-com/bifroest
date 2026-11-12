@@ -1,4 +1,4 @@
-import { act, createElement, StrictMode } from 'react';
+import { act, createElement, StrictMode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactCatalog } from '../src/artifacts/ArtifactCatalog';
@@ -72,6 +72,37 @@ afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
 });
+type CatalogOptions = {
+    access?: WebAccess;
+    active?: boolean;
+    disabled?: boolean;
+    selected?: ArtifactRequest;
+};
+function CatalogFrame({
+    initial,
+    active,
+    selected,
+    options,
+    view,
+    element,
+    commits,
+}: {
+    initial: WebAccess;
+    active: boolean;
+    selected(request: ArtifactRequest, summary?: RecordingSummary | AuditlogSummary): void;
+    options: CatalogOptions;
+    view: 'recordings' | 'auditlogs';
+    element: HTMLElement;
+    commits: string[];
+}) {
+    useLayoutEffect(() => {
+        commits.push(element.textContent ?? '');
+    });
+    const props = { access: initial, active, disabled: false, onSelect: selected, ...options };
+    return view === 'recordings'
+        ? createElement(ArtifactCatalog, props)
+        : createElement(AuditCatalog, props);
+}
 async function mount(
     initial = access(),
     active = true,
@@ -82,28 +113,20 @@ async function mount(
     element.style.width = '1200px';
     document.body.append(element);
     const root = createRoot(element);
+    const commits: string[] = [];
     const selected =
         vi.fn<(request: ArtifactRequest, summary?: RecordingSummary | AuditlogSummary) => void>();
-    const render = async (
-        options: {
-            access?: WebAccess;
-            active?: boolean;
-            disabled?: boolean;
-            selected?: ArtifactRequest;
-        } = {},
-    ) => {
+    const render = async (options: CatalogOptions = {}) => {
         await act(async () => {
-            const props = {
-                access: initial,
+            const content = createElement(CatalogFrame, {
+                initial,
                 active,
-                disabled: false,
-                onSelect: selected,
-                ...options,
-            };
-            const content =
-                view === 'recordings'
-                    ? createElement(ArtifactCatalog, props)
-                    : createElement(AuditCatalog, props);
+                selected,
+                options,
+                view,
+                element,
+                commits,
+            });
             root.render(strict ? createElement(StrictMode, null, content) : content);
         });
     };
@@ -112,8 +135,28 @@ async function mount(
         element.remove();
     });
     await render();
-    return { element, render, selected };
+    return { element, render, selected, commits };
 }
+
+it('does not commit the preceding actor recording page while its replacement is still loading', async () => {
+    const pending = Promise.withResolvers<Page<RecordingSummary>>();
+    vi.mocked(WebAccess.prototype.managementRecordings)
+        .mockResolvedValueOnce({ items: [row], next: '', skipped: 0 })
+        .mockReturnValueOnce(pending.promise);
+    const app = await mount(access('alice'));
+    await vi.waitFor(() => expect(app.element.textContent).toContain(row.id));
+    await app.render({ access: access('bob') });
+    expect(app.commits.at(-1)).not.toContain(row.id);
+    await vi.waitFor(() =>
+        expect(WebAccess.prototype.managementRecordings).toHaveBeenCalledTimes(2),
+    );
+    const nextID = '00000000-0000-0000-0000-000000000002';
+    await act(async () =>
+        pending.resolve({ items: [{ ...row, id: nextID }], next: '', skipped: 0 }),
+    );
+    await vi.waitFor(() => expect(app.element.textContent).toContain(nextID));
+    expect(app.element.textContent).not.toContain(row.id);
+});
 function button(name: string) {
     const result = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
         (node) => node.textContent === name || node.getAttribute('aria-label') === name,

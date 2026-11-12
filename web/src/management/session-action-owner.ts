@@ -1,4 +1,5 @@
 import { OperationSlot } from '../shared/operation';
+import { SnapshotObservers } from '../shared/snapshot-observers';
 import type { ActionPreview, SessionAction, SessionActionConfirmation } from './action';
 
 export type SessionActionState =
@@ -32,23 +33,16 @@ export class SessionActionOwner {
     #handle: SessionActionConfirmation | null = null;
     #mounted = false;
     readonly #operation = new OperationSlot();
-    readonly #listeners = new Set<() => void>();
+    readonly #observers = new SnapshotObservers();
     constructor(
         private readonly port: SessionActionPort,
         private readonly boundary: () => SessionActionBoundary,
     ) {}
     readonly getSnapshot = () => this.#state;
-    readonly subscribe = (listener: () => void) => {
-        this.#listeners.add(listener);
-        return () => {
-            this.#listeners.delete(listener);
-        };
-    };
+    readonly subscribe = this.#observers.subscribe;
     #publish(state: SessionActionState): void {
         this.#state = Object.freeze(state);
-        for (const listener of this.#listeners) {
-            listener();
-        }
+        this.#observers.notify();
     }
     mount(): () => void {
         this.#mounted = true;
@@ -140,9 +134,9 @@ export class SessionActionOwner {
         }
         this.#handle = null;
         this.#publish({ phase: 'sending', preview: state.preview });
-        this.boundary().dispatched();
-        this.boundary().lock(true);
         try {
+            this.boundary().dispatched();
+            this.boundary().lock(true);
             await handle.confirm(operation.signal);
             if (operation.current()) {
                 this.#publish({ phase: 'confirmed', preview: state.preview });
@@ -154,10 +148,13 @@ export class SessionActionOwner {
                 this.boundary().failed(error, true);
             }
         } finally {
-            if (operation.current()) {
-                this.boundary().settled();
+            try {
+                if (operation.current()) {
+                    this.boundary().settled();
+                }
+            } finally {
+                operation.finish();
             }
-            operation.finish();
         }
     }
     stopWaiting(): void {

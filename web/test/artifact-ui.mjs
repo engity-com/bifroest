@@ -762,7 +762,63 @@ try {
         );
         const gridNode = await events.elementHandle();
         await eye.click();
-        await events.locator('[role="columnheader"][data-field="reason"]').waitFor();
+        try {
+            await events.locator('[role="columnheader"][data-field="reason"]').waitFor();
+        } catch (cause) {
+            const projection = await page.evaluate(() => ({
+                views: [
+                    ...document.querySelectorAll(
+                        '[data-connection-active="true"] [data-audit-view]',
+                    ),
+                ].map((node) => ({ view: node.dataset.auditView, phase: node.dataset.auditPhase })),
+                evidence: [
+                    ...document.querySelectorAll(
+                        '[data-connection-active="true"] [data-evidence-phase]',
+                    ),
+                ].map((node) => ({
+                    phase: node.dataset.evidencePhase,
+                    received: node.dataset.evidenceInput,
+                })),
+                grids: [
+                    ...document.querySelectorAll('[data-connection-active="true"] [role="grid"]'),
+                ].map((node) => ({
+                    visible: node.checkVisibility({ visibilityProperty: true }),
+                    columns: [...node.querySelectorAll('[role="columnheader"]')].map(
+                        (header) => header.dataset.field,
+                    ),
+                })),
+                eyes: [
+                    ...document.querySelectorAll(
+                        '[data-connection-active="true"] button[aria-pressed]',
+                    ),
+                ].map((node) => ({
+                    pressed: node.getAttribute('aria-pressed'),
+                    disabled: node.disabled,
+                })),
+                verification: window.ownedWorkers.flatMap((worker) =>
+                    worker.requests.flatMap((raw) => {
+                        const request = JSON.parse(raw);
+                        return request.kind === 'verify'
+                            ? [
+                                  {
+                                      sensitive: request.options?.sensitive === true,
+                                      terminated: worker.terminated,
+                                  },
+                              ]
+                            : [];
+                    }),
+                ),
+            }));
+            throw new Error(
+                JSON.stringify({
+                    stage: 'local-sensitive-projection',
+                    projection,
+                    requestsBefore: beforeLocal,
+                    requestsAfter: apiRequests.length,
+                }),
+                { cause },
+            );
+        }
         assert.equal(await eye.getAttribute('aria-pressed'), 'true');
         assert.equal(
             apiRequests.length,

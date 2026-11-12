@@ -1,4 +1,5 @@
 import { type OperationLease, OperationSlot } from '../shared/operation';
+import { SnapshotObservers } from '../shared/snapshot-observers';
 
 export type ArtifactPhase = 'downloading' | 'inspecting' | 'verifying' | 'preparing';
 
@@ -13,22 +14,15 @@ export class EvidenceJob {
     constructor(private readonly allowed: () => boolean = () => true) {}
     #state: EvidenceJobState = { phase: null, progress: null };
     readonly #slot = new OperationSlot();
-    readonly #listeners = new Set<() => void>();
+    readonly #observers = new SnapshotObservers();
     readonly getSnapshot = () => this.#state;
-    readonly subscribe = (listener: () => void) => {
-        this.#listeners.add(listener);
-        return () => {
-            this.#listeners.delete(listener);
-        };
-    };
+    readonly subscribe = this.#observers.subscribe;
     get busy(): boolean {
         return this.#slot.busy;
     }
     #publish(state: EvidenceJobState): void {
         this.#state = Object.freeze(state);
-        for (const listener of this.#listeners) {
-            listener();
-        }
+        this.#observers.notify();
     }
     progress(lease: OperationLease, value: ReadProgress | null): void {
         if (this.allowed() && lease.current() && this.#state.phase !== null) {

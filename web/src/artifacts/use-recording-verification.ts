@@ -171,8 +171,8 @@ export function useRecordingVerification({
                 );
             }
         } finally {
-            revealWanted.current = false;
             if (owned()) {
+                revealWanted.current = false;
                 clearInputs();
             }
             if (controller.current === stopped) {

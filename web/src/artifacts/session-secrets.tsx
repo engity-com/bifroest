@@ -1,7 +1,17 @@
-import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
+import {
+    createContext,
+    type ReactNode,
+    useContext,
+    useLayoutEffect,
+    useRef,
+    useState,
+    useSyncExternalStore,
+} from 'react';
 import type { WebAccess } from '../remember';
 import { profileResetEvent } from '../ui/profile-reset';
+import { useOwnerKey } from '../ui/use-owner-key';
 import { ArtifactSessionSecrets } from './artifact-secrets';
+import { EvidenceError } from './evidence-protocol';
 
 export const ArtifactSecretsContext = createContext<ArtifactSessionSecrets | null>(null);
 
@@ -41,6 +51,39 @@ export function useTabArtifactSecrets(
 
 export function useArtifactSecrets(access: WebAccess): ArtifactSessionSecrets {
     const shared = useContext(ArtifactSecretsContext);
-    const own = useTabArtifactSecrets(access);
-    return shared ?? own;
+    if (!shared?.ownedBy(access)) {
+        throw new EvidenceError('cancelled');
+    }
+    // Only fingerprint/revision metadata crosses the React subscription. Key
+    // bytes and passphrases remain private to this owner-bound service.
+    useSyncExternalStore(shared.subscribe, shared.getSnapshot);
+    return shared;
+}
+
+function StandaloneSecrets({ access, children }: { access: WebAccess; children?: ReactNode }) {
+    const cache = useTabArtifactSecrets(access);
+    return (
+        <ArtifactSecretsContext.Provider value={cache}>{children}</ArtifactSecretsContext.Provider>
+    );
+}
+
+// Integrated views reuse their tab's cache. Only a genuinely standalone view
+// mounts a cache provider; consumers never create unused fallback services.
+export function ArtifactSecretsBoundary({
+    access,
+    children,
+}: {
+    access: WebAccess;
+    children?: ReactNode;
+}) {
+    const shared = useContext(ArtifactSecretsContext);
+    const ownerKey = useOwnerKey(access);
+    if (shared?.ownedBy(access)) {
+        return children;
+    }
+    return (
+        <StandaloneSecrets key={ownerKey} access={access}>
+            {children}
+        </StandaloneSecrets>
+    );
 }

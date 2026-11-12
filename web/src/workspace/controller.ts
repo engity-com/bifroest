@@ -1,4 +1,5 @@
 import type { WebAccess } from '../remember';
+import { SnapshotObservers } from '../shared/snapshot-observers';
 import { newViewID } from '../shared/uuid';
 import type { ConnectionActions, TerminalActions } from '../terminal/connection-actions';
 import type { TerminalState } from '../terminal/socket';
@@ -23,7 +24,7 @@ export class WorkspaceController {
     #nextID = 0;
     #mounted = false;
     #lease = 0;
-    readonly #listeners = new Set<() => void>();
+    readonly #observers = new SnapshotObservers();
     readonly #connections = new WorkspaceConnections();
     readonly #accepted = new WeakSet<WebAccess>();
     readonly #retired = new WeakSet<WebAccess>();
@@ -34,12 +35,7 @@ export class WorkspaceController {
     ) {}
 
     readonly getSnapshot = (): WorkspaceState => this.#state;
-    readonly subscribe = (listener: () => void): (() => void) => {
-        this.#listeners.add(listener);
-        return () => {
-            this.#listeners.delete(listener);
-        };
-    };
+    readonly subscribe = this.#observers.subscribe;
 
     mount(): () => void {
         const lease = ++this.#lease;
@@ -79,9 +75,7 @@ export class WorkspaceController {
             this.boundary().onViewsChange(this.#state.tabs);
         }
         after?.();
-        for (const listener of this.#listeners) {
-            listener();
-        }
+        this.#observers.notify();
     }
 
     #operate(id: number, action: (tab: WorkspaceTab) => void): void {

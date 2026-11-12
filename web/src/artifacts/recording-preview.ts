@@ -22,7 +22,7 @@ export interface RecordingPreviewContext {
     target(): { readonly flow?: string; readonly sessionId?: string } | null;
     readonly keys: Pick<ArtifactSessionSecrets, 'matching' | 'rememberDecryption'>;
     information(info: RecordingInfo): void;
-    keyRemembered(): void;
+    keyRemembered?(): void;
 }
 
 // Decode-only use case. No React state, server request, signature verification
@@ -85,7 +85,7 @@ export async function prepareRecordingPreview(
         }
         if (key && result.info.decryption === 'authenticated') {
             context.keys.rememberDecryption(key, result.info);
-            context.keyRemembered();
+            context.keyRemembered?.();
         }
         const source = artifact.files[0]?.data;
         if (!source) {

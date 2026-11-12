@@ -102,3 +102,25 @@ it('rechecks a new guard before confirmation and cancels only unused preparation
     f.unmount();
     expect(f.cancel).toHaveBeenCalledOnce();
 });
+
+it('never dispatches after a failing required lock and frees the slot even when settlement fails', async () => {
+    const f = fixture();
+    await f.owner.prepare('disconnect', target);
+    vi.mocked(f.boundary.lock).mockImplementation((value) => {
+        if (value) {
+            throw new Error('Required lock failed');
+        }
+    });
+    vi.mocked(f.boundary.settled).mockImplementationOnce(() => {
+        throw new Error('Settlement failed');
+    });
+    await expect(f.owner.confirm(`${target.flow}/${target.id}`)).rejects.toThrow(
+        'Settlement failed',
+    );
+    expect(f.commit).not.toHaveBeenCalled();
+    expect(f.owner.getSnapshot().phase).toBe('unknown');
+    f.owner.dismissUnknown();
+    await f.owner.prepare('disconnect', target);
+    expect(f.prepareSessionAction).toHaveBeenCalledTimes(2);
+    f.unmount();
+});

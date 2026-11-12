@@ -16,6 +16,7 @@ import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button } from '../ui/material';
 import { t } from '../ui/messages';
 import { profileResetEvent } from '../ui/profile-reset';
+import { useOwnerKey } from '../ui/use-owner-key';
 import type { SessionAction } from './action';
 import { FlowOverview } from './FlowOverview';
 import { m, sessionStateLabel } from './messages';
@@ -35,19 +36,24 @@ import { sessionField as field, sessionTime as when } from './session-display';
 import { useSessionAction } from './use-session-action';
 import { VersionPage } from './VersionPage';
 
-export function ManagementPanel({
-    access,
-    active,
-    disabled,
-    onActionLock,
-    view,
-}: {
+interface ManagementPanelProps {
     access: WebAccess;
     active: boolean;
     disabled: boolean;
     onActionLock: (locked: boolean) => void;
     view: 'sessions' | 'server' | 'version';
-}) {
+}
+export function ManagementPanel(props: ManagementPanelProps) {
+    const ownerKey = useOwnerKey(props.access);
+    return <OwnedManagementPanel key={ownerKey} {...props} />;
+}
+function OwnedManagementPanel({
+    access,
+    active,
+    disabled,
+    onActionLock,
+    view,
+}: ManagementPanelProps) {
     const [flows, setFlows] = useState<Page<FlowSummary> | null>(null);
     const [target, setTarget] = useState<SessionTargetValue>({
         flow: '',
@@ -142,45 +148,15 @@ export function ManagementPanel({
         mutation.state.phase === 'confirmed' || mutation.state.phase === 'unknown'
             ? { kind: mutation.state.phase, preview: mutation.state.preview }
             : null;
-    // biome-ignore lint/correctness/useExhaustiveDependencies: An access change must reset all actor-owned results, even though the effect does not read the access itself.
+    // The parent boundary mounts a fresh read view for every access owner.
+    // Cleanup only retires outstanding work; tab/page activation is not a reset.
     useEffect(() => {
-        generation.current++;
-        request.current?.abort();
-        request.current = null;
-        setFlows(null);
-        setTarget({ flow: '', id: '', action: 'details' });
-        consumedRoute.current = null;
-        mutationRoute.current = null;
-        nativeFilterIntent.current = null;
-        loadedFlow.current = null;
-        returnRoute.current = null;
-        setVersion(null);
-        setBuildVersion(null);
-        setSessions(null);
-        setSelected(null);
-        setBusy(false);
-        setError(null);
-        setLoading(null);
-        setSessionPage(1);
-        setSessionQuery('');
-        setSessionSort('asc');
-        sessionCursors.current.reset();
-        setFlowPage(1);
-        setFlowQuery('');
-        setFlowSort('asc');
-        flowCursors.current.reset();
-        setVersionFailed(false);
-        attempted.current = { sessions: false, version: false, flows: false, build: false };
-        lastFilter.current = {};
-        setSessionFilter(null);
-        setFlowFilter(null);
-        setTyped('');
         return () => {
             generation.current++;
             request.current?.abort();
             request.current = null;
         };
-    }, [access]);
+    }, []);
     // Read intent belongs to the first active, enabled view of this access, not to
     // mounting a background tab. Mark attempts before dispatch: failures, view
     // changes and cleared mutation results must never cause an automatic retry.

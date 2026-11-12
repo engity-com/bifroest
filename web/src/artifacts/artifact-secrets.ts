@@ -1,18 +1,45 @@
 import type { WebAccess } from '../remember';
+import { SnapshotObservers } from '../shared/snapshot-observers';
 import type { VerifiedArtifact } from './evidence-protocol';
 import { EvidenceError } from './evidence-protocol';
 import type { RecordingInfo } from './open-recording';
 import type { EvidenceKey } from './verify';
+
+export interface ArtifactSecretMetadata {
+    readonly fingerprint: string | null;
+    readonly revision: number;
+}
+const unavailable: ArtifactSecretMetadata = Object.freeze({ fingerprint: null, revision: 0 });
 
 // Owned by one management tab, shared ONLY by its Recording/Audit pages. Never
 // indexed by username/origin, persisted, serialized, or used for authentication.
 export class ArtifactSessionSecrets {
     readonly #owner: WebAccess | undefined;
     #retired = false;
+    #metadata: ArtifactSecretMetadata = unavailable;
+    readonly #observers = new SnapshotObservers();
+    readonly subscribe = this.#observers.subscribe;
+    readonly getSnapshot = (): ArtifactSecretMetadata =>
+        this.#usable() ? this.#metadata : unavailable;
     constructor(owner?: WebAccess) {
         this.#owner = owner;
     }
     #key: { file: Blob; passphrase: Uint8Array; fingerprint: string } | null = null;
+    #usable(): boolean {
+        return !this.#retired && this.#owner?.status() !== 'closed';
+    }
+    ownedBy(owner: WebAccess): boolean {
+        return this.#owner === owner;
+    }
+    #publish(fingerprint: string | null): void {
+        this.#metadata = Object.freeze({ fingerprint, revision: this.#metadata.revision + 1 });
+        this.#observers.notify();
+    }
+    #replace(file: Blob, passphrase: Uint8Array, fingerprint: string): void {
+        this.#key?.passphrase.fill(0);
+        this.#key = { file, passphrase, fingerprint };
+        this.#publish(fingerprint);
+    }
     remember(key: EvidenceKey, verified: VerifiedArtifact): void {
         if (this.#retired || this.#owner?.status() === 'closed') {
             throw new EvidenceError('cancelled');
@@ -33,8 +60,7 @@ export class ArtifactSessionSecrets {
             passphrase.fill(0);
             throw new EvidenceError('key');
         }
-        this.clear();
-        this.#key = { file: key.file, passphrase, fingerprint: metadata.expectedRecipient };
+        this.#replace(key.file, passphrase, metadata.expectedRecipient);
     }
     matching(fingerprint: string): EvidenceKey | null {
         if (this.#retired || this.#owner?.status() === 'closed') {
@@ -66,8 +92,7 @@ export class ArtifactSessionSecrets {
             passphrase.fill(0);
             throw new EvidenceError('key');
         }
-        this.clear();
-        this.#key = { file: key.file, passphrase, fingerprint: info.recipient };
+        this.#replace(key.file, passphrase, info.recipient);
     }
     has(fingerprint: string): boolean {
         return (
@@ -77,11 +102,15 @@ export class ArtifactSessionSecrets {
         );
     }
     fingerprint(): string | null {
-        return this.#key?.fingerprint ?? null;
+        return this.getSnapshot().fingerprint;
     }
     clear(): void {
+        if (this.#key === null) {
+            return;
+        }
         this.#key?.passphrase.fill(0);
         this.#key = null;
+        this.#publish(null);
     }
     retire(): void {
         this.#retired = true;

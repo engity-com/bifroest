@@ -126,3 +126,105 @@ it('preserves enrollment uncertainty when cancelled and discards its late comple
     await rejection;
     expect(f.attempt.getSnapshot().phase).toBe('uncertain');
 });
+
+it('clears a prompt and publishes cancellation when only the external signal is aborted', async () => {
+    const f = fixture();
+    const cancellation = new AbortController();
+    const step = { sequence: '1', kind: 'prompt' as const, message: 'Question', echo: false };
+    f.client.interactive.mockImplementation(async (_user, handler, signal) => {
+        if (!signal) {
+            throw new Error('Missing signal');
+        }
+        await handler(step, signal);
+        return f.access;
+    });
+    const pending = f.attempt.start(
+        f.client,
+        { ...request(), method: 'keyboard-interactive' },
+        { ...f.ports, signal: cancellation.signal },
+    );
+    const rejection = expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    cancellation.abort();
+    expect(f.attempt.getSnapshot()).toEqual({ phase: 'cancelled', prompt: null, provider: null });
+    f.attempt.answer(step, 'LATE-PRIVATE-ANSWER');
+    await rejection;
+    expect(f.ports.admit).not.toHaveBeenCalled();
+    await f.attempt.start(f.client, request(), f.ports);
+    expect(f.attempt.getSnapshot().phase).toBe('authorized');
+});
+
+it('retains uncertainty on external enrollment cancellation, and never revives a cancelled admission', async () => {
+    const f = fixture();
+    const cancellation = new AbortController();
+    const completion = Promise.withResolvers<void>();
+    const remember = vi.spyOn(f.access, 'remember').mockReturnValue(completion.promise);
+    const pending = f.attempt.start(
+        f.client,
+        { ...request(), remember: true },
+        { ...f.ports, signal: cancellation.signal },
+    );
+    await vi.waitFor(() => expect(f.attempt.getSnapshot().phase).toBe('enrolling'));
+    cancellation.abort();
+    expect(f.attempt.getSnapshot()).toEqual({ phase: 'uncertain', prompt: null, provider: null });
+    const rejection = expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    completion.resolve();
+    await rejection;
+    await expect(f.attempt.start(f.client, request(), f.ports)).rejects.toMatchObject({
+        code: 'outcome-unknown',
+    });
+    expect(remember).toHaveBeenCalledOnce();
+    f.attempt.retire();
+    const second = new AbortController();
+    const admit = vi.fn(() => {
+        second.abort();
+        return true;
+    });
+    await expect(
+        f.attempt.start(
+            f.client,
+            { ...request(), remember: true },
+            { signal: second.signal, current: () => true, admit },
+        ),
+    ).rejects.toMatchObject({ code: 'cancelled' });
+    expect(remember).toHaveBeenCalledOnce();
+    expect(f.attempt.getSnapshot().phase).toBe('cancelled');
+});
+
+it('rejects an already-aborted request without dispatching or retaining a busy slot', async () => {
+    const f = fixture();
+    const cancellation = new AbortController();
+    cancellation.abort();
+    await expect(
+        f.attempt.start(f.client, request(), { ...f.ports, signal: cancellation.signal }),
+    ).rejects.toMatchObject({ code: 'cancelled' });
+    expect(f.client.password).not.toHaveBeenCalled();
+    await f.attempt.start(f.client, request(), f.ports);
+    expect(f.client.password).toHaveBeenCalledOnce();
+});
+
+it('isolates throwing observers, never logs their private errors, and permits subsequent attempts', async () => {
+    const f = fixture();
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+        const unsubscribe = f.attempt.subscribe(() => {
+            throw new Error('PRIVATE-OBSERVER-INPUT');
+        });
+        const observed = vi.fn();
+        f.attempt.subscribe(observed);
+        await f.attempt.start(f.client, request(), f.ports);
+        expect(f.attempt.getSnapshot().phase).toBe('authorized');
+        expect(observed).toHaveBeenCalled();
+        unsubscribe();
+        await f.attempt.start(f.client, request(), f.ports);
+        expect(f.client.password).toHaveBeenCalledTimes(2);
+        expect(
+            diagnostics.mock.calls.every(
+                (args) =>
+                    JSON.stringify(args) ===
+                    JSON.stringify(['[Bifröst/model-observer]', 'listener-failed']),
+            ),
+        ).toBe(true);
+    } finally {
+        diagnostics.mockRestore();
+    }
+});

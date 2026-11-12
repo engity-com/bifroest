@@ -67,4 +67,31 @@ describe('volatile actor-tab decryption key reuse', () => {
         expect(() => retired.remember(key, verified)).toThrow();
         expect(retired.has(fingerprint)).toBe(false);
     });
+    it('publishes only immutable metadata snapshots and replaces a verified key atomically', () => {
+        const cache = new ArtifactSessionSecrets();
+        const seen: unknown[] = [];
+        const unsubscribe = cache.subscribe(() => seen.push(cache.getSnapshot()));
+        const key = { file: new Blob(['PRIVATE-KEY']), passphrase: 'PRIVATE-PASSPHRASE' };
+        cache.remember(key, verified);
+        const first = cache.getSnapshot();
+        cache.remember({ ...key, passphrase: 'REPLACEMENT-PASSPHRASE' }, verified);
+        expect(seen).toHaveLength(2);
+        expect(cache.getSnapshot().fingerprint).toBe(fingerprint);
+        expect(cache.getSnapshot().revision).toBeGreaterThan(first.revision);
+        expect(Object.isFrozen(first)).toBe(true);
+        expect(JSON.stringify(seen)).not.toContain('PRIVATE');
+        expect(JSON.stringify(seen)).not.toContain('PASSPHRASE');
+        const current = cache.getSnapshot();
+        expect(() =>
+            cache.remember(key, {
+                ...verified,
+                metadata: { ...verified.metadata, decryption: 'not-checked' },
+            }),
+        ).toThrow();
+        expect(cache.getSnapshot()).toBe(current);
+        unsubscribe();
+        cache.clear();
+        expect(seen).toHaveLength(2);
+        expect(cache.fingerprint()).toBeNull();
+    });
 });

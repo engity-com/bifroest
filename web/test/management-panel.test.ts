@@ -1,4 +1,4 @@
-import { act, createElement, StrictMode } from 'react';
+import { act, createElement, StrictMode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionActionConfirmation } from '../src/management/action';
@@ -72,6 +72,21 @@ function fixture() {
     };
     return { api, access: api as unknown as WebAccess, confirm, cancel };
 }
+type ManagementProps = Parameters<typeof ManagementPanel>[0];
+function ManagementFrame({
+    props,
+    container,
+    commits,
+}: {
+    props: ManagementProps;
+    container: HTMLElement;
+    commits: string[];
+}) {
+    useLayoutEffect(() => {
+        commits.push(container.textContent ?? '');
+    });
+    return createElement(ManagementPanel, props);
+}
 async function mount(
     access: WebAccess,
     initial: Partial<Parameters<typeof ManagementPanel>[0]> = {},
@@ -81,6 +96,7 @@ async function mount(
     container.style.width = '1200px';
     document.body.append(container);
     const root = createRoot(container);
+    const commits: string[] = [];
     const lock = vi.fn();
     let props = {
         access,
@@ -97,13 +113,55 @@ async function mount(
     async function render(next: Partial<Parameters<typeof ManagementPanel>[0]> = {}) {
         props = { ...props, ...next };
         await act(async () => {
-            const content = createElement(ManagementPanel, props);
+            const content = createElement(ManagementFrame, { props, container, commits });
             root.render(strict ? createElement(StrictMode, null, content) : content);
         });
     }
     await render();
-    return { container, lock, render };
+    return { container, lock, render, commits };
 }
+
+it('never commits previous-actor read results under a new access before passive cleanup', async () => {
+    const first = fixture();
+    const second = fixture();
+    const waiting = Promise.withResolvers<Page<SessionItem>>();
+    second.api.managementSessions.mockReturnValue(waiting.promise);
+    const app = await mount(first.access);
+    await vi.waitFor(() => expect(app.container.textContent).toContain('alice'));
+    await app.render({ access: second.access });
+    expect(app.commits.at(-1)).not.toContain('alice');
+    expect(first.api.managementSessions).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(second.api.managementSessions).toHaveBeenCalledOnce());
+    await act(async () =>
+        waiting.resolve({
+            items: [{ ...item, user: 'bob', remote: 'bob@127.0.0.1' }],
+            next: '',
+            skipped: 0,
+        }),
+    );
+    await vi.waitFor(() => expect(app.container.textContent).toContain('bob'));
+    expect(app.container.textContent).not.toContain('alice');
+});
+
+it('cannot publish a late old-actor page into the new read view', async () => {
+    const first = fixture();
+    const second = fixture();
+    const waiting = Promise.withResolvers<Page<SessionItem>>();
+    first.api.managementSessions.mockReturnValue(waiting.promise);
+    second.api.managementSessions.mockResolvedValue({
+        items: [{ ...item, user: 'bob', remote: 'bob@127.0.0.1' }],
+        next: '',
+        skipped: 0,
+    });
+    const app = await mount(first.access);
+    await vi.waitFor(() => expect(first.api.managementSessions).toHaveBeenCalledOnce());
+    const signal = first.api.managementSessions.mock.calls[0]?.[1];
+    await app.render({ access: second.access });
+    expect(signal?.aborted).toBe(true);
+    await act(async () => waiting.resolve(page));
+    await vi.waitFor(() => expect(app.container.textContent).toContain('bob'));
+    expect(app.container.textContent).not.toContain('alice');
+});
 function button(name: string, parent: ParentNode = document) {
     const found = [...parent.querySelectorAll<HTMLButtonElement>('button,a[href]')].find(
         (node) =>

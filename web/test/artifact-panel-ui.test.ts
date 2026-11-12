@@ -1,13 +1,15 @@
-import { act, createElement, type ReactNode, StrictMode, useLayoutEffect } from 'react';
+import { act, createElement, createRef, type ReactNode, StrictMode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactEvidencePanel as ArtifactPanel } from '../src/artifacts/ArtifactEvidencePanel';
+import { AuditViewContext } from '../src/artifacts/AuditViewContext';
 import type {
     EvidenceMetadata,
     EvidenceOptions,
     VerifiedArtifact,
 } from '../src/artifacts/evidence-protocol';
 import { EvidenceError } from '../src/artifacts/evidence-protocol';
+import type { ArtifactEvidenceControl } from '../src/artifacts/evidence-view';
 import { openRecording } from '../src/artifacts/open-recording';
 import { inspectProtection } from '../src/artifacts/protection';
 import type { ArtifactRequest, ReceivedArtifact } from '../src/artifacts/protocol';
@@ -382,6 +384,107 @@ function button(name: string, parent: ParentNode = document) {
     }
     return node;
 }
+
+function ProjectionHarness({
+    access,
+    sensitive,
+    control,
+}: {
+    access: WebAccess;
+    sensitive: boolean;
+    control: ReturnType<typeof createRef<ArtifactEvidenceControl>>;
+}) {
+    return createElement(
+        AuditViewContext.Provider,
+        {
+            value: {
+                scope: access.snapshot().scope,
+                sensitive,
+                toggleSensitive() {},
+                local: true,
+                running: false,
+                provenance: undefined,
+                producerId: signer,
+            },
+        },
+        createElement(ArtifactPanel, {
+            access,
+            disabled: false,
+            view: 'auditlogs',
+            controlRef: control,
+        }),
+    );
+}
+
+it('does not lose an explicit private projection intent that arrives before an owned verification settles', async () => {
+    const owner = access();
+    const control = createRef<ArtifactEvidenceControl>();
+    const pending = Promise.withResolvers<VerifiedArtifact>();
+    vi.mocked(verifyArtifact).mockReturnValueOnce(pending.promise);
+    const host = document.createElement('div');
+    host.style.width = '1000px';
+    document.body.append(host);
+    const root = createRoot(host);
+    cleanups.push(() => {
+        root.unmount();
+        host.remove();
+    });
+    const render = async (sensitive: boolean) =>
+        act(async () =>
+            root.render(createElement(ProjectionHarness, { access: owner, sensitive, control })),
+        );
+    await render(false);
+    await click(button('Open fixture audit', host));
+    await vi.waitFor(() => expect(verifyArtifact).toHaveBeenCalledOnce());
+    await render(true);
+    const initial = vi.mocked(verifyArtifact).mock.calls[0];
+    if (!initial) {
+        throw new Error('Missing first verification');
+    }
+    await act(async () => pending.resolve(result(initial[0], initial[1])));
+    await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(verifyArtifact).toHaveBeenCalledTimes(2);
+        expect(host.querySelector('[data-evidence-phase="idle"]')).not.toBeNull();
+        expect(host.querySelector('[role="columnheader"][data-field="reason"]')).not.toBeNull();
+    });
+    expect(vi.mocked(verifyArtifact).mock.calls[1]?.[1].sensitive).toBe(true);
+    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledOnce();
+});
+
+it('does not retry a queued projection after explicit cancellation', async () => {
+    const owner = access();
+    const control = createRef<ArtifactEvidenceControl>();
+    const pending = Promise.withResolvers<VerifiedArtifact>();
+    vi.mocked(verifyArtifact).mockReturnValueOnce(pending.promise);
+    const host = document.createElement('div');
+    host.style.width = '1000px';
+    document.body.append(host);
+    const root = createRoot(host);
+    cleanups.push(() => {
+        root.unmount();
+        host.remove();
+    });
+    const render = async (sensitive: boolean) =>
+        act(async () =>
+            root.render(createElement(ProjectionHarness, { access: owner, sensitive, control })),
+        );
+    await render(false);
+    await click(button('Open fixture audit', host));
+    await vi.waitFor(() => expect(verifyArtifact).toHaveBeenCalledOnce());
+    await render(true);
+    await act(async () => control.current?.cancel());
+    const initial = vi.mocked(verifyArtifact).mock.calls[0];
+    if (!initial) {
+        throw new Error('Missing first verification');
+    }
+    await act(async () => pending.resolve(result(initial[0], initial[1])));
+    await vi.waitFor(() =>
+        expect(host.querySelector('[data-evidence-phase="idle"]')).not.toBeNull(),
+    );
+    expect(verifyArtifact).toHaveBeenCalledOnce();
+    expect(WebAccess.prototype.downloadArtifact).toHaveBeenCalledOnce();
+});
 async function click(node: HTMLElement) {
     await act(async () => node.click());
 }
