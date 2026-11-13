@@ -1,11 +1,8 @@
-import CancelIcon from '@mui/icons-material/Cancel';
-import { IconButton, Tooltip } from '@mui/material';
 import {
     useCallback,
     useContext,
     useEffect,
     useEffectEvent,
-    useId,
     useImperativeHandle,
     useMemo,
     useRef,
@@ -21,26 +18,23 @@ import { uuidEqual, uuidText } from '../shared/uuid';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { useAdminDetail } from '../ui/admin-navigation';
 import { reportUiError } from '../ui/error-report';
-import { VerificationResultButton } from '../ui/GridWork';
 import { bookmarkPath } from '../ui/hash-route';
-import { LicenseIcon } from '../ui/LicenseIcon';
 import { relationFlow } from '../ui/ManagementJump';
 import { ManagementNotFound } from '../ui/ManagementNotFound';
 import type { ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
-import { Alert, Button, Modal, Select, useComputedColorScheme } from '../ui/material';
+import { Alert } from '../ui/material';
 import { type Message, t } from '../ui/messages';
 import { profileResetEvent } from '../ui/profile-reset';
-import { ReadProgress } from '../ui/ReadProgress';
 import { ArtifactCatalog } from './ArtifactCatalog';
 import { ArtifactOpenByID } from './ArtifactOpenByID';
-import { ArtifactSourceDetails } from './ArtifactSourceDetails';
 import { AuditCatalog } from './AuditCatalog';
-import { AuditEvents } from './AuditEvents';
+import { AuditEvidenceView } from './AuditEvidenceView';
 import { AuditSourceContext } from './AuditSourceContext';
 import { useAuditView } from './AuditViewContext';
 import type { AuditEventRow } from './audit-events';
-import { EvidenceDetailsDialog } from './EvidenceDetailsDialog';
+import { EvidenceDialogs } from './EvidenceDialogs';
+import { EvidenceVerificationToolbar } from './EvidenceVerificationToolbar';
 import type { EvidenceFailure, SigningExpectation as UsedExpectation } from './evidence-details';
 import { EvidenceDocument } from './evidence-document';
 import { EvidenceJob } from './evidence-job';
@@ -50,14 +44,13 @@ import { LocalArtifactDownload } from './local-download';
 import { readEvidenceKey } from './local-key-input';
 import { inspectProtection } from './protection';
 import { type ArtifactRequest, artifactFields, type ReceivedArtifact } from './protocol';
-import { RecordingPlayer } from './RecordingPlayer';
+import { RecordingEvidenceView } from './RecordingEvidenceView';
 import { type LocalRecordingIndex, recordingVerificationFromIndex } from './recording-index';
 import { prepareRecordingPreview } from './recording-preview';
 import { RecordingRuntimeOwner } from './recording-runtime-owner';
 import { ArtifactSecretsBoundary, useArtifactSecrets } from './session-secrets';
 import { validSigningID } from './signing-id';
-import { VerificationDialog } from './VerificationDialog';
-import { LocalKeyFields, VerificationFields } from './VerificationFields';
+import { useLocalKeyInput } from './use-local-key-input';
 import type { EvidenceKey, RecordingRuntime } from './verify';
 import { verifyEvidence } from './verify-evidence';
 import './recording-player.css';
@@ -108,7 +101,6 @@ function OwnedArtifactEvidencePanel({
     onEvidenceState,
     onResultReady,
 }: ArtifactEvidencePanelProps) {
-    const palette = useComputedColorScheme('light');
     const auditView = useAuditView();
     const sourceHints = useContext(AuditSourceContext);
     const managed = mode === 'audit-verification';
@@ -145,10 +137,8 @@ function OwnedArtifactEvidencePanel({
     const { recordingFlow, recordingSession, verified, auditIndex, verifiedSensitive, used } =
         receipt;
     const [auditEvent, setAuditEvent] = useState<AuditEventRow | null>(null);
-    const inputID = useId();
-    const passwordID = useId();
-    const decryptInputID = useId();
-    const decryptPasswordID = useId();
+    const verificationKey = useLocalKeyInput();
+    const decryptionKey = useLocalKeyInput();
     const sourceVerification = useRef<{
         access: WebAccess;
         index: LocalRecordingIndex | null;
@@ -183,8 +173,7 @@ function OwnedArtifactEvidencePanel({
     const [operationDetails, setOperationDetails] = useState(false);
     const [details, setDetails] = useState(false);
     const [filePage, setFilePage] = useState(0);
-    const [candidate, setCandidate] = useState(false);
-    const [keyRevision, setKeyRevision] = useState(0);
+    const candidate = verificationKey.fields.candidate;
     const [validateIdentity, setValidateIdentity] = useState(false);
     const [producer, setProducer] = useState('');
     const [producerSource, setProducerSource] = useState<'reported' | 'user'>('reported');
@@ -212,12 +201,6 @@ function OwnedArtifactEvidencePanel({
     const [auditlog, setAuditlog] = useState('');
     const [id, setID] = useState('');
     const heading = useRef<HTMLDivElement | null>(null);
-    const keyInput = useRef<HTMLInputElement | null>(null);
-    const form = useRef<HTMLFormElement | null>(null);
-    // Sibling dialogs overlap during exit transitions. Unmounting the old
-    // decrypt input must not clear the active verification dialog's refs.
-    const decryptKeyInput = useRef<HTMLInputElement | null>(null);
-    const decryptForm = useRef<HTMLFormElement | null>(null);
     const recordingRuntime = useRef<{
         access: WebAccess;
         value: RecordingRuntimeOwner;
@@ -270,22 +253,8 @@ function OwnedArtifactEvidencePanel({
     }, []);
     const identity = () => ({ enabled: validateIdentity, producer, source: producerSource });
     const clearInputs = () => {
-        for (const [file, owner] of [
-            [keyInput, form],
-            [decryptKeyInput, decryptForm],
-        ] as const) {
-            if (file.current) {
-                file.current.value = '';
-            }
-            const input = owner.current?.querySelector<HTMLInputElement>(
-                '[name="evidence-passphrase"]',
-            );
-            if (input) {
-                input.value = '';
-            }
-        }
-        setCandidate(false);
-        setKeyRevision((value) => value + 1);
+        verificationKey.clear();
+        decryptionKey.clear();
     };
     const cancelJob = () => {
         appliedSensitive.current = effectiveSensitive;
@@ -540,11 +509,9 @@ function OwnedArtifactEvidencePanel({
             setProducerSource('reported');
             setValidateIdentity(false);
         }
-        const chosenFile = managed ? keyInput.current?.files?.[0] : undefined;
-        const chosenPassphrase = managed
-            ? (form.current?.querySelector<HTMLInputElement>('[name="evidence-passphrase"]')
-                  ?.value ?? '')
-            : '';
+        const chosen = managed ? verificationKey.read() : null;
+        const chosenFile = chosen?.file;
+        const chosenPassphrase = chosen?.passphrase ?? '';
         resetResult();
         retireRecordingRuntime();
         attemptedVerification.current = false;
@@ -656,10 +623,7 @@ function OwnedArtifactEvidencePanel({
         const image = received;
         attemptedVerification.current = true;
         const previousHeader = protection;
-        const file = keyInput.current?.files?.[0];
-        const passphrase =
-            form.current?.querySelector<HTMLInputElement>('[name="evidence-passphrase"]')?.value ??
-            '';
+        const { file, passphrase } = verificationKey.read();
         const expected = identity();
         if (!(managed && auditView?.local)) {
             resetResult();
@@ -751,10 +715,7 @@ function OwnedArtifactEvidencePanel({
             return;
         }
         const image = received;
-        const file = decryptKeyInput.current?.files?.[0];
-        const passphrase =
-            decryptForm.current?.querySelector<HTMLInputElement>('[name="evidence-passphrase"]')
-                ?.value ?? '';
+        const { file, passphrase } = decryptionKey.read();
         await run('preparing', async (signal, token) => {
             let key = recordingInfo?.encrypted ? secrets.matching(recordingInfo.recipient) : null;
             if (file) {
@@ -1092,51 +1053,46 @@ function OwnedArtifactEvidencePanel({
         />
     );
     const verificationControls = (
-        <>
-            {(success || verificationFailure || flowMismatch) && (
-                <VerificationResultButton
-                    result={success && !verificationFailure ? 'success' : 'failure'}
-                    disabled={locked}
-                    onClick={() => {
-                        setOperationDetails(false);
-                        setDetails(true);
-                    }}
-                />
-            )}
-            {(!success ||
+        <EvidenceVerificationToolbar
+            result={
+                success || verificationFailure || flowMismatch
+                    ? success && !verificationFailure
+                        ? 'success'
+                        : 'failure'
+                    : null
+            }
+            busy={phase !== null}
+            disabled={locked}
+            verifyDisabled={disabled || (!phase && received === null)}
+            showVerify={
+                !success ||
                 attemptedVerification.current ||
-                verificationFailure ||
+                verificationFailure !== null ||
                 flowMismatch ||
-                phase) && (
-                <Tooltip title={t(phase ? 'artifactCancel' : 'verifyOpen')}>
-                    <span>
-                        <IconButton
-                            color="inherit"
-                            aria-label={t(phase ? 'artifactCancel' : 'verifyOpen')}
-                            disabled={disabled || (!phase && received === null)}
-                            onClick={() => {
-                                if (phase) {
-                                    cancelJob();
-                                    clearInputs();
-                                } else if (
-                                    (protection !== null || recordingInfo !== null) &&
-                                    attemptedVerification.current &&
-                                    !keyNeeded
-                                ) {
-                                    void recheck();
-                                } else {
-                                    clearInputs();
-                                    setDecryptOpen(false);
-                                    setOptionsOpen(true);
-                                }
-                            }}
-                        >
-                            {phase ? <CancelIcon /> : <LicenseIcon />}
-                        </IconButton>
-                    </span>
-                </Tooltip>
-            )}
-        </>
+                phase !== null
+            }
+            onDetails={() => {
+                setOperationDetails(false);
+                setDetails(true);
+            }}
+            onCancel={() => {
+                cancelJob();
+                clearInputs();
+            }}
+            onVerify={() => {
+                if (
+                    (protection !== null || recordingInfo !== null) &&
+                    attemptedVerification.current &&
+                    !keyNeeded
+                ) {
+                    void recheck();
+                } else {
+                    clearInputs();
+                    setDecryptOpen(false);
+                    setOptionsOpen(true);
+                }
+            }}
+        />
     );
     const entityNotFound =
         !managed &&
@@ -1270,345 +1226,187 @@ function OwnedArtifactEvidencePanel({
             {opened !== null && (
                 <>
                     {flowMismatch && <Alert color="red">{t('artifactFlowMismatch')}</Alert>}
-                    {!managed && view === 'recordings' && (playback === null || phase !== null) && (
-                        <section
-                            className={`recording-video${palette === 'dark' ? ' recording-video--dark' : ''}`}
-                            aria-label={t('playbackVideo')}
-                            aria-busy={phase !== null}
-                        >
-                            <div className="recording-overlay">
-                                {phase ? (
-                                    <div className="stack recording-loading">
-                                        <span>
-                                            {t(
-                                                phase === 'downloading'
-                                                    ? 'recordingOpening'
-                                                    : phase === 'preparing'
-                                                      ? 'playbackPreparing'
-                                                      : phase === 'inspecting'
-                                                        ? 'artifactInspecting'
-                                                        : 'recordingVerifying',
-                                            )}
-                                        </span>
-                                        <ReadProgress value={progress} />
-                                    </div>
-                                ) : (
-                                    <div className="stack">
-                                        {notice && <span>{t(notice)}</span>}
-                                        <Button
-                                            disabled={locked || !received}
-                                            onClick={() => {
-                                                void decodeRecording();
-                                            }}
-                                        >
-                                            {t(
-                                                recordingInfo?.requiresKey
-                                                    ? 'artifactUnlock'
-                                                    : 'recordingOpen',
-                                            )}
-                                        </Button>
-                                        {notice && (
-                                            <Button
-                                                variant="subtle"
-                                                onClick={() => {
-                                                    setOperationDetails(true);
-                                                    setDetails(true);
-                                                }}
-                                            >
-                                                {t('detailsTitle')}
-                                            </Button>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                            <div className="recording-verification">{verificationControls}</div>
-                        </section>
-                    )}
-                    {received && (
-                        <>
-                            {playback &&
-                                phase === null &&
-                                view === 'recordings' &&
+                    {view === 'recordings' ? (
+                        <RecordingEvidenceView
+                            received={received}
+                            summary={selection}
+                            info={recordingInfo}
+                            playback={playback}
+                            phase={phase}
+                            progress={progress}
+                            notice={notice}
+                            disabled={disabled}
+                            locked={locked}
+                            active={active && (!managed || auditView?.local === true)}
+                            showPlaceholder={!managed}
+                            playbackAllowed={
                                 !(
                                     recordingInfo &&
                                     ((route?.flow && route.flow !== recordingInfo.flow) ||
                                         (route?.sessionId &&
                                             !uuidEqual(route.sessionId, recordingInfo.sessionId)))
-                                ) && (
-                                    <RecordingPlayer
-                                        source={playback.source}
-                                        preparedImage={playback.image}
-                                        onPrepare={() => {
-                                            void decodeRecording();
-                                        }}
-                                        expected={{
-                                            id:
-                                                received.request.kind === 'recording'
-                                                    ? received.request.id
-                                                    : '',
-                                            producer: '',
-                                            allowUntrusted: true,
-                                            unchecked: true,
-                                        }}
-                                        disabled={disabled}
-                                        active={active && (!managed || auditView?.local === true)}
-                                        autoPrepare
-                                        verificationControls={verificationControls}
-                                    />
-                                )}
-                            {verified?.output &&
-                                metadata?.kind === 'audit' &&
-                                metadata.outputFormat === 'jsonl' && (
-                                    <AuditEvents
-                                        source={verified.output}
-                                        initialIndex={auditIndex ?? undefined}
-                                        privateFieldsKnown={verifiedSensitive && effectiveSensitive}
-                                        active={active && (!managed || auditView?.local === true)}
-                                        selected={auditEvent}
-                                        onSelect={setAuditEvent}
-                                    />
-                                )}
-                        </>
+                                )
+                            }
+                            verificationControls={verificationControls}
+                            scope={access.snapshot().scope}
+                            relation={{ flow: recordingFlow, sessionId: recordingSession }}
+                            page={filePage}
+                            onPage={setFilePage}
+                            onSave={save}
+                            onOpen={() => {
+                                void decodeRecording();
+                            }}
+                            onOperationDetails={() => {
+                                setOperationDetails(true);
+                                setDetails(true);
+                            }}
+                        />
+                    ) : (
+                        received && (
+                            <AuditEvidenceView
+                                verified={verified}
+                                index={auditIndex}
+                                privateFieldsKnown={verifiedSensitive && effectiveSensitive}
+                                active={active && (!managed || auditView?.local === true)}
+                                selected={auditEvent}
+                                onSelect={setAuditEvent}
+                            />
+                        )
                     )}
                 </>
             )}
-            {received && opened?.kind === 'recording' && (
-                <section className="recording-evidence">
-                    <ArtifactSourceDetails
-                        received={received}
-                        summary={selection}
-                        disabled={locked}
-                        page={filePage}
-                        onPage={setFilePage}
-                        onSave={save}
-                        showFiles={false}
-                        scope={access.snapshot().scope}
-                        relation={{ flow: recordingFlow, sessionId: recordingSession }}
-                    />
-                </section>
-            )}
-            <Modal
-                opened={active && decryptOpen}
-                onClose={() => {
-                    setDecryptOpen(false);
-                    clearInputs();
+            <EvidenceDialogs
+                notice={notice}
+                locked={locked}
+                source={{
+                    received,
+                    summary: selection,
+                    page: filePage,
+                    onPage: setFilePage,
+                    onSave: save,
                 }}
-                title={t('recordingDecrypt')}
-            >
-                {notice && <Alert color="red">{t(notice)}</Alert>}
-                <LocalKeyFields
-                    input={decryptKeyInput}
-                    form={decryptForm}
-                    id={decryptInputID}
-                    passwordID={decryptPasswordID}
-                    revision={keyRevision}
-                    candidate={candidate}
-                    onCandidate={setCandidate}
-                    disabled={locked}
-                />
-                <Button
-                    disabled={locked || !candidate}
-                    onClick={() => {
+                decryption={{
+                    open: active && decryptOpen,
+                    key: decryptionKey.fields,
+                    close: () => {
+                        setDecryptOpen(false);
+                        clearInputs();
+                    },
+                    unlock: () => {
                         setDecryptOpen(false);
                         void decodeRecording();
-                    }}
-                >
-                    {t('artifactUnlock')}
-                </Button>
-            </Modal>
-            <VerificationDialog
-                open={active && optionsOpen}
-                source={opened?.auditlog ?? route?.auditlog ?? ''}
-                kind={view === 'auditlogs' ? 'audit' : 'recording'}
-                disabled={
-                    locked ||
-                    !pinReady ||
-                    (received === null ? remoteDisabled || !managed || !route?.auditlog : !ready)
-                }
-                onClose={() => {
-                    setOptionsOpen(false);
-                    clearInputs();
+                    },
                 }}
-                onStart={() => {
-                    setOptionsOpen(false);
-                    if (managed && verificationInput === 'fresh' && route?.auditlog) {
-                        void open({ kind: 'audit', auditlog: route.auditlog });
-                    } else if (received) {
-                        void recheck();
-                    } else if (route?.auditlog) {
-                        void open({ kind: 'audit', auditlog: route.auditlog });
-                    }
-                }}
-                actions={
-                    <>
-                        {secrets.fingerprint() !== null && (
-                            <Button
-                                disabled={locked}
-                                onClick={() => {
-                                    secrets.clear();
-                                }}
-                            >
-                                {t('artifactForgetKey')}
-                            </Button>
-                        )}
-                        {!flowMismatch && verified?.output && (
-                            <Button
-                                variant="default"
-                                disabled={locked}
-                                onClick={() => {
-                                    if (verified.output) {
-                                        save(
-                                            verified.output,
-                                            verified.request.kind === 'recording'
-                                                ? `recording-${verified.request.id}.cast`
-                                                : `audit-${verified.request.auditlog}.jsonl`,
-                                        );
-                                    }
-                                }}
-                            >
-                                {t('artifactSaveExport')}
-                            </Button>
-                        )}
-                    </>
-                }
-            >
-                {managed && received && (
-                    <Select
-                        label={t('verificationInput')}
-                        value={verificationInput}
-                        disabled={locked}
-                        data={[
-                            { value: 'fresh', label: t('verificationFresh') },
-                            { value: 'received', label: t('verificationReceived') },
-                        ]}
-                        onChange={(value) =>
-                            setVerificationInput(value === 'received' ? 'received' : 'fresh')
-                        }
-                    />
-                )}
-                {notice && (
-                    <Alert color="red" role="status">
-                        {t(notice)}
-                    </Alert>
-                )}
-                <VerificationFields
-                    level={level}
-                    onLevel={(value) => {
-                        setLevel(value);
-                        resetResult();
-                        clearInputs();
-                    }}
-                    checked={validateIdentity}
-                    onChecked={(value) => {
-                        setValidateIdentity(value);
-                        resetResult();
-                    }}
-                    producer={producer}
-                    onProducer={(value) => {
-                        setProducer(value);
-                        setProducerSource('user');
-                        resetResult();
-                    }}
-                    reported={producerSource === 'reported'}
-                    disabled={locked}
-                    {...(view === 'auditlogs'
-                        ? {
-                              auditScope: scope,
-                              onAuditScope: (value: 'complete' | 'captured-prefix') => {
-                                  setScope(value);
-                                  document.forgetProtection();
-                                  resetResult();
-                              },
-                          }
-                        : {})}
-                >
-                    {(managed || optionsOpen) && (
-                        <LocalKeyFields
-                            input={keyInput}
-                            form={form}
-                            id={inputID}
-                            passwordID={passwordID}
-                            revision={keyRevision}
-                            candidate={candidate}
-                            onCandidate={setCandidate}
-                            disabled={locked}
-                            cached={cached}
-                        />
-                    )}
-                </VerificationFields>
-                {encrypted && verified !== null && (
-                    <Button
-                        disabled={locked}
-                        onClick={() => {
+                verification={{
+                    open: active && optionsOpen,
+                    source: opened?.auditlog ?? route?.auditlog ?? '',
+                    kind: view === 'auditlogs' ? 'audit' : 'recording',
+                    disabled:
+                        locked ||
+                        !pinReady ||
+                        (received === null
+                            ? remoteDisabled || !managed || !route?.auditlog
+                            : !ready),
+                    input: managed && received ? verificationInput : null,
+                    selectInput: setVerificationInput,
+                    settings: {
+                        level,
+                        checked: validateIdentity,
+                        producer,
+                        reported: producerSource === 'reported',
+                        onLevel: (value) => {
+                            setLevel(value);
                             resetResult();
-                            setCandidate(false);
-                        }}
-                    >
-                        {t('artifactReplaceKey')}
-                    </Button>
-                )}
-            </VerificationDialog>
-            <EvidenceDetailsDialog
-                open={active && details}
-                onClose={() => setDetails(false)}
-                disabled={locked}
-                retryDisabled={locked || remoteDisabled}
-                state={{
-                    operationDetails,
-                    notice,
-                    errorCode,
-                    failedStage,
-                    phase,
-                    verificationFailure,
-                    success,
-                    metadata,
-                    protection,
-                    recordingInfo,
-                    used,
+                            clearInputs();
+                        },
+                        onChecked: (value) => {
+                            setValidateIdentity(value);
+                            resetResult();
+                        },
+                        onProducer: (value) => {
+                            setProducer(value);
+                            setProducerSource('user');
+                            resetResult();
+                        },
+                        ...(view === 'auditlogs'
+                            ? {
+                                  auditScope: scope,
+                                  onAuditScope: (value: 'complete' | 'captured-prefix') => {
+                                      setScope(value);
+                                      document.forgetProtection();
+                                      resetResult();
+                                  },
+                              }
+                            : {}),
+                    },
+                    key: verificationKey.fields,
+                    showKey: managed || optionsOpen,
+                    cached,
+                    canForget: secrets.fingerprint() !== null,
+                    canReplace: encrypted && verified !== null,
+                    export:
+                        !flowMismatch && verified?.output
+                            ? {
+                                  data: verified.output,
+                                  filename:
+                                      verified.request.kind === 'recording'
+                                          ? `recording-${verified.request.id}.cast`
+                                          : `audit-${verified.request.auditlog}.jsonl`,
+                              }
+                            : null,
+                    forget: () => secrets.clear(),
+                    replace: () => {
+                        resetResult();
+                        verificationKey.clearCandidate();
+                    },
+                    close: () => {
+                        setOptionsOpen(false);
+                        clearInputs();
+                    },
+                    start: () => {
+                        setOptionsOpen(false);
+                        if (managed && verificationInput === 'fresh' && route?.auditlog) {
+                            void open({ kind: 'audit', auditlog: route.auditlog });
+                        } else if (received) {
+                            void recheck();
+                        } else if (route?.auditlog) {
+                            void open({ kind: 'audit', auditlog: route.auditlog });
+                        }
+                    },
                 }}
-                changeSettings={
-                    received
+                details={{
+                    open: active && details,
+                    retryDisabled: locked || remoteDisabled,
+                    close: () => setDetails(false),
+                    state: {
+                        operationDetails,
+                        notice,
+                        errorCode,
+                        failedStage,
+                        phase,
+                        verificationFailure,
+                        success,
+                        metadata,
+                        protection,
+                        recordingInfo,
+                        used,
+                    },
+                    changeSettings: received
                         ? () => {
                               setDetails(false);
                               clearInputs();
                               setOptionsOpen(true);
                           }
-                        : null
-                }
-                retryOpen={
-                    notice && received === null && opened
-                        ? () => {
-                              setDetails(false);
-                              void open(opened, selection ?? undefined);
-                          }
-                        : null
-                }
-            >
-                {received && (
-                    <>
-                        <ArtifactSourceDetails
-                            received={received}
-                            summary={selection}
-                            disabled={locked}
-                            page={filePage}
-                            onPage={setFilePage}
-                            onSave={save}
-                            showFiles={false}
-                        />
-                        <details>
-                            <summary>{t('artifactOriginalsAdvanced')}</summary>
-                            <ArtifactSourceDetails
-                                received={received}
-                                disabled={locked}
-                                page={filePage}
-                                onPage={setFilePage}
-                                onSave={save}
-                                showMetadata={false}
-                            />
-                        </details>
-                    </>
-                )}
-            </EvidenceDetailsDialog>
+                        : null,
+                    retryOpen:
+                        notice && received === null && opened
+                            ? () => {
+                                  setDetails(false);
+                                  void open(opened, selection ?? undefined);
+                              }
+                            : null,
+                }}
+            />
         </section>
     );
 }

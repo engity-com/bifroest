@@ -137,6 +137,8 @@ test('workspace and evidence contracts do not depend on component implementation
         join(source, 'workspace/model.ts'),
         join(source, 'workspace/contracts.ts'),
         join(source, 'artifacts/evidence-view.ts'),
+        join(source, 'artifacts/evidence-dialogs-view.ts'),
+        join(source, 'artifacts/local-key-input-view.ts'),
     ]) {
         for (const entry of imports(path)) {
             if (entry.specifier.startsWith('.')) {
@@ -146,6 +148,30 @@ test('workspace and evidence contracts do not depend on component implementation
                     `${relative(source, path)} imports a TSX implementation: ${entry.specifier}`,
                 );
             }
+        }
+    }
+});
+
+test('evidence presentation has no direct grant, worker or workflow implementation dependencies', () => {
+    for (const name of [
+        'EvidenceDialogs.tsx',
+        'EvidenceVerificationToolbar.tsx',
+        'RecordingEvidenceView.tsx',
+        'AuditEvidenceView.tsx',
+    ]) {
+        for (const entry of imports(join(source, 'artifacts', name)).filter(
+            (entry) => !entry.typeOnly,
+        )) {
+            assert(
+                !/(?:^|\/)remember(?:\/|$)/u.test(entry.specifier),
+                `${name} imports access implementation: ${entry.specifier}`,
+            );
+            assert(
+                !/(?:^|\/)(?:verify|verify-evidence|recording-preview|recording-runtime-owner|recording-source-verification|receive|protection|evidence-job|evidence-document)$/u.test(
+                    entry.specifier,
+                ),
+                `${name} imports workflow implementation: ${entry.specifier}`,
+            );
         }
     }
 });

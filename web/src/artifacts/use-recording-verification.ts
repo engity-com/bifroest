@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
@@ -13,6 +13,7 @@ import {
 } from './recording-source-verification';
 import { useArtifactSecrets } from './session-secrets';
 import { validSigningID } from './signing-id';
+import { useLocalKeyInput } from './use-local-key-input';
 
 export function useRecordingVerification({
     access,
@@ -49,25 +50,8 @@ export function useRecordingVerification({
     const [checked, setChecked] = useState(false);
     const [reported, setReported] = useState(true);
     const seeded = useRef('');
-    const file = useRef<HTMLInputElement>(null);
-    const form = useRef<HTMLFormElement>(null);
-    const [candidate, setCandidate] = useState(false);
-    const [revision, setRevision] = useState(0);
-    const inputID = useId();
-    const passwordID = useId();
-    const clearInputs = useCallback(() => {
-        if (file.current) {
-            file.current.value = '';
-        }
-        const password = form.current?.querySelector<HTMLInputElement>(
-            '[name="evidence-passphrase"]',
-        );
-        if (password) {
-            password.value = '';
-        }
-        setCandidate(false);
-        setRevision((value) => value + 1);
-    }, []);
+    const keyInput = useLocalKeyInput();
+    const clearInputs = keyInput.clear;
     // biome-ignore lint/correctness/useExhaustiveDependencies: Actor/source boundaries retire the entire owned job, never resume a previous source.
     useEffect(() => {
         generation.current++;
@@ -134,17 +118,18 @@ export function useRecordingVerification({
         setFailed('');
         setResult(null);
         setProgress(null);
-        const selectedKey = file.current?.files?.[0];
-        const password =
-            form.current?.querySelector<HTMLInputElement>('[name="evidence-passphrase"]')?.value ??
-            '';
+        const selectedKey = keyInput.read();
         const owned = () =>
             token === generation.current &&
             owner.current.access === access &&
             owner.current.source === source &&
             access.status() !== 'closed';
         try {
-            const chosen = await readEvidenceKey(selectedKey, password, stopped.signal);
+            const chosen = await readEvidenceKey(
+                selectedKey.file,
+                selectedKey.passphrase,
+                stopped.signal,
+            );
             const completed = await verifyRecordingSource(
                 { source, level, producer: checked ? producer : '', reported, key: chosen },
                 {
@@ -241,13 +226,7 @@ export function useRecordingVerification({
             disabled: busy,
         },
         keyFields: {
-            input: file,
-            form,
-            id: inputID,
-            passwordID,
-            revision,
-            candidate,
-            onCandidate: setCandidate,
+            ...keyInput.fields,
             disabled: busy,
             cached: secrets.fingerprint() !== null,
         },

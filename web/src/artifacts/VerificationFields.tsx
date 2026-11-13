@@ -1,6 +1,7 @@
-import type { ReactNode, RefObject } from 'react';
+import type { ReactNode } from 'react';
 import { Checkbox, PasswordInput, Select, TextInput } from '../ui/material';
 import { t } from '../ui/messages';
+import type { LocalKeyInputFields } from './local-key-input-view';
 
 // One set of actual local options for recording sets, individual recordings and
 // audit snapshots. Only the journal-specific scope is conditional.
@@ -84,14 +85,7 @@ export function LocalKeyFields({
     onCandidate,
     disabled,
     cached = false,
-}: {
-    input: RefObject<HTMLInputElement | null>;
-    form: RefObject<HTMLFormElement | null>;
-    id: string;
-    passwordID: string;
-    revision: number;
-    candidate: boolean;
-    onCandidate(value: boolean): void;
+}: LocalKeyInputFields & {
     disabled: boolean;
     cached?: boolean;
 }) {
