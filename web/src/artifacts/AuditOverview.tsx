@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { exactFlow, type ManagementLocation } from '../application/management-location';
 import type { AuditEventItem, AuditOverviewPage } from '../management/audit-overview';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { ColumnFilter } from '../management/protocol';
@@ -9,7 +10,6 @@ import { uuidEqual, uuidInputPattern } from '../shared/uuid';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { relationID } from '../ui/ManagementJump';
 import { ManagementNotFound } from '../ui/ManagementNotFound';
-import { exactFlow, type ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, TextInput } from '../ui/material';
 import { t } from '../ui/messages';
@@ -38,7 +38,7 @@ export function AuditOverview({
     onSource?: (producer: string) => void;
 }) {
     const navigation = useManagementNavigation();
-    const route = navigation?.location;
+    const route = navigation?.location.page === 'auditlogs' ? navigation.location : undefined;
     const flow = route?.flow;
     const sessionScope = route?.sessionId;
     const view = useAuditView();

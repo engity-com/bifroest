@@ -1,6 +1,6 @@
+import { type ManagementLocation, managementRoot } from '../application/management-location';
 import { uuidText } from '../shared/uuid';
 import type { AdminCrumb } from './AdminBreadcrumbs';
-import type { ManagementLocation } from './management-location';
 import { t } from './messages';
 
 // Hints are displayable opaque identities, never proof of an event's flow.
@@ -58,19 +58,11 @@ export function managementCrumbs(
     const detail = route.id ?? route.eventHint ?? route.recordingHint;
     const { id: _id, eventHint: _event, recordingHint: _recording, ...list } = route;
     const { sessionId: _session, ...flowList } = list;
-    const { flow: _flow, ...sourceList } = flowList;
-    const root: ManagementLocation = {
-        managementFlow: route.managementFlow,
-        page: route.page,
-    };
+    const root = managementRoot(route.managementFlow, route.page);
     return [
         crumb(t('workspaceBifroest'), overview),
         crumb(t(page), root),
-        ...(route.auditlog ? [crumb(route.auditlog, sourceList)] : []),
         ...(route.flow ? [crumb(route.flow, flowList)] : []),
-        ...(route.sessionId
-            ? [crumb(`${t('managementSessionId')}: ${uuidText(route.sessionId)}`, list)]
-            : []),
         ...(detail ? [crumb(uuidText(detail), route)] : []),
     ];
 }

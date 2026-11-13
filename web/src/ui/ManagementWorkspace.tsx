@@ -22,6 +22,7 @@ import {
     useRef,
     useState,
 } from 'react';
+import { type ManagementLocation, managementRoot } from '../application/management-location';
 import { ArtifactSecretsContext, useTabArtifactSecrets } from '../artifacts/session-secrets';
 import type { WebAccess } from '../remember';
 import type { ConnectionActions } from '../terminal/connection-actions';
@@ -33,7 +34,6 @@ import { reportUiError } from './error-report';
 import { hashPath } from './hash-route';
 import { LeftPanelCloseIcon } from './LeftPanelCloseIcon';
 import { managementCrumbs } from './management-crumbs';
-import type { ManagementLocation } from './management-location';
 import { ManagementNavigationContext } from './management-navigation';
 import { Alert, Button } from './material';
 import { t } from './messages';
@@ -85,7 +85,10 @@ export function ManagementWorkspace({
         managementFlow: access.snapshot().flow?.name ?? 'management',
         page: 'server',
     };
-    const [ownRoute, setOwnRoute] = useState({ access, route: root });
+    const [ownRoute, setOwnRoute] = useState<{ access: WebAccess; route: ManagementLocation }>({
+        access,
+        route: root,
+    });
     const route = location ?? (ownRoute.access === access ? ownRoute.route : root);
     const view = route.page;
     const sectionTitle = t(
@@ -195,7 +198,7 @@ export function ManagementWorkspace({
     );
     const navigate = (next: typeof view) => {
         if (active && !disabled && !locked) {
-            const target: ManagementLocation = { managementFlow: route.managementFlow, page: next };
+            const target = managementRoot(route.managementFlow, next);
             if (location && onNavigate) {
                 onNavigate(owner, target);
             } else {
@@ -293,10 +296,9 @@ export function ManagementWorkspace({
                                             <ListItemButton
                                                 key={section}
                                                 component={RouterAnchor}
-                                                to={href({
-                                                    managementFlow: route.managementFlow,
-                                                    page: section,
-                                                })}
+                                                to={href(
+                                                    managementRoot(route.managementFlow, section),
+                                                )}
                                                 selected={
                                                     view === section ||
                                                     (section === 'auditlogs' &&

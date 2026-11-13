@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
+import type { ManagementLocation } from '../application/management-location';
 import type { Scope, WebAccess } from '../remember';
 import type { AuthenticationView } from '../terminal/authentication-view';
-import type { ManagementLocation } from '../ui/management-location';
 import type { ConnectionView, WorkspaceControls } from './model';
 
 export interface WorkspaceCallbacks {

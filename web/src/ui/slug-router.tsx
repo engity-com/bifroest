@@ -8,11 +8,15 @@ import {
     useLocation,
     useNavigate,
 } from 'react-router';
+import {
+    type ManagementLocation,
+    parseManagementLocation,
+} from '../application/management-location';
+import { ViewIDs } from '../application/view-ids';
 import { type Scope, validateScope } from '../remember/protocol';
 import { newViewID } from '../shared/uuid';
 import type { ConnectionView } from '../workspace/model';
 import { hashPath, parseHashTarget } from './hash-route';
-import { type ManagementLocation, parseManagementLocation } from './management-location';
 
 export interface SlugRoute {
     readonly scope: Scope | null;
@@ -123,7 +127,10 @@ export function useSlugRoute(
     // Never persist this generation. A reload must turn even a valid old view ID
     // into a fresh login intent, not reconnect or recover a grant.
     const generation = useRef(newViewID());
-    const publicIds = useRef(new Map<number, string>());
+    const publicIds = useRef(new ViewIDs());
+    useLayoutEffect(() => {
+        publicIds.current.reconcile(connections, activation.current?.view);
+    });
     for (const connection of connections) {
         if (connection.routeId) {
             publicIds.current.set(connection.id, connection.routeId);

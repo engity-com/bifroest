@@ -9,6 +9,8 @@ import {
     useState,
     useSyncExternalStore,
 } from 'react';
+import { AuthorizationHandoff } from '../application/authorization-handoff';
+import type { ManagementLocation } from '../application/management-location';
 import { ApplicationNavigation } from '../application/navigation';
 import type { ProfileResetResult } from '../application/reset-contracts';
 import { ApplicationResetOwner, type ResetBoundary } from '../application/reset-owner';
@@ -34,7 +36,6 @@ import {
     loginOptionFor,
     loginOptionKey,
 } from './link-metadata';
-import type { ManagementLocation } from './management-location';
 import { ActionIcon, Tooltip } from './material';
 import { t } from './messages';
 import { preferredUsername, saveSuccessfulUsername } from './preferences';
@@ -61,10 +62,8 @@ export function App({
         metadata.loginOptions[0]?.requestUser ? preferredUsername(metadata.scope) : '',
     );
     const access = useRef<WebAccess | null>(null);
-    // An independently confirmed primary may still be enrolling RememberMe. Keep
-    // that owning grant recoverable without confusing it with an internal tab's
-    // active selection (for example when a connecting tab is retired).
-    const candidate = useRef<WebAccess | null>(null);
+    const [handoff] = useState(() => new AuthorizationHandoff<WebAccess>());
+    const handoffState = useSyncExternalStore(handoff.subscribe, handoff.getSnapshot);
     const savedHandle = useRef<BrowserBinding | null>(null);
     const confirmationHandle = useRef<BrowserBinding | null>(null);
     const operation = useRef<AbortController | null>(null);
@@ -93,7 +92,7 @@ export function App({
     }, []);
     const [resetOwner] = useState(() => new ApplicationResetOwner());
     const [noticeOpen, setNoticeOpen] = useState(false);
-    const [authorizationEvent, setAuthorizationEvent] = useState<WebAccess | null>(null);
+    const authorizationEvent = handoff.event;
     const [retiredAccess, setRetiredAccess] = useState<WebAccess | null>(null);
     const [tabCount, setTabCount] = useState(0);
     const views = useRef<readonly ConnectionView[]>([]);
@@ -112,7 +111,7 @@ export function App({
                 : new Map([...previous].filter(([owner]) => owners.has(owner))),
         );
     }, []);
-    const [rememberUncertain, setRememberUncertain] = useState(false);
+    const rememberUncertain = handoffState.phase === 'uncertain';
     const [loginChoice, setLoginChoice] = useState(() =>
         metadata.loginOptions[0] ? loginOptionKey(metadata.loginOptions[0]) : '',
     );
@@ -231,9 +230,7 @@ export function App({
                         );
                     }
                     access.current = selected.access;
-                    if (candidate.current === selected.access) {
-                        candidate.current = null;
-                    }
+                    handoff.acknowledge(selected.access);
                     setSnapshot(selected.access.snapshot());
                     setActiveView(selected.id);
                     setLoginOpen(false);
@@ -298,6 +295,7 @@ export function App({
         readSaved,
         attempt,
         navigation,
+        handoff,
     ]);
     useEffect(() => {
         void readSaved();
@@ -309,20 +307,20 @@ export function App({
         };
     }, [readSaved, attempt, navigation]);
 
-    const selectAccess = useCallback((selected: WebAccess | null) => {
-        if (candidate.current !== null && candidate.current !== selected) {
-            return;
-        }
-        if (candidate.current === selected) {
-            candidate.current = null;
-        }
-        access.current = selected;
-        setSnapshot(selected?.snapshot() ?? null);
-        if (selected === null) {
-            setAuthorizationEvent(null);
-            setLoginOpen(false);
-        }
-    }, []);
+    const selectAccess = useCallback(
+        (selected: WebAccess | null) => {
+            if (!handoff.acknowledge(selected)) {
+                return;
+            }
+            access.current = selected;
+            setSnapshot(selected?.snapshot() ?? null);
+            if (selected === null) {
+                handoff.clear();
+                setLoginOpen(false);
+            }
+        },
+        [handoff],
+    );
 
     const selectView = useCallback(
         (selected: ConnectionView | null, replace = false) => {
@@ -481,13 +479,13 @@ export function App({
         setNotice({
             key: enrollmentMayHaveCommitted ? 'unknown' : 'cancelled',
             color: 'yellow',
-            ...(enrollmentMayHaveCommitted && candidate.current
-                ? { context: candidate.current.snapshot() }
+            ...(enrollmentMayHaveCommitted && handoff.candidate
+                ? { context: handoff.candidate.snapshot() }
                 : {}),
         });
         if (enrollmentMayHaveCommitted) {
             reportUiError('application', new RememberMeError('outcome-unknown'));
-            setRememberUncertain(true);
+            handoff.uncertain();
             setLoginOpen(false);
         }
         void readSaved();
@@ -564,14 +562,13 @@ export function App({
                             saveSuccessfulUsername(selectedScope, user);
                         }
                         access.current = result;
-                        candidate.current = result;
                         setSnapshot(result.snapshot());
                         if (
-                            slugRoute.management &&
-                            (result.snapshot().environment !== 'management' ||
-                                (slugRoute.management.managementFlow !== '' &&
-                                    result.snapshot().flow?.name !==
-                                        slugRoute.management.managementFlow))
+                            !handoff.offer(
+                                result,
+                                slugRoute.management?.managementFlow ?? null,
+                                remember,
+                            )
                         ) {
                             setNotice({
                                 key: 'managementRouteMismatch',
@@ -583,7 +580,6 @@ export function App({
                             return false;
                         }
                         setClosing(false);
-                        setRememberUncertain(false);
                         return true;
                     },
                 });
@@ -596,20 +592,16 @@ export function App({
                 return;
             }
             const result = completed.access;
-            const uncertain = completed.enrollment === 'unknown';
             if (completed.enrollment === 'registered') {
                 setNotice({ key: 'registered', color: 'green', context: result.snapshot() });
             } else if (completed.error !== undefined) {
                 setNotice({ ...errorNotice(completed.error), context: result.snapshot() });
             }
-            setRememberUncertain(uncertain);
             if (current === generation.current) {
+                handoff.complete(result, completed.enrollment);
                 setTerminalLogin(null);
                 attempt.clearProvider();
                 setLoginOpen(false);
-                if (!uncertain) {
-                    setAuthorizationEvent(result);
-                }
             }
         });
     }
@@ -626,14 +618,8 @@ export function App({
                 return;
             }
             access.current = result;
-            candidate.current = result;
             setSnapshot(result.snapshot());
-            if (
-                slugRoute.management &&
-                (result.snapshot().environment !== 'management' ||
-                    (slugRoute.management.managementFlow !== '' &&
-                        result.snapshot().flow?.name !== slugRoute.management.managementFlow))
-            ) {
+            if (!handoff.offer(result, slugRoute.management?.managementFlow ?? null, false)) {
                 setNotice({
                     key: 'managementRouteMismatch',
                     color: 'red',
@@ -644,8 +630,7 @@ export function App({
             }
             setClosing(false);
             setLoginOpen(false);
-            setRememberUncertain(false);
-            setAuthorizationEvent(result);
+            handoff.complete(result, 'none');
         });
     }
 
@@ -680,10 +665,7 @@ export function App({
                 return;
             }
             access.current = null;
-            if (candidate.current === selected) {
-                candidate.current = null;
-            }
-            setAuthorizationEvent((event) => (event === selected ? null : event));
+            handoff.release(selected);
             setSnapshot(null);
             setTerminalLogin(null);
             setClosing(false);
@@ -691,7 +673,6 @@ export function App({
             setApplicationMenuOpen(false);
             setRetiredAccess(selected);
             setLoginOpen(false); // The remaining active tab is selected by the workspace.
-            setRememberUncertain(false);
             attempt.retire();
             setNotice({ ...cleanupNotice(result, 'loggedOut'), context: selected.snapshot() });
         } catch (error) {
@@ -738,20 +719,18 @@ export function App({
             ...new Set([
                 ...views.current.map((view) => view.access),
                 ...(access.current ? [access.current] : []),
-                ...(candidate.current ? [candidate.current] : []),
+                ...(handoff.candidate ? [handoff.candidate] : []),
                 ...(retiredAccess ? [retiredAccess] : []),
             ]),
         ];
     }
     function resetViews() {
-        candidate.current = null;
+        handoff.clear();
         access.current = null;
         savedHandle.current = null;
         confirmationHandle.current = null;
         setSnapshot(null);
-        setAuthorizationEvent(null);
         setRetiredAccess(null);
-        setRememberUncertain(false);
         setTerminalLogin(null);
         attempt.retire();
         setLoginOpen(false);

@@ -1,8 +1,12 @@
 import { CircularProgress } from '@mui/material';
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
+import {
+    exactFlow,
+    type ManagementLocation,
+    managementRoot,
+} from '../application/management-location';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
-import { CursorPages } from '../shared/cursor-pages';
 import { uuidEqual, uuidText } from '../shared/uuid';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
@@ -11,7 +15,6 @@ import { useDetailRefresh } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
 import { bookmarkPath as managementPath } from '../ui/hash-route';
 import { ManagementNotFound } from '../ui/ManagementNotFound';
-import { exactFlow, type ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button } from '../ui/material';
 import { t } from '../ui/messages';
@@ -20,19 +23,13 @@ import { useOwnerKey } from '../ui/use-owner-key';
 import type { SessionAction } from './action';
 import { FlowOverview } from './FlowOverview';
 import { m, sessionStateLabel } from './messages';
-import type {
-    ColumnFilter,
-    FlowSummary,
-    Page,
-    SessionItem,
-    SessionOptions,
-    VersionInfo,
-} from './protocol';
+import type { ColumnFilter, SessionItem, SessionOptions } from './protocol';
 import { SessionActionDialog } from './SessionActionDialog';
 import { SessionArtifactLinks } from './SessionArtifactLinks';
 import { SessionDetails } from './SessionDetails';
 import { SessionTarget, type SessionTargetValue } from './SessionTarget';
 import { sessionField as field, sessionTime as when } from './session-display';
+import { useManagementReads } from './use-management-reads';
 import { useSessionAction } from './use-session-action';
 import { VersionPage } from './VersionPage';
 
@@ -54,7 +51,6 @@ function OwnedManagementPanel({
     onActionLock,
     view,
 }: ManagementPanelProps) {
-    const [flows, setFlows] = useState<Page<FlowSummary> | null>(null);
     const [target, setTarget] = useState<SessionTargetValue>({
         flow: '',
         id: '',
@@ -77,43 +73,60 @@ function OwnedManagementPanel({
     } | null>(null);
     const mutationRoute = useRef<ManagementLocation | null>(null);
     const consumedRoute = useRef<string | null>(null);
-    const loadedFlow = useRef<string | null>(null);
     const returnRoute = useRef<ManagementLocation | null>(null);
-    const [version, setVersion] = useState<VersionInfo | null>(null);
-    const [buildVersion, setBuildVersion] = useState<VersionInfo | null>(null);
-    const [sessions, setSessions] = useState<Page<SessionItem> | null>(null);
-    const [selected, setSelected] = useState<SessionItem | null>(null);
-    const [sessionFilter, setSessionFilter] = useState<ColumnFilter | null>(null);
-    const [flowFilter, setFlowFilter] = useState<ColumnFilter | null>(null);
-    const [reading, setBusy] = useState(false);
     const [error, setError] = useState<'denied' | 'unavailable' | 'not-found' | null>(null);
-    const [readCompletion, setReadCompletion] = useState(0);
-    const [loading, setLoading] = useState<
-        'sessions' | 'flows' | 'version' | 'build' | 'details' | null
-    >(null);
-    const [sessionPage, setSessionPage] = useState(1);
-    const [sessionQuery, setSessionQuery] = useState('');
-    const [sessionSort, setSessionSort] = useState<'asc' | 'desc'>('asc');
-    const sessionCursors = useRef(new CursorPages());
-    const [flowPage, setFlowPage] = useState(1);
-    const [flowQuery, setFlowQuery] = useState('');
-    const [flowSort, setFlowSort] = useState<'asc' | 'desc'>('asc');
-    const flowCursors = useRef(new CursorPages());
-    const [versionFailed, setVersionFailed] = useState(false);
     const attempted = useRef({ sessions: false, version: false, flows: false, build: false });
     const detailElement = useRef<HTMLElement | null>(null);
     const listElement = useRef<HTMLDivElement | null>(null);
     const returningToList = useRef(false);
     const detailID = useId();
-    const request = useRef<AbortController | null>(null);
-    const generation = useRef(0);
-    const lastFilter = useRef<SessionOptions>({});
     const isActive = useRef(active);
     isActive.current = active;
     const [typed, setTyped] = useState('');
+    const { model: reads, state: readState } = useManagementReads(access, {
+        allowed: (): boolean =>
+            !disabled && ['idle', 'confirmed'].includes(mutation.owner.getSnapshot().phase),
+        sessionsMatch: (options) =>
+            !routeNow.current || routeNow.current.flow === (options.flow || undefined),
+        detailMatches: (item) =>
+            !routeNow.current ||
+            (routeNow.current.flow === item.flow && uuidEqual(routeNow.current.id, item.id)),
+        starting: () => setError(null),
+        failed: (error, resource) => {
+            reportUiError('management-read', error);
+            setError(
+                error instanceof RememberMeError && error.code === 'denied'
+                    ? 'denied'
+                    : resource === 'details' &&
+                        error instanceof RememberMeError &&
+                        error.code === 'not-found'
+                      ? 'not-found'
+                      : 'unavailable',
+            );
+        },
+    });
+    const {
+        flows,
+        version,
+        buildVersion,
+        sessions,
+        selected,
+        sessionFilter,
+        flowFilter,
+        loading,
+        sessionPage,
+        sessionQuery,
+        sessionSort,
+        flowPage,
+        flowQuery,
+        flowSort,
+        versionFailed,
+        completion: readCompletion,
+    } = readState;
+    const reading = loading !== null;
     const mutation = useSessionAction(access, active, {
-        canPrepare: () => active && !disabled && request.current === null,
-        canConfirm: () => active && !disabled && request.current === null,
+        canPrepare: () => active && !disabled && !reads.busy,
+        canConfirm: () => active && !disabled && !reads.busy,
         lock: onActionLock,
         dispatched: () => {
             mutationRoute.current = route?.id ? route : null;
@@ -121,8 +134,7 @@ function OwnedManagementPanel({
         },
         settled: () => {
             setTyped('');
-            setSessions(null);
-            setSelected(null);
+            reads.clearSessions();
         },
         failed: (error, changing) => {
             if (changing) {
@@ -148,20 +160,11 @@ function OwnedManagementPanel({
         mutation.state.phase === 'confirmed' || mutation.state.phase === 'unknown'
             ? { kind: mutation.state.phase, preview: mutation.state.preview }
             : null;
-    // The parent boundary mounts a fresh read view for every access owner.
-    // Cleanup only retires outstanding work; tab/page activation is not a reset.
-    useEffect(() => {
-        return () => {
-            generation.current++;
-            request.current?.abort();
-            request.current = null;
-        };
-    }, []);
     // Read intent belongs to the first active, enabled view of this access, not to
     // mounting a background tab. Mark attempts before dispatch: failures, view
     // changes and cleared mutation results must never cause an automatic retry.
     const readInitialView = useEffectEvent(() => {
-        if (!active || disabled || busy || request.current !== null || notice?.kind === 'unknown') {
+        if (!active || disabled || busy || reads.busy || notice?.kind === 'unknown') {
             return;
         }
         if (view === 'sessions' && !route && !attempted.current.sessions) {
@@ -181,22 +184,22 @@ function OwnedManagementPanel({
     // biome-ignore lint/correctness/useExhaustiveDependencies: Access/view are read intents. The completion counter also advances the serialized initial server reads when React batches busy=true/false.
     useEffect(() => {
         if (active && !disabled && !busy) {
-            const current = generation.current;
+            const current = reads.epoch;
             // Commit ownership before dispatch. StrictMode's setup/cleanup replay
             // retires the first lease without sending a duplicate server request.
             queueMicrotask(() => {
-                if (current === generation.current) {
+                if (current === reads.epoch) {
                     readInitialView();
                 }
             });
         }
-    }, [access, active, disabled, busy, view, readCompletion]);
+    }, [access, active, disabled, busy, view, readCompletion, reads]);
     const readRoute = useEffectEvent(() => {
         if (
             !active ||
             disabled ||
             busy ||
-            request.current !== null ||
+            reads.busy ||
             !route ||
             consumedRoute.current === routeKey
         ) {
@@ -206,13 +209,13 @@ function OwnedManagementPanel({
         setError(null);
         if (route.id && route.flow) {
             if (!uuidEqual(selected?.id, route.id) || selected?.flow !== route.flow) {
-                setSelected(null);
+                reads.clearSelection();
                 void show({ flow: route.flow, id: route.id });
             }
             return;
         }
-        setSelected(null);
-        if (loadedFlow.current === (route.flow ?? '') && sessions !== null) {
+        reads.clearSelection();
+        if (readState.loadedFlow === (route.flow ?? '') && sessions !== null) {
             return;
         }
         const native =
@@ -225,11 +228,7 @@ function OwnedManagementPanel({
               : exactFlow(sessionFilter)
                 ? null
                 : sessionFilter;
-        setSessions(null);
-        setSessionPage(1);
-        sessionCursors.current.reset();
-        setSessionFilter(filter);
-        setSessionQuery(native?.query ?? '');
+        reads.sessionIntent(filter, native?.query ?? '');
         void loadSessions(
             false,
             {
@@ -265,9 +264,13 @@ function OwnedManagementPanel({
             : exactFlow(sessionFilter)
               ? null
               : sessionFilter;
-        lastFilter.current = { ...lastFilter.current, flow: parent.flow ?? '', filter, after: '' };
-        setSessionFilter(filter);
-        loadedFlow.current = parent.flow ?? '';
+        reads.invalidateSessions({
+            ...reads.lastFilter,
+            flow: parent.flow ?? '',
+            filter,
+            after: '',
+        });
+        reads.sessionFilter(filter);
         consumedRoute.current = JSON.stringify(parent);
         navigation.navigate(parent, true);
     });
@@ -308,65 +311,14 @@ function OwnedManagementPanel({
             navigation.navigate(returnRoute.current ?? parent);
             return;
         }
-        setSelected(null);
+        reads.clearSelection();
     }
     function cancel() {
         if (sending) {
             mutation.owner.stopWaiting();
             return;
         }
-        generation.current++;
-        request.current?.abort();
-        request.current = null;
-        setBusy(false);
-        setLoading(null);
-    }
-    async function run(
-        action: (signal: AbortSignal, current: number) => Promise<void>,
-        resource: typeof loading = null,
-    ) {
-        if (
-            disabled ||
-            request.current !== null ||
-            !['idle', 'confirmed'].includes(mutation.owner.getSnapshot().phase)
-        ) {
-            return;
-        }
-        const controller = new AbortController();
-        const current = ++generation.current;
-        request.current = controller;
-        setBusy(true);
-        setLoading(resource);
-        setError(null);
-        try {
-            await action(controller.signal, current);
-        } catch (error) {
-            if (
-                current === generation.current &&
-                !(error instanceof RememberMeError && error.code === 'cancelled')
-            ) {
-                reportUiError('management-read', error);
-                setError(
-                    error instanceof RememberMeError && error.code === 'denied'
-                        ? 'denied'
-                        : resource === 'details' &&
-                            error instanceof RememberMeError &&
-                            error.code === 'not-found'
-                          ? 'not-found'
-                          : 'unavailable',
-                );
-                if (resource === 'version') {
-                    setVersionFailed(true);
-                }
-            }
-        } finally {
-            if (current === generation.current) {
-                request.current = null;
-                setBusy(false);
-                setLoading(null);
-                setReadCompletion((value) => value + 1);
-            }
-        }
+        reads.cancel();
     }
     async function loadFlows(
         after = '',
@@ -376,50 +328,24 @@ function OwnedManagementPanel({
         filter = flowFilter,
     ) {
         attempted.current.flows = true;
-        await run(async (signal, current) => {
-            const result = await access.managementFlows(
-                { after, query, filter, ...(direction === 'desc' ? { sort: 'name-desc' } : {}) },
-                signal,
-            );
-            if (current === generation.current) {
-                setFlows(result);
-                setFlowPage(index + 1);
-                setFlowQuery(query);
-                setFlowSort(direction);
-                setFlowFilter(filter);
-                if (index === 0) {
-                    flowCursors.current.reset();
-                }
-                flowCursors.current.completed(index, result.next);
-            }
-        }, 'flows');
+        await reads.flows(
+            { after, query, filter, ...(direction === 'desc' ? { sort: 'name-desc' } : {}) },
+            index,
+        );
     }
     async function loadVersion(long = false) {
         if (!long) {
             attempted.current.version = true;
         }
-        await run(
-            async (signal, current) => {
-                const result = await access.managementVersion(long, signal);
-                if (current === generation.current) {
-                    if (long) {
-                        setBuildVersion(result);
-                    } else {
-                        setVersion(result);
-                        setVersionFailed(false);
-                    }
-                }
-            },
-            long ? 'build' : 'version',
-        );
+        await reads.version(long);
     }
     async function refreshSessions() {
         await loadSessions(false, {
-            ...lastFilter.current,
+            ...reads.lastFilter,
             after: '',
-            flow: navigation ? (route?.flow ?? '') : (lastFilter.current.flow ?? ''),
-            user: lastFilter.current.user ?? '',
-            state: lastFilter.current.state ?? 'all',
+            flow: navigation ? (route?.flow ?? '') : (reads.lastFilter.flow ?? ''),
+            user: reads.lastFilter.user ?? '',
+            state: reads.lastFilter.state ?? 'all',
         });
     }
     async function loadSessions(next = false, initial?: SessionOptions, index?: number) {
@@ -427,7 +353,7 @@ function OwnedManagementPanel({
         const filters: SessionOptions =
             initial ??
             (next
-                ? { ...lastFilter.current, after: sessions?.next ?? '' }
+                ? { ...reads.lastFilter, after: sessions?.next ?? '' }
                 : {
                       state: 'all',
                       filter: sessionFilter,
@@ -436,39 +362,10 @@ function OwnedManagementPanel({
                       ...(route?.flow ? { flow: route.flow } : {}),
                   });
         const pageIndex = index ?? (next ? sessionPage : 0);
-        await run(async (signal, current) => {
-            const result = await access.managementSessions(filters, signal);
-            if (
-                current === generation.current &&
-                (!routeNow.current || routeNow.current.flow === (filters.flow || undefined))
-            ) {
-                lastFilter.current = filters;
-                loadedFlow.current = filters.flow ?? '';
-                setSessions(result);
-                setSelected(null);
-                setSessionPage(pageIndex + 1);
-                if (pageIndex === 0) {
-                    sessionCursors.current.reset();
-                }
-                sessionCursors.current.completed(pageIndex, result.next);
-                setSessionQuery(filters.query ?? '');
-                setSessionSort(filters.sort === 'flow-desc' ? 'desc' : 'asc');
-                setSessionFilter(filters.filter ?? null);
-            }
-        }, 'sessions');
+        await reads.sessions(filters, pageIndex);
     }
     async function show(item: Pick<SessionItem, 'flow' | 'id'>) {
-        await run(async (signal, current) => {
-            const result = await access.managementSession(item.flow, item.id, signal);
-            if (
-                current === generation.current &&
-                (!routeNow.current ||
-                    (routeNow.current.flow === item.flow &&
-                        uuidEqual(routeNow.current.id, item.id)))
-            ) {
-                setSelected(result);
-            }
-        }, 'details');
+        await reads.detail(item);
     }
     function openSession(item: Pick<SessionItem, 'flow' | 'id'>) {
         if (navigation) {
@@ -516,7 +413,7 @@ function OwnedManagementPanel({
         busy,
         () => {
             if (view === 'sessions') {
-                void loadSessions(false, { ...lastFilter.current, filter: null, after: '' }, 0);
+                void loadSessions(false, { ...reads.lastFilter, filter: null, after: '' }, 0);
             } else if (view === 'server') {
                 void loadFlows('', 0, flowQuery, flowSort, null);
             }
@@ -566,11 +463,13 @@ function OwnedManagementPanel({
                                               ? 'workspaceVersion'
                                               : 'workspaceSessions',
                                       ),
-                                      to: managementPath(access.snapshot().scope, {
-                                          managementFlow:
+                                      to: managementPath(
+                                          access.snapshot().scope,
+                                          managementRoot(
                                               access.snapshot().flow?.name ?? 'management',
-                                          page: view === 'version' ? 'version' : 'sessions',
-                                      }),
+                                              view === 'version' ? 'version' : 'sessions',
+                                          ),
+                                      ),
                                       ...(selected
                                           ? { onClick: returnToSessions, disabled: locked }
                                           : {}),
@@ -668,7 +567,7 @@ function OwnedManagementPanel({
                             void loadFlows('', 0, query, flowSort, filter);
                         },
                         page: (index) => {
-                            const cursor = flowCursors.current.at(index);
+                            const cursor = reads.flowCursor(index);
                             if (cursor !== undefined && index <= flowPage) {
                                 void loadFlows(cursor, index);
                             }
@@ -703,7 +602,7 @@ function OwnedManagementPanel({
                         actionField="details"
                         label={t('managementSessionsCaption')}
                         rows={
-                            !route || loadedFlow.current === (route.flow ?? '')
+                            !route || readState.loadedFlow === (route.flow ?? '')
                                 ? (sessions?.items ?? [])
                                 : []
                         }
@@ -774,8 +673,7 @@ function OwnedManagementPanel({
                         onSearch={(query, filter) => {
                             const flow = exactFlow(filter);
                             if (navigation && route && flow !== route.flow) {
-                                setSessionQuery(query);
-                                setSessionFilter(filter);
+                                reads.sessionFilter(filter, query);
                                 const { flow: _flow, id: _id, ...parent } = route;
                                 const next = { ...parent, ...(flow ? { flow } : {}) };
                                 nativeFilterIntent.current = {
@@ -801,27 +699,23 @@ function OwnedManagementPanel({
                         sortField="flow"
                         sortDirection={sessionSort}
                         onPage={(index) => {
-                            const cursor = sessionCursors.current.at(index);
+                            const cursor = reads.sessionCursor(index);
                             if (cursor !== undefined && index <= sessionPage) {
                                 void loadSessions(
                                     false,
-                                    { ...lastFilter.current, after: cursor },
+                                    { ...reads.lastFilter, after: cursor },
                                     index,
                                 );
                             }
                         }}
                         onQuery={(query) => {
-                            void loadSessions(
-                                false,
-                                { ...lastFilter.current, after: '', query },
-                                0,
-                            );
+                            void loadSessions(false, { ...reads.lastFilter, after: '', query }, 0);
                         }}
                         onSort={(direction) => {
                             void loadSessions(
                                 false,
                                 {
-                                    ...lastFilter.current,
+                                    ...reads.lastFilter,
                                     after: '',
                                     sort: direction === 'asc' ? 'flow-asc' : 'flow-desc',
                                 },

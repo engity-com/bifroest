@@ -1,11 +1,11 @@
 import { useContext, useRef, useState } from 'react';
+import type { ManagementLocation } from '../application/management-location';
 import type { AuditlogSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { AdminDetailContext } from '../ui/admin-navigation';
 import { bookmarkPath } from '../ui/hash-route';
 import { managementCrumbs } from '../ui/management-crumbs';
-import type { ManagementLocation } from '../ui/management-location';
 import { ManagementNavigationContext, useManagementNavigation } from '../ui/management-navigation';
 import { ArtifactEvidencePanel } from './ArtifactEvidencePanel';
 import { AuditSourceContext } from './AuditSourceContext';

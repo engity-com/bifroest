@@ -9,7 +9,7 @@ import {
     useState,
     useSyncExternalStore,
 } from 'react';
-import type { ReadProgress as Progress } from '../management/progress';
+import type { ManagementLocation } from '../application/management-location';
 import type { RecordingSummary } from '../management/protocol';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
@@ -21,7 +21,6 @@ import { reportUiError } from '../ui/error-report';
 import { bookmarkPath } from '../ui/hash-route';
 import { relationFlow } from '../ui/ManagementJump';
 import { ManagementNotFound } from '../ui/ManagementNotFound';
-import type { ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert } from '../ui/material';
 import { type Message, t } from '../ui/messages';
@@ -36,23 +35,18 @@ import type { AuditEventRow } from './audit-events';
 import { EvidenceDialogs } from './EvidenceDialogs';
 import { EvidenceVerificationToolbar } from './EvidenceVerificationToolbar';
 import type { EvidenceFailure, SigningExpectation as UsedExpectation } from './evidence-details';
-import { EvidenceDocument } from './evidence-document';
-import { EvidenceJob } from './evidence-job';
 import { EvidenceError, type EvidenceMetadata } from './evidence-protocol';
+import { EvidenceSession } from './evidence-session';
+import { matchesEvidenceTarget } from './evidence-target';
 import type { ArtifactEvidencePanelProps, ArtifactPhase as Phase } from './evidence-view';
 import { LocalArtifactDownload } from './local-download';
-import { readEvidenceKey } from './local-key-input';
-import { inspectProtection } from './protection';
-import { type ArtifactRequest, artifactFields, type ReceivedArtifact } from './protocol';
+import type { ArtifactRequest, ReceivedArtifact } from './protocol';
 import { RecordingEvidenceView } from './RecordingEvidenceView';
-import { type LocalRecordingIndex, recordingVerificationFromIndex } from './recording-index';
-import { prepareRecordingPreview } from './recording-preview';
-import { RecordingRuntimeOwner } from './recording-runtime-owner';
+import type { LocalRecordingIndex } from './recording-index';
 import { ArtifactSecretsBoundary, useArtifactSecrets } from './session-secrets';
 import { validSigningID } from './signing-id';
 import { useLocalKeyInput } from './use-local-key-input';
-import type { EvidenceKey, RecordingRuntime } from './verify';
-import { verifyEvidence } from './verify-evidence';
+import type { EvidenceKey } from './verify';
 import './recording-player.css';
 
 function failure(error: unknown): Message {
@@ -107,6 +101,7 @@ function OwnedArtifactEvidencePanel({
     const secrets = useArtifactSecrets(access);
     const cacheRevision = secrets.getSnapshot().revision;
     const navigation = useManagementNavigation();
+    const standalone = navigation === null;
     const route = navigation?.location.page === view ? navigation.location : null;
     const routeRef = useRef(route);
     if (route !== null) {
@@ -121,16 +116,20 @@ function OwnedArtifactEvidencePanel({
     const returnRoute = useRef<ManagementLocation | null>(null);
     const routeKey = JSON.stringify(route);
     const routedSummary = useRef<RecordingSummary | null>(null);
-    const document = useMemo(
+    const session = useMemo(
         () =>
-            new EvidenceDocument(
-                (request) =>
+            new EvidenceSession(access, {
+                accepts: (request) =>
                     !disabled &&
                     access.status() !== 'closed' &&
                     request.kind === (view === 'recordings' ? 'recording' : 'audit'),
-            ),
-        [access, disabled, view],
+                owns: () => ownerRef.current === access,
+                matches: (request) => matchesEvidenceTarget(request, routeRef.current, standalone),
+                target: () => routeRef.current,
+            }),
+        [access, disabled, view, standalone],
     );
+    const { document, job } = session;
     const { opened, selection, received, protection, recordingInfo, playback, receipt } =
         useSyncExternalStore(document.subscribe, document.getSnapshot);
     const updateReceipt = document.updateReceipt;
@@ -158,10 +157,6 @@ function OwnedArtifactEvidencePanel({
     }, [access]);
     const attemptedVerification = useRef(false);
     const [decryptOpen, setDecryptOpen] = useState(false);
-    const job = useMemo(
-        () => new EvidenceJob(() => document.getSnapshot().opened !== null),
-        [document],
-    );
     const { phase, progress } = useSyncExternalStore(job.subscribe, job.getSnapshot);
     useEffect(() => {
         onPhaseChange?.(phase);
@@ -201,36 +196,16 @@ function OwnedArtifactEvidencePanel({
     const [auditlog, setAuditlog] = useState('');
     const [id, setID] = useState('');
     const heading = useRef<HTMLDivElement | null>(null);
-    const recordingRuntime = useRef<{
-        access: WebAccess;
-        value: RecordingRuntimeOwner;
-    } | null>(null);
     function retireRecordingRuntime() {
-        const current = recordingRuntime.current;
-        recordingRuntime.current = null;
-        current?.value.dispose();
-    }
-    async function runtimeFor(
-        image: ReceivedArtifact,
-        signal: AbortSignal,
-    ): Promise<RecordingRuntime> {
-        let owner = recordingRuntime.current;
-        if (!owner || owner.access !== access) {
-            retireRecordingRuntime();
-            owner = { access, value: new RecordingRuntimeOwner(() => ownerRef.current === access) };
-            recordingRuntime.current = owner;
-        }
-        return owner.value.acquire(image, signal);
+        session.clearRuntime();
     }
     const downloads = useRef(new LocalArtifactDownload());
     const forgetEvidence = useEffectEvent(() => {
         appliedSensitive.current = effectiveSensitive;
-        retireRecordingRuntime();
         setOptionsOpen(false);
-        job.retire();
+        session.retire();
         downloads.current.clear();
         clearInputs();
-        document.close();
         attemptedVerification.current = false;
         setDecryptOpen(false);
         seeded.current = '';
@@ -277,10 +252,8 @@ function OwnedArtifactEvidencePanel({
     // biome-ignore lint/correctness/useExhaustiveDependencies: Actor/page/availability boundaries retire local output and unvalidated input, never a replacement login.
     useEffect(() => {
         appliedSensitive.current = effectiveSensitive;
-        retireRecordingRuntime();
-        job.retire();
+        session.retire();
         downloads.current.clear();
-        document.close();
         consumedRoute.current = null;
         consumedSelection.current = null;
         returnRoute.current = null;
@@ -304,12 +277,10 @@ function OwnedArtifactEvidencePanel({
         setID('');
         clearInputs();
         return () => {
-            retireRecordingRuntime();
-            job.retire();
+            session.retire();
             downloads.current.clear();
-            document.close();
         };
-    }, [access, disabled, view]);
+    }, [access, disabled, view, session]);
     useEffect(() => {
         if (
             !disabled &&
@@ -335,24 +306,7 @@ function OwnedArtifactEvidencePanel({
         }
     }, [active, backgroundAllowed]);
     const current = (token: OperationLease, signal: AbortSignal) =>
-        token.current() &&
-        !signal.aborted &&
-        access.status() !== 'closed' &&
-        ownerRef.current === access;
-    function matchesRoute(request: ArtifactRequest): boolean {
-        const target = routeRef.current;
-        if (!target) {
-            return navigation === null;
-        }
-        if (request.kind === 'audit') {
-            return target.page === 'auditlogs' && target.auditlog === request.auditlog;
-        }
-        return (
-            target.page === 'recordings' &&
-            uuidEqual(target.id ?? target.recordingHint, request.id) &&
-            target.auditlogHint === request.auditlog
-        );
-    }
+        !signal.aborted && session.current(token);
     async function run(
         next: Phase,
         action: (
@@ -402,9 +356,11 @@ function OwnedArtifactEvidencePanel({
             },
         );
     }
-    function resetResult() {
+    function resetResult(invalidate = true) {
         setVerificationFailure(null);
-        updateReceipt({ type: 'invalidate-verification' });
+        if (invalidate) {
+            updateReceipt({ type: 'invalidate-verification' });
+        }
         setAuditEvent(null);
         downloads.current.clear();
         setNotice(null);
@@ -425,7 +381,7 @@ function OwnedArtifactEvidencePanel({
         if (current(token, signal) && !(managed && auditView?.local)) {
             updateReceipt({ type: 'expectation', value: checked });
         }
-        const completed = await verifyEvidence(
+        const completed = await session.verify(
             image,
             header,
             key,
@@ -436,34 +392,16 @@ function OwnedArtifactEvidencePanel({
                 sensitive: includeSensitive,
                 indexAudit: managed,
             },
-            {
-                signal,
-                current: () => current(token, signal),
-                matches: () => matchesRoute(image.request),
-                target: () => routeRef.current,
-                recording: runtimeFor,
-                progress: (value) => job.progress(token, value),
-            },
+            secrets,
+            token,
         );
-        if (!current(token, signal)) {
+        if (!completed || !current(token, signal)) {
             return;
         }
-        const { verified: result, auditIndex: preparedIndex, context } = completed;
+        const { verified: result, context } = completed;
         const flow = context.flow;
         const target = routeRef.current;
-        if (key !== null) {
-            secrets.remember(key, result);
-        }
-        resetResult();
-        updateReceipt({
-            type: 'verified',
-            value: result,
-            index: preparedIndex,
-            sensitive: includeSensitive,
-            expectation: checked,
-            flow,
-            session: context.sessionId,
-        });
+        resetResult(false);
         clearInputs();
         if (
             managed &&
@@ -510,8 +448,6 @@ function OwnedArtifactEvidencePanel({
             setValidateIdentity(false);
         }
         const chosen = managed ? verificationKey.read() : null;
-        const chosenFile = chosen?.file;
-        const chosenPassphrase = chosen?.passphrase ?? '';
         resetResult();
         retireRecordingRuntime();
         attemptedVerification.current = false;
@@ -529,20 +465,10 @@ function OwnedArtifactEvidencePanel({
             updateReceipt({ type: 'expectation', value: expected });
         }
         await run('downloading', async (signal, token, stage) => {
-            artifactFields(request);
-            const report = (value: Progress) => {
-                if (current(token, signal)) {
-                    job.progress(token, value);
-                }
-            };
-            const image = await access.downloadArtifact(request, signal, report);
-            if (!current(token, signal)) {
+            const image = await session.receive(request, token);
+            if (!image || !current(token, signal)) {
                 return;
             }
-            if (!matchesRoute(request)) {
-                throw new EvidenceError('cancelled');
-            }
-            document.receive(image);
             seedSigner(
                 'ProducerID' in image.metadata
                     ? image.metadata.ProducerID.toLowerCase()
@@ -553,64 +479,37 @@ function OwnedArtifactEvidencePanel({
                 stage('preparing');
                 await prepareRecording(image, null, signal, token);
                 const binding = sourceVerification.current;
-                const cached = await recordingVerificationFromIndex(
-                    binding.access === access ? binding.index : null,
+                const cached = await session.reuseSourceReceipt(
                     image,
-                    signal,
+                    binding.access === access ? binding.index : null,
+                    () => sourceVerification.current === binding,
+                    token,
                 );
-                if (
-                    cached &&
-                    sourceVerification.current === binding &&
-                    current(token, signal) &&
-                    matchesRoute(request)
-                ) {
+                if (cached && current(token, signal)) {
                     setLevel('private');
-                    updateReceipt({
-                        type: 'verified',
-                        value: cached.verified,
-                        index: null,
-                        sensitive: false,
-                        expectation: {
-                            enabled: cached.verified.metadata.trust === 'pinned',
-                            producer:
-                                cached.verified.metadata.trust === 'pinned'
-                                    ? cached.verified.metadata.producer
-                                    : '',
-                            source: cached.reported ? 'reported' : 'user',
-                        },
-                        flow: cached.verified.metadata.recordingContext?.flow ?? '',
-                        session: cached.verified.metadata.recordingContext?.sessionId ?? '',
-                    });
                 }
                 return;
             }
             stage('inspecting');
-            const header = await inspectProtection(image, signal, scope, report);
-            if (!current(token, signal)) {
+            const inspected = await session.inspect(
+                image,
+                { reuse: false, level, auditScope: scope, selection: chosen },
+                secrets,
+                token,
+            );
+            if (!inspected || !current(token, signal)) {
                 return;
             }
-            document.inspect(header);
-            let key =
-                level === 'outer' || header.expectedRecipient === ''
-                    ? null
-                    : secrets.matching(header.expectedRecipient);
-            if (managed && chosenFile && level === 'private' && header.expectedRecipient !== '') {
-                key = await readEvidenceKey(chosenFile, chosenPassphrase, signal);
-            }
-            if (level === 'outer' || header.expectedRecipient === '' || key !== null) {
-                stage('verifying');
-                await check(
-                    image,
-                    header,
-                    key,
-                    expected,
-                    signal,
-                    token,
-                    managed ? effectiveSensitive : false,
-                );
-            } else {
-                throw new EvidenceError('key-required');
-            }
+            stage('verifying');
+            await check(
+                image,
+                inspected.header,
+                inspected.key,
+                expected,
+                signal,
+                token,
+                managed ? effectiveSensitive : false,
+            );
             if (activeRef.current) {
                 heading.current?.focus({ preventScroll: true });
             }
@@ -623,7 +522,7 @@ function OwnedArtifactEvidencePanel({
         const image = received;
         attemptedVerification.current = true;
         const previousHeader = protection;
-        const { file, passphrase } = verificationKey.read();
+        const selection = verificationKey.read();
         const expected = identity();
         if (!(managed && auditView?.local)) {
             resetResult();
@@ -636,46 +535,24 @@ function OwnedArtifactEvidencePanel({
         await run(
             previousHeader || recordingInfo ? 'verifying' : 'inspecting',
             async (signal, token, stage) => {
-                const header =
-                    image.request.kind === 'recording' && recordingInfo
-                        ? {
-                              producer: recordingInfo.producer,
-                              expectedRecipient: recordingInfo.recipient,
-                          }
-                        : (previousHeader ??
-                          (await inspectProtection(image, signal, scope, (value) => {
-                              if (current(token, signal)) {
-                                  job.progress(token, value);
-                              }
-                          })));
-                if (!current(token, signal)) {
+                const inspected = await session.inspect(
+                    image,
+                    { reuse: true, level, auditScope: scope, selection },
+                    secrets,
+                    token,
+                );
+                if (!inspected || !current(token, signal)) {
                     return;
                 }
-                if ('validation' in header) {
-                    document.inspect(header as EvidenceMetadata);
-                }
-                let key =
-                    level === 'outer' || header.expectedRecipient === ''
-                        ? null
-                        : secrets.matching(header.expectedRecipient);
-                if (level === 'private' && file !== undefined) {
-                    if (header.expectedRecipient === '') {
-                        throw new EvidenceError('key');
-                    }
-                    key = await readEvidenceKey(file, passphrase, signal);
-                }
-                if (level === 'private' && header.expectedRecipient !== '' && key === null) {
-                    throw new EvidenceError('key-required');
-                }
                 stage('verifying');
-                await check(image, header, key, expected, signal, token);
+                await check(image, inspected.header, inspected.key, expected, signal, token);
                 if (
                     image.request.kind === 'recording' &&
                     (level === 'private' || hadPlayback) &&
                     current(token, signal)
                 ) {
                     stage('preparing');
-                    await prepareRecording(image, key, signal, token);
+                    await prepareRecording(image, inspected.key, signal, token);
                 }
             },
         );
@@ -686,28 +563,14 @@ function OwnedArtifactEvidencePanel({
         signal: AbortSignal,
         token: OperationLease,
     ) {
-        job.progress(token, null);
-        const runtime = await runtimeFor(image, signal);
-        const result = await prepareRecordingPreview(runtime, image, key, {
-            signal,
-            current: () => current(token, signal),
-            target: () => routeRef.current,
-            keys: secrets,
-            information: document.information,
-        });
-        // The controller's result crosses an await boundary. A route/access reset
-        // in that interval still must not publish the decoded image to a new owner.
+        const result = await session.prepare(image, key, secrets, token);
         if (!current(token, signal)) {
-            if (result?.kind === 'ready') {
-                result.image.dispose();
-            }
             return;
         }
         if (result?.kind === 'key-required') {
             setDecryptOpen(true);
         } else if (result?.kind === 'ready') {
             setDecryptOpen(false);
-            document.preview(result.source, result.image);
         }
     }
     async function decodeRecording() {
@@ -715,23 +578,21 @@ function OwnedArtifactEvidencePanel({
             return;
         }
         const image = received;
-        const { file, passphrase } = decryptionKey.read();
+        const selection = decryptionKey.read();
         await run('preparing', async (signal, token) => {
-            let key = recordingInfo?.encrypted ? secrets.matching(recordingInfo.recipient) : null;
-            if (file) {
-                key = await readEvidenceKey(file, passphrase, signal);
+            const result = await session.unlock(image, selection, secrets, token);
+            if (current(token, signal) && result?.kind === 'ready') {
+                setDecryptOpen(false);
+            } else if (current(token, signal) && result?.kind === 'key-required') {
+                setDecryptOpen(true);
             }
-            document.clearPlayback();
-            await prepareRecording(image, key, signal, token);
         });
     }
     function closeLocal() {
         appliedSensitive.current = effectiveSensitive;
-        retireRecordingRuntime();
-        job.retire();
+        session.retire();
         resetResult();
         clearInputs();
-        document.close();
         setDecryptOpen(false);
         setDetails(false);
     }
@@ -1135,7 +996,7 @@ function OwnedArtifactEvidencePanel({
                                       to: bookmarkPath(access.snapshot().scope, {
                                           managementFlow:
                                               access.snapshot().flow?.name ?? 'management',
-                                          page: view,
+                                          page: 'recordings',
                                           auditlogHint: opened.auditlog,
                                           flow: recordingFlow || selection?.flow || '',
                                       }),
@@ -1152,10 +1013,16 @@ function OwnedArtifactEvidencePanel({
                                       to: bookmarkPath(access.snapshot().scope, {
                                           managementFlow:
                                               access.snapshot().flow?.name ?? 'management',
-                                          page: view,
                                           ...(opened.kind === 'recording'
-                                              ? { auditlogHint: opened.auditlog, id: opened.id }
-                                              : { auditlog: opened.auditlog }),
+                                              ? {
+                                                    page: 'recordings' as const,
+                                                    auditlogHint: opened.auditlog,
+                                                    id: opened.id,
+                                                }
+                                              : {
+                                                    page: 'auditlogs' as const,
+                                                    auditlog: opened.auditlog,
+                                                }),
                                       }),
                                   },
                               ]
@@ -1182,7 +1049,9 @@ function OwnedArtifactEvidencePanel({
                         }
                         onRecordings={(source) => {
                             sourceHints?.select(source);
-                            navigation?.navigate({ ...route, auditlogHint: source.name });
+                            if (route.page === 'recordings') {
+                                navigation?.navigate({ ...route, auditlogHint: source.name });
+                            }
                         }}
                     />
                 ) : view === 'recordings' ? (
@@ -1203,7 +1072,7 @@ function OwnedArtifactEvidencePanel({
                         onSource={(name) => {
                             if (
                                 navigation &&
-                                route &&
+                                route?.page === 'recordings' &&
                                 (route.id || route.recordingHint) &&
                                 !route.auditlogHint
                             ) {

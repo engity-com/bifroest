@@ -1,11 +1,11 @@
 import { type ComponentType, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import type { ManagementLocation } from '../application/management-location';
 import type { WebAccess } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { GridActionsContext, type GridWork, GridWorkContext } from '../ui/GridWork';
 import { bookmarkPath } from '../ui/hash-route';
 import { ManagementJump } from '../ui/ManagementJump';
 import { managementCrumbs } from '../ui/management-crumbs';
-import type { ManagementLocation } from '../ui/management-location';
 import { ManagementNavigationContext, useManagementNavigation } from '../ui/management-navigation';
 import { Alert } from '../ui/material';
 import { t } from '../ui/messages';
@@ -47,7 +47,10 @@ export function AuditWorkspace({
         managementFlow: access.snapshot().flow?.name ?? 'management',
         page: 'auditlogs',
     };
-    const [legacy, setLegacy] = useState({ access, route: root });
+    const [legacy, setLegacy] = useState<{ access: WebAccess; route: ManagementLocation }>({
+        access,
+        route: root,
+    });
     const route = external
         ? (owner.current.route ?? {
               managementFlow: external.location.managementFlow,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { exactFlow, type ManagementLocation } from '../application/management-location';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { ColumnFilter } from '../management/protocol';
 import { uuidEqual, uuidInputPattern } from '../shared/uuid';
@@ -6,7 +7,6 @@ import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { relationID } from '../ui/ManagementJump';
 import { ManagementNotFound } from '../ui/ManagementNotFound';
-import { exactFlow, type ManagementLocation } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button, TextInput } from '../ui/material';
 import { t } from '../ui/messages';

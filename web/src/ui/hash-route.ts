@@ -1,10 +1,10 @@
-import { type Scope, validateScope } from '../remember/protocol';
-import { resourceID, uuidText } from '../shared/uuid';
 import {
     type ManagementLocation,
     managementPath,
     parseManagementLocation,
-} from './management-location';
+} from '../application/management-location';
+import { type Scope, validateScope } from '../remember/protocol';
+import { resourceID, uuidText } from '../shared/uuid';
 
 export interface HashTarget {
     readonly scope: Scope;

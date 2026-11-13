@@ -1,12 +1,12 @@
 import { expect, it } from 'vitest';
-import { uuidText } from '../src/shared/uuid';
-import { managementCrumbs } from '../src/ui/management-crumbs';
 import {
     exactFlow,
     type ManagementLocation,
     managementPath,
     parseManagementLocation,
-} from '../src/ui/management-location';
+} from '../src/application/management-location';
+import { uuidText } from '../src/shared/uuid';
+import { managementCrumbs } from '../src/ui/management-crumbs';
 
 it('formats only UUID identity fields, never UUID-shaped flow or source names', () => {
     const name = '34e34ab8-7457-4d88-a5e4-c57791775c3a';
@@ -134,10 +134,9 @@ it('uses explicit source collections and never turns an equal source/flow into d
     for (const page of ['auditlogs', 'recordings'] as const) {
         const route: ManagementLocation = {
             managementFlow: 'admin',
-            page,
             ...(page === 'auditlogs'
-                ? { auditlog: 'docker-encrypted' }
-                : { auditlogHint: 'docker-encrypted' }),
+                ? { page: 'auditlogs' as const, auditlog: 'docker-encrypted' }
+                : { page: 'recordings' as const, auditlogHint: 'docker-encrypted' }),
             flow: 'docker-encrypted',
             sessionId: uuid,
         };

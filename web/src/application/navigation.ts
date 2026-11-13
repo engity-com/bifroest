@@ -1,9 +1,9 @@
 import { RememberMeError, type Scope } from '../remember/protocol';
 import { OperationSlot } from '../shared/operation';
 import { SnapshotObservers } from '../shared/snapshot-observers';
-import type { ManagementLocation } from '../ui/management-location';
 import type { ConnectionView } from '../workspace/model';
 import type { LinkMetadata } from './link-metadata';
+import type { ManagementLocation } from './management-location';
 
 export interface ApplicationRouteIntent {
     readonly key: string;

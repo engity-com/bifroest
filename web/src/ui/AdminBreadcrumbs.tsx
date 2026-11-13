@@ -1,5 +1,5 @@
 import { Breadcrumbs, Link, Typography } from '@mui/material';
-import type { ManagementLocation } from './management-location';
+import type { ManagementLocation } from '../application/management-location';
 import { useManagementNavigation } from './management-navigation';
 import { t } from './messages';
 import { RouterAnchor } from './RouterAnchor';

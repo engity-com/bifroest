@@ -2,17 +2,63 @@ import type { Scope } from '../remember/protocol';
 import { validateScope } from '../remember/protocol';
 import { resourceID, uuidBytes } from '../shared/uuid';
 
-export type ManagementPage = 'server' | 'sessions' | 'recordings' | 'auditlogs' | 'version';
-export interface ManagementLocation {
+interface ManagementTarget {
     readonly managementFlow: string;
-    readonly page: ManagementPage;
-    readonly flow?: string;
-    readonly id?: string;
-    readonly auditlog?: string;
-    readonly auditlogHint?: string;
-    readonly eventHint?: string;
-    readonly recordingHint?: string;
-    readonly sessionId?: string;
+}
+type NoEvidence = {
+    readonly auditlog?: never;
+    readonly auditlogHint?: never;
+    readonly eventHint?: never;
+    readonly recordingHint?: never;
+    readonly sessionId?: never;
+};
+export type ManagementLocation = ManagementTarget &
+    (
+        | ({
+              readonly page: 'server' | 'version';
+              readonly flow?: never;
+              readonly id?: never;
+          } & NoEvidence)
+        | ({ readonly page: 'sessions' } & (
+              | { readonly flow?: string; readonly id?: never }
+              | { readonly flow: string; readonly id: string }
+          ) &
+              NoEvidence)
+        | {
+              readonly page: 'recordings';
+              readonly flow?: string;
+              readonly id?: string;
+              readonly auditlogHint?: string;
+              readonly recordingHint?: string;
+              readonly sessionId?: string;
+              readonly auditlog?: never;
+              readonly eventHint?: never;
+          }
+        | {
+              readonly page: 'auditlogs';
+              readonly flow?: string;
+              readonly id?: string;
+              readonly auditlog?: string;
+              readonly eventHint?: string;
+              readonly sessionId?: string;
+              readonly auditlogHint?: never;
+              readonly recordingHint?: never;
+          }
+    );
+export type ManagementPage = ManagementLocation['page'];
+export function managementRoot(managementFlow: string, page: ManagementPage): ManagementLocation {
+    switch (page) {
+        case 'server':
+            return { managementFlow, page };
+        case 'version':
+            return { managementFlow, page };
+        case 'sessions':
+            return { managementFlow, page };
+        case 'recordings':
+            return { managementFlow, page };
+        case 'auditlogs':
+            return { managementFlow, page };
+    }
 }
 const name = (value: string) =>
     /^[A-Za-z0-9.-]{1,255}$/u.test(value) && value !== '.' && value !== '..';
@@ -74,12 +120,20 @@ export function parseManagementLocation(
         if (!source || !log(source) || (entry !== undefined && !id(entry))) {
             return null;
         }
-        result = {
-            managementFlow,
-            page: collection === 'events' ? 'auditlogs' : 'recordings',
-            ...(collection === 'events' ? { auditlog: source } : { auditlogHint: source }),
-            ...(entry ? { id: entry } : {}),
-        };
+        result =
+            collection === 'events'
+                ? {
+                      managementFlow,
+                      page: 'auditlogs',
+                      auditlog: source,
+                      ...(entry ? { id: entry } : {}),
+                  }
+                : {
+                      managementFlow,
+                      page: 'recordings',
+                      auditlogHint: source,
+                      ...(entry ? { id: entry } : {}),
+                  };
     } else if (section === 'auditlogs' && parts.length <= 3) {
         const [auditlog, flow, event] = parts;
         if (

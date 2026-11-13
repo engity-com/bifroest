@@ -3,10 +3,10 @@ import PeopleOutlineIcon from '@mui/icons-material/PeopleOutlineOutlined';
 import ScreenshotMonitorIcon from '@mui/icons-material/ScreenshotMonitor';
 import { Button, IconButton, Link, Tooltip } from '@mui/material';
 import type { MouseEvent, ReactNode } from 'react';
+import type { ManagementLocation } from '../application/management-location';
 import type { Scope } from '../remember/protocol';
 import { resourceID } from '../shared/uuid';
 import { bookmarkPath } from './hash-route';
-import type { ManagementLocation } from './management-location';
 import { useManagementNavigation } from './management-navigation';
 import { type Message, t } from './messages';
 

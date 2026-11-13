@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useContext, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import { exactFlow } from '../application/management-location';
 import type { ReadProgress as Progress } from '../management/progress';
 import type {
     AuditlogSummary,
@@ -15,7 +16,6 @@ import { AdminDataGrid } from '../ui/AdminDataGrid';
 import { useDetailedView } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
 import { ManagementJump, relationID, sessionRelation } from '../ui/ManagementJump';
-import { exactFlow } from '../ui/management-location';
 import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert, Button } from '../ui/material';
 import type { Message } from '../ui/messages';

@@ -51,8 +51,8 @@ test('transport, storage, workers and shared primitives do not import presentati
                 name.startsWith('shared/') ||
                 name.startsWith('application/') ||
                 name === 'login/attempt.ts' ||
-                /management\/(?:client|session-action-owner)\.ts$/u.test(name) ||
-                /artifacts\/(?:evidence-job|evidence-document|evidence-result|prepared-playback|verify-evidence|recording-source-verification)\.ts$/u.test(
+                /management\/(?:client|read-model|session-action-owner)\.ts$/u.test(name) ||
+                /artifacts\/(?:evidence-session|evidence-target|evidence-job|evidence-document|evidence-result|prepared-playback|verify-evidence|recording-source-verification)\.ts$/u.test(
                     name,
                 ) ||
                 /workspace\/(?:controller|connections|state|policy)\.ts$/u.test(name) ||
@@ -73,6 +73,9 @@ test('transport, storage, workers and shared primitives do not import presentati
         'login/attempt.ts',
         'management/client.ts',
         'management/session-action-owner.ts',
+        'management/read-model.ts',
+        'artifacts/evidence-session.ts',
+        'artifacts/evidence-target.ts',
         'artifacts/evidence-job.ts',
         'artifacts/evidence-document.ts',
         'artifacts/evidence-result.ts',
@@ -167,7 +170,7 @@ test('evidence presentation has no direct grant, worker or workflow implementati
                 `${name} imports access implementation: ${entry.specifier}`,
             );
             assert(
-                !/(?:^|\/)(?:verify|verify-evidence|recording-preview|recording-runtime-owner|recording-source-verification|receive|protection|evidence-job|evidence-document)$/u.test(
+                !/(?:^|\/)(?:verify|verify-evidence|recording-preview|recording-runtime-owner|recording-source-verification|receive|protection|evidence-session|evidence-job|evidence-document)$/u.test(
                     entry.specifier,
                 ),
                 `${name} imports workflow implementation: ${entry.specifier}`,

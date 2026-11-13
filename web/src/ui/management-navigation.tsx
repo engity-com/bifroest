@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { ManagementLocation } from './management-location';
+import type { ManagementLocation } from '../application/management-location';
 
 export interface ManagementNavigation {
     readonly location: ManagementLocation;

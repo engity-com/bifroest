@@ -1,9 +1,9 @@
+import type { ManagementLocation } from '../application/management-location';
 import type { WebAccess } from '../remember';
 import { AuthenticationTerminal } from '../terminal/AuthenticationTerminal';
 import type { AuthenticationView } from '../terminal/authentication-view';
 import { TerminalPanel, terminalStatus } from '../terminal/TerminalPanel';
 import { ManagementWorkspace } from '../ui/ManagementWorkspace';
-import type { ManagementLocation } from '../ui/management-location';
 import { t } from '../ui/messages';
 import type { ConnectionWorkspaceProps } from './contracts';
 import type { WorkspaceController } from './controller';
