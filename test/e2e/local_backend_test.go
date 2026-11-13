@@ -299,11 +299,11 @@ func TestOpenSSHLocalSessionRecording(t *testing.T) {
 	testOpenSSHLocalSessionRecording(t, false)
 }
 
-func TestOpenSSHLocalRecordingOnly(t *testing.T) {
+func TestOpenSSHLocalWithoutAuditlogDoesNotRecord(t *testing.T) {
 	testOpenSSHLocalSessionRecording(t, true)
 }
 
-func testOpenSSHLocalSessionRecording(t *testing.T, recordingOnly bool) {
+func testOpenSSHLocalSessionRecording(t *testing.T, withoutAuditlog bool) {
 	f, err := newFixture(t)
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +323,7 @@ func testOpenSSHLocalSessionRecording(t *testing.T, recordingOnly bool) {
 	}
 	producerID := recordingProducerID(t, auditIdentity)
 
-	if err := f.prepareLocalRecording(auditIdentity, recordingOnly); err != nil {
+	if err := f.prepareLocalRecording(auditIdentity, withoutAuditlog); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("runtime=%s container=%s port=%s producer=%s", f.runtimeCLI, f.containerID, f.port, producerID)
@@ -335,6 +335,13 @@ func testOpenSSHLocalSessionRecording(t *testing.T, recordingOnly bool) {
 	if result.stdout != "stdout-e2e\n" || result.stderr != "stderr-e2e\n" {
 		t.Fatalf("recorded command output: stdout=%q stderr=%q", result.stdout, result.stderr)
 	}
+	if withoutAuditlog {
+		result = f.runtime(5*time.Second, "exec", f.containerID, "/bin/sh", "-c", "test ! -e /var/lib/bifroest/auditlog && test ! -e /var/lib/bifroest/recordings")
+		if result.err != nil {
+			t.Fatalf("unassigned flow created audit or Recording state: %v\nstderr:\n%s", result.err, result.stderr)
+		}
+		return
+	}
 
 	result = f.runtime(5*time.Second, "exec", f.containerID, "/bin/sh", "-c", "find /var/lib/bifroest/recordings/sealed -maxdepth 1 -type f -name '*.bcast' -print")
 	if result.err != nil {
@@ -343,12 +350,6 @@ func testOpenSSHLocalSessionRecording(t *testing.T, recordingOnly bool) {
 	artifacts := strings.Fields(result.stdout)
 	if len(artifacts) != 1 {
 		t.Fatalf("sealed recordings: got %d, want 1: %q", len(artifacts), result.stdout)
-	}
-	if recordingOnly {
-		result = f.runtime(5*time.Second, "exec", f.containerID, "/bin/sh", "-c", "test ! -e /var/lib/bifroest/auditlog")
-		if result.err != nil {
-			t.Fatalf("recording-only created an audit journal: %v\nstderr:\n%s", result.err, result.stderr)
-		}
 	}
 
 	result = f.runtime(12*time.Second, "stop", "--time", "5", f.containerID)

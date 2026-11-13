@@ -11,7 +11,7 @@ import (
 )
 
 func TestEnsureIdentityAcceptsGeneratedWindowsKeyDACL(t *testing.T) {
-	conf := auditIdentityTestConfiguration(t.TempDir(), true)
+	conf := auditIdentityTestConfiguration(t.TempDir())
 	_, err := auditIdentityKeyRequirement.CreateFile(nil, conf.IdentityFile)
 	require.NoError(t, err)
 
@@ -22,7 +22,7 @@ func TestEnsureIdentityAcceptsGeneratedWindowsKeyDACL(t *testing.T) {
 }
 
 func TestEnsureIdentityRejectsInsecureWindowsKeyDACL(t *testing.T) {
-	conf := auditIdentityTestConfiguration(t.TempDir(), true)
+	conf := auditIdentityTestConfiguration(t.TempDir())
 	_, err := auditIdentityKeyRequirement.CreateFile(nil, conf.IdentityFile)
 	require.NoError(t, err)
 	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;FR;;;WD)(A;;FA;;;OW)")
@@ -40,7 +40,7 @@ func TestEnsureIdentityRejectsInsecureWindowsKeyDACL(t *testing.T) {
 }
 
 func TestEnsureIdentityRejectsWindowsKeyHardLink(t *testing.T) {
-	conf := auditIdentityTestConfiguration(t.TempDir(), true)
+	conf := auditIdentityTestConfiguration(t.TempDir())
 	_, err := auditIdentityKeyRequirement.CreateFile(nil, conf.IdentityFile)
 	require.NoError(t, err)
 	require.NoError(t, os.Link(conf.IdentityFile, conf.IdentityFile+".link"))

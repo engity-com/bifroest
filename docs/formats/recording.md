@@ -1,5 +1,5 @@
 ---
-description: Version 1 native session recording maps, chain, checkpoints, and recovery.
+description: Native session recording maps, chain, checkpoints, and recovery.
 ---
 
 # Native recording format
@@ -22,19 +22,19 @@ authority, though managed repositories require the canonical suffix for the sign
 
 Recording work and active files use `recording.bcast` or `recording.becast` in
 per-recording directories, with a signed `head.cbor`. Published files are
-`sealed/<canonical-uuid-v4>.bcast` or `.becast`. Remote targets copy those files byte
+`sealed/<base58-uuid-v4>.bcast` or `.becast`. Remote targets copy those files byte
 for byte under `<producer-id>/<sealed-file-name>`.
 
 The producer ID is `SHA256(ssh-key)`, where `ssh-key` is the canonical binary SSH
 Ed25519 public-key blob. It is 32 raw bytes in the maps and 64 lowercase hex characters
-in paths. Recording IDs are UUIDv4 bytes in CBOR and canonical UUID text in file names.
+in paths. Recording IDs are 16 UUIDv4 bytes in CBOR; filenames use Base58 of those bytes. Producer IDs, hashes and fingerprints are not UUIDs.
 
 A suffix, embedded signing key, or embedded producer ID is not an external trust anchor.
 Encryption does not replace Ed25519 signatures.
 
 ## Recording wire maps
 
-All tables below are **version 1**. Each key is an unsigned-integer CBOR map key.
+Framing, event groups and checkpoints use version `1`. The signed recording header selects UUID rendering for canonical Cast metadata and signature messages: version `2` uses Base58; version `1` uses canonical UUID notation. Each key below is an unsigned-integer CBOR map key.
 `R` means required, even for zero or false. `O` means omit when absent, never CBOR null.
 Types, canonical encoding, and `head.cbor` (a separately signed canonical map, not a
 container frame) follow the [shared container rules](container.md).
@@ -48,7 +48,7 @@ fingerprint.
 
 | Header (type 1) key | Field | Type | Presence |
 | --- | --- | --- | --- |
-| 1 | version (`1`) | u8 | R |
+| 1 | header/UUID-rendering version | u8 | R |
 | 2 | encryption (`0` none, `1` age SSH) | u8 | R |
 | 3 | recording ID | uuid16 | R |
 | 4 | producer ID | hash32 | R |

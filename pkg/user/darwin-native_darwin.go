@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shirou/gopsutil/v4/process"
 
 	berrors "github.com/engity-com/bifroest/pkg/errors"
 )
@@ -40,8 +39,6 @@ type darwinExecCommandRunner struct{}
 func (darwinExecCommandRunner) Run(ctx context.Context, path string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, path, args...).CombinedOutput()
 }
-
-type darwinProcessLister func(context.Context) ([]*process.Process, error)
 
 type darwinUserRecord struct {
 	name         string
@@ -1467,34 +1464,11 @@ func (this *DarwinRepository) KillProcessesByAbsentIdentity(ctx context.Context,
 func (this *DarwinRepository) killAllDarwinProcesses(ctx context.Context, id Id) error {
 	list := this.processes
 	if list == nil {
-		list = process.ProcessesWithContext
+		list = listDarwinProcessesByUID
 	}
-	processes, err := list(ctx)
-	if err != nil {
-		return berrors.Newf(berrors.System, "cannot list processes of Darwin user %d: %w", id, err)
-	}
-	for _, candidate := range processes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if candidate.Pid == int32(os.Getpid()) {
-			continue
-		}
-		uids, err := candidate.UidsWithContext(ctx)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return berrors.Newf(berrors.System, "cannot inspect process %d: %w", candidate.Pid, err)
-		}
-		if len(uids) == 0 || uids[0] != uint32(id) {
-			continue
-		}
-		if err := killVerifiedUserProcess(ctx, candidate, uint32(id)); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return berrors.Newf(berrors.System, "cannot kill process %d of Darwin user %d: %w", candidate.Pid, id, err)
-		}
-	}
-	return nil
+	return killDarwinProcessesByUID(ctx, id, int32(os.Getpid()), list, darwinProcessChecks{
+		uids:     darwinProcessUIDs,
+		identity: inspectDarwinProcessIdentity,
+		kill:     killVerifiedUserProcess,
+	})
 }

@@ -187,11 +187,15 @@ func TestDomainAuditRecordsEachEvaluatedFlowAndNotSkippedFlows(t *testing.T) {
 	require.NoError(t, client.Close())
 
 	evaluated := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluated)
-	require.Len(t, evaluated, 2)
-	require.Equal(t, "rejected", evaluated[0].Flow)
-	require.Equal(t, audit.EventOutcomeDenied, evaluated[0].Outcome)
-	require.Equal(t, "restricted-key", evaluated[1].Flow)
-	require.Equal(t, audit.EventOutcomeSuccess, evaluated[1].Outcome)
+	require.Len(t, evaluated, 4)
+	for i, phase := range []audit.AuthenticationPhase{audit.AuthenticationPhaseCandidate, audit.AuthenticationPhaseVerified} {
+		require.Equal(t, "rejected", evaluated[2*i].Flow)
+		require.Equal(t, audit.EventOutcomeDenied, evaluated[2*i].Outcome)
+		require.Equal(t, phase, evaluated[2*i].AuthenticationPhase)
+		require.Equal(t, "restricted-key", evaluated[2*i+1].Flow)
+		require.Equal(t, audit.EventOutcomeSuccess, evaluated[2*i+1].Outcome)
+		require.Equal(t, phase, evaluated[2*i+1].AuthenticationPhase)
+	}
 }
 
 func TestDomainAuditRecordsPublicKeySuccessOnlyAfterCertificateVerification(t *testing.T) {

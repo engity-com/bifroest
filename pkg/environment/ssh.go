@@ -22,6 +22,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 	bssh "github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 type sshEnvironment struct {
@@ -47,13 +48,24 @@ func (this *sshEnvironment) Run(task Task) (int, error) {
 	return this.run(task, nil)
 }
 
+func (this *sshEnvironment) RunTerminal(task TerminalTask) (int, error) {
+	if task.TaskType() != TaskTypeShell {
+		return -1, ErrSubsystemNotAllowed
+	}
+	return this.run(task, nil)
+}
+
 func (this *sshEnvironment) RunSubsystem(task Task, reply func(bool) error) (int, error) {
 	return this.run(task, reply)
 }
 
-func (this *sshEnvironment) run(task Task, reply func(bool) error) (int, error) {
+func (this *sshEnvironment) run(task TaskContext, reply func(bool) error) (int, error) {
 	if task.TaskType() == TaskTypeSftp || task.TaskType() == TaskTypeSubsystem {
-		subsystem := task.SshSession().Subsystem()
+		source := taskSshSession(task)
+		if source == nil {
+			return -1, ErrSubsystemNotAllowed
+		}
+		subsystem := source.Subsystem()
 		if task.TaskType() == TaskTypeSftp {
 			subsystem = "sftp"
 		}
@@ -85,7 +97,7 @@ func (this *sshEnvironment) run(task Task, reply func(bool) error) (int, error) 
 		case TaskTypeShell:
 			code, err = this.runShell(task, transport, environment)
 		case TaskTypeSftp, TaskTypeSubsystem:
-			code, err = this.runSubsystem(task, transport, environment, reply)
+			code, err = this.runSubsystem(task.(Task), transport, environment, reply)
 		default:
 			code, err = -1, fmt.Errorf("illegal task type: %v", task.TaskType())
 		}
@@ -99,7 +111,7 @@ func (this *sshEnvironment) run(task Task, reply func(bool) error) (int, error) 
 	}
 }
 
-func (this *sshEnvironment) environmentFor(task Task) (sys.EnvVars, error) {
+func (this *sshEnvironment) environmentFor(task TaskContext) (sys.EnvVars, error) {
 	result := sys.EnvVars{}
 	targetOs := this.repository.conf.Os
 	if err := applyTaskEnvironment(&result, targetOs, task); err != nil {
@@ -134,7 +146,12 @@ func sendSshEnvironment(channel sshRequestSender, environment sys.EnvVars) error
 	return nil
 }
 
-func (this *sshEnvironment) runShell(task Task, transport *sshTransport, environment sys.EnvVars) (int, error) {
+func (this *sshEnvironment) runShell(task TaskContext, transport *sshTransport, environment sys.EnvVars) (int, error) {
+	sshSession, releaseTerminal, err := taskTerminal(task)
+	if err != nil {
+		return -1, err
+	}
+	defer releaseTerminal()
 	target, err := this.openTargetSession(task.Context(), transport)
 	if err != nil {
 		return -1, fmt.Errorf("cannot open SSH target session: %w", err)
@@ -150,7 +167,6 @@ func (this *sshEnvironment) runShell(task Task, transport *sshTransport, environ
 		}
 	}()
 
-	sshSession := task.SshSession()
 	target.Stdin = sshSession
 	target.Stdout = sshSession
 	target.Stderr = sshSession.Stderr()
@@ -166,7 +182,7 @@ func (this *sshEnvironment) runShell(task Task, transport *sshTransport, environ
 	}()
 
 	if pty, windows, ok := sshSession.Pty(); ok {
-		if err := requestTargetPty(target, pty); err != nil {
+		if err := requestTargetPty(target, bssh.SshPty(pty)); err != nil {
 			return -1, fmt.Errorf("cannot request SSH target PTY: %w", err)
 		}
 		workers.Add(1)
@@ -180,7 +196,7 @@ func (this *sshEnvironment) runShell(task Task, transport *sshTransport, environ
 					if !ok {
 						return
 					}
-					if err := sendTargetWindowChange(target, window); err != nil {
+					if err := sendTargetWindowChange(target, bssh.SshWindow(window)); err != nil {
 						this.connection.Logger().WithError(err).Warn("cannot forward SSH target window change")
 						return
 					}
@@ -189,7 +205,7 @@ func (this *sshEnvironment) runShell(task Task, transport *sshTransport, environ
 		}()
 	}
 
-	if bssh.AgentRequested(sshSession) && authorization.IsAgentForwardingAllowed(task.Authorization()) {
+	if source := taskSshSession(task); source != nil && bssh.AgentRequested(source) && authorization.IsAgentForwardingAllowed(task.Authorization()) {
 		if err := transport.ensureAgent(task, this.lifetime); err != nil {
 			return -1, fmt.Errorf("cannot forward SSH agent to target: %w", err)
 		}
@@ -198,7 +214,7 @@ func (this *sshEnvironment) runShell(task Task, transport *sshTransport, environ
 		}
 	}
 
-	signals := make(chan essh.Signal, 16)
+	signals := make(chan terminal.Signal, 16)
 	sshSession.Signals(signals)
 	defer sshSession.Signals(nil)
 	workers.Add(1)
@@ -882,7 +898,7 @@ type sshLifetimeSession struct {
 
 func (this *sshLifetimeSession) Context() essh.Context { return this.context }
 
-func (this *sshTransport) ensureAgent(task Task, lifetimeContext context.Context) error {
+func (this *sshTransport) ensureAgent(task TaskContext, lifetimeContext context.Context) error {
 	this.agentMu.Lock()
 	defer this.agentMu.Unlock()
 	select {
@@ -903,7 +919,7 @@ func (this *sshTransport) ensureAgent(task Task, lifetimeContext context.Context
 	if err != nil {
 		return err
 	}
-	go bssh.ForwardAgentConnections(listener, task.Connection().Logger(), &sshLifetimeSession{task.SshSession(), lifetime})
+	go bssh.ForwardAgentConnections(listener, task.Connection().Logger(), &sshLifetimeSession{taskSshSession(task), lifetime})
 	connectContext, cancel := context.WithCancel(lifetimeContext)
 	defer cancel()
 	go func() {

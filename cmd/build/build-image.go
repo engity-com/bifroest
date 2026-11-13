@@ -23,6 +23,7 @@ import (
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 
 	bib "github.com/engity-com/bifroest/internal/build"
+	"github.com/engity-com/bifroest/internal/build/browser"
 	"github.com/engity-com/bifroest/internal/build/images"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -111,6 +112,14 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 		return failf("binary has no third-party license inventory")
 	}
 	a.thirdPartyLicenseInventory = binary.thirdPartyLicenseInventory
+	if binary.browserManifest == nil {
+		return failf("binary has no browser build manifest")
+	}
+	browserTarget, err := releaseLicenseImageTarget(browser.ArchiveFilename, a.Os)
+	if err != nil {
+		return fail(err)
+	}
+	licenseItems = append(licenseItems, images.LayerItem{SourceFile: browserBuildPath(binary), TargetFile: browserTarget, Mode: 0644})
 	thirdPartyNoticesTarget, err := releaseLicenseImageTarget(thirdPartyNoticesFilename, a.Os)
 	if err != nil {
 		return fail(err)

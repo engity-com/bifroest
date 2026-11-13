@@ -45,6 +45,26 @@ func ReadLocalConPTYCommand(input io.Reader) ([]string, error) {
 // RunLocalConPTYRelay runs argv in a pseudoconsole owned by the relay's user.
 // Stdin carries framed data/resize/EOF requests; stdout carries only PTY output.
 func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
+	return runLocalConPTYRelay(cols, rows, argv, nil)
+}
+
+// Passive test observations; these never change shutdown order, I/O, process
+// rights or a production exit. Root-state probes use a zero-time native wait.
+type localConPTYRelayObservation struct {
+	jobQueryOK      bool
+	activeProcesses uint32
+	released        bool
+	outputBytes     int64
+	stdoutType      uint32
+	outputPipeType  uint32
+	emptyReads      uint64
+	rootAtInputEOF  string
+	rootAtOutputEOF string
+	rootAtNativeEOF string
+	eofBeforeClose  bool
+}
+
+func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTYRelayObservation) (int, error) {
 	if cols < 1 || cols > 32767 || rows < 1 || rows > 32767 {
 		return -1, fmt.Errorf("invalid ConPTY size %d x %d", cols, rows)
 	}
@@ -79,23 +99,37 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 	if err := windows.CreatePipe(&outputRead, &outputWrite, nil, 0); err != nil {
 		return -1, fmt.Errorf("create ConPTY output pipe: %w", err)
 	}
+	if observation != nil {
+		observation.outputPipeType, _ = windows.GetFileType(outputRead)
+		if stdout, err := windows.GetStdHandle(windows.STD_OUTPUT_HANDLE); err == nil {
+			observation.stdoutType, _ = windows.GetFileType(stdout)
+		}
+	}
 	var console windows.Handle
 	if err := windows.CreatePseudoConsole(windows.Coord{X: int16(cols), Y: int16(rows)}, inputRead, outputWrite, 0, &console); err != nil {
 		return -1, fmt.Errorf("create pseudoconsole: %w", err)
 	}
-	_ = windows.CloseHandle(inputRead)
-	inputRead = 0
-	_ = windows.CloseHandle(outputWrite)
-	outputWrite = 0
+	releaseCreationHandles := func() {
+		for _, handle := range []*windows.Handle{&inputRead, &outputWrite} {
+			if *handle != 0 {
+				_ = windows.CloseHandle(*handle)
+				*handle = 0
+			}
+		}
+	}
 	in := os.NewFile(uintptr(inputWrite), "conpty-input")
 	inputWrite = 0
+	outputReader := &localConPTYOutputReader{handle: outputRead, observation: observation}
 	out := os.NewFile(uintptr(outputRead), "conpty-output")
 	outputRead = 0
 	defer in.Close()
 	defer out.Close()
 	outputDone := make(chan error, 1)
 	go func() {
-		_, err := io.Copy(os.Stdout, out)
+		written, err := io.Copy(os.Stdout, outputReader)
+		if observation != nil {
+			observation.outputBytes = written
+		}
 		outputDone <- err
 	}()
 	// Closing a pseudoconsole may wait for its output pipe. Never close it on
@@ -108,12 +142,14 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 			consoleMu.Lock()
 			consoleClosed = true
 			consoleMu.Unlock()
+			outputReader.closeStarted.Store(true)
 			windows.ClosePseudoConsole(console)
 			close(done)
 		}()
 		return done
 	}
 	defer func() {
+		releaseCreationHandles()
 		consoleMu.Lock()
 		closed := consoleClosed
 		consoleMu.Unlock()
@@ -139,6 +175,14 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 	}
 	startup := windows.StartupInfoEx{ProcThreadAttributeList: attrs.List()}
 	startup.Cb = uint32(unsafe.Sizeof(startup))
+	// FALSE handle inheritance alone does not prevent Windows from duplicating
+	// redirected parent stdio into a console child. Explicitly opt out so its
+	// standard handles are initialized from the selected pseudoconsole instead.
+	// https://github.com/microsoft/terminal/discussions/15814
+	startup.Flags = windows.STARTF_USESTDHANDLES
+	startup.StdInput = windows.InvalidHandle
+	startup.StdOutput = windows.InvalidHandle
+	startup.StdErr = windows.InvalidHandle
 
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -153,9 +197,17 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 	}
 
 	var proc windows.ProcessInformation
-	if err := windows.CreateProcess(path, line, nil, nil, false,
-		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_SUSPENDED,
-		nil, nil, &startup.StartupInfo, &proc); err != nil {
+	if err := withLocalConPTYChildStandardHandles(windows.GetStdHandle, windows.SetStdHandle, func() error {
+		return windows.CreateProcess(path, line, nil, nil, false,
+			windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_SUSPENDED,
+			nil, nil, &startup.StartupInfo, &proc)
+	}); err != nil {
+		if proc.Process != 0 {
+			_ = windows.TerminateProcess(proc.Process, 1)
+			_, _ = windows.WaitForSingleObject(proc.Process, windows.INFINITE)
+			_ = windows.CloseHandle(proc.Process)
+			_ = windows.CloseHandle(proc.Thread)
+		}
 		return -1, fmt.Errorf("start shell: %w", err)
 	}
 	defer func() { _ = windows.CloseHandle(proc.Process) }()
@@ -169,9 +221,12 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 		_ = windows.TerminateProcess(proc.Process, 1)
 		return -1, fmt.Errorf("assign shell to job: %w", err)
 	}
+	outputReader.rootProcess.Store(uintptr(proc.Process))
 	if _, err := windows.ResumeThread(proc.Thread); err != nil {
 		return -1, fmt.Errorf("resume shell: %w", err)
 	}
+	// Keep the creation-side handles until the console client has been started.
+	releaseCreationHandles()
 
 	inputDone := make(chan error, 1)
 	go func() {
@@ -248,12 +303,22 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 		select {
 		case err := <-inputDone:
 			inputDone = nil
+			if observation != nil && err == nil {
+				observation.rootAtInputEOF = observeLocalConPTYRootState(func() (uint32, error) {
+					return windows.WaitForSingleObject(proc.Process, 0)
+				})
+			}
 			if err != nil {
 				relayErr = fmt.Errorf("relay input: %w", err)
 				_ = windows.TerminateJobObject(job, 1)
 			}
 		case err := <-outputDone:
 			outputDone = nil
+			if observation != nil && err == nil {
+				observation.rootAtOutputEOF = observeLocalConPTYRootState(func() (uint32, error) {
+					return windows.WaitForSingleObject(proc.Process, 0)
+				})
+			}
 			if err != nil {
 				relayErr = fmt.Errorf("relay output: %w", err)
 				_ = windows.TerminateJobObject(job, 1)
@@ -283,26 +348,131 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 		TotalUserTime, TotalKernelTime, PeriodUserTime, PeriodKernelTime int64
 		PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses uint32
 	}
-	if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicAccountingInformation,
-		uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil); err != nil || accounting.ActiveProcesses > 0 {
+	accountingErr := windows.QueryInformationJobObject(job, windows.JobObjectBasicAccountingInformation,
+		uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil)
+	if observation != nil {
+		observation.jobQueryOK = accountingErr == nil
+		observation.activeProcesses = accounting.ActiveProcesses
+	}
+	if accountingErr != nil || accounting.ActiveProcesses > 0 {
 		// The shell has exited; surviving descendants must not hold ConPTY open.
 		_ = windows.TerminateJobObject(job, 1)
 	}
-	// The parent may keep the control pipe open after the shell has exited.
-	// Cancel a pending frame read rather than waiting for another frame.
+	// Keep our reference until the suspended client's execution has actually
+	// finished. ResumeThread alone does not confirm client initialization. Only
+	// then let conhost flush and finish naturally, before freeing HPCON at EOF.
+	// https://learn.microsoft.com/windows/console/releasepseudoconsole
+	released, err := releaseLocalConPTY(console)
+	if err != nil {
+		return -1, errors.Join(relayErr, err)
+	}
+	if observation != nil {
+		observation.released = released
+	}
+	if err := finishLocalConPTYOutput(released, func() error {
+		if outputDone == nil {
+			return nil
+		}
+		err := <-outputDone
+		outputDone = nil
+		if observation != nil && err == nil {
+			observation.rootAtOutputEOF = observeLocalConPTYRootState(func() (uint32, error) {
+				return windows.WaitForSingleObject(proc.Process, 0)
+			})
+		}
+		return err
+	}, func() { <-closeConsole() }); err != nil && relayErr == nil {
+		relayErr = fmt.Errorf("relay output: %w", err)
+	}
+	// Retire input only after output has reached EOF. Closing input earlier can
+	// terminate the console host before its final screen update has been read.
 	_ = windows.CancelIoEx(windows.Handle(os.Stdin.Fd()), nil)
 	go os.Stdin.Close()
 	_ = windows.CancelIoEx(windows.Handle(in.Fd()), nil)
-	go in.Close() // An in-flight synchronous write must not block output draining.
-	closedDone := closeConsole()
-	<-closedDone
-	if outputDone != nil {
-		if err := <-outputDone; err != nil && relayErr == nil {
-			relayErr = fmt.Errorf("relay output: %w", err)
-		}
-	}
 	if relayErr != nil {
 		return -1, relayErr
 	}
 	return int(code), nil
+}
+
+func observeLocalConPTYRootState(wait func() (uint32, error)) string {
+	status, err := wait()
+	if err != nil {
+		return "unknown"
+	}
+	switch status {
+	case windows.WAIT_OBJECT_0:
+		return "exited"
+	case uint32(windows.WAIT_TIMEOUT):
+		return "running"
+	default:
+		return "unknown"
+	}
+}
+
+func releaseLocalConPTY(console windows.Handle) (bool, error) {
+	release := windows.NewLazySystemDLL("kernel32.dll").NewProc("ReleasePseudoConsole")
+	return resolveLocalConPTYRelease(release.Find, func() error {
+		if result, _, _ := release.Call(uintptr(console)); result != 0 {
+			return fmt.Errorf("release pseudoconsole: HRESULT 0x%08x", result)
+		}
+		return nil
+	})
+}
+
+func resolveLocalConPTYRelease(find func() error, release func() error) (bool, error) {
+	if err := find(); err != nil {
+		if errors.Is(err, windows.ERROR_PROC_NOT_FOUND) {
+			// Older Windows needs its supported ClosePseudoConsole operation to
+			// finish the stream. The output reader remains active during Close;
+			// never reinterpret an opaque HPCON to emulate a newer release API.
+			return false, nil
+		}
+		return false, fmt.Errorf("resolve pseudoconsole release: %w", err)
+	}
+	if err := release(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func finishLocalConPTYOutput(released bool, drain func() error, closeConsole func()) error {
+	if released {
+		defer closeConsole()
+	} else {
+		closeConsole()
+	}
+	return drain()
+}
+
+var localConPTYProcessCreation sync.Mutex
+
+// The relay owns framed pipe handles, not a terminal. Let the new console
+// populate the child's standard table instead of copying those pipe values.
+// Go's os.Stdin/Stdout/Stderr retain their original handles; none are closed.
+// This helper runs only in the dedicated relay process and restores its table
+// even when process creation or a SetStdHandle operation fails.
+func withLocalConPTYChildStandardHandles(get func(uint32) (windows.Handle, error), set func(uint32, windows.Handle) error, create func() error) (resultErr error) {
+	localConPTYProcessCreation.Lock()
+	defer localConPTYProcessCreation.Unlock()
+	ids := []uint32{windows.STD_INPUT_HANDLE, windows.STD_OUTPUT_HANDLE, windows.STD_ERROR_HANDLE}
+	saved := make([]windows.Handle, len(ids))
+	for i, id := range ids {
+		handle, err := get(id)
+		if err != nil {
+			return err
+		}
+		saved[i] = handle
+	}
+	defer func() {
+		for i, id := range ids {
+			resultErr = errors.Join(resultErr, set(id, saved[i]))
+		}
+	}()
+	for _, id := range ids {
+		if err := set(id, 0); err != nil {
+			return err
+		}
+	}
+	return create()
 }

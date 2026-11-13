@@ -21,7 +21,7 @@ func TestPrepareEnsuresAuditIdentity(t *testing.T) {
 	identityFile := filepath.Join(directory, "auditlog-key")
 	journalDirectory := filepath.Join(directory, "auditlog")
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		conf.Auditlogs[0].Enabled = true
+		configureDefaultTestAuditlog(conf)
 		conf.Auditlogs[0].IdentityFile = identityFile
 		conf.Auditlogs[0].Directory = journalDirectory
 	})
@@ -80,15 +80,14 @@ func TestPrepareResolvesNamedFlowAuditlog(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
 		conf.Auditlogs = append(conf.Auditlogs, configuration.Auditlog{
 			Name:         "security",
-			Enabled:      true,
 			IdentityFile: filepath.Join(directory, "security-key"),
 			Directory:    filepath.Join(directory, "security-journal"),
 		})
 		conf.Flows[0].Auditlog = "security"
 	})
 
-	require.Len(t, server.service.auditIdentities, 2)
-	require.Len(t, server.service.auditRecorders, 2)
+	require.Len(t, server.service.auditIdentities, 1)
+	require.Len(t, server.service.auditRecorders, 1)
 	require.Nil(t, server.service.auditIdentities[configuration.DefaultAuditlogName])
 	require.NotNil(t, server.service.auditIdentities["security"])
 	require.Same(t, server.service.auditRecorders["security"], server.service.flowAuditRecorders[server.service.Configuration.Flows[0].Name])
@@ -127,7 +126,6 @@ func TestValidateRuntimePathsRejectsSessionStorageAuditOverlap(t *testing.T) {
 			conf := configuration.Configuration{
 				Auditlogs: configuration.Auditlogs{{
 					Name:         "security",
-					Enabled:      true,
 					IdentityFile: test.identityFile,
 					Directory:    test.journal,
 				}},
@@ -183,7 +181,6 @@ func TestValidateRuntimePathsRejectsSessionStorageAuditInputFileOverlap(t *testi
 		t.Run(test.name, func(t *testing.T) {
 			auditlog := configuration.Auditlog{
 				Name:         "security",
-				Enabled:      true,
 				IdentityFile: filepath.Join(root, "audit-identity"),
 				Directory:    filepath.Join(root, "journal"),
 			}
@@ -198,29 +195,14 @@ func TestValidateRuntimePathsRejectsSessionStorageAuditInputFileOverlap(t *testi
 	}
 }
 
-func TestValidateRuntimePathsIgnoresDisabledAuditlogWithoutSideEffects(t *testing.T) {
+func TestValidateRuntimePathsWithoutAuditlogHasNoAuditSideEffects(t *testing.T) {
 	storage := filepath.Join(t.TempDir(), "sessions")
 	conf := configuration.Configuration{
-		Auditlogs: configuration.Auditlogs{{
-			Name:                    configuration.DefaultAuditlogName,
-			Enabled:                 false,
-			IdentityFile:            filepath.Join(storage, "identity"),
-			EncryptionPublicKeyFile: crypto.PublicKeysFile(filepath.Join(storage, "encryption.pub")),
-			Directory:               storage,
-			Targets: configuration.AuditlogTargets{{
-				Name: "archive",
-				V: &configuration.AuditlogTargetSftp{
-					KnownHostsFile: crypto.KnownHostsFile(filepath.Join(storage, "known_hosts")),
-					IdentityFiles:  []string{filepath.Join(storage, "archive-key")},
-				},
-			}},
-		}},
 		Session: configuration.Session{V: &configuration.SessionFs{Storage: storage}},
 	}
 
 	require.NoError(t, validateRuntimePaths(&conf))
-	require.NoFileExists(t, conf.Auditlogs[0].IdentityFile)
-	require.NoFileExists(t, string(conf.Auditlogs[0].EncryptionPublicKeyFile))
+	require.Empty(t, conf.Auditlogs)
 	require.NoDirExists(t, storage)
 }
 
@@ -243,7 +225,6 @@ func TestValidateRuntimePathsRewritesSymlinkAliases(t *testing.T) {
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:                    "security",
-			Enabled:                 true,
 			IdentityFile:            filepath.Join(alias, "audit-key"),
 			EncryptionPublicKeyFile: crypto.PublicKeysFile(filepath.Join(alias, "encryption.pub")),
 			Directory:               filepath.Join(alias, "journal"),
@@ -284,7 +265,6 @@ func TestValidateRuntimePathsRejectsRecordingSymlinkOverlap(t *testing.T) {
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:         "security",
-			Enabled:      true,
 			IdentityFile: filepath.Join(real, "identity"),
 			Directory:    filepath.Join(real, "journal"),
 			Recording: configuration.AuditlogRecording{
@@ -309,7 +289,6 @@ func TestValidateRuntimePathsRejectsRecordingSessionStorageSymlinkOverlap(t *tes
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:         "security",
-			Enabled:      true,
 			IdentityFile: filepath.Join(real, "identity"),
 			Directory:    filepath.Join(real, "journal"),
 			Recording: configuration.AuditlogRecording{
@@ -337,7 +316,6 @@ func TestValidateRuntimePathsRejectsRecordingTargetInputSymlinkOverlap(t *testin
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:         "security",
-			Enabled:      true,
 			IdentityFile: filepath.Join(real, "identity"),
 			Directory:    filepath.Join(real, "journal"),
 			Recording: configuration.AuditlogRecording{
@@ -367,7 +345,6 @@ func TestValidateRuntimePathsRejectsCustomRecordingTargetCrossRootSymlinkOverlap
 		Auditlogs: configuration.Auditlogs{
 			{
 				Name:         "first",
-				Enabled:      true,
 				IdentityFile: filepath.Join(real, "first-identity"),
 				Directory:    filepath.Join(real, "first-journal"),
 				Recording: configuration.AuditlogRecording{
@@ -377,7 +354,6 @@ func TestValidateRuntimePathsRejectsCustomRecordingTargetCrossRootSymlinkOverlap
 			},
 			{
 				Name:         "second",
-				Enabled:      true,
 				IdentityFile: filepath.Join(real, "second-identity"),
 				Directory:    filepath.Join(real, "second-journal"),
 				Recording: configuration.AuditlogRecording{
@@ -406,7 +382,6 @@ func TestValidateRuntimePathsRejectsCustomRecordingTargetSessionStorageOverlap(t
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:         "security",
-			Enabled:      true,
 			IdentityFile: filepath.Join(real, "identity"),
 			Directory:    filepath.Join(real, "journal"),
 			Recording: configuration.AuditlogRecording{
@@ -470,7 +445,6 @@ func TestValidateRuntimePathsRejectsCrossAuditlogRecordingCredentialSymlinkOverl
 		t.Run(test.name, func(t *testing.T) {
 			first := configuration.Auditlog{
 				Name:         "first",
-				Enabled:      true,
 				IdentityFile: filepath.Join(real, "first-identity"),
 				Directory:    filepath.Join(real, "first-journal"),
 				Recording: configuration.AuditlogRecording{
@@ -480,7 +454,6 @@ func TestValidateRuntimePathsRejectsCrossAuditlogRecordingCredentialSymlinkOverl
 			}
 			second := configuration.Auditlog{
 				Name:         "second",
-				Enabled:      true,
 				IdentityFile: filepath.Join(real, "second-identity"),
 				Directory:    filepath.Join(real, "second-journal"),
 			}
@@ -512,7 +485,6 @@ func TestValidateRuntimePathsIsAtomicAfterLateRecordingOverlap(t *testing.T) {
 		Auditlogs: configuration.Auditlogs{
 			{
 				Name:                    "first",
-				Enabled:                 true,
 				IdentityFile:            filepath.Join(alias, "first-identity"),
 				EncryptionPublicKeyFile: crypto.PublicKeysFile(filepath.Join(alias, "recipient.pub")),
 				Directory:               filepath.Join(alias, "first-journal"),
@@ -524,7 +496,6 @@ func TestValidateRuntimePathsIsAtomicAfterLateRecordingOverlap(t *testing.T) {
 			},
 			{
 				Name:         "second",
-				Enabled:      true,
 				IdentityFile: filepath.Join(alias, "second-identity"),
 				Directory:    filepath.Join(alias, "second-journal"),
 				Targets:      configuration.AuditlogTargets{{Name: "archive", V: sftp}},
@@ -563,7 +534,6 @@ func TestValidateRuntimePathsIsAtomicAfterRecordingCanonicalizationFailure(t *te
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:         "security",
-			Enabled:      true,
 			IdentityFile: filepath.Join(alias, "identity"),
 			Directory:    filepath.Join(alias, "journal"),
 			Recording: configuration.AuditlogRecording{
@@ -604,7 +574,6 @@ func TestValidateRuntimePathsIsAtomicAfterCustomRecordingTargetFailure(t *testin
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:                    "security",
-			Enabled:                 true,
 			IdentityFile:            filepath.Join(alias, "identity"),
 			EncryptionPublicKeyFile: crypto.PublicKeysFile(filepath.Join(alias, "recipient.pub")),
 			Directory:               filepath.Join(alias, "journal"),
@@ -648,7 +617,6 @@ func TestValidateRuntimePathsDoesNotCanonicalizeDisabledRecording(t *testing.T) 
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:         "security",
-			Enabled:      true,
 			IdentityFile: filepath.Join(alias, "identity"),
 			Directory:    filepath.Join(alias, "journal"),
 			Recording: configuration.AuditlogRecording{
@@ -785,8 +753,8 @@ func TestPrepareAuditSigningKeyCollisionAppliesFailurePolicy(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsExistingDisabledAuditIdentityReuse(t *testing.T) {
-	for _, disabledBy := range []string{"configuration", "bestEffort SFTP failure"} {
+func TestPrepareRejectsExistingConfiguredOrFailedAuditIdentityReuse(t *testing.T) {
+	for _, disabledBy := range []string{"active", "bestEffort SFTP failure"} {
 		for _, reusedBy := range []string{"signing", "encryption"} {
 			t.Run(disabledBy+"/"+reusedBy, func(t *testing.T) {
 				root := t.TempDir()
@@ -810,7 +778,6 @@ func TestPrepareRejectsExistingDisabledAuditIdentityReuse(t *testing.T) {
 					Directory: filepath.Join(root, "other-journal"),
 				}
 				if disabledBy == "bestEffort SFTP failure" {
-					other.Enabled = true
 					other.FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
 					other.Targets = configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{filepath.Join(root, "missing-sftp-key")})}}
 				}
@@ -832,7 +799,7 @@ func TestPrepareRejectsExistingDisabledAuditIdentityReuse(t *testing.T) {
 	}
 }
 
-func TestPrepareReadOnlyDisabledAuditIdentityChecks(t *testing.T) {
+func TestPrepareConfiguredAndFailedAuditIdentityChecks(t *testing.T) {
 	for _, bestEffort := range []bool{false, true} {
 		for _, existing := range []bool{false, true} {
 			t.Run(fmt.Sprintf("bestEffort=%t/existing=%t", bestEffort, existing), func(t *testing.T) {
@@ -844,7 +811,6 @@ func TestPrepareReadOnlyDisabledAuditIdentityChecks(t *testing.T) {
 					Directory: filepath.Join(root, "other-journal"),
 				}
 				if bestEffort {
-					other.Enabled = true
 					other.FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
 					other.Targets = configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{filepath.Join(root, "missing-sftp-key")})}}
 				}
@@ -856,112 +822,100 @@ func TestPrepareReadOnlyDisabledAuditIdentityChecks(t *testing.T) {
 				svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
 				if existing {
 					require.Nil(t, svc)
-					require.ErrorContains(t, err, "cannot verify identity of auditlog \"other\"")
+					if bestEffort {
+						require.ErrorContains(t, err, "cannot verify identity of auditlog \"other\"")
+					} else {
+						require.ErrorContains(t, err, "cannot load audit identity file")
+					}
 					require.FileExists(t, other.IdentityFile)
 				} else {
 					require.NoError(t, err)
 					require.NotNil(t, svc)
 					require.NoError(t, svc.Close())
-					require.NoFileExists(t, other.IdentityFile)
+					if bestEffort {
+						require.NoFileExists(t, other.IdentityFile)
+					} else {
+						require.FileExists(t, other.IdentityFile)
+						require.DirExists(t, other.Directory)
+					}
 				}
-				require.NoDirExists(t, other.Directory)
+				if existing || bestEffort {
+					require.NoDirExists(t, other.Directory)
+				}
 			})
 		}
 	}
 }
 
-func TestPrepareChecksDisabledSftpIdentityFilesReadOnly(t *testing.T) {
-	for _, placement := range []string{"disabled audit target", "disabled audit Recording target", "disabled Recording target"} {
-		for _, keyCase := range []string{"signing copy", "recipient copy", "missing", "missing shared signing path", "missing then signing copy", "malformed"} {
-			t.Run(placement+"/"+keyCase, func(t *testing.T) {
-				root := t.TempDir()
-				conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
-				conf.Auditlogs[0].Targets = nil
-				path := filepath.Join(root, "disabled-sftp-key")
-				var original []byte
-				switch keyCase {
-				case "missing shared signing path":
-					path = conf.Auditlogs[0].IdentityFile
-				case "signing copy", "recipient copy", "missing then signing copy":
-					source := conf.Auditlogs[0].IdentityFile
-					if keyCase == "recipient copy" {
-						source = filepath.Join(root, "offline-recipient")
-					}
-					key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, source)
-					require.NoError(t, err)
-					if keyCase == "recipient copy" {
-						conf.Auditlogs[0].EncryptionPublicKey = crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(key.PublicKey()))))
-					}
-					original, err = os.ReadFile(source)
-					require.NoError(t, err)
-					writeCopiedAuditTestKey(t, path, original)
-				case "malformed":
-					original = []byte("invalid private key")
-					writeCopiedAuditTestKey(t, path, original)
+func TestPrepareChecksDisabledRecordingSftpIdentityFilesReadOnly(t *testing.T) {
+	for _, keyCase := range []string{"signing copy", "recipient copy", "missing", "missing shared signing path", "missing then signing copy", "malformed"} {
+		t.Run(keyCase, func(t *testing.T) {
+			root := t.TempDir()
+			conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+			conf.Auditlogs[0].Targets = nil
+			path := filepath.Join(root, "disabled-sftp-key")
+			var original []byte
+			switch keyCase {
+			case "missing shared signing path":
+				path = conf.Auditlogs[0].IdentityFile
+			case "signing copy", "recipient copy", "missing then signing copy":
+				source := conf.Auditlogs[0].IdentityFile
+				if keyCase == "recipient copy" {
+					source = filepath.Join(root, "offline-recipient")
 				}
-				identityFiles := []string{path}
-				if keyCase == "missing then signing copy" {
-					identityFiles = append([]string{filepath.Join(root, "missing-sftp-key")}, identityFiles...)
+				key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, source)
+				require.NoError(t, err)
+				if keyCase == "recipient copy" {
+					conf.Auditlogs[0].EncryptionPublicKey = crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(key.PublicKey()))))
 				}
-				target := newAuditSftpDedicatednessTarget(t, identityFiles)
-				other := configuration.Auditlog{
-					Name: "disabled", IdentityFile: filepath.Join(root, "disabled-audit-key"),
-					Directory: filepath.Join(root, "disabled-journal"),
-				}
-				switch placement {
-				case "disabled audit target":
-					other.Targets = configuration.AuditlogTargets{{Name: "archive", V: target}}
-					conf.Auditlogs = append(conf.Auditlogs, other)
-				case "disabled audit Recording target":
-					require.NoError(t, other.Recording.SetDefaults())
-					other.Recording.Directory = filepath.Join(root, "disabled-recordings")
-					other.Recording.Targets = recordingSftpTargets(target)
-					conf.Auditlogs = append(conf.Auditlogs, other)
-				case "disabled Recording target":
-					conf.Auditlogs[0].Recording.Enabled = false
-					conf.Auditlogs[0].Recording.Directory = filepath.Join(root, "recordings")
-					conf.Auditlogs[0].Recording.Targets = recordingSftpTargets(target)
-				}
+				original, err = os.ReadFile(source)
+				require.NoError(t, err)
+				writeCopiedAuditTestKey(t, path, original)
+			case "malformed":
+				original = []byte("invalid private key")
+				writeCopiedAuditTestKey(t, path, original)
+			}
+			identityFiles := []string{path}
+			if keyCase == "missing then signing copy" {
+				identityFiles = append([]string{filepath.Join(root, "missing-sftp-key")}, identityFiles...)
+			}
+			conf.Auditlogs[0].Recording.Enabled = false
+			conf.Auditlogs[0].Recording.Directory = filepath.Join(root, "recordings")
+			conf.Auditlogs[0].Recording.Targets = recordingSftpTargets(newAuditSftpDedicatednessTarget(t, identityFiles))
 
-				svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
-				switch keyCase {
-				case "signing copy", "missing then signing copy":
-					require.Nil(t, svc)
-					require.ErrorContains(t, err, "audit identity must not reuse an SFTP target identity key")
-				case "recipient copy":
-					require.Nil(t, svc)
-					require.ErrorContains(t, err, "audit encryption recipient reuses a private key")
-				case "malformed":
-					require.Nil(t, svc)
-					require.ErrorContains(t, err, "cannot load static SFTP identities of")
-				case "missing":
-					require.NoError(t, err)
-					require.NotNil(t, svc)
-					require.Nil(t, svc.auditDeliveries[other.Name])
-					require.Nil(t, svc.recordingTargets[other.Name])
-					require.Nil(t, svc.recordingRepositories[other.Name])
-					require.Nil(t, svc.recordingTargets[conf.Auditlogs[0].Name])
-					require.NoError(t, svc.Close())
-					require.NoFileExists(t, path)
-				case "missing shared signing path":
-					require.Nil(t, svc)
-					require.ErrorContains(t, err, "overlaps auditlog")
-					require.NoFileExists(t, path)
-				}
-				if keyCase != "missing" && keyCase != "missing shared signing path" {
-					after, readErr := os.ReadFile(path)
-					require.NoError(t, readErr)
-					require.Equal(t, original, after)
-				}
-				if keyCase == "missing then signing copy" {
-					require.NoFileExists(t, identityFiles[0])
-				}
-				if placement != "disabled Recording target" {
-					require.NoFileExists(t, other.IdentityFile)
-					require.NoDirExists(t, other.Directory)
-				}
-			})
-		}
+			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+			switch keyCase {
+			case "signing copy", "missing then signing copy":
+				require.Nil(t, svc)
+				require.ErrorContains(t, err, "audit identity must not reuse an SFTP target identity key")
+			case "recipient copy":
+				require.Nil(t, svc)
+				require.ErrorContains(t, err, "audit encryption recipient reuses a private key")
+			case "malformed":
+				require.Nil(t, svc)
+				require.ErrorContains(t, err, "cannot load static SFTP identities of")
+			case "missing":
+				require.NoError(t, err)
+				require.NotNil(t, svc)
+				require.Nil(t, svc.auditDeliveries[conf.Auditlogs[0].Name])
+				require.Nil(t, svc.recordingRepositories[conf.Auditlogs[0].Name])
+				require.Nil(t, svc.recordingTargets[conf.Auditlogs[0].Name])
+				require.NoError(t, svc.Close())
+				require.NoFileExists(t, path)
+			case "missing shared signing path":
+				require.Nil(t, svc)
+				require.ErrorContains(t, err, "overlaps auditlog")
+				require.NoFileExists(t, path)
+			}
+			if keyCase != "missing" && keyCase != "missing shared signing path" {
+				after, readErr := os.ReadFile(path)
+				require.NoError(t, readErr)
+				require.Equal(t, original, after)
+			}
+			if keyCase == "missing then signing copy" {
+				require.NoFileExists(t, identityFiles[0])
+			}
+		})
 	}
 }
 
@@ -976,7 +930,7 @@ func TestPrepareRejectsSigningKeyReusedByOtherAuditlogSftpTarget(t *testing.T) {
 	copyPath := filepath.Join(root, "other-target-key")
 	writeCopiedAuditTestKey(t, copyPath, contents)
 	conf.Auditlogs = append(conf.Auditlogs, configuration.Auditlog{
-		Name: "other", Enabled: true,
+		Name:         "other",
 		IdentityFile: filepath.Join(root, "other-signing-key"),
 		Directory:    filepath.Join(root, "other-journal"),
 		Targets:      configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{copyPath})}},
@@ -1191,7 +1145,6 @@ func TestPrepareAuditEncryptionIsolatesBestEffortSftpIdentityErrors(t *testing.T
 	sftp.IdentityFiles = []string{filepath.Join(root, "missing-secondary-sftp-key")}
 	conf.Auditlogs = append(conf.Auditlogs, configuration.Auditlog{
 		Name:          "secondary",
-		Enabled:       true,
 		FailurePolicy: configuration.AuditlogFailurePolicyBestEffort,
 		IdentityFile:  filepath.Join(root, "secondary-audit-key"),
 		Directory:     filepath.Join(root, "secondary-journal"),
@@ -1226,7 +1179,6 @@ func TestPrepareAuditEncryptionValidatesSftpIdentityKeysAcrossAuditlogs(t *testi
 	sftp.IdentityFiles = []string{sftpIdentityPath}
 	conf.Auditlogs = append(conf.Auditlogs, configuration.Auditlog{
 		Name:         "secondary",
-		Enabled:      true,
 		IdentityFile: filepath.Join(root, "secondary-audit-key"),
 		Directory:    filepath.Join(root, "secondary-journal"),
 		Targets:      configuration.AuditlogTargets{{Name: "archive", V: sftp}},
@@ -1277,7 +1229,6 @@ func TestPrepareAuditEncryptionRetainsSftpIdentityKeysAcrossBestEffortFailures(t
 			conf.Auditlogs[0].Targets = nil
 			secondary := configuration.Auditlog{
 				Name:          "secondary",
-				Enabled:       true,
 				FailurePolicy: configuration.AuditlogFailurePolicyBestEffort,
 				IdentityFile:  filepath.Join(root, "secondary-audit-key"),
 				Directory:     filepath.Join(root, "secondary-journal"),
@@ -1324,9 +1275,7 @@ flows:
       type: dummy
 `, filepath.ToSlash(filepath.Join(root, "host-key")), filepath.ToSlash(filepath.Join(root, "sessions")))), "audit-sftp-dedicatedness-test.yaml")
 	require.NoError(t, err)
-	require.Len(t, conf.Auditlogs, 1)
-	auditlog := &conf.Auditlogs[0]
-	auditlog.Enabled = true
+	auditlog := configureDefaultTestAuditlog(&conf)
 	auditlog.IdentityFile = filepath.Join(root, "audit-key")
 	auditlog.EncryptionPublicKey = encryptionKey
 	auditlog.Directory = filepath.Join(root, "journal")
@@ -1344,8 +1293,7 @@ flows:
 func TestPrepareActivatesRemoteAuditDelivery(t *testing.T) {
 	directory := t.TempDir()
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		auditlog := &conf.Auditlogs[0]
-		auditlog.Enabled = true
+		auditlog := configureDefaultTestAuditlog(conf)
 		auditlog.IdentityFile = filepath.Join(directory, "auditlog-key")
 		auditlog.Directory = filepath.Join(directory, "auditlog")
 		auditlog.Targets = configuration.AuditlogTargets{{

@@ -109,6 +109,38 @@ func TestFsRepositoryPersistsEnvironmentTokenAndCreatedAt(t *testing.T) {
 	require.Equal(t, createdDetails.At(), restoredDetails.At())
 }
 
+func TestFsRepositoryDisposeReportsOnlyDurableStateTransitions(t *testing.T) {
+	ctx := context.Background()
+	conf := newFsRepositoryTestConfiguration(t)
+	repository, err := NewFsRepository(ctx, conf)
+	require.NoError(t, err)
+	created, err := repository.Create(ctx, "test", fsRepositoryTestRemote{}, []byte("authorization"))
+	require.NoError(t, err)
+	id := created.Id()
+	changed, err := created.Dispose(ctx)
+	require.NoError(t, err)
+	require.True(t, changed)
+	changed, err = created.Dispose(ctx)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.NoError(t, repository.Close())
+
+	restoredRepository, err := NewFsRepository(ctx, conf)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoredRepository.Close()) }()
+	restored, err := restoredRepository.FindBy(ctx, "test", id, nil)
+	require.NoError(t, err)
+	info, err := restored.Info(ctx)
+	require.NoError(t, err)
+	require.Equal(t, StateDisposed, info.State())
+	changed, err = restored.Dispose(ctx)
+	require.NoError(t, err)
+	require.False(t, changed)
+	// Disposal preserves the entry until the independent retention deletion.
+	_, err = restoredRepository.FindBy(ctx, "test", id, nil)
+	require.NoError(t, err)
+}
+
 func TestFsRepositoryRejectsWritesThroughStaleDisposedSession(t *testing.T) {
 	conf := newFsRepositoryTestConfiguration(t)
 	repository, err := NewFsRepository(context.Background(), conf)

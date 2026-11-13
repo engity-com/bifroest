@@ -12,7 +12,7 @@ import (
 )
 
 func (this *service) handleBanner(ctx essh.Context, _ gossh.ConnMetadata) (string, error) {
-	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{ctx}); err != nil {
+	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{Context: ctx, connection: this.connection(ctx)}); err != nil {
 		return "", errors.Newf(errors.System, "cannot retrieve SSH banner: %w", err)
 	} else {
 		return b, nil
@@ -28,7 +28,9 @@ func (this *service) showRememberMe(sshSess essh.Session, auth authorization.Aut
 	}
 	if pub != nil {
 		if v := this.Configuration.Ssh.Keys.RememberMeNotification; !v.IsZero() {
-			buf, err := v.Render(newRememberMeNotificationContext(ctx, auth, state == session.StateNew, pub))
+			notificationContext := newRememberMeNotificationContext(ctx, auth, state == session.StateNew, pub)
+			notificationContext.authentication = (&environmentContext{service: this, connection: this.connection(ctx), authorization: auth}).Authentication
+			buf, err := v.Render(notificationContext)
 			if err != nil {
 				return errors.Newf(errors.System, "cannot render remember me notification: %w", err)
 			}

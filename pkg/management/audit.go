@@ -2,10 +2,10 @@ package management
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementclient "github.com/engity-com/bifroest/pkg/management/client"
 )
 
 func AuditPrivateKey(target Target) (string, error) {
@@ -26,15 +26,5 @@ func DownloadAuditSnapshot(ctx context.Context, target Target, auditlogName, roo
 		return transport.AuditSnapshotHeader{}, err
 	}
 	defer cmd.close()
-	header, err := transport.ReadAuditSnapshot(cmd.stdout, root)
-	if err != nil {
-		return transport.AuditSnapshotHeader{}, cmd.failure("cannot download audit snapshot", err)
-	}
-	if err := cmd.wait("remote audit snapshot transfer failed"); err != nil {
-		return transport.AuditSnapshotHeader{}, err
-	}
-	if header.Name != name.String() {
-		return transport.AuditSnapshotHeader{}, fmt.Errorf("remote audit snapshot has the wrong auditlog name")
-	}
-	return header, nil
+	return managementclient.ReadAuditSnapshot(ctx, cmd.response("remote audit snapshot transfer failed"), name.String(), transport.NewAuditSnapshotFileSink(root))
 }

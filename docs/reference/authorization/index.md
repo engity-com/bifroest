@@ -6,14 +6,18 @@ description: Everything in Bifröst starts here. A user must be authorized at fi
 
 Everything in Bifröst starts here. Firstly, a user must be authorized. Bifröst supports [different types of authorizations](#types) you can choose from to adjust to your needs.
 
+Each [flow](../flow.md#property-authorization) selects one authorization, either inline or from the root [`authorizations` map](../configuration.md#property-authorizations). An omitted authorization uses `authorizations.default` only if defined.
+
 ## Types
 
 1. `local`: [Local](local.md)
-2. `oidc`: [OpenID Connect (OIDC)](oidc.md)
+2. `oidcDeviceAuth`: [OpenID Connect (OIDC)](oidc.md)
 3. `simple`: [Simple](simple.md)
 4. `htpasswd`: [Htpasswd](htpasswd.md)
 5. `bifroest`: [Bifröst delegation](bifroest.md)
 6. `none`: [None](none.md)
+
+The resulting identity is available through [Context Authentication](../context/authentication.md).
 
 ## Examples
 
@@ -33,7 +37,7 @@ Everything in Bifröst starts here. Firstly, a user must be authorized. Bifröst
       - profile
       - offline_access
    ```
-3. Using [Simple DeviceAuth](simple.md):
+3. Using [Simple authorization](simple.md):
    ```yaml
    type: simple
    entries:

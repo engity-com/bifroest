@@ -4,12 +4,12 @@ description: Configure fail-closed SSH session recording, storage, delivery, and
 
 # Session recording
 
-Session recording is disabled by default. Configure it under an [audit log](index.md) to capture one signed [asciicast v3](https://docs.asciinema.org/manual/asciicast/v3/) for each SSH shell or exec task. The audit journal itself may remain disabled.
+Session recording is disabled by default. Configure it under a selected [audit log](index.md) to capture one signed [asciicast v3](https://docs.asciinema.org/manual/asciicast/v3/) for each SSH or browser shell or exec task, alongside the audit journal.
 
 ## Properties
 
 <<property("enabled", "bool", default=False)>>
-Enables session recording for flows that reference this audit log. `auditlog.enabled` may remain `false`: Bifröst still uses the signing identity and Recording repository but creates **no audit journal**.
+Enables session recording for flows that select this audit log. The journal is already active for a selected logger; this flag adds the Recording repository and signed output artifacts.
 
 <<property("directory", "File Path", "../data-type.md#file-path", default="<os specific>")>>
 Local recording repository. Keep it on an access-controlled filesystem, separate from session storage, audit journals and key files. Bifröst manages it exclusively; do not modify it or rotate its files externally.
@@ -63,12 +63,6 @@ Compression profile for chunked Zstandard encoding. `default` is currently the o
 * Raw keyboard input is not captured. **Echoed commands and secrets printed by programs can still appear in the output.** Treat recordings and exported Casts as sensitive; encrypted containers also expose public metadata.
 * Recording is terminal playback, not a byte-for-byte SSH capture. With the default `failurePolicy: strict`, a local recording failure aborts the affected task. With `bestEffort`, Bifröst disables the audit log and recording until restart. See [failure policy](index.md#property-failurePolicy).
 
-## Recording-only
-
-With `auditlog.enabled: false` and `recording.enabled: true`, Bifröst creates signed `.bcast` or `.becast` files and signed delivery receipts, but **no `.baudit`/`.beaudit` journal or audit events**. Lifecycle, delivery and retention audit events are not written. Recording failures still obey `failurePolicy`.
-
-The repository binds its mode: switching between recording-only and audited recording requires a **new empty Recording directory**. Preserve the previous repository and evidence. Recording targets, including inherited targets, still receive sealed Recordings, but no audit segments.
-
 ## Formats and keys
 
 Recording inherits its signing identity and optional age recipient from the parent audit log:
@@ -78,21 +72,21 @@ Recording inherits its signing identity and optional age recipient from the pare
 
 Encrypted inspection or verification without the private age key checks only the signed outer envelope, **not** decrypted content or claimed status. [`recording verify`](../cli/recording/verify.md) with a matching key checks the full content without exporting a Cast; `--require-full` fails rather than accepting outer-only verification. Full export also verifies the content. Even encrypted artifacts expose metadata such as recording ID and timing; protect them. See the [native format](../../formats/recording.md) and [test vectors](../../formats/recording-vectors.md) for wire details.
 
-Switching between `.bcast` and `.becast`, or between recording-only and audited mode, requires a new empty Recording directory. If an audit journal is enabled, changing its recipient also requires a new empty audit-log directory. Preserve old evidence and decryption keys. If the signing key is lost, Bifröst refuses to regenerate it over existing history.
+Switching between `.bcast` and `.becast` requires a new empty Recording directory. Changing the audit recipient also requires a new empty audit-log directory. Older recording-only repositories cannot switch to audited recording in place: use a new empty Recording directory. Preserve old evidence and decryption keys. If the signing key is lost, Bifröst refuses to regenerate it over existing history.
 
 ## Storage and recovery
 
 * `active/` holds in-progress recordings; `sealed/` holds immutable `.bcast` or `.becast` files. Startup seals interrupted recordings as `incomplete`. Integrity failures in accepted evidence fail closed; there is no manual repair command.
 * `quarantine/` and `.bifroest-work/` hold rejected and in-progress recovery work. Do not manually move these files into `sealed/`.
-* `.delivery/` holds signed receipts. Only with an enabled audit journal does its `receipt.lifecycle` outbox hold signed, **unencrypted** flow names, correlation IDs and digests until the event is recorded. Recording-only has no lifecycle outbox. Protect the entire repository and its backups with filesystem permissions/ACLs; signatures protect integrity, not confidentiality.
+* `.delivery/` holds signed receipts. Its `receipt.lifecycle` outbox holds signed, **unencrypted** flow names, correlation IDs and digests until the event is recorded. Protect the entire repository and its backups with filesystem permissions/ACLs; signatures protect integrity, not confidentiality.
 
-With an enabled audit journal, recovery replays pending terminal audit events at least once; a crash after commit can produce an identical duplicate. Recording-only recovers the sealed artifact and its receipt **without** creating an audit event. See [recording lifecycle events](events.md#sessionrecordingincomplete).
+Recovery replays pending terminal audit events at least once; a crash after commit can produce an identical duplicate. See [recording lifecycle events](events.md#sessionrecordingincomplete).
 
 ## Remote delivery and retention
 
 Signed receipts bind sealed bytes to selected remote targets. Delivery retries asynchronously; changing a target cannot redirect an outstanding artifact. See [remote delivery](remote-targets/index.md#delivery-behavior).
 
-With targets, `retainFor` begins after the last durable acknowledgement; an enabled audit journal additionally requires success-audit markers. Without targets, it begins at sealing. Bifröst deletes only local recordings, not remote copies; set remote retention separately. `retainFor: 0s` stops new automatic deletions.
+With targets, `retainFor` begins after the last durable acknowledgement and requires success-audit markers. Without targets, it begins at sealing. Bifröst deletes only local recordings, not remote copies; set remote retention separately. `retainFor: 0s` stops new automatic deletions.
 
 ## Export and playback
 
@@ -106,16 +100,16 @@ With targets, `retainFor` begins after the last durable acknowledgement; an enab
 
 ### Clear recording
 
-1. Enable **recording only** on the `default` entry. Existing flows use `default` unless they select another audit log:
+1. Add recording to the explicitly defined `default` logger. Flows use it unless they select another audit log:
 
     ```yaml title="/etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - enabled: false
+    auditlogs:
+      default:
         recording:
           enabled: true
     ```
 
-2. Start Bifröst and use a shell or exec task. After it ends, find `<recording-uuid>.bcast` under `recording.directory/sealed/`. An optional [recording notice](#property-notice) shows the ID **only for interactive PTY shells**. Enable `auditlog.enabled: true` separately if you also need [audit events](events.md#sessionrecordingstarted) correlating it with the session.
+2. Start Bifröst and use a shell or exec task. After it ends, find `<recording-uuid>.bcast` under `recording.directory/sealed/`. An optional [recording notice](#property-notice) shows the ID **only for interactive PTY shells**. The logger also writes [audit events](events.md#sessionrecordingstarted) correlating the Recording with its session.
 
 3. On the **running** Bifröst host, export the already sealed `.bcast` to a file **outside** the repository. The local signing identity is used automatically; no configuration path or producer ID needs to be repeated:
 
@@ -130,11 +124,11 @@ With targets, `retainFor` begins after the last durable acknowledgement; an enab
 
 ### Encrypted recording
 
-1. For a **new, empty** Recording directory, configure an [offline age recipient](index.md#encrypted-audit-events) on the parent entry. Bifröst then writes `.becast` instead of `.bcast` without creating an audit journal:
+1. For **new, empty** audit and Recording directories, configure an [offline age recipient](index.md#encrypted-audit-events) on the parent entry. Bifröst then writes `.becast` instead of `.bcast` and an encrypted `.beaudit` journal:
 
     ```yaml title="/etc/engity/bifroest/configuration.yaml"
-    auditlog:
-      - enabled: false
+    auditlogs:
+      default:
         encryptionPublicKeyFile: /etc/engity/bifroest/audit-recipient.pub
         recording:
           enabled: true

@@ -17,7 +17,9 @@ var (
 	DefaultEnvironmentKubernetesConfig  = template.MustNewTextMarshaller[kubernetes.Kubeconfig, *kubernetes.Kubeconfig]("")
 	DefaultEnvironmentKubernetesContext = template.MustNewString("")
 
-	DefaultEnvironmentKubernetesName                 = template.MustNewString("bifroest-{{.session.id}}")
+	// Base58 UUIDs are case-sensitive and therefore not DNS label names. Resource
+	// names use a derived hash; the exact session binding remains in its label.
+	DefaultEnvironmentKubernetesName                 = template.MustNewString("bifroest-{{.session.id | toString | sha256sum | trunc 32}}")
 	DefaultEnvironmentKubernetesNamespace            = template.MustNewString("")
 	DefaultEnvironmentKubernetesOs                   = sys.OsLinux
 	DefaultEnvironmentKubernetesArch                 = sys.ArchAmd64

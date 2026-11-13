@@ -1,0 +1,60 @@
+{
+  "schema": "bifroest-license-provenance-bridge-v1",
+  "component": "react-remove-scroll-bar@2.3.8",
+  "declaredLicense": "MIT",
+  "archives": {
+    "2.3.7": {
+      "gitHead": "29e9fcd1eecf7d3b77a767941c4a57fe461fc1e4",
+      "integrity": "sha512-UzA0npskGFA2bUqwWsSRJscuQEt7zyfVtMpCtBl/lk+k/ky6lzYImEks9jwgxTDe/B0tb5hyrYgbQv/JQaHjDw==",
+      "tarball": "https://registry.npmjs.org/react-remove-scroll-bar/-/react-remove-scroll-bar-2.3.7.tgz",
+      "license": "MIT"
+    },
+    "2.3.8": {
+      "gitHead": "b3b1287aad81def2e2ae707274b74531b61ddbaf",
+      "integrity": "sha512-9r+yi9+mgU33AKcj6IbT9oRCO78WriSj6t/cF8DWBZJ9aOGPOTEDvdUDz1FwKim7QXWwmHqtdHnRJfhAxEG46Q==",
+      "tarball": "https://registry.npmjs.org/react-remove-scroll-bar/-/react-remove-scroll-bar-2.3.8.tgz",
+      "license": "MIT"
+    }
+  },
+  "identicalPayloadFiles": {
+    "README.md": "486442209236ffa3893312e508694699a6b8834d30a2f9c083c1f3379983e4f9",
+    "constants/package.json": "9b557c166960d4a096abc83259b8787a4072516f666856f8cf51656e38ed904b",
+    "dist/es2015/component.d.ts": "8b9441c9166045f81e5000001f95521319692124baea142b228efdc370883736",
+    "dist/es2015/component.js": "3baec61523006aedf14321423427b0c50aa17bfe48faf344bebff9d883149f29",
+    "dist/es2015/constants.d.ts": "cd9dd3a7b0b95c3068f3b43b82da6dc6bee018f56d975b248d4bb6c484e61ed1",
+    "dist/es2015/constants.js": "1c73582ef730bbca1d536a6995c7eea438dcd0632fee2856337627e44b5872e2",
+    "dist/es2015/index.d.ts": "130bc4c810a84aeae180ba8fe1e7fd96f706d5d3a0cf6728419ff2c74708185f",
+    "dist/es2015/index.js": "130bc4c810a84aeae180ba8fe1e7fd96f706d5d3a0cf6728419ff2c74708185f",
+    "dist/es2015/utils.d.ts": "c4304c2114b48bb2778de565b4a0274ebbbbd71f6d7f5c57e116bd1656ea2c32",
+    "dist/es2015/utils.js": "2c4105ab772a5cbf4b3d1e54f49e94d03fde867d20767b46bb3e5c27f4d82f00",
+    "dist/es2019/component.d.ts": "8b9441c9166045f81e5000001f95521319692124baea142b228efdc370883736",
+    "dist/es2019/component.js": "ac214bb2783fdf743a0c949fef47784741db109dcc6f4426f46e77386dee1c8f",
+    "dist/es2019/constants.d.ts": "cd9dd3a7b0b95c3068f3b43b82da6dc6bee018f56d975b248d4bb6c484e61ed1",
+    "dist/es2019/constants.js": "f597b4036280caca4cc58d3476ffc02dc5c16564090229e6685e98b80a8e2a33",
+    "dist/es2019/index.d.ts": "130bc4c810a84aeae180ba8fe1e7fd96f706d5d3a0cf6728419ff2c74708185f",
+    "dist/es2019/index.js": "130bc4c810a84aeae180ba8fe1e7fd96f706d5d3a0cf6728419ff2c74708185f",
+    "dist/es2019/utils.d.ts": "c4304c2114b48bb2778de565b4a0274ebbbbd71f6d7f5c57e116bd1656ea2c32",
+    "dist/es2019/utils.js": "dafd773a756cca848d359153df92315235becb2ed8e10b1146458be4bfd38826",
+    "dist/es5/component.d.ts": "8b9441c9166045f81e5000001f95521319692124baea142b228efdc370883736",
+    "dist/es5/component.js": "d95ae68cda75b262f01b7c3eba3d530c6a24579778cbb3e320b2449348dabb13",
+    "dist/es5/constants.d.ts": "cd9dd3a7b0b95c3068f3b43b82da6dc6bee018f56d975b248d4bb6c484e61ed1",
+    "dist/es5/constants.js": "20bf238e562be0830b10b1813d36fa321e81cd07fd99b27724833132304b73bc",
+    "dist/es5/index.d.ts": "130bc4c810a84aeae180ba8fe1e7fd96f706d5d3a0cf6728419ff2c74708185f",
+    "dist/es5/index.js": "0e1ab245d6b12ef80409b988b0f29b498c562b6cff6e7365714cb0c351914a12",
+    "dist/es5/utils.d.ts": "c4304c2114b48bb2778de565b4a0274ebbbbd71f6d7f5c57e116bd1656ea2c32",
+    "dist/es5/utils.js": "ee6c64e8690475db96ec1a1b2ede342ffdc45ccf739bd28dd6f86c8c9a5917c3"
+  },
+  "metadataDifferences": {
+    "version": ["2.3.7", "2.3.8"],
+    "dependencies.react-style-singleton": ["^2.2.1", "^2.2.2"]
+  },
+  "licenseSource": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/8ca9ba5ea52de03308fe8ced94f7b159a44d28ff/LICENSE",
+  "licenseSha256": "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84",
+  "sourceComparison": "https://github.com/theKashey/react-remove-scroll-bar/compare/29e9fcd1eecf7d3b77a767941c4a57fe461fc1e4...8ca9ba5ea52de03308fe8ced94f7b159a44d28ff",
+  "sourceComparisonFiles": ["LICENSE added"],
+  "limits": [
+    "The 2.3.8 gitHead is still not retrievable.",
+    "This is not a reproducible TypeScript source-to-npm build attestation or a legal opinion.",
+    "The dependency-range change is not ignored; dependencies have separate locked notices."
+  ]
+}

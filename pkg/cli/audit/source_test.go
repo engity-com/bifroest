@@ -235,18 +235,18 @@ func TestAuditCommandsUseExplicitProducerTrustAnchorsWithoutSigningKeys(t *testi
 	}
 }
 
-func TestAuditCommandsRejectDisabledBeforeOutputOrIdentityAccess(t *testing.T) {
+func TestAuditCommandsRejectUnknownBeforeOutputOrIdentityAccess(t *testing.T) {
 	root := t.TempDir()
 	configured := configuration.Auditlog{Name: "disabled", IdentityFile: filepath.Join(root, "missing-key"), Directory: filepath.Join(root, "missing-journal")}
 	path := writeAuditCliTestConfiguration(t, root, configured)
 	app := newAuditCliTestApplication(t)
 	for _, command := range []string{"verify", "export", "decrypt", "merge"} {
 		var output bytes.Buffer
-		args := []string{"audit", command, "disabled", "--configuration=" + path}
+		args := []string{"audit", command, "missing", "--configuration=" + path}
 		if command != "verify" {
 			args = append(args, "--output="+filepath.Join(root, "must-not-create.jsonl"), "--force")
 		}
-		require.ErrorContains(t, runAuditCliTestCommand(t, app, &output, args...), "is disabled")
+		require.ErrorContains(t, runAuditCliTestCommand(t, app, &output, args...), "does not exist")
 		require.Empty(t, output.Bytes())
 		require.NoFileExists(t, filepath.Join(root, "must-not-create.jsonl"))
 		require.NoFileExists(t, configured.IdentityFile)
@@ -259,7 +259,7 @@ func TestAuditCommandsReadLiveCommittedCheckpoint(t *testing.T) {
 	var configured []configuration.Auditlog
 	var recorders []bfAudit.Recorder
 	for _, name := range []string{"first", "second"} {
-		entry := configuration.Auditlog{Name: configuration.AuditlogName(name), Enabled: true,
+		entry := configuration.Auditlog{Name: configuration.AuditlogName(name),
 			IdentityFile: filepath.Join(root, name+"-key"), Directory: filepath.Join(root, name+"-journal")}
 		identity, err := bfAudit.EnsureIdentity(&entry)
 		require.NoError(t, err)

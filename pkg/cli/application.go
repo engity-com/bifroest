@@ -13,6 +13,7 @@ import (
 	cexec "github.com/engity-com/bifroest/pkg/cli/exec"
 	cflow "github.com/engity-com/bifroest/pkg/cli/flow"
 	cforever "github.com/engity-com/bifroest/pkg/cli/forever"
+	cid "github.com/engity-com/bifroest/pkg/cli/id"
 	cimp "github.com/engity-com/bifroest/pkg/cli/imp"
 	ckey "github.com/engity-com/bifroest/pkg/cli/key"
 	crecording "github.com/engity-com/bifroest/pkg/cli/recording"
@@ -47,6 +48,7 @@ func NewApplication[O any](version sys.Version, description string, run common.S
 		WithCommand(cforever.CreateCommands()...).
 		WithCommand(cimp.CreateCommands(version)...).
 		WithCommand(ckey.CreateCommands()...).
+		WithCommand(cid.CreateCommands()...).
 		WithCommand(cserve.CreateCommands(version, run)...).
 		WithCommand(cservice.CreateCommands(version)...).
 		WithCommand(csftpserver.CreateCommands()...)

@@ -29,9 +29,9 @@ import (
 func TestRecordingListVerifiesOnlyRequestedPage(t *testing.T) {
 	fixture := createRecordingFixture(t)
 	conf, input := configureRecordingFixture(t, fixture)
-	const corruptID = "ffffffff-ffff-4fff-bfff-ffffffffffff"
-	require.Less(t, fixture.id.String(), corruptID)
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(input), corruptID+".bcast"), []byte("corrupt artifact"), 0600))
+	corruptID := bfRecording.Id(uuid.MustParse("ffffffff-ffff-4fff-bfff-ffffffffffff"))
+	require.Less(t, bytes.Compare(fixture.id[:], corruptID[:]), 0, "pagination is ordered by UUID bytes, not text notation")
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(input), corruptID.String()+".bcast"), []byte("corrupt artifact"), 0600))
 	app := newRecordingTestApplication(t)
 	var output bytes.Buffer
 	ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)
@@ -50,7 +50,7 @@ func TestRecordingListVerifiesOnlyRequestedPage(t *testing.T) {
 	err = app.ParseAndExecute(ctx, opts, "recording", "ls", "default", "--configuration="+conf.Filename, "--format=json", "--limit=2")
 	require.Error(t, err)
 	require.Contains(t, output.String(), fixture.id.String(), "only the verified prefix may be emitted")
-	require.NotContains(t, output.String(), corruptID)
+	require.NotContains(t, output.String(), corruptID.String())
 	require.False(t, json.Valid(output.Bytes()), "a failed stream must not be completed as a successful JSON result")
 }
 

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	"github.com/google/uuid"
 
 	bsys "github.com/engity-com/bifroest/pkg/sys"
@@ -187,7 +188,7 @@ func stageDarwinHomeReplacement(path string, expected os.FileInfo, transaction *
 		}
 		return fmt.Errorf("path %q changed identity before replacement", path)
 	}
-	backup := "." + name + ".bifroest-backup-" + uuid.NewString()
+	backup := "." + name + ".bifroest-backup-" + uuidtext.Format(uuid.New())
 	if err := parent.Rename(name, backup); err != nil {
 		_ = parent.Close()
 		return err

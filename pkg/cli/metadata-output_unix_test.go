@@ -43,8 +43,8 @@ func TestMetadataFileOutputDoesNotReadUnrelatedRepositories(t *testing.T) {
 	require.NoError(t, os.WriteFile(identity, []byte("metadata commands do not read this key"), 0600))
 	raw, err := yaml.Marshal(map[string]any{
 		"session": map[string]string{"type": "fs", "storage": directories[0]},
-		"auditlog": []map[string]any{{
-			"name": "default", "enabled": true, "identityFile": identity, "directory": directories[1],
+		"auditlogs": map[string]any{"default": map[string]any{
+			"identityFile": identity, "directory": directories[1],
 			"recording": map[string]any{"enabled": true, "directory": directories[2]},
 		}},
 		"flows": []map[string]any{{

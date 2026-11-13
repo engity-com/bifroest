@@ -67,6 +67,15 @@ func (this Bool) IsHardCoded() bool {
 	return this.isHardCoded
 }
 
+// StaticValue reports a known constant, including the zero value, without
+// evaluating a template or accessing its context.
+func (this Bool) StaticValue() (value bool, known bool) {
+	if this.isHardCoded || this.tmpl == nil {
+		return this.hardCodedValue, true
+	}
+	return false, false
+}
+
 func (this Bool) String() string {
 	return this.plain
 }

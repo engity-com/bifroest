@@ -17,15 +17,14 @@ import (
 	"github.com/creack/pty"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
-	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 func (this *local) Banner(req Request) (io.ReadCloser, error) {
@@ -38,6 +37,10 @@ func (this *local) Banner(req Request) (io.ReadCloser, error) {
 }
 
 func (this *local) Run(t Task) (exitCode int, rErr error) {
+	return this.run(t)
+}
+func (this *local) RunTerminal(t TerminalTask) (int, error) { return this.run(t) }
+func (this *local) run(t TaskContext) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}
@@ -46,7 +49,12 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	l := t.Connection().Logger()
-	sshSess := t.SshSession()
+	stream, releaseTerminal, err := taskTerminal(t)
+	if err != nil {
+		return fail(err)
+	}
+	defer releaseTerminal()
+	sshSess := stream
 	if _, _, isPty := sshSess.Pty(); isPty && t.TaskType() == TaskTypeSftp {
 		return fail(ErrSubsystemNotAllowed)
 	}
@@ -62,8 +70,6 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return fail(err)
 	}
 	defer release()
-
-	setReservedEnvironment(ev, localTargetOs, session.EnvName, sess.Id().String())
 
 	switch t.TaskType() {
 	case TaskTypeShell:
@@ -81,19 +87,19 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
+	if source := taskSshSession(t); source != nil && ssh.AgentRequested(source) && authorization.IsAgentForwardingAllowed(auth) {
 		ln, err := this.newAgentNamedPipe()
 		if err != nil {
 			return failf("cannot listen to agent: %w", err)
 		}
 		defer common.IgnoreCloseError(ln)
-		go ssh.ForwardAgentConnections(ln, l, sshSess)
+		go ssh.ForwardAgentConnections(ln, l, source)
 		setReservedEnvironment(ev, localTargetOs, ssh.AuthSockEnvName, ln.Path())
 	}
 	if ptyReq, _, isPty := sshSess.Pty(); isPty && localTargetOs == sys.OsWindows {
 		setReservedEnvironment(ev, localTargetOs, "TERM", ptyReq.Term)
 		cmd.Env = ev.Strings()
-		return this.runConPTY(t, cmd)
+		return this.runConPTY(t, cmd, stream)
 	}
 
 	var stderr io.Writer = sshSess.Stderr()
@@ -105,7 +111,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	var fPty, fTty *os.File
-	var winCh <-chan essh.Window
+	var winCh <-chan terminal.Window
 	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
 		winCh = windows
 		var err error
@@ -183,7 +189,13 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		}
 		return failf("cannot start process %v: %w", cmd.Args, err)
 	}
+	if fTty != nil {
+		// Only the child owns the slave after Start. Retaining the parent's slave
+		// keeps the master from reaching EOF after the child has exited.
+		_ = fTty.Close()
+	}
 	var outputDone chan error
+	var ptyOutputDone chan error
 	var outputWriting atomic.Int32
 	if stdoutRead != nil {
 		_ = stdoutWrite.Close()
@@ -211,7 +223,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		exitCode int
 		err      error
 	}
-	signals := make(chan essh.Signal, 1)
+	signals := make(chan terminal.Signal, 1)
 	processDone := make(chan doneT, 1)
 	waitFinished := make(chan struct{})
 	copyDone := make(chan error, 2)
@@ -226,9 +238,14 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}()
 
 	if fPty != nil {
-		doCopy := func(from io.Reader, to io.Writer, name string) {
+		ptyOutputDone = make(chan error, 1)
+		doCopy := func(from io.Reader, to io.Writer, name string, output bool) {
 			defer activeRoutines.Done()
-			if _, err := io.Copy(to, from); this.isRelevantError(err) {
+			_, err := io.Copy(to, from)
+			if output {
+				ptyOutputDone <- err
+			}
+			if this.isRelevantError(err) {
 				copyDone <- err
 			} else {
 				copyDone <- nil
@@ -236,9 +253,9 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 			l.Tracef("finished copy %s", name)
 		}
 		activeRoutines.Add(1)
-		go doCopy(fPty, sshSess, "pty -> ssh")
+		go doCopy(fPty, sshSess, "pty -> ssh", true)
 		activeRoutines.Add(1)
-		go doCopy(sshSess, fPty, "ssh -> pty")
+		go doCopy(sshSess, fPty, "ssh -> pty", false)
 	}
 
 	activeRoutines.Add(1)
@@ -247,6 +264,15 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		defer close(waitFinished)
 		waitErr := cmd.Wait()
 		var outputErr error
+		if ptyOutputDone != nil {
+			outputErr = waitLocalPtyOutput(t.Context(), ptyOutputDone, 2*time.Second, func() {
+				_ = fPty.Close()
+				_ = sshSess.Close()
+			})
+			if !this.isRelevantError(outputErr) {
+				outputErr = nil
+			}
+		}
 		if outputDone != nil {
 			timer := time.NewTimer(2 * time.Second)
 			defer timer.Stop()
@@ -314,6 +340,32 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 				return -1, rErr
 			}
 		}
+	}
+}
+
+// Process exit alone does not prove terminal output delivery. The caller applies
+// the platform's ordinary PTY EOF/EIO classification; timeout/cancel must stay a
+// failure even if a previously blocked writer later reports success.
+func waitLocalPtyOutput(ctx context.Context, done <-chan error, timeout time.Duration, abort func()) error {
+	if err := ctx.Err(); err != nil {
+		abort()
+		return err
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if canceled := ctx.Err(); canceled != nil {
+			abort()
+			return canceled
+		}
+		return err
+	case <-ctx.Done():
+		abort()
+		return ctx.Err()
+	case <-timer.C:
+		abort()
+		return errors.System.Newf("local PTY output did not complete before timeout")
 	}
 }
 

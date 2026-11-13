@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
 func TestRecordSelectionKeepsNewestMatchesAcrossSegments(t *testing.T) {
@@ -164,7 +167,12 @@ func TestRecordSelectionContinuesBeyondFullHistoryBudget(t *testing.T) {
 		records:   maxMaterializedVerifiedRecords,
 		selection: &verifiedRecordSelection{selection: RecordSelection{Limit: 1}},
 	}
-	_, _, err := verifyLiveProducer(t.Context(), source, r.headDirectory, id, nil, r.state.lastRecord, true, budget, []string{conf.Directory})
+	headBytes, _, err := readVerifierFile(filepath.Join(r.headDirectory, nativeHeadFileName), nativeformat.MaxMetadataPayload)
+	require.NoError(t, err)
+	head, err := evidence.CaptureAuditProducerHead(headBytes, id.ProducerId(), false)
+	require.NoError(t, err)
+	require.Equal(t, r.state.lastRecord, head.Checkpoint())
+	_, _, err = verifyLiveProducer(t.Context(), source, r.headDirectory, head, nil, true, budget, []string{conf.Directory})
 	require.NoError(t, err)
 	require.EqualValues(t, maxMaterializedVerifiedRecords+1, budget.records)
 	require.Len(t, budget.selection.materialize(), 1)

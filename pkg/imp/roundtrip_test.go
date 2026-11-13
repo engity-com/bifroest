@@ -117,6 +117,9 @@ func TestRoundtrip(t *testing.T) {
 }
 
 func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, session.Id) func(context.Context, func())) {
+	// The IMP and its asynchronous forwarding observers belong to the parent
+	// test. Keep the parent testlog hook: a child hook would let a queued observer
+	// retain a testing.T after that child has completed.
 	ctx, cancelFn := context.WithCancel(context.Background())
 	defer cancelFn()
 
@@ -183,7 +186,6 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	require.NoError(t, err)
 
 	t.Run("ping", func(t *testing.T) {
-		testlog.Hook(t)
 		connId, err := connection.NewId()
 		require.NoError(t, err)
 
@@ -195,7 +197,6 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 
 	if *roundtripTestWithKill {
 		t.Run("kill", func(t *testing.T) {
-			testlog.Hook(t)
 			executionSession, ok := sess.(ExecutionSession)
 			require.True(t, ok)
 			connId, err := connection.NewId()
@@ -211,7 +212,6 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	}
 
 	t.Run("tcp-forward", func(t *testing.T) {
-		testlog.Hook(t)
 		connId, err := connection.NewId()
 		require.NoError(t, err)
 
@@ -243,7 +243,6 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	})
 
 	t.Run("named-pipe", func(t *testing.T) {
-		testlog.Hook(t)
 		connId, err := connection.NewId()
 		require.NoError(t, err)
 
@@ -294,7 +293,6 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	})
 
 	t.Run("named-pipe-noop", func(t *testing.T) {
-		testlog.Hook(t)
 		connId, err := connection.NewId()
 		require.NoError(t, err)
 
@@ -656,7 +654,6 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	})
 
 	t.Run("get-environment", func(t *testing.T) {
-		testlog.Hook(t)
 		connId, err := connection.NewId()
 		require.NoError(t, err)
 

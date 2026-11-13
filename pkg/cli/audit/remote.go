@@ -130,7 +130,7 @@ func runRemoteAudit(ctx context.Context, target management.Target, opts remoteAu
 			ExpectedEncryptionRecipient: header.Recipient, DecryptionIdentities: identities,
 			WithSensitive: opts.WithSensitive || opts.Operation == remoteVerify && len(identities) != 0,
 		})
-		destination.Auditlogs = append(destination.Auditlogs, configuration.Auditlog{Name: name, Enabled: true, Directory: journal})
+		destination.Auditlogs = append(destination.Auditlogs, configuration.Auditlog{Name: name, Directory: journal})
 	}
 	if opts.Operation == remoteVerify {
 		if opts.RequireFull && sources[0].ExpectedEncryptionRecipient != "" && len(identities) == 0 {

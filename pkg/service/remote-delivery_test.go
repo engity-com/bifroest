@@ -141,8 +141,7 @@ func TestServiceShutdownSealsAndFlushesAuditTail(t *testing.T) {
 	directory := t.TempDir()
 	target := &serviceRemoteDeliveryTestTarget{published: make(chan uint64, 1)}
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		auditlog := &conf.Auditlogs[0]
-		auditlog.Enabled = true
+		auditlog := configureDefaultTestAuditlog(conf)
 		auditlog.IdentityFile = filepath.Join(directory, "auditlog-key")
 		auditlog.Directory = filepath.Join(directory, "auditlog")
 		auditlog.Targets = configuration.AuditlogTargets{{

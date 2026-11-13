@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	stderrors "errors"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/uuidpath"
 )
 
 const (
@@ -277,6 +279,11 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		}
 	}
 	recoverer, canRecoverSealedState := prepareSealed.(SealedArtifactStateRecoverer)
+	for _, item := range []struct{ directory, suffix string }{{result.activePath, ""}, {result.workPath, ".tmp"}, {result.sealedPath, format.sealedSuffix()}} {
+		if err := uuidpath.CheckAliases(ctx, item.directory, item.suffix); err != nil {
+			return nil, err
+		}
+	}
 	result.quota, err = newLocalQuotaWithReceiptRecovery(options.MaximumSpoolBytes, canRecoverSealedState, result.workPath, result.activePath, result.sealedPath, result.quarantinePath, filepath.Join(canonical, localDeliveryDirectory))
 	if err != nil {
 		return nil, err
@@ -383,10 +390,30 @@ func (this *localRepository[Head, Summary]) listSealed(ctx context.Context) ([]I
 		}
 		result = append(result, id)
 	}
+	// ReadDir orders storage names, which is not UUID byte order for Base58 or
+	// mixed classic aliases. Keep full inventories consistent with ID pages.
+	sort.Slice(result, func(i, j int) bool { return bytes.Compare(result[i][:], result[j][:]) < 0 })
+	for i := 1; i < len(result); i++ {
+		if result[i-1] == result[i] {
+			return nil, errors.Config.Newf("recording %s has ambiguous sealed artifacts", result[i])
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id Id) (_ *LocalSealedArtifact[Summary], rErr error) {
+	return this.openSealedWithVerifier(ctx, id, func(file *os.File, size int64, ctx context.Context) (Summary, error) {
+		return this.format.verifyPublished(file, size, nil, ctx)
+	})
+}
+
+// A catalog can supply stricter per-call verification without changing the
+// repository format/options or the ordinary OpenSealed/CLI contract. The
+// verifier sees the actual opened descriptor's stat size before any reads.
+func (this *localRepository[Head, Summary]) openSealedWithVerifier(ctx context.Context, id Id, verify func(*os.File, int64, context.Context) (Summary, error)) (_ *LocalSealedArtifact[Summary], rErr error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil local recording repository")
 	}
@@ -414,8 +441,12 @@ func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id I
 		this.mutex.Unlock()
 		return nil, err
 	}
-	fileName := id.String() + this.format.sealedSuffix()
-	path := filepath.Join(this.sealedPath, fileName)
+	path, pathErr := uuidpath.Resolve(this.sealedPath, id, this.format.sealedSuffix())
+	if pathErr != nil {
+		this.mutex.Unlock()
+		return nil, pathErr
+	}
+	fileName := filepath.Base(path)
 	file, err := openSealedLocalFile(path)
 	if err != nil {
 		this.mutex.Unlock()
@@ -437,7 +468,7 @@ func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id I
 	if info.Size() < 1 {
 		return nil, errors.Config.Newf("sealed recording artifact is empty")
 	}
-	summary, err := this.format.verifyPublished(file, info.Size(), nil, ctx)
+	summary, err := verify(file, info.Size(), ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +546,10 @@ func (this *localRepository[Head, Summary]) deleteSealed(ctx context.Context, id
 	if this.active[id] != nil {
 		return false, errors.System.Newf("sealed recording is still being finalized")
 	}
-	path := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
+	path, err := uuidpath.Resolve(this.sealedPath, id, this.format.sealedSuffix())
+	if err != nil {
+		return false, err
+	}
 	current, err := os.Lstat(path)
 	if stderrors.Is(err, fs.ErrNotExist) {
 		tombstoneSize, tombstoneDestroyed, cleanupErr := removeLocalRetentionTombstone(path + localRetentionTombstone)
@@ -600,7 +634,7 @@ func localRetentionTombstoneId(name, sealedSuffix string) (Id, bool, error) {
 	}
 	sealedName := strings.TrimSuffix(name, localRetentionTombstone)
 	idText := strings.TrimSuffix(sealedName, sealedSuffix)
-	if idText == sealedName || id.UnmarshalText([]byte(idText)) != nil || id.String()+sealedSuffix != sealedName {
+	if idText == sealedName || id.UnmarshalText([]byte(idText)) != nil || !uuidpath.Canonical(idText, id) {
 		return Id{}, false, errors.Config.Newf("recording sealed directory contains unsupported retention tombstone %q", name)
 	}
 	return id, true, nil
@@ -713,7 +747,18 @@ func (this *localRepository[Head, Summary]) sealedRemoteArtifact(ctx context.Con
 	if err != nil {
 		return audit.RemoteArtifact{}, err
 	}
-	return audit.NewRemoteArtifact(this.identity.ProducerId(), id.String()+this.format.sealedSuffix(), digest, info.Size(), file)
+	// A historical lifecycle/receipt binds the original filename as well as the
+	// content. Recovery and byte-for-byte delivery must not invent a new alias.
+	name := filepath.Base(file.Name())
+	text := strings.TrimSuffix(name, this.format.sealedSuffix())
+	if !uuidpath.Canonical(text, id) {
+		text = strings.TrimSuffix(filepath.Base(filepath.Dir(file.Name())), ".tmp")
+		if !uuidpath.Canonical(text, id) {
+			return audit.RemoteArtifact{}, errors.System.Newf("recording receipt source has an unrelated filename")
+		}
+		name = text + this.format.sealedSuffix()
+	}
+	return audit.NewRemoteArtifact(this.identity.ProducerId(), name, digest, info.Size(), file)
 }
 
 func (this *localRepository[Head, Summary]) createActive(ctx context.Context, header CastHeader, metadata CastMetadata, chunkSize int) (*localActive[Head, Summary], error) {
@@ -752,9 +797,18 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 	if _, exists := this.active[metadata.RecordingId]; exists {
 		return nil, errors.System.Newf("recording %s is already active", metadata.RecordingId)
 	}
-	activeDirectory := filepath.Join(this.activePath, metadata.RecordingId.String())
-	sealedPath := filepath.Join(this.sealedPath, metadata.RecordingId.String()+this.format.sealedSuffix())
-	workDirectory := filepath.Join(this.workPath, metadata.RecordingId.String()+".tmp")
+	activeDirectory, err := uuidpath.Resolve(this.activePath, metadata.RecordingId, "")
+	if err != nil {
+		return nil, err
+	}
+	sealedPath, err := uuidpath.Resolve(this.sealedPath, metadata.RecordingId, this.format.sealedSuffix())
+	if err != nil {
+		return nil, err
+	}
+	workDirectory, err := uuidpath.Resolve(this.workPath, metadata.RecordingId, ".tmp")
+	if err != nil {
+		return nil, err
+	}
 	for _, path := range []string{activeDirectory, sealedPath, workDirectory} {
 		if _, err := os.Lstat(path); err == nil {
 			return nil, errors.System.Newf("recording path %q already exists", path)
@@ -1270,7 +1324,7 @@ func (this *localRepository[Head, Summary]) recoverWorkDirectories(ctx context.C
 		}
 		name := strings.TrimSuffix(entry.Name(), ".tmp")
 		var id Id
-		if name == entry.Name() || id.UnmarshalText([]byte(name)) != nil || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+		if name == entry.Name() || id.UnmarshalText([]byte(name)) != nil || !uuidpath.Canonical(name, id) || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return errors.Config.Newf("recording work directory contains unsupported entry %q", entry.Name())
 		}
 		path := filepath.Join(this.workPath, entry.Name())
@@ -1313,7 +1367,15 @@ func (this *localRepository[Head, Summary]) recoverWorkDirectories(ctx context.C
 			}
 			continue
 		}
-		activeDirectory := filepath.Join(this.activePath, id.String())
+		activeDirectory, err := uuidpath.Resolve(this.activePath, id, "")
+		if err != nil {
+			return err
+		}
+		if _, statErr := os.Lstat(activeDirectory); os.IsNotExist(statErr) {
+			activeDirectory = filepath.Join(this.activePath, strings.TrimSuffix(entry.Name(), ".tmp"))
+		} else if statErr != nil {
+			return statErr
+		}
 		if err := this.publishValidatedWork(ctx, path, activeDirectory, validated); err != nil {
 			return err
 		}
@@ -1542,7 +1604,7 @@ func (this *localRepository[Head, Summary]) validateSealed() error {
 func localSealedEntryId(entry os.DirEntry, suffix string) (Id, error) {
 	name := strings.TrimSuffix(entry.Name(), suffix)
 	var id Id
-	if name == entry.Name() || id.UnmarshalText([]byte(name)) != nil || !entry.Type().IsRegular() {
+	if name == entry.Name() || id.UnmarshalText([]byte(name)) != nil || !uuidpath.Canonical(name, id) || !entry.Type().IsRegular() {
 		return Id{}, errors.Config.Newf("sealed recording directory contains unsupported entry %q", entry.Name())
 	}
 	return id, nil
@@ -1562,7 +1624,7 @@ func (this *localRepository[Head, Summary]) recoverActive(ctx context.Context) e
 		default:
 		}
 		var id Id
-		if id.UnmarshalText([]byte(entry.Name())) != nil || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+		if id.UnmarshalText([]byte(entry.Name())) != nil || !uuidpath.Canonical(entry.Name(), id) || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return errors.Config.Newf("active recording directory contains unsupported entry %q", entry.Name())
 		}
 		if err := this.recoverActiveDirectory(ctx, id, filepath.Join(this.activePath, entry.Name())); err != nil {
@@ -1670,11 +1732,11 @@ func (this *localRepository[Head, Summary]) recordingStateExists(id Id) (bool, e
 	if this.closed {
 		return false, errors.System.Newf("local recording repository is closed")
 	}
-	for _, path := range []string{
-		filepath.Join(this.workPath, id.String()+".tmp"),
-		filepath.Join(this.activePath, id.String()),
-		filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix()),
-	} {
+	for _, item := range []struct{ directory, suffix string }{{this.workPath, ".tmp"}, {this.activePath, ""}, {this.sealedPath, this.format.sealedSuffix()}} {
+		path, err := uuidpath.Resolve(item.directory, id, item.suffix)
+		if err != nil {
+			return false, err
+		}
 		if _, err := os.Lstat(path); err == nil {
 			return true, nil
 		} else if !stderrors.Is(err, fs.ErrNotExist) {
@@ -1716,7 +1778,10 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 		}
 		hasHead = hasHead || entry.Name() == this.format.headFileName()
 	}
-	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
+	target, resolveErr := uuidpath.Resolve(this.sealedPath, id, this.format.sealedSuffix())
+	if resolveErr != nil {
+		return resolveErr
+	}
 	file, err := openSealedLocalFile(target)
 	if err != nil {
 		return errors.System.Newf("active recording content is missing and sealed target is unavailable: %w", err)
@@ -1783,7 +1848,15 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 }
 
 func (this *localRepository[Head, Summary]) publishRecovered(ctx context.Context, id Id, directory, contentPath, headPath string, sealedInfo os.FileInfo, head *Head) error {
-	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
+	target, err := uuidpath.Resolve(this.sealedPath, id, this.format.sealedSuffix())
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Lstat(target); os.IsNotExist(statErr) {
+		target = filepath.Join(this.sealedPath, filepath.Base(directory)+this.format.sealedSuffix())
+	} else if statErr != nil {
+		return statErr
+	}
 	if err := publishLocalFile(contentPath, target); err != nil {
 		return err
 	}

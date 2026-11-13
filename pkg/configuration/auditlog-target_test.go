@@ -71,7 +71,6 @@ func (this testAuditlogTarget) FeatureFlags() []string {
 func TestAuditlogTargetsUnmarshalAndRoundTrip(t *testing.T) {
 	var actual Auditlog
 	require.NoError(t, yaml.Unmarshal([]byte(`
-enabled: true
 targets:
   - name: " archive "
     type: TEST-REMOTE-ALIAS

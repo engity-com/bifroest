@@ -43,7 +43,6 @@ func TestAuditOutputRejectsEncryptionPublicKeyAliases(t *testing.T) {
 	require.NoError(t, goos.WriteFile(publicKey, []byte("public"), 0600))
 	configured := &configuration.Auditlog{
 		Name:                    "default",
-		Enabled:                 true,
 		IdentityFile:            filepath.Join(directory, "identity"),
 		EncryptionPublicKeyFile: bfcrypto.PublicKeysFile(publicKey),
 		Directory:               journal,

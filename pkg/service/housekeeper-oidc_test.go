@@ -58,7 +58,7 @@ func TestHouseKeeperOIDCCleanupBeforeRetentionWithDisposedSession(t *testing.T) 
 	hk.service.authorizer = authorizer
 	hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 	hk.service.flowAuditRecorders[sess.flow] = recorder
 
 	for range 2 {
@@ -98,7 +98,7 @@ func TestHouseKeeperOIDCCleanupWaitsForAuditAndEnvironment(t *testing.T) {
 			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, authorizer)
 			hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
 			hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
-			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 			hk.service.flowAuditRecorders[sess.flow] = recorder
 			environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
 			switch name {
@@ -142,7 +142,7 @@ func TestHouseKeeperForgetsOIDCRevocationAfterFinalDeleteEvenIfAuditCompletionFa
 	}
 	hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
-	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 	recorder := &recordingAuditRecorder{}
 	recorder.setErrorBeforeRecordForName(audit.EventNameHousekeepingSessionDeleteCompleted, goerrors.New("audit completion unavailable"))
 	hk.service.flowAuditRecorders[sess.flow] = recorder
@@ -174,7 +174,7 @@ func TestHouseKeeperOIDCFinalRetentionClearsLocalTokenWithoutRestore(t *testing.
 			hk := newHouseKeeperForTest(repository, authorizer)
 			hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
 			hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
-			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 			hk.service.flowAuditRecorders[sess.flow] = recorder
 
 			canContinue, err := hk.inspectSession(context.Background(), sess)
@@ -243,7 +243,7 @@ func TestHouseKeeperOIDCOnlyBypassesRestoreAndSuccessfulTokenAccess(t *testing.T
 			}
 			hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: authConfig}}
 			hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
-			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
 			hk.service.flowAuditRecorders[sess.flow] = recorder
 
 			canContinue, err := hk.inspectSession(context.Background(), sess)

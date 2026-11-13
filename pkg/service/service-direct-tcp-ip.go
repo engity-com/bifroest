@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	essh "github.com/engity-com/ssh-server-go"
 	"github.com/google/uuid"
 	gossh "golang.org/x/crypto/ssh"
@@ -124,7 +125,7 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 		service:     this,
 		ctx:         ctx,
 		auth:        auth,
-		operationId: operationId.String(),
+		operationId: uuidtext.Format(operationId),
 	}
 
 	d := localForwardChannelData{}
@@ -281,7 +282,7 @@ func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.
 	}
 	recordDecision := func(allowed bool, outcome audit.EventOutcome, reason audit.EventReason, decisionErr error) (bool, error) {
 		event := this.authorizationAuditEvent(ctx, auth, audit.EventNamePortForwardingReverseDecided, audit.EventDomainPortForwarding)
-		event.OperationId = operationId.String()
+		event.OperationId = uuidtext.Format(operationId)
 		event.Outcome = outcome
 		event.Reason = reason
 		if decisionErr != nil {
