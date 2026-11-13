@@ -138,24 +138,35 @@ export function ManagementWorkspace({
         (_section: AdminSection, _detail: AdminDetail | null) => {},
         [],
     );
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!pane.current) {
             return;
         }
         let previous: boolean | undefined;
         const update = () => {
+            const width = pane.current?.clientWidth ?? 0;
+            // Hidden background panes have no responsive layout. Their zero
+            // width must not erase this view's navigation choices.
+            if (width === 0) {
+                return;
+            }
             if (header.current) {
                 pane.current?.style.setProperty(
                     '--admin-header-height',
                     `${header.current.offsetHeight}px`,
                 );
             }
-            const next = (pane.current?.clientWidth ?? 0) > 1136;
+            const next = width > 1136;
             if (previous !== next) {
+                const changed = previous !== undefined;
                 previous = next;
                 setWide(next);
-                setCollapsed(false);
-                setTemporaryOpen(false);
+                // Initial measurement is not a breakpoint transition and must
+                // not cancel an early explicit navigation-open gesture.
+                if (changed) {
+                    setCollapsed(false);
+                    setTemporaryOpen(false);
+                }
             }
         };
         const observer = new ResizeObserver(update);
@@ -193,7 +204,7 @@ export function ManagementWorkspace({
             setTemporaryOpen(false);
         }
     };
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!active) {
             setTemporaryOpen(false);
         }
@@ -291,7 +302,7 @@ export function ManagementWorkspace({
                                                     (section === 'auditlogs' &&
                                                         view === 'recordings')
                                                 }
-                                                disabled={disabled || locked}
+                                                disabled={disabled || locked || !active}
                                                 aria-current={
                                                     view === section ||
                                                     (section === 'auditlogs' &&
@@ -371,12 +382,17 @@ export function ManagementWorkspace({
                                     )}
                                     aria-expanded={drawerOpen}
                                     aria-controls={`${navigationID}-navigation`}
-                                    disabled={disabled || locked}
-                                    onClick={() =>
-                                        wide
-                                            ? setCollapsed((value) => !value)
-                                            : setTemporaryOpen((value) => !value)
-                                    }
+                                    disabled={disabled || locked || !active}
+                                    onClick={() => {
+                                        if (!active || disabled || locked) {
+                                            return;
+                                        }
+                                        if (wide) {
+                                            setCollapsed((value) => !value);
+                                        } else {
+                                            setTemporaryOpen((value) => !value);
+                                        }
+                                    }}
                                 >
                                     {drawerOpen ? <LeftPanelCloseIcon /> : <MenuIcon />}
                                 </IconButton>

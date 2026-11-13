@@ -1,4 +1,4 @@
-import { act, createElement } from 'react';
+import { act, createElement, type ReactNode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
 import { WebAccess } from '../src/remember/client';
@@ -69,7 +69,21 @@ afterEach(async () => {
     });
     vi.unstubAllGlobals();
 });
-async function mount(width: number) {
+function EarlyDrawerOpen({
+    container,
+    children,
+}: {
+    container: HTMLElement;
+    children?: ReactNode;
+}) {
+    useLayoutEffect(() => {
+        container
+            .querySelector<HTMLButtonElement>('.admin-page-heading button[aria-expanded="false"]')
+            ?.click();
+    }, [container]);
+    return children;
+}
+async function mount(width: number, options: { earlyOpen?: boolean; active?: boolean } = {}) {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const container = document.createElement('div');
     container.style.width = `${width}px`;
@@ -93,19 +107,20 @@ async function mount(width: number) {
         root.unmount();
         container.remove();
     });
-    await act(async () =>
+    await act(async () => {
+        const content = createElement(ManagementWorkspace, {
+            access,
+            owner: 1,
+            signal: new AbortController().signal,
+            active: options.active ?? true,
+            disabled: false,
+            onActionLock: vi.fn(),
+            onReauthenticate: vi.fn(),
+        });
         root.render(
-            createElement(ManagementWorkspace, {
-                access,
-                owner: 1,
-                signal: new AbortController().signal,
-                active: true,
-                disabled: false,
-                onActionLock: vi.fn(),
-                onReauthenticate: vi.fn(),
-            }),
-        ),
-    );
+            options.earlyOpen ? createElement(EarlyDrawerOpen, { container }, content) : content,
+        );
+    });
     await vi.waitFor(() => expect(container.querySelector('.admin-shell')).not.toBeNull());
     return container;
 }
@@ -187,6 +202,66 @@ it('starts at Bifröst with a persistent tab-local drawer and keeps the entire b
     expect(button(container, t('adminNavigationCollapse')).getAttribute('aria-expanded')).toBe(
         'true',
     );
+});
+
+it('keeps an explicit early drawer open instead of resetting it in a later measurement effect', async () => {
+    const container = await mount(600, { earlyOpen: true });
+    await vi.waitFor(() =>
+        expect(container.querySelector('.admin-drawer-backdrop')).not.toBeNull(),
+    );
+    expect(
+        container.querySelector('.admin-page-heading button')?.getAttribute('aria-expanded'),
+    ).toBe('true');
+});
+
+it('does not offer enabled drawer interaction while the owning management view is inactive', async () => {
+    const container = await mount(600, { active: false });
+    const toggle = container.querySelector<HTMLButtonElement>('.admin-page-heading button');
+    expect(toggle?.disabled).toBe(true);
+    await click(button(container, t('adminNavigationOpen')));
+    expect(container.querySelector('.admin-drawer-backdrop')).toBeNull();
+});
+
+it('does not interpret a hidden zero-width pane as a breakpoint change that resets a collapsed drawer', async () => {
+    const observers: { targets: Set<Element>; notify(): void }[] = [];
+    vi.stubGlobal(
+        'ResizeObserver',
+        class implements ResizeObserver {
+            readonly targets = new Set<Element>();
+            constructor(private readonly callback: ResizeObserverCallback) {
+                observers.push(this);
+            }
+            observe(target: Element) {
+                this.targets.add(target);
+            }
+            unobserve(target: Element) {
+                this.targets.delete(target);
+            }
+            disconnect() {
+                this.targets.clear();
+            }
+            notify() {
+                this.callback([], this);
+            }
+        },
+    );
+    const container = await mount(1200);
+    await click(button(container, t('adminNavigationCollapse')));
+    const observer = observers.find((value) =>
+        [...value.targets].some((node) => node.classList.contains('admin-shell')),
+    );
+    if (!observer) {
+        throw new Error('Missing pane measurement observer');
+    }
+    await act(async () => {
+        container.style.display = 'none';
+        observer.notify();
+    });
+    await act(async () => {
+        container.style.display = '';
+        observer.notify();
+    });
+    expect(button(container, t('adminNavigationOpen')).getAttribute('aria-expanded')).toBe('false');
 });
 
 it('contains a temporary drawer and backdrop inside only its own management pane', async () => {
