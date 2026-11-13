@@ -3,13 +3,251 @@ import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
 import { runInNewContext } from 'node:vm';
+import { installDrawerDiagnostics } from './drawer-diagnostics.mjs';
 import { observeSingleRootDirectory } from './login-options-ui.mjs';
 import { managementWire } from './management-wire.mjs';
+import { installPollDiagnostics, pollDiagnostics } from './poll-diagnostics.mjs';
 import {
     assertCatalogRequestPrivacy,
     captureJsonResponse,
     installPreparationObserver,
 } from './response-capture.mjs';
+
+function pollFixture({ failRead = false, fetchFailure = false } = {}) {
+    const secret = 'PRIVATE-POLL-KEY-ANSWER-CAUSE';
+    const failure = new Error(secret, { cause: { password: secret } });
+    const calls = [];
+    let reads = 0;
+    const reader = {
+        async read() {
+            calls.push('read');
+            if (failRead) {
+                throw failure;
+            }
+            return ++reads === 1
+                ? { value: new TextEncoder().encode(secret), done: false }
+                : { done: true };
+        },
+        cancel(reason) {
+            calls.push(['reader-cancel', reason]);
+            return Promise.resolve();
+        },
+        releaseLock() {
+            calls.push('release-lock');
+        },
+    };
+    const response = {
+        status: 200,
+        body: {
+            getReader() {
+                calls.push('get-reader');
+                return reader;
+            },
+            cancel(reason) {
+                calls.push(['body-cancel', reason]);
+                return Promise.resolve();
+            },
+        },
+    };
+    const globals = {
+        URL,
+        location: { origin: 'https://app.example.org' },
+        performance,
+        fetch: async (...args) => {
+            calls.push(['fetch', ...args]);
+            if (fetchFailure) {
+                throw failure;
+            }
+            return response;
+        },
+    };
+    runInNewContext(`(${installPollDiagnostics.toString()})()`, globals);
+    const signal = new AbortController();
+    const url = new URL('/api/v1/login/poll', globals.location.origin);
+    const options = {
+        method: 'POST',
+        signal: signal.signal,
+        body: secret,
+        headers: { Authorization: secret },
+    };
+    const events = () => JSON.parse(JSON.stringify(globals.bifroestPollDiagnostics.events));
+    return { globals, signal, url, options, response, reader, calls, failure, secret, events };
+}
+
+test('poll diagnostics preserve response/reader identity and EOF ownership without reading, cloning or retaining secrets', async () => {
+    const f = pollFixture();
+    const response = await f.globals.fetch(f.url, f.options);
+    assert.equal(response, f.response);
+    assert.equal(f.calls.length, 1, 'headers observation must not read the body');
+    const reader = response.body.getReader();
+    assert.equal(reader, f.reader);
+    const chunk = await reader.read();
+    assert.equal(new TextDecoder().decode(chunk.value), f.secret);
+    assert.equal((await reader.read()).done, true);
+    reader.releaseLock();
+    f.signal.abort(f.failure);
+    const events = f.events();
+    assert.deepEqual(
+        events.map((event) => event.event),
+        ['start', 'headers-200', 'get-reader', 'chunk', 'eof', 'release-lock', 'signal-abort'],
+    );
+    assert.equal(events.at(-1).eof, true);
+    assert.equal(events.at(-1).aborted, true);
+    assert.equal(f.calls.filter((call) => Array.isArray(call) && call[0] === 'fetch').length, 1);
+    assert.equal(f.calls.includes('read'), true);
+    assert.equal(JSON.stringify(events).includes(f.secret), false);
+});
+
+test('poll diagnostics preserve original read/fetch failures and incomplete cancellation without replay', async () => {
+    const f = pollFixture({ failRead: true });
+    const response = await f.globals.fetch(f.url, f.options);
+    const reader = response.body.getReader();
+    await assert.rejects(reader.read(), (error) => error === f.failure);
+    await reader.cancel(f.failure);
+    reader.releaseLock();
+    await response.body.cancel(f.failure);
+    f.signal.abort(f.failure);
+    assert.deepEqual(
+        f.events().map((event) => event.event),
+        [
+            'start',
+            'headers-200',
+            'get-reader',
+            'read-failed',
+            'reader-cancel',
+            'release-lock',
+            'body-cancel',
+            'signal-abort',
+        ],
+    );
+    assert.equal(
+        f.events().every((event) => !event.eof),
+        true,
+    );
+    assert.equal(JSON.stringify(f.events()).includes(f.secret), false);
+    const lost = pollFixture({ fetchFailure: true });
+    await assert.rejects(
+        lost.globals.fetch(lost.url, lost.options),
+        (error) => error === lost.failure,
+    );
+    assert.deepEqual(
+        lost.events().map((event) => event.event),
+        ['start', 'fetch-failed'],
+    );
+    assert.equal(lost.calls.length, 1);
+    assert.deepEqual(
+        await pollDiagnostics({
+            evaluate: async () => {
+                throw f.failure;
+            },
+        }),
+        { unavailable: true },
+    );
+});
+
+test('poll observations are bounded and unrelated or foreign requests are untouched', async () => {
+    const f = pollFixture();
+    for (const url of [
+        new URL('https://foreign.example/api/v1/login/poll'),
+        new URL('/api/v1/login/reply', f.url),
+        new URL(`${f.url}?private-query`),
+    ]) {
+        assert.equal(await f.globals.fetch(url, f.options), f.response);
+    }
+    assert.deepEqual(f.events(), []);
+    for (let index = 0; index < 150; index++) {
+        await f.globals.fetch(f.url, f.options);
+    }
+    assert.equal(f.events().length, 256);
+    assert.equal(f.globals.bifroestPollDiagnostics.dropped(), 44);
+    assert.equal(JSON.stringify(f.events()).includes(f.secret), false);
+});
+
+test('poll instrumentation works with the native response stream without consuming or substituting bytes', async () => {
+    const secret = 'PRIVATE-NATIVE-RESPONSE';
+    const response = new Response(JSON.stringify({ answer: secret }));
+    const globals = {
+        URL,
+        location: { origin: 'https://app.example.org' },
+        performance,
+        fetch: async () => response,
+    };
+    runInNewContext(`(${installPollDiagnostics.toString()})()`, globals);
+    assert.equal(
+        await globals.fetch(new URL('/api/v1/login/poll', globals.location.origin), {
+            method: 'POST',
+        }),
+        response,
+    );
+    const reader = response.body.getReader();
+    const part = await reader.read();
+    assert.equal(new TextDecoder().decode(part.value), JSON.stringify({ answer: secret }));
+    assert.equal((await reader.read()).done, true);
+    reader.releaseLock();
+    assert.equal(JSON.stringify(globals.bifroestPollDiagnostics.events).includes(secret), false);
+    assert.deepEqual(
+        Array.from(globals.bifroestPollDiagnostics.events, (event) => event.event),
+        ['start', 'headers-200', 'get-reader', 'chunk', 'eof', 'release-lock'],
+    );
+});
+
+test('drawer diagnostics retain only bounded layout and ephemeral ownership, not DOM text, route or arbitrary CSS', () => {
+    const secret = 'PRIVATE-DRAWER-OWNER-ROUTE-INPUT';
+    let observe;
+    const style = { display: 'block', visibility: 'visible', transform: 'none', secret };
+    const pane = { getAttribute: () => 'true' };
+    const link = {
+        parentElement: null,
+        secret,
+        getBoundingClientRect: () => ({ width: 232, height: 40, x: -232, y: 10 }),
+    };
+    const paper = { ...link, querySelector: () => link };
+    const toggle = { disabled: false, getAttribute: () => 'true', secret };
+    const shell = {
+        ...link,
+        clientWidth: 900,
+        closest: () => pane,
+        getAttribute: () => 'temporary',
+        querySelector: (selector) =>
+            selector.includes('button') ? toggle : selector === '.MuiDrawer-paper' ? paper : null,
+        textContent: secret,
+        outerHTML: secret,
+    };
+    const globals = {
+        performance,
+        document: { querySelectorAll: () => [shell], addEventListener() {} },
+        getComputedStyle: () => style,
+        ResizeObserver: class {
+            observe() {}
+        },
+        MutationObserver: class {
+            constructor(callback) {
+                observe = callback;
+            }
+            observe() {}
+        },
+    };
+    runInNewContext(`(${installDrawerDiagnostics.toString()})()`, globals);
+    observe();
+    const snapshot = () => JSON.parse(JSON.stringify(globals.bifroestDrawerDiagnostics.snapshot()));
+    const first = snapshot().events.at(-1).panes[0];
+    assert.equal(first.owner, 1);
+    assert.equal(first.active, true);
+    assert.equal(first.expanded, true);
+    assert.equal(first.link.x, -232);
+    shell.hidden = true;
+    style.display = 'none';
+    observe();
+    assert.equal(snapshot().events.at(-1).panes[0].shell.hidden, true);
+    assert.equal(snapshot().events.at(-1).panes[0].shell.displayNone, true);
+    for (let index = 0; index < 300; index++) {
+        snapshot();
+    }
+    const result = snapshot();
+    assert.equal(result.events.length, 256);
+    assert(result.dropped > 0);
+    assert.equal(JSON.stringify(result).includes(secret), false);
+});
 
 function wireFixture() {
     const page = new EventEmitter();

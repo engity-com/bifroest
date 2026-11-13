@@ -609,10 +609,14 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	}
 	require.NoError(t, err, "%s", output)
 	var result struct {
-		Success bool `json:"success"`
+		Success           bool            `json:"success"`
+		DrawerDiagnostics json.RawMessage `json:"drawerDiagnostics"`
 	}
 	require.NoError(t, json.Unmarshal(output, &result), "%s", output)
 	require.True(t, result.Success)
+	if mode == "profile-reset" {
+		t.Logf("profile reset drawer diagnostics: %s", result.DrawerDiagnostics)
+	}
 	expectedInterrupt := 0
 	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" || workspaceActionMode || mode == "workspace-races" || mode == "management-forced-dispose" || mode == "terminal-logout-lost" {
 		expectedInterrupt = 1

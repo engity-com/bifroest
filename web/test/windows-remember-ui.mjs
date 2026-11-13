@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { chromium } from 'playwright';
+import { installPollDiagnostics, pollDiagnostics } from './poll-diagnostics.mjs';
 import { expectTerminalExit, observeTerminalResults } from './terminal-results.mjs';
 import {
     answerAuthentication,
@@ -28,6 +29,14 @@ const executions = [];
 const failures = [];
 const responses = [];
 const transportObservations = [];
+const pollObservations = [];
+const pollIDs = new WeakMap();
+const pollProfiles = [];
+const observePoll = (value) => {
+    if (pollObservations.length < 256) {
+        pollObservations.push({ ...value, at: Math.round(performance.now()) });
+    }
+};
 const expectedDenials = new Set();
 const requestIDs = new WeakMap();
 let requestNumber = 0;
@@ -83,12 +92,26 @@ async function open(profile) {
             window.cspViolations.push(event.violatedDirective),
         );
     });
+    await context.addInitScript(installPollDiagnostics);
     const page = await context.newPage();
+    const profileNumber = pollProfiles.length + 1;
+    let pollNumber = 0;
+    pollProfiles.push({ profile: profileNumber, diagnostics: null });
     terminals.set(page, observeTerminalResults(page));
     page.on('pageerror', () => failures.push({ type: 'pageerror', stage }));
     page.on('request', (request) => {
         requestIDs.set(request, ++requestNumber);
         const path = new URL(request.url()).pathname;
+        if (path === '/api/v1/login/poll' && request.method() === 'POST') {
+            pollIDs.set(request, ++pollNumber);
+            observePoll({
+                profile: profileNumber,
+                poll: pollNumber,
+                id: requestIDs.get(request),
+                event: 'request',
+                stage,
+            });
+        }
         if (request.method() !== 'POST') {
             return;
         }
@@ -109,6 +132,16 @@ async function open(profile) {
     });
     page.on('response', (response) => {
         const path = new URL(response.url()).pathname;
+        if (pollIDs.has(response.request())) {
+            observePoll({
+                profile: profileNumber,
+                poll: pollIDs.get(response.request()),
+                id: requestIDs.get(response.request()),
+                event: 'response',
+                status: response.status(),
+                stage,
+            });
+        }
         if (path.startsWith('/api/v1/') && transportObservations.length < 128) {
             transportObservations.push({
                 path,
@@ -145,6 +178,19 @@ async function open(profile) {
             stage,
         }),
     );
+    for (const event of ['requestfinished', 'requestfailed']) {
+        page.on(event, (request) => {
+            if (pollIDs.has(request)) {
+                observePoll({
+                    profile: profileNumber,
+                    poll: pollIDs.get(request),
+                    id: requestIDs.get(request),
+                    event,
+                    stage,
+                });
+            }
+        });
+    }
     page.on('websocket', (socket) =>
         socket.on('framereceived', ({ payload }) => {
             if (typeof payload !== 'string') {
@@ -168,6 +214,12 @@ async function open(profile) {
     assert.equal(response.status(), 200);
     assert(response.headers()['content-security-policy'].includes("frame-ancestors 'none'"));
     return page;
+}
+
+async function closeProfile() {
+    pollProfiles.at(-1).diagnostics = await pollDiagnostics(page);
+    await context.close();
+    context = undefined;
 }
 
 async function storedKeys(page) {
@@ -318,8 +370,7 @@ try {
         await storedKeys(page);
         stage = `primary-${method}-native-probe`;
         await probeAndExit(page, `${method}-initial`, true);
-        await context.close();
-        context = undefined;
+        await closeProfile();
         stage = `profile-${method}`;
         page = await open(profile);
         assert.equal(await page.getByRole('tab').count(), 0);
@@ -327,8 +378,7 @@ try {
         await connected(page);
         await storedKeys(page);
         await probeAndExit(page, `${method}-profile`);
-        await context.close();
-        context = undefined;
+        await closeProfile();
         await checkpoint(`restart-${method}`);
         stage = `service-${method}`;
         page = await open(profile);
@@ -362,8 +412,7 @@ try {
         await page.locator('[data-terminal-phase="connected"]').waitFor();
         await probeAndExit(page, `${method}-group-restored`);
         assert.equal(resumes, proofsBefore, 'restored admission must still use that same bearer');
-        await context.close();
-        context = undefined;
+        await closeProfile();
         await checkpoint(`disable-${method}`);
         stage = `denied-${method}`;
         page = await open(profile);
@@ -398,15 +447,16 @@ try {
         assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
         assert.equal((await context.cookies()).length, 0);
         stage = `restored-${method}-close-profile`;
-        await context.close();
-        context = undefined;
+        await closeProfile();
     }
+    stage = 'assert-summary';
     assert.equal(credentialLeak, false);
     assert.equal(primaryLogins, 2);
     assert.equal(resumes, 8);
     assert.equal(denied, 2);
     assert.equal(groupDenied, 2);
     assert.equal(responses.length, 2);
+    stage = 'assert-transport-failures';
     assert(
         failures.every(
             (failure) =>
@@ -416,10 +466,12 @@ try {
                 failure.error === 'net::ERR_ABORTED',
         ),
     );
+    stage = 'assert-execution-identity';
     assert.equal(executions.length, 10);
     assert.equal(new Set(executions.map((value) => value.connection)).size, 10);
     assert.equal(new Set(executions.map((value) => value.execution)).size, 10);
     assert.equal(new Set(executions.map((value) => value.session)).size, 1);
+    console.error(JSON.stringify({ tag: 'poll-diagnostics', pollObservations, pollProfiles }));
     console.log(JSON.stringify({ executions, primaryLogins, resumes, denied, groupDenied }));
 } catch (error) {
     // Playwright action errors can include a fill() argument. Never forward their
@@ -443,6 +495,9 @@ try {
             failures,
             responses,
             transportObservations,
+            pollObservations,
+            pollProfiles,
+            livePollDiagnostics: context ? await pollDiagnostics(page) : null,
             completedExecutions: executions.length,
             error: ['Error', 'TimeoutError', 'AssertionError'].includes(error?.name)
                 ? error.name

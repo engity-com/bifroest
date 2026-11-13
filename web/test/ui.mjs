@@ -7,6 +7,7 @@ import { exerciseAdminShell } from './admin-shell-ui.mjs';
 import { exerciseCompactWorkspace } from './compact-workspace-ui.mjs';
 import { exerciseConnectionRaces, exerciseManagementOwner } from './connection-races-ui.mjs';
 import { exerciseConnections } from './connections-ui.mjs';
+import { installDrawerDiagnostics } from './drawer-diagnostics.mjs';
 import { exerciseKeepAlive } from './keepalive-ui.mjs';
 import { exerciseKey, exerciseKeyDiagnostic, exerciseKeyVariant } from './key-ui.mjs';
 import {
@@ -61,6 +62,15 @@ const failedRequests = [];
 const loginResponses = [];
 let singleRootState;
 const terminalResults = new WeakMap();
+const diagnosticPages = [];
+const drawerDiagnostics = () =>
+    Promise.all(
+        diagnosticPages.map((page) =>
+            page
+                .evaluate(() => globalThis.bifroestDrawerDiagnostics?.snapshot() ?? null)
+                .catch(() => ({ unavailable: true })),
+        ),
+    );
 try {
     const open = async () => {
         context = await chromium.launchPersistentContext(profile, {
@@ -79,7 +89,13 @@ try {
                 window.cspViolations.push(event.violatedDirective),
             );
         });
+        if (process.argv[3] === 'profile-reset') {
+            await context.addInitScript(installDrawerDiagnostics);
+        }
         const page = await context.newPage();
+        if (process.argv[3] === 'profile-reset') {
+            diagnosticPages.push(page);
+        }
         terminalResults.set(page, observeTerminalResults(page));
         managementWire(page);
         if (process.argv[3] === 'single-root-directory') {
@@ -750,7 +766,12 @@ try {
         );
     }
     await exercise();
-    console.log(JSON.stringify({ success: true }));
+    console.log(
+        JSON.stringify({
+            success: true,
+            ...(diagnosticPages.length ? { drawerDiagnostics: await drawerDiagnostics() } : {}),
+        }),
+    );
 } catch (error) {
     throw new Error(
         JSON.stringify({
@@ -758,6 +779,7 @@ try {
             pageErrors: errors,
             failedResources,
             failedRequests,
+            drawerDiagnostics: await drawerDiagnostics(),
         }),
         { cause: error },
     );

@@ -36,8 +36,25 @@ export async function exerciseProfileReset(page, login) {
     await login(page, true);
     await workspace(page, 'Overview');
     assert.equal(await countBindings(page), 1);
-    await page.getByRole('button', { name: 'New connection', exact: true }).click();
-    await login(page, false);
+    const previousOwner = await page.locator('[data-connection-active="true"]').elementHandle();
+    assert(previousOwner);
+    try {
+        await page.getByRole('button', { name: 'New connection', exact: true }).click();
+        await login(page, false);
+        // Both accesses use alice. A matching principal and a closed login dialog
+        // do not prove that the new tab owns the committed workspace yet. Otherwise
+        // Playwright can pin its click to the old, still-attached hidden link.
+        await page.waitForFunction((previous) => {
+            const active = document.querySelector('[data-connection-active="true"]');
+            return (
+                active !== null &&
+                active !== previous &&
+                previous.getAttribute('data-connection-active') === 'false'
+            );
+        }, previousOwner);
+    } finally {
+        await previousOwner.dispose();
+    }
     await workspace(page, 'Overview');
     assert.equal(await page.getByRole('tab').count(), 2);
     await changeTheme(page, 'Dark');

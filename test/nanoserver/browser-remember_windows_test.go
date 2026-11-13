@@ -75,7 +75,7 @@ func exerciseNativePasswordRemember(t *testing.T, ctx context.Context, h windows
 	var diagnostics bytes.Buffer
 	t.Cleanup(func() {
 		if t.Failed() {
-			_ = os.WriteFile(filepath.Join(h.root, "var", "e2e", "windows-password-remember-ui.stderr.log"), diagnostics.Bytes(), 0600)
+			_ = os.WriteFile(filepath.Join(h.root, "var", "e2e", "windows-browser-remember-ui.stderr.log"), diagnostics.Bytes(), 0600)
 		}
 	})
 	command.Stderr = &diagnostics
@@ -145,6 +145,7 @@ func exerciseNativePasswordRemember(t *testing.T, ctx context.Context, h windows
 	}
 	require.NoError(t, scanner.Err())
 	require.NoError(t, command.Wait(), "native password RememberMe: %s", diagnostics.String())
+	t.Logf("native password RememberMe transport diagnostics: %s", diagnostics.String())
 	require.Empty(t, checkpoints)
 	require.Len(t, results.Executions, 10)
 	require.Equal(t, 2, results.PrimaryLogins)
