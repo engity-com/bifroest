@@ -10,7 +10,7 @@ import (
 const (
 	fromDefaultLinux         = "scratch"
 	fromDefaultLinuxExtended = "docker.io/library/ubuntu:26.04@sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96"
-	fromDefaultWindows       = "mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:5a1c3c8308f8f5c9b67d21d2332a449d4ab8f9a6cf277f07d4aeac27ff2a0213"
+	fromDefaultWindows       = "mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:0b85b25c76e25efeb8e5f772d1d44bc24a54e0a8e4917385bc810a847952cdea"
 )
 
 func DefaultWindowsContainerBaseImage() string {
