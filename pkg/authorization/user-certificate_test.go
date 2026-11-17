@@ -39,7 +39,6 @@ func TestEvaluateGlobalUserCertificateRejectsInvalidCertificate(t *testing.T) {
 
 	for name, mutate := range map[string]func(*ssh.Certificate){
 		"wrong-principal":  func(cert *ssh.Certificate) { cert.ValidPrincipals = []string{"bob"} },
-		"no-principals":    func(cert *ssh.Certificate) { cert.ValidPrincipals = nil },
 		"expired":          func(cert *ssh.Certificate) { cert.ValidBefore = uint64(now.Unix()) },
 		"not-yet-valid":    func(cert *ssh.Certificate) { cert.ValidAfter = uint64(now.Add(time.Minute).Unix()) },
 		"host-certificate": func(cert *ssh.Certificate) { cert.CertType = ssh.HostCert },
@@ -57,6 +56,26 @@ func TestEvaluateGlobalUserCertificateRejectsInvalidCertificate(t *testing.T) {
 
 	certificate := newUserCertificateTestCertificate(t, authority, subject.PublicKey(), now)
 	_, accepted, err := evaluatePublicKeyCredential(certificate, "alice", bnet.Host{}, []ssh.PublicKey{otherAuthority.PublicKey()}, emptyAuthorizedKeySource, now)
+	require.NoError(t, err)
+	require.False(t, accepted)
+}
+
+func TestEvaluateGlobalUserCertificateRejectsNoPrincipals(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	authority := newUserCertificateTestSigner(t)
+	certificate := newUserCertificateTestCertificate(t, authority, newUserCertificateTestSigner(t).PublicKey(), now)
+	certificate.ValidPrincipals = nil
+	certificate.Signature = nil
+	// SignCert rejects empty principals. Sign the wire representation directly
+	// to test rejection of a correctly signed legacy certificate, not a bad signature.
+	data := certificate.Marshal()
+	data = data[:len(data)-4] // Exclude the trailing signature length.
+	var err error
+	certificate.Signature, err = authority.Sign(rand.Reader, data)
+	require.NoError(t, err)
+	require.NoError(t, authority.PublicKey().Verify(data, certificate.Signature))
+
+	_, accepted, err := evaluatePublicKeyCredential(certificate, "alice", bnet.Host{}, []ssh.PublicKey{authority.PublicKey()}, emptyAuthorizedKeySource, now)
 	require.NoError(t, err)
 	require.False(t, accepted)
 }

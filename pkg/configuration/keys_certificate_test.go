@@ -21,7 +21,11 @@ func TestKeysAppliesRestrictionsToCertificateSubjectAndAuthority(t *testing.T) {
 	require.NoError(t, err)
 	subject, err := gossh.NewSignerFromKey(subjectPrivate)
 	require.NoError(t, err)
-	certificate := &gossh.Certificate{Key: subject.PublicKey()}
+	certificate := &gossh.Certificate{
+		Key:             subject.PublicKey(),
+		CertType:        gossh.UserCert,
+		ValidPrincipals: []string{"alice"},
+	}
 	require.NoError(t, certificate.SignCert(rand.Reader, authority))
 
 	var keys Keys
