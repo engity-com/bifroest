@@ -1,10 +1,9 @@
 import { useLayoutEffect, useRef } from 'react';
-import type { WorkspaceTab } from './model';
 
-export function useTabLayout(active: number | null, tabs: readonly WorkspaceTab[]) {
+export function useTabLayout() {
     const tabList = useRef<HTMLDivElement | null>(null);
     useLayoutEffect(() => {
-        const showActive = () => {
+        const updateWidth = () => {
             const list = tabList.current;
             const header = list?.closest<HTMLElement>('.application-tabs');
             if (list && header) {
@@ -26,14 +25,11 @@ export function useTabLayout(active: number | null, tabs: readonly WorkspaceTab[
                     `${Math.max(48, Math.min(320, available))}px`,
                 );
             }
-            if (active !== null && tabs.some((tab) => tab.id === active)) {
-                document
-                    .getElementById(`terminal-tab-${active}`)
-                    ?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-            }
         };
-        showActive();
-        const observer = new ResizeObserver(showActive);
+        // MUI owns selected-tab scrolling. Resizing must not compete with its
+        // animation or snap a user browsing background tabs back to the active one.
+        updateWidth();
+        const observer = new ResizeObserver(updateWidth);
         const list = tabList.current;
         if (list) {
             observer.observe(list);
@@ -47,6 +43,6 @@ export function useTabLayout(active: number | null, tabs: readonly WorkspaceTab[
             }
         }
         return () => observer.disconnect();
-    }, [active, tabs]);
+    }, []);
     return tabList;
 }

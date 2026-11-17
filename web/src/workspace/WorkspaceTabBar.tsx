@@ -37,7 +37,7 @@ export function WorkspaceTabBar({
     utilities: ReactNode;
     locations: ReadonlyMap<number, ManagementLocation> | undefined;
 }) {
-    const tabList = useTabLayout(active, state.tabs);
+    const tabList = useTabLayout();
     const menu = state.menu;
     const menuOwner =
         menu?.kind === 'tab' ? state.tabs.find((tab) => tab.id === menu.owner) : undefined;
