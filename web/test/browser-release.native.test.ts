@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
     cpSync,
+    mkdirSync,
     mkdtempSync,
     readFileSync,
     rmSync,
@@ -145,21 +146,45 @@ for (const entry of ['browser-key', 'browser-transfer', 'browser-evidence']) {
     });
 }
 
-test('documentation favicon checkout preserves source bytes on CRLF-default build hosts', () => {
+test('all browser inputs preserve source bytes on CRLF-default build hosts', (t) => {
     const root = fileURLToPath(new URL('../../', import.meta.url));
-    const file = 'HEAD:docs/assets/favicon.svg';
-    const canonical = execFileSync('git', ['cat-file', 'blob', file], { cwd: root });
-    const windowsCheckout = execFileSync(
+    const snapshot = captureBrowserInputs(root);
+    const checkout = mkdtempSync(join(tmpdir(), 'bifroest-browser-checkout-'));
+    const windowsCheckout = join(checkout, 'windows');
+    t.after(() => rmSync(checkout, { recursive: true, force: true }));
+    for (const input of snapshot.inputs) {
+        const target = join(checkout, input.name);
+        mkdirSync(dirname(target), { recursive: true });
+        cpSync(join(root, input.name), target);
+    }
+    execFileSync('git', ['init', '--quiet'], { cwd: checkout });
+    execFileSync('git', ['-c', 'core.autocrlf=false', 'add', '--all'], { cwd: checkout });
+    execFileSync(
         'git',
-        ['-c', 'core.autocrlf=true', 'cat-file', '--filters', file],
-        { cwd: root },
+        [
+            '-c',
+            'core.autocrlf=true',
+            'checkout-index',
+            '--all',
+            `--prefix=${windowsCheckout.replaceAll('\\', '/')}/`,
+        ],
+        {
+            cwd: checkout,
+        },
     );
-    assert(!canonical.includes(Buffer.from('\r\n')));
-    assert.deepEqual(
-        windowsCheckout,
-        canonical,
-        'the same raw browser input must be verified on Linux and Windows',
-    );
+    for (const input of snapshot.inputs) {
+        const bytes = readFileSync(join(windowsCheckout, input.name));
+        assert.equal(
+            bytes.length,
+            input.bytes,
+            `CRLF-default checkout changed size: ${input.name}`,
+        );
+        assert.equal(
+            hash(bytes),
+            input.sha256,
+            `CRLF-default checkout changed bytes: ${input.name}`,
+        );
+    }
 });
 
 test('release inventory binds actual built assets, Go/project inputs and separate npm license provenance', () => {
