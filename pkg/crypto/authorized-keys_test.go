@@ -17,7 +17,6 @@ import (
 //nolint:unused
 //goland:noinspection ALL
 var (
-	dsa1Pub, dsa1Fn             = mustSshPublicKey("dsa-1")
 	ecdsa1Pub, ecdsa1Fn         = mustSshPublicKey("ecdsa-1")
 	ecdsaSk1Pub, ecdsaSk1Fn     = mustSshPublicKey("ecdsa-sk-1")
 	ed255191Pub, ed255191Fn     = mustSshPublicKey("ed25519-1")
@@ -113,4 +112,13 @@ func mustSshPublicKey(name string) (ssh.PublicKey, string) {
 	common.Must(err, "public key file %q must contain a valid public key", fn)
 	common.MustNotNil(result, "public key file %q must contain a valid public key", fn)
 	return result, fn
+}
+
+func TestAuthorizedKeysRejectsUnsupportedDsa(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "dsa-1.pub"))
+	require.NoError(t, err)
+	_, err = AuthorizedKeys(data).Get()
+	require.ErrorIs(t, err, ErrIllegalSshKey)
+	_, err = PublicKeys(data).Get()
+	require.ErrorIs(t, err, ErrIllegalPublicKeysFormat)
 }
