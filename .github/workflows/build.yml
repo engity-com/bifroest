@@ -277,7 +277,7 @@ jobs:
       contents: write
       packages: write
     container:
-      image: ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:1fb3989f69942529cceeb9f07fdb909be5c9da932df6391806d2aead9b3aa536
+      image: ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:a9b0bb3fe70b329e954ff45c35dfc0343eb502a2f0777336cf9abdb1bb97d4c9
     env:
       GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
       GITHUB_SHA: ${{ inputs.commit || github.sha }}
