@@ -68,7 +68,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE
-        uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
 
       - name: Install pinned browser toolchain
         run: mise -C web install
