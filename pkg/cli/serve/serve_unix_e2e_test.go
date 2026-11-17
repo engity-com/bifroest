@@ -180,8 +180,8 @@ flows:
       type: none
     environment:
       type: dummy
-auditlog:
-  - enabled: true
+auditlogs:
+  default:
     identityFile: "%s"
     directory: "%s"
     recording:

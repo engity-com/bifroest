@@ -7,18 +7,16 @@ import (
 	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 func (this *service) recordFlowAudit(ctx context.Context, flow configuration.FlowName, event audit.Event) error {
 	fail := func(err error) error {
-		if sshContext, ok := ctx.(essh.Context); ok {
-			if conn := this.connection(sshContext); conn != nil {
-				_ = conn.Close()
-			}
-		}
+		this.closeAuditConnection(ctx)
 		return err
 	}
 	recorder := this.flowAuditRecorders[flow]
@@ -29,6 +27,11 @@ func (this *service) recordFlowAudit(ctx context.Context, flow configuration.Flo
 	if recorder == nil {
 		return fail(errors.System.Newf("no audit recorder configured for flow %q", flow))
 	}
+	var normalizeErr error
+	event, normalizeErr = evidence.NormalizeEventIDs(event)
+	if normalizeErr != nil {
+		return fail(normalizeErr)
+	}
 	if err := recorder.Record(ctx, event); err != nil {
 		return fail(errors.System.Newf("cannot record audit event %q for flow %q: %w", event.Name, flow, err))
 	}
@@ -37,11 +40,7 @@ func (this *service) recordFlowAudit(ctx context.Context, flow configuration.Flo
 
 func (this *service) recordUnauthenticatedFlowAudit(ctx context.Context, flow configuration.FlowName, event audit.Event) error {
 	fail := func(err error) error {
-		if sshContext, ok := ctx.(essh.Context); ok {
-			if conn := this.connection(sshContext); conn != nil {
-				_ = conn.Close()
-			}
-		}
+		this.closeAuditConnection(ctx)
 		return err
 	}
 	recorder := this.flowAuditRecorders[flow]
@@ -54,6 +53,11 @@ func (this *service) recordUnauthenticatedFlowAudit(ctx context.Context, flow co
 	}
 	if this.auditlogDisabled(auditlog) {
 		return nil
+	}
+	var normalizeErr error
+	event, normalizeErr = evidence.NormalizeEventIDs(event)
+	if normalizeErr != nil {
+		return fail(normalizeErr)
 	}
 	if err := this.unauthenticatedAudit.Record(ctx, auditlog, this.enabledAuditlogs[auditlog], recorder, event); err != nil {
 		return fail(errors.System.Newf("cannot record unauthenticated audit event %q for flow %q: %w", event.Name, flow, err))
@@ -158,13 +162,31 @@ func (this *failurePolicyAuditRecorder) handleFailure(err error) error {
 }
 
 func (this *service) authorizationAuditEvent(ctx essh.Context, auth authorization.Authorization, name audit.EventName, domain audit.EventDomain) audit.Event {
+	return authorizationAuditEventFor(this.connection(ctx), auth, name, domain)
+}
+
+type auditConnectionContextKey struct{}
+
+func (this *service) closeAuditConnection(ctx context.Context) {
+	if conn, ok := ctx.Value(auditConnectionContextKey{}).(managedConnection); ok && !isNilDependency(conn) {
+		_ = conn.Close()
+		return
+	}
+	if sshContext, ok := ctx.(essh.Context); ok {
+		if conn := this.connection(sshContext); conn != nil {
+			_ = conn.Close()
+		}
+	}
+}
+
+func authorizationAuditEventFor(conn bconn.Connection, auth authorization.Authorization, name audit.EventName, domain audit.EventDomain) audit.Event {
 	event := audit.Event{
 		Name:              name,
 		Domain:            domain,
 		Flow:              auth.Flow().String(),
 		AuthorizationKind: authorization.KindOf(auth),
 	}
-	if conn := this.connection(ctx); conn != nil {
+	if !isNilDependency(conn) {
 		event.ConnectionId = conn.Id().String()
 	}
 	if sess := auth.FindSession(); sess != nil {
@@ -229,6 +251,10 @@ func (this *sessionRecordingDeliveryAuditor) RecordRemoteArtifactDelivery(ctx co
 	recorder := this.service.auditRecorders[this.auditlog]
 	if recorder == nil {
 		return errors.System.Newf("no audit recorder configured for Recording delivery of auditlog %q", this.auditlog)
+	}
+	event, err = evidence.NormalizeEventIDs(event)
+	if err != nil {
+		return err
 	}
 	if err := recorder.Record(ctx, event); err != nil {
 		return errors.System.Newf("cannot record Recording delivery audit event %q for auditlog %q: %w", event.Name, this.auditlog, err)

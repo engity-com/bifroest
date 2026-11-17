@@ -40,6 +40,7 @@ flows:
   - name: openssh-target
     authorization:
       type: simple
+      rememberMe: allowedAndEnabledByDefault
       entries:
         - name: gateway
           authorizedKeysFile: /etc/engity/bifroest/gateway-clients.pub

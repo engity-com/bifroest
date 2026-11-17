@@ -144,8 +144,8 @@ func NewRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 	if conf == nil {
 		return nil, errors.Config.Newf("nil auditlog configuration")
 	}
-	if !conf.Enabled || len(conf.Targets) == 0 {
-		return nil, errors.Config.Newf("remote delivery requires an enabled auditlog with targets")
+	if len(conf.Targets) == 0 {
+		return nil, errors.Config.Newf("remote delivery requires an auditlog with targets")
 	}
 	if identity == nil || identity.ProducerId().IsZero() {
 		return nil, errors.Config.Newf("nil audit identity")

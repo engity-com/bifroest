@@ -122,9 +122,6 @@ func configuredAuditJournalSource(configured *configuration.Auditlog, decryption
 	if configured == nil {
 		return audit.JournalSource{}, fmt.Errorf("nil auditlog configuration")
 	}
-	if !configured.Enabled {
-		return audit.JournalSource{}, fmt.Errorf("auditlog %q is disabled", configured.Name)
-	}
 	if expectedProducerId.IsZero() {
 		privateKey, err := LoadAuditPrivateKey(configured.IdentityFile)
 		if err != nil {

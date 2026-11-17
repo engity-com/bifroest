@@ -22,7 +22,7 @@ import (
 func nativeRecorderTestConfig(t *testing.T, encrypted bool) (configuration.Auditlog, *Identity) {
 	t.Helper()
 	id := nativeTestIdentity(t)
-	conf := auditIdentityTestConfiguration(filepath.Join(t.TempDir(), "audit"), true)
+	conf := auditIdentityTestConfiguration(filepath.Join(t.TempDir(), "audit"))
 	if encrypted {
 		key, err := auditIdentityKeyRequirement.GenerateKey(nil)
 		require.NoError(t, err)

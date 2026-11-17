@@ -24,6 +24,7 @@ import (
 	bferrors "github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/recording"
 	"github.com/engity-com/bifroest/pkg/template"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 )
 
 func TestSessionRecordingCoordinatorCheckpointsBySizeAndStopsOnce(t *testing.T) {
@@ -134,7 +135,6 @@ func TestSessionRecordingStopFailurePreservesPreparedLifecycle(t *testing.T) {
 			root := t.TempDir()
 			auditlog := configuration.Auditlog{
 				Name:         "security",
-				Enabled:      true,
 				IdentityFile: filepath.Join(root, "identity"),
 				Directory:    filepath.Join(root, "journal"),
 			}
@@ -520,10 +520,15 @@ func TestExecuteSessionRecordingCapturesForcedCommandRequestedAsSftp(t *testing.
 
 func TestExecuteSessionRecordingCreateFailurePreventsEnvironmentRun(t *testing.T) {
 	var runCalled atomic.Bool
-	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{run: func(environment.Task) (int, error) {
+	root := t.TempDir()
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(environment.Task) (int, error) {
 		runCalled.Store(true)
 		return 0, nil
-	}})
+	}}, func(conf *configuration.Configuration) {
+		auditlog := configureDefaultTestAuditlog(conf)
+		auditlog.IdentityFile = filepath.Join(root, "audit-key")
+		auditlog.Directory = filepath.Join(root, "journal")
+	})
 	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
 	server.service.recordingRepositories[auditlog] = &sessionRecordingRepository{}
 	auditRecorder := &recordingAuditRecorder{}
@@ -1011,8 +1016,7 @@ func requireAuditEventsNamedEventually(t *testing.T, recorder *recordingAuditRec
 }
 
 func enableSessionRecordingForLifecycleTest(conf *configuration.Configuration, root string) {
-	auditlog := &conf.Auditlogs[0]
-	auditlog.Enabled = true
+	auditlog := configureDefaultTestAuditlog(conf)
 	auditlog.IdentityFile = filepath.Join(root, "audit", "identity")
 	auditlog.Directory = filepath.Join(root, "audit", "journal")
 	auditlog.Recording.Enabled = true
@@ -1086,7 +1090,7 @@ func requireSessionRecordingAuditCorrelation(t *testing.T, verification *session
 	require.Equal(t, started.ConnectionId, completed.ConnectionId)
 	require.Equal(t, metadata.SessionId.String(), started.SessionId)
 	require.Equal(t, started.SessionId, completed.SessionId)
-	require.Equal(t, metadata.OperationId.String(), started.OperationId)
+	require.Equal(t, uuidtext.Format(metadata.OperationId), started.OperationId)
 	require.Equal(t, started.OperationId, completed.OperationId)
 	require.Equal(t, metadata.Flow.String(), started.Flow)
 	require.Equal(t, started.Flow, completed.Flow)

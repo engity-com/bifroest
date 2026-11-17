@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shirou/gopsutil/v4/process"
-
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/stretchr/testify/require"
 )
@@ -924,16 +922,23 @@ func TestDarwinProcessCleanupRequiresIdentityOrConfirmedAbsence(t *testing.T) {
 	runner := newFakeDarwinRunner()
 	runner.users["alice"] = &fakeDarwinUser{name: "alice", uid: 501, gid: 20, home: "/Users/alice"}
 	repository := newFakeNativeDarwinRepository(runner)
-	repository.processes = func(context.Context) ([]*process.Process, error) { return nil, nil }
+	var listed []Id
+	repository.processes = func(_ context.Context, id Id) ([]darwinProcessCandidate, error) {
+		listed = append(listed, id)
+		return nil, nil
+	}
 
 	require.ErrorContains(t, repository.KillProcessesByIdentity(t.Context(), 501, "mallory"), "changed name")
+	require.Empty(t, listed, "a mismatched account binding must not enumerate processes")
 	require.NoError(t, repository.KillProcessesByIdentity(t.Context(), 501, "alice"))
 	require.NoError(t, repository.KillProcessesByAbsentIdentity(t.Context(), 999, "absent"))
+	require.Equal(t, []Id{501, 999}, listed)
 
 	repository.lookupUserById = func(string) (*osuser.User, error) {
 		return &osuser.User{Username: "reused", Uid: "999"}, nil
 	}
 	require.ErrorContains(t, repository.KillProcessesByAbsentIdentity(t.Context(), 999, "absent"), "no longer absent")
+	require.Equal(t, []Id{501, 999}, listed, "a reused account must not enumerate processes")
 }
 
 func TestDarwinDeleteGroupRejectsPrimaryGroupAndVerifiesDeletion(t *testing.T) {

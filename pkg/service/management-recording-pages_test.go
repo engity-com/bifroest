@@ -75,14 +75,24 @@ func TestManagementRecordingPagesOverIntegratedSSHClient(t *testing.T) {
 				require.NoError(t, err)
 				sessionID, err := session.NewId()
 				require.NoError(t, err)
+				metadata := recording.CastMetadata{RecordingId: id, ConnectionId: connectionID, SessionId: sessionID, OperationId: uuid.New(),
+					Flow: "restricted-key", Task: audit.SessionTaskExec, ProducerId: server.service.recordingRepositories["pages"].producerId, StartedAt: started}
+				receipts := server.service.recordingRepositories["pages"].receipts
+				fileName, err := server.service.recordingRepositories["pages"].artifactName(id)
+				require.NoError(t, err)
+				require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, started, sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)))
 				active, err := repository.CreateActive(t.Context(),
 					recording.CastHeader{Version: 3, Terminal: recording.CastTerminal{Columns: 80, Rows: 24}, Timestamp: started.Unix()},
-					recording.CastMetadata{RecordingId: id, ConnectionId: connectionID, SessionId: sessionID, OperationId: uuid.New(),
-						Flow: "restricted-key", Task: audit.SessionTaskExec, ProducerId: server.service.recordingRepositories["pages"].producerId, StartedAt: started}, 300)
+					metadata, 300)
 				require.NoError(t, err)
 				status := uint32(0)
+				require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingCompleted, audit.EventOutcomeSuccess, "", nil, time.Second, nil, &status)))
 				_, err = active.Seal(time.Second, recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: started.Add(time.Second)}, &status)
 				require.NoError(t, err)
+				pending, err := receipts.PendingLifecycle(t.Context())
+				require.NoError(t, err)
+				require.Len(t, pending, 1)
+				require.NoError(t, receipts.CompleteLifecycle(t.Context(), pending[0]))
 			}
 			var configured *configuration.Auditlog
 			for i := range server.service.Configuration.Auditlogs {

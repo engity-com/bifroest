@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -223,11 +223,11 @@ func (this *AuthorizationEvidence) Validate() error {
 		if err := validateAuthorizationEvidenceFingerprint(hop.SubjectKeyFingerprint); err != nil {
 			return fmt.Errorf("authorization evidence hops[%d].subjectKeyFingerprint is invalid: %w", i, err)
 		}
-		parsedSessionId, err := uuid.Parse(hop.SessionId)
+		parsedSessionId, err := uuidtext.Parse(hop.SessionId)
 		if err != nil {
 			return fmt.Errorf("authorization evidence hops[%d].sessionId is invalid: %w", i, err)
 		}
-		if parsedSessionId == uuid.Nil || parsedSessionId.String() != hop.SessionId {
+		if parsedSessionId == [16]byte{} {
 			return fmt.Errorf("authorization evidence hops[%d].sessionId is invalid", i)
 		}
 		flow := configuration.FlowName(hop.Flow)

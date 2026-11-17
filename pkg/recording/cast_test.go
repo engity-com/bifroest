@@ -19,6 +19,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/connection"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	bferrors "github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/recording/cast"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -43,7 +44,7 @@ func castV3GoldenTestContent(t *testing.T) ([]byte, *audit.Identity, CastMetadat
 	t.Helper()
 	identity, header, metadata := castTestValues(t, true)
 	var output bytes.Buffer
-	writer, err := NewCastWriter(&output, identity, header, metadata)
+	writer, err := cast.NewLegacyCastWriter(&output, identity, header, metadata)
 	require.NoError(t, err)
 	require.NoError(t, writer.WriteOutput(248*time.Millisecond, OutputStreamTerminal, []byte("Welcome to production\r\n")))
 	require.NoError(t, writer.WriteResize(1001*time.Millisecond, 132, 43))
@@ -293,14 +294,16 @@ func TestCastWriterSplitsLargeUtf8OutputOnRuneBoundaries(t *testing.T) {
 	require.Equal(t, uint64(2), verification.OutputEvents)
 }
 
-func TestIdRequiresCanonicalRandomUuid(t *testing.T) {
+func TestIdWritesBase58AndRequiresRandomUuid(t *testing.T) {
 	var id Id
 	require.NoError(t, id.UnmarshalText([]byte("34e34ab8-7457-4d88-a5e4-c57791775c3a")))
-	require.Equal(t, "34e34ab8-7457-4d88-a5e4-c57791775c3a", id.String())
-	err := id.UnmarshalText([]byte("34E34AB8-7457-4D88-A5E4-C57791775C3A"))
-	require.ErrorContains(t, err, "canonical")
-	require.True(t, bferrors.Config.IsErr(err))
-	err = id.UnmarshalText([]byte("0194c3c8-11b2-7a4c-a49a-7709891742fe"))
+	require.Equal(t, "7Xng23oeg4L1zHaZfeX6wB", id.String())
+	for _, text := range []string{"34E34AB8-7457-4D88-A5E4-C57791775C3A", "34e34ab874574d88a5e4c57791775c3a", "{34e34ab8-7457-4d88-a5e4-c57791775c3a}", "urn:uuid:34e34ab8-7457-4d88-a5e4-c57791775c3a", "7Xng23oeg4L1zHaZfeX6wB"} {
+		var parsed Id
+		require.NoError(t, parsed.UnmarshalText([]byte(text)))
+		require.Equal(t, id, parsed)
+	}
+	err := id.UnmarshalText([]byte("0194c3c8-11b2-7a4c-a49a-7709891742fe"))
 	require.ErrorContains(t, err, "illegal")
 	require.True(t, bferrors.Config.IsErr(err))
 }

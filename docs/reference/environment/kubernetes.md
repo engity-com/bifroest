@@ -110,8 +110,10 @@ Has to be true (after being evaluated) that the user is allowed to use this envi
       }}
    ```
 
-<<property("name", "string", template_context="../context/authorization.md", default="bifroest-{{.session.id}}")>>
+<<property("name", "string", template_context="../context/authorization.md", default="bifroest-{{.session.id | toString | sha256sum | trunc 32}}")>>
 [Kubernetes name](https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names) of the Pod which will be created.
+
+The default derives a DNS-compatible name from the session ID. Custom templates must produce a valid Kubernetes name.
 
 <<property("namespace", "string", template_context="../context/authorization.md")>>
 [Kubernetes namespace](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/) where the Pod will be created inside.

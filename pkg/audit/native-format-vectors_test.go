@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/engity-com/bifroest/internal/testvectors"
 	"io"
 	"os"
 	"path/filepath"
@@ -244,7 +245,7 @@ func verifyAuditVector(t *testing.T, identity *Identity, key bfcrypto.PrivateKey
 	}
 	var output bytes.Buffer
 	require.NoError(t, verified.ExportJSONLines(&output, RecordOrderChain))
-	require.Equal(t, redacted, output.Bytes())
+	require.Equal(t, testvectors.Base58Projection(redacted), output.Bytes())
 	if fingerprint != "" {
 		source.WithSensitive = true
 		require.Error(t, VerifyJournalIntegrity(ctx, []JournalSource{source}))
@@ -265,7 +266,7 @@ func verifyAuditVector(t *testing.T, identity *Identity, key bfcrypto.PrivateKey
 	}
 	output.Reset()
 	require.NoError(t, verified.ExportJSONLines(&output, RecordOrderChain))
-	require.Equal(t, full, output.Bytes())
+	require.Equal(t, testvectors.Base58Projection(full), output.Bytes())
 }
 
 func auditVectorFiles(clear, encrypted auditVectorSet, clearRedacted, clearFull, encryptedRedacted, encryptedFull []byte) []struct {

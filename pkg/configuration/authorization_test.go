@@ -46,7 +46,7 @@ clientId: abc`,
 issuer: https://foo-bar
 clientId: anId
 clientSecret: aSecret`,
-			expected: Authorization{&AuthorizationOidcDeviceAuth{
+			expected: Authorization{V: &AuthorizationOidcDeviceAuth{
 				Issuer:           template.MustNewUrl("https://foo-bar"),
 				ClientId:         template.MustNewString("anId"),
 				ClientSecret:     template.MustNewString("aSecret"),

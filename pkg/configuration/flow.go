@@ -2,8 +2,13 @@ package configuration
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 // Flow represents a dedicated flow within the service.
@@ -21,9 +26,17 @@ import (
 type Flow struct {
 	// Name unique name within the while configuration which identifies the Flow.
 	Name FlowName `yaml:"name"`
+	// Title is an optional display label, never an identifier or selector.
+	Title string `yaml:"title,omitempty"`
 
 	// Auditlog references the audit log used by this flow.
-	Auditlog AuditlogName `yaml:"auditlog,omitempty"`
+	Auditlog         AuditlogName `yaml:"auditlog,omitempty"`
+	auditlogResolved bool
+	resolvedAuditlog AuditlogName
+
+	Ssh            FlowSsh  `yaml:"ssh,omitempty"`
+	Http           FlowHttp `yaml:"http,omitempty"`
+	DiscoverAsSlug string   `yaml:"discoverAsSlug,omitempty"`
 
 	// Requirement represents all rules the connection has to meet to be able to be accepted by this flow.
 	Requirement Requirement `yaml:"requirement,omitempty"`
@@ -36,9 +49,14 @@ type Flow struct {
 }
 
 func (this *Flow) SetDefaults() error {
+	this.auditlogResolved, this.resolvedAuditlog = false, ""
 	return setDefaults(this,
 		noopSetDefault[Flow]("name"),
-		fixedDefault("auditlog", func(v *Flow) *AuditlogName { return &v.Auditlog }, DefaultAuditlogName),
+		noopSetDefault[Flow]("title"),
+		fixedDefault("auditlog", func(v *Flow) *AuditlogName { return &v.Auditlog }, ""),
+		func(v *Flow) (string, defaulter) { return "ssh", &v.Ssh },
+		func(v *Flow) (string, defaulter) { return "http", &v.Http },
+		noopSetDefault[Flow]("discoverAsSlug"),
 
 		func(v *Flow) (string, defaulter) { return "requirement", &v.Requirement },
 		func(v *Flow) (string, defaulter) { return "authorization", &v.Authorization },
@@ -47,32 +65,134 @@ func (this *Flow) SetDefaults() error {
 }
 
 func (this *Flow) Trim() error {
-	return trim(this,
-		noopTrim[Flow]("name"),
-		noopTrim[Flow]("auditlog"),
+	return this.trim(true)
+}
 
-		func(v *Flow) (string, trimmer) { return "requirement", &v.Requirement },
-		func(v *Flow) (string, trimmer) { return "authorization", &v.Authorization },
-		func(v *Flow) (string, trimmer) { return "environment", &v.Environment },
+func (this *Flow) trim(requireResolved bool) error {
+	return trim(&flowValidation{this, requireResolved},
+		func(v *flowValidation) (string, trimmer) { return "ssh", &v.Ssh },
+		func(v *flowValidation) (string, trimmer) { return "http", &v.Http },
+
+		func(v *flowValidation) (string, trimmer) { return "requirement", &v.Requirement },
+		func(v *flowValidation) (string, trimmer) {
+			if !requireResolved && v.Authorization.V == nil {
+				return "authorization", &noopT{}
+			}
+			return "authorization", &v.Authorization
+		},
+		func(v *flowValidation) (string, trimmer) {
+			if !requireResolved && v.Environment.V == nil {
+				return "environment", &noopT{}
+			}
+			return "environment", &v.Environment
+		},
 	)
 }
 
+type flowValidation struct {
+	*Flow
+	requireResolved bool
+}
+
+func (this *flowValidation) Validate() error { return this.Flow.validate(this.requireResolved) }
+
 func (this *Flow) Validate() error {
-	return validate(this,
+	return this.validate(true)
+}
+
+func (this *Flow) validate(requireResolved bool) error {
+	if err := validate(this,
 		notZeroValidate("name", func(v *Flow) *FlowName { return &v.Name }),
-		func(v *Flow) (string, validator) { return "auditlog", &v.Auditlog },
+		func(v *Flow) (string, validator) {
+			return "title", validatorFunc(func() error {
+				if len(v.Title) > 255 || !utf8.ValidString(v.Title) || strings.IndexFunc(v.Title, func(r rune) bool { return unicode.IsControl(r) || unicode.In(r, unicode.Cf) }) >= 0 {
+					return fmt.Errorf("must be plain text of at most 255 bytes")
+				}
+				return nil
+			})
+		},
+		func(v *Flow) (string, validator) {
+			if v.Auditlog == "" {
+				return "auditlog", &noopT{}
+			}
+			return "auditlog", &v.Auditlog
+		},
+		func(v *Flow) (string, validator) { return "ssh", &v.Ssh },
+		func(v *Flow) (string, validator) { return "http", &v.Http },
+		func(v *Flow) (string, validator) {
+			return "discoverAsSlug", validatorFunc(func() error { return net.ValidateHttpSlug(v.DiscoverAsSlug) })
+		},
 
 		func(v *Flow) (string, validator) { return "requirement", &v.Requirement },
-		func(v *Flow) (string, validator) { return "authorization", &v.Authorization },
-		func(v *Flow) (string, validator) { return "environment", &v.Environment },
-	)
+		func(v *Flow) (string, validator) {
+			if !requireResolved && v.Authorization.V == nil {
+				return "authorization", &noopT{}
+			}
+			return "authorization", &v.Authorization
+		},
+		func(v *Flow) (string, validator) {
+			if !requireResolved && v.Environment.V == nil {
+				return "environment", &noopT{}
+			}
+			return "environment", &v.Environment
+		},
+	); err != nil {
+		return err
+	}
+	return this.validateDiscoverySlug()
 }
 
 func (this *Flow) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *Flow, node *yaml.Node) error {
+	if err := this.SetDefaults(); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	if err := func(target *Flow, node *yaml.Node) error {
+		if err := rejectUnknownConfigurationFields(node, target); err != nil {
+			return err
+		}
+		// Decode the effective fields first so YAML merge keys cannot hide a null
+		// transport block, for which yaml would skip its UnmarshalYAML method.
+		fields, err := effectiveHttpFields(node)
+		if err != nil {
+			return err
+		}
+		if value, exists := fields["auditlog"]; exists && value.Tag != "!!str" && value.Tag != "!!null" {
+			return reportYamlRelatedErrf(&value, "[auditlog] must be a string reference")
+		}
+		if value, exists := fields["title"]; exists && value.Tag != "!!str" && value.Tag != "!!null" {
+			return reportYamlRelatedErrf(&value, "[title] must be a string")
+		}
+		for _, key := range []string{"ssh", "http"} {
+			value, exists := fields[key]
+			if !exists {
+				continue
+			}
+			if value.Kind == yaml.AliasNode && value.Alias != nil {
+				value = *value.Alias
+			}
+			if value.Kind != yaml.MappingNode {
+				return reportYamlRelatedErrf(&value, "[%s] must be a mapping", key)
+			}
+		}
 		type raw Flow
 		return node.Decode((*raw)(target))
-	})
+	}(this, node); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	// Missing values and references require the complete root context. Typed
+	// inline values have already been decoded and validated and never fall back.
+	if err := this.trim(false); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	return nil
+}
+
+func (this Flow) MarshalYAML() (any, error) {
+	type raw Flow
+	if this.auditlogResolved && this.Auditlog == this.resolvedAuditlog {
+		this.Auditlog = ""
+	}
+	return raw(this), nil
 }
 
 func (this Flow) IsEqualTo(other any) bool {
@@ -90,11 +210,33 @@ func (this Flow) IsEqualTo(other any) bool {
 }
 
 func (this Flow) isEqualTo(other *Flow) bool {
+	if other == nil {
+		return false
+	}
+	configuredAuditlog := func(flow Flow) AuditlogName {
+		if flow.auditlogResolved && flow.Auditlog == flow.resolvedAuditlog {
+			return ""
+		}
+		return flow.Auditlog
+	}
 	return isEqual(&this.Name, &other.Name) &&
+		this.Title == other.Title &&
 		isEqual(&this.Auditlog, &other.Auditlog) &&
+		configuredAuditlog(this) == configuredAuditlog(*other) &&
+		this.Ssh.IsEqualTo(other.Ssh) && this.Http.IsEqualTo(other.Http) &&
+		this.DiscoverAsSlug == other.DiscoverAsSlug &&
 		isEqual(&this.Requirement, &other.Requirement) &&
 		isEqual(&this.Authorization, &other.Authorization) &&
 		isEqual(&this.Environment, &other.Environment)
+}
+
+// GetTitle is non-empty for every successfully validated/resolved flow. Keep
+// Name unchanged for authorization, session bindings and audit selectors.
+func (this Flow) GetTitle() string {
+	if title := strings.TrimSpace(this.Title); title != "" {
+		return title
+	}
+	return this.Name.String()
 }
 
 // Flows defines a set of Flow instances.
@@ -134,12 +276,24 @@ func (this Flows) validateUniqueNames() error {
 }
 
 func (this *Flows) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return reportYamlRelatedErrf(node, "must be a list of flows")
+	}
+	for _, item := range node.Content {
+		if item.Kind == yaml.AliasNode && item.Alias != nil {
+			item = item.Alias
+		}
+		if item.Kind != yaml.MappingNode {
+			return reportYamlRelatedErrf(item, "flow must be a mapping")
+		}
+	}
 	// Clear the entries before...
 	*this = Flows{}
-	return unmarshalYAML(this, node, func(target *Flows, node *yaml.Node) error {
-		type raw Flows
-		return node.Decode((*raw)(target))
-	})
+	type raw Flows
+	if err := node.Decode((*raw)(this)); err != nil {
+		return err
+	}
+	return this.validateUniqueNames()
 }
 
 func (this Flows) IsEqualTo(other any) bool {

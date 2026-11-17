@@ -42,13 +42,14 @@ type releaseManifestAsset struct {
 }
 
 type releaseManifestVariant struct {
-	Os           string                       `json:"os"`
-	Architecture string                       `json:"architecture"`
-	Edition      string                       `json:"edition"`
-	Archive      string                       `json:"archive,omitempty"`
-	Notice       string                       `json:"notice,omitempty"`
-	Sboms        releaseManifestVariantSboms  `json:"sboms"`
-	Image        *releaseManifestVariantImage `json:"image,omitempty"`
+	Os                 string                       `json:"os"`
+	Architecture       string                       `json:"architecture"`
+	Edition            string                       `json:"edition"`
+	Archive            string                       `json:"archive,omitempty"`
+	Notice             string                       `json:"notice,omitempty"`
+	BrowserBuildDigest string                       `json:"browserBuildDigest,omitempty"`
+	Sboms              releaseManifestVariantSboms  `json:"sboms"`
+	Image              *releaseManifestVariantImage `json:"image,omitempty"`
 }
 
 type releaseManifestVariantSboms struct {
@@ -80,6 +81,7 @@ type releaseManifestVariantBuilder struct {
 	archiveMediaType     string
 	archiveSubjectDigest string
 	notice               string
+	browserBuildDigest   string
 	archiveSboms         releaseManifestSbomFiles
 	imageSboms           releaseManifestSbomFiles
 	imageMediaType       string
@@ -127,6 +129,9 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 				}
 				builder.archive = artifact.name()
 				builder.archiveDigest = digest
+				if artifact.thirdPartyLicenseInventory != nil && artifact.thirdPartyLicenseInventory.browser != nil {
+					builder.browserBuildDigest = artifact.thirdPartyLicenseInventory.browserDigest
+				}
 			case buildArtifactTypeNotice:
 				if builder.notice != "" {
 					return nil, fmt.Errorf("duplicate third-party notice for %s", artifact.Platform)
@@ -247,11 +252,12 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 			return nil, fmt.Errorf("image for %s has incomplete SBOM formats", builder.platform)
 		}
 		variant := releaseManifestVariant{
-			Os:           builder.platform.Os.String(),
-			Architecture: builder.platform.Arch.String(),
-			Edition:      builder.platform.Edition.String(),
-			Archive:      builder.archive,
-			Notice:       builder.notice,
+			Os:                 builder.platform.Os.String(),
+			Architecture:       builder.platform.Arch.String(),
+			Edition:            builder.platform.Edition.String(),
+			Archive:            builder.archive,
+			Notice:             builder.notice,
+			BrowserBuildDigest: builder.browserBuildDigest,
 		}
 		if builder.archiveSboms.Spdx != "" || builder.archiveSboms.CycloneDx != "" {
 			variant.Sboms.Archive = &builder.archiveSboms

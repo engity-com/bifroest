@@ -21,7 +21,6 @@ func TestValidateRuntimePathsRejectsWindowsSftpIdentityInsideSessionStorage(t *t
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:         "security",
-			Enabled:      true,
 			IdentityFile: filepath.Join(root, "identity"),
 			Directory:    filepath.Join(root, "journal"),
 			Targets: configuration.AuditlogTargets{{
@@ -52,7 +51,7 @@ func TestValidateRuntimePathsRejectsWindowsHostKeyJunctionIntoJournal(t *testing
 	require.NoError(t, os.WriteFile(storedPath, []byte("unchanged"), 0600))
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
-			Name: "security", Enabled: true, IdentityFile: filepath.Join(root, "audit-identity"),
+			Name: "security", IdentityFile: filepath.Join(root, "audit-identity"),
 			Directory: journal,
 		}},
 	}

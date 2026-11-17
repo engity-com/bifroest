@@ -33,7 +33,7 @@ func resolveAuditSourceConfiguration[O common.ConfigurationOptions](ctx context.
 			return "", nil, err
 		}
 		return name, &configuration.Configuration{Auditlogs: configuration.Auditlogs{{
-			Name: name, Enabled: true, Directory: directory, EncryptionPublicKeyFile: bfcrypto.PublicKeysFile(recipient),
+			Name: name, Directory: directory, EncryptionPublicKeyFile: bfcrypto.PublicKeysFile(recipient),
 		}}}, nil
 	}
 	if recipient != "" {

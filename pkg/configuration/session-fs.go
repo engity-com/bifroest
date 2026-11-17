@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"fmt"
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -77,6 +78,21 @@ func (this *SessionFs) UnmarshalYAML(node *yaml.Node) error {
 		type raw SessionFs
 		return node.Decode((*raw)(target))
 	})
+}
+
+func (this SessionFs) MarshalYAML() (any, error) {
+	type raw SessionFs
+	var result yaml.Node
+	if err := result.Encode(raw(this)); err != nil {
+		return nil, err
+	}
+	// Preserve the actual permission bits rather than FileMode's display text.
+	for index := 0; index < len(result.Content); index += 2 {
+		if result.Content[index].Value == "fileMode" {
+			result.Content[index+1].Value = fmt.Sprintf("%04o", uint32(this.FileMode))
+		}
+	}
+	return &result, nil
 }
 
 func (this SessionFs) IsEqualTo(other any) bool {

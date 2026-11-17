@@ -1,0 +1,11 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# Only OS libraries for the pinned Playwright headless shell. Go and Node are
+# mounted read-only from the caller's MISE installations, never installed here.
+RUN apt-get update && apt-get install --yes --no-install-recommends \
+    libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+    libdrm2 libxkbcommon0 libx11-6 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxrandr2 libgbm1 libasound2 fonts-dejavu-core \
+    && mkdir -p /tmp/opencode \
+    && printf 'bifroest-owned-pam-integration\n' > /run/bifroest-pam-integration

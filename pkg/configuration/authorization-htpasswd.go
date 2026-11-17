@@ -5,6 +5,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 var (
@@ -16,12 +17,14 @@ var (
 )
 
 type AuthorizationHtpasswd struct {
-	File    crypto.HtpasswdFile `yaml:"file,omitempty"`
-	Entries crypto.Htpasswd     `yaml:"entries,omitempty"`
+	RemoteName template.String     `yaml:"remoteName,omitempty"`
+	File       crypto.HtpasswdFile `yaml:"file,omitempty"`
+	Entries    crypto.Htpasswd     `yaml:"entries,omitempty"`
 }
 
 func (this *AuthorizationHtpasswd) SetDefaults() error {
 	return setDefaults(this,
+		fixedDefault("remoteName", func(v *AuthorizationHtpasswd) *template.String { return &v.RemoteName }, DefaultAuthorizationRemoteName),
 		func(v *AuthorizationHtpasswd) (string, defaulter) {
 			return "file", defaulterFunc(func() error {
 				fn := DefaultAuthorizationHtpasswdFile
@@ -41,6 +44,7 @@ func (this *AuthorizationHtpasswd) SetDefaults() error {
 
 func (this *AuthorizationHtpasswd) Trim() error {
 	return trim(this,
+		noopTrim[AuthorizationHtpasswd]("remoteName"),
 		noopTrim[AuthorizationHtpasswd]("file"),
 		noopTrim[AuthorizationHtpasswd]("entries"),
 	)
@@ -48,12 +52,18 @@ func (this *AuthorizationHtpasswd) Trim() error {
 
 func (this *AuthorizationHtpasswd) Validate() error {
 	return validate(this,
+		func(v *AuthorizationHtpasswd) (string, validator) {
+			return "remoteName", validatorFunc(func() error { return validateAuthorizationRemoteName(v.RemoteName) })
+		},
 		func(v *AuthorizationHtpasswd) (string, validator) { return "file", &v.File },
 		func(v *AuthorizationHtpasswd) (string, validator) { return "entries", &v.Entries },
 	)
 }
 
 func (this *AuthorizationHtpasswd) UnmarshalYAML(node *yaml.Node) error {
+	if err := validateAuthorizationRemoteNameYAML(node); err != nil {
+		return err
+	}
 	return unmarshalYAML(this, node, func(target *AuthorizationHtpasswd, node *yaml.Node) error {
 		type raw AuthorizationHtpasswd
 		return node.Decode((*raw)(target))
@@ -76,6 +86,7 @@ func (this AuthorizationHtpasswd) IsEqualTo(other any) bool {
 
 func (this AuthorizationHtpasswd) isEqualTo(other *AuthorizationHtpasswd) bool {
 	return isEqual(&this.File, &other.File) &&
+		isEqual(&this.RemoteName, &other.RemoteName) &&
 		isEqual(&this.Entries, &other.Entries)
 }
 

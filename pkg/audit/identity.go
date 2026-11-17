@@ -16,6 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const maxAuditIdentityFileSize = 1 << 20
@@ -98,9 +99,8 @@ func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
 	return ensureIdentity(conf, nil)
 }
 
-// EnsureIdentityWithAuditlogs allows a recording-only identity to share an
-// enabled auditlog's journal path if all journal state belongs to that other
-// log's existing identity. Unknown or unowned state still blocks key creation.
+// EnsureIdentityWithAuditlogs loads or creates the configured audit identity.
+// History in any repository sharing the file blocks a replacement identity.
 func EnsureIdentityWithAuditlogs(conf *configuration.Auditlog, auditlogs configuration.Auditlogs) (*Identity, error) {
 	return ensureIdentity(conf, auditlogs)
 }
@@ -109,53 +109,36 @@ func ensureIdentity(conf *configuration.Auditlog, auditlogs configuration.Auditl
 	if conf == nil {
 		return nil, errors.Config.Newf("nil auditlog configuration")
 	}
-	if !conf.Enabled && !conf.Recording.Enabled {
-		return nil, nil
-	}
 	identityFile := strings.TrimSpace(conf.IdentityFile)
 	if identityFile == "" {
 		return nil, errors.Config.Newf("audit identity file is empty")
 	}
 	journalDirectory := strings.TrimSpace(conf.Directory)
-	if conf.Enabled && journalDirectory == "" {
+	if journalDirectory == "" {
 		return nil, errors.Config.Newf("audit journal directory is empty")
 	}
 
 	if _, err := os.Lstat(identityFile); errors.Is(err, fs.ErrNotExist) {
-		if journalDirectory != "" {
-			hasHistory, inspectErr := auditJournalHasHistory(journalDirectory)
-			if inspectErr != nil {
-				return nil, inspectErr
+		if err := validateMissingAuditIdentityState(conf, identityFile); err != nil {
+			return nil, err
+		}
+		if len(auditlogs) > 0 {
+			path, err := sys.CanonicalPath(identityFile)
+			if err != nil {
+				return nil, errors.Config.Newf("cannot resolve audit identity file: %w", err)
 			}
-			if hasHistory {
-				ownedByOther := false
-				if !conf.Enabled && conf.Recording.Enabled && len(auditlogs) > 0 {
-					ownedByOther, inspectErr = journalHistoryBelongsToOtherAuditlog(conf, auditlogs)
-					if inspectErr != nil {
-						return nil, inspectErr
+			for index := range auditlogs {
+				other := &auditlogs[index]
+				otherPath, err := sys.CanonicalPath(other.IdentityFile)
+				if err != nil {
+					return nil, errors.Config.Newf("cannot resolve identity file of auditlog %q: %w", other.Name, err)
+				}
+				relative, err := filepath.Rel(path, otherPath)
+				if err == nil && relative == "." {
+					if err := validateMissingAuditIdentityState(other, identityFile); err != nil {
+						return nil, err
 					}
 				}
-				if !ownedByOther {
-					return nil, errors.Config.Newf("audit identity file %q is missing while journal %q contains history", identityFile, journalDirectory)
-				}
-			}
-		}
-		recordingDirectory := strings.TrimSpace(conf.Recording.Directory)
-		if conf.Recording.Enabled && recordingDirectory == "" {
-			return nil, errors.Config.Newf("audit Recording directory is empty")
-		}
-		if recordingDirectory != "" {
-			// Defaults can share this path across auditlogs: fail closed rather than
-			// assign existing Recording state to a newly generated signing key.
-			hasState, inspectErr := journalDirectoryHasEntry(context.Background(), recordingDirectory, func(os.DirEntry) bool { return true })
-			if inspectErr != nil && !errors.Is(inspectErr, fs.ErrNotExist) {
-				// A disabled Recording path below a regular file cannot contain spool state.
-				if conf.Recording.Enabled || !errors.Is(inspectErr, syscall.ENOTDIR) {
-					return nil, errors.System.Newf("cannot inspect audit Recording directory %q: %w", recordingDirectory, inspectErr)
-				}
-			}
-			if hasState {
-				return nil, errors.Config.Newf("audit identity file %q is missing while Recording directory %q contains state", identityFile, recordingDirectory)
 			}
 		}
 		if _, createErr := auditIdentityKeyRequirement.CreateFile(nil, identityFile); createErr != nil && !errors.Is(createErr, fs.ErrExist) {
@@ -177,6 +160,34 @@ func ensureIdentity(conf *configuration.Auditlog, auditlogs configuration.Auditl
 		return nil, errors.Config.Newf("cannot use audit identity file %q: %w", identityFile, err)
 	}
 	return identity, nil
+}
+
+func validateMissingAuditIdentityState(conf *configuration.Auditlog, identityFile string) error {
+	journalDirectory := strings.TrimSpace(conf.Directory)
+	if journalDirectory != "" {
+		hasHistory, err := auditJournalHasHistory(journalDirectory)
+		if err != nil {
+			return err
+		}
+		if hasHistory {
+			return errors.Config.Newf("audit identity file %q is missing while journal %q contains history", identityFile, journalDirectory)
+		}
+	}
+	recordingDirectory := strings.TrimSpace(conf.Recording.Directory)
+	if conf.Recording.Enabled && recordingDirectory == "" {
+		return errors.Config.Newf("audit Recording directory is empty")
+	}
+	if recordingDirectory != "" {
+		// Disabled Recording repositories may still retain evidence.
+		hasState, err := journalDirectoryHasEntry(context.Background(), recordingDirectory, func(os.DirEntry) bool { return true })
+		if err != nil && !errors.Is(err, fs.ErrNotExist) && (conf.Recording.Enabled || !errors.Is(err, syscall.ENOTDIR)) {
+			return errors.System.Newf("cannot inspect audit Recording directory %q: %w", recordingDirectory, err)
+		}
+		if hasState {
+			return errors.Config.Newf("audit identity file %q is missing while Recording directory %q contains state", identityFile, recordingDirectory)
+		}
+	}
+	return nil
 }
 
 func loadAuditIdentityFile(path string) (bfcrypto.PrivateKey, error) {
@@ -220,101 +231,6 @@ func auditJournalHasHistory(directory string) (bool, error) {
 		return false, errors.System.Newf("cannot inspect audit journal workspace %q: %w", workDirectory, err)
 	}
 	return hasHistory, nil
-}
-
-func journalHistoryBelongsToOtherAuditlog(conf *configuration.Auditlog, auditlogs configuration.Auditlogs) (bool, error) {
-	journalPath, err := filepath.EvalSymlinks(conf.Directory)
-	if err != nil {
-		return false, errors.Config.Newf("cannot resolve audit journal %q: %w", conf.Directory, err)
-	}
-	journalPath, err = filepath.Abs(journalPath)
-	if err != nil {
-		return false, errors.Config.Newf("cannot resolve audit journal %q: %w", conf.Directory, err)
-	}
-	configured := false
-	var owner *configuration.Auditlog
-	for i := range auditlogs {
-		candidate := &auditlogs[i]
-		if candidate.Name == conf.Name && candidate.Enabled == conf.Enabled && candidate.Recording.Enabled == conf.Recording.Enabled &&
-			candidate.IdentityFile == conf.IdentityFile && candidate.Directory == conf.Directory {
-			configured = true
-		}
-		if !candidate.Enabled {
-			continue
-		}
-		candidatePath, pathErr := filepath.EvalSymlinks(candidate.Directory)
-		if pathErr != nil {
-			if errors.Is(pathErr, fs.ErrNotExist) {
-				continue
-			}
-			return false, errors.Config.Newf("cannot resolve audit journal %q: %w", candidate.Directory, pathErr)
-		}
-		candidatePath, pathErr = filepath.Abs(candidatePath)
-		if pathErr != nil {
-			return false, errors.Config.Newf("cannot resolve audit journal %q: %w", candidate.Directory, pathErr)
-		}
-		if candidatePath == journalPath {
-			if owner != nil || candidate.IdentityFile == conf.IdentityFile {
-				return false, nil
-			}
-			owner = candidate
-		}
-	}
-	if !configured || owner == nil {
-		return false, nil
-	}
-	key, err := LoadExistingIdentityPublicKey(owner.IdentityFile)
-	if err != nil {
-		return false, err
-	}
-	if key == nil || key.Type() != gossh.KeyAlgoED25519 {
-		return false, nil
-	}
-	producer := newProducerId(key.Marshal()).String()
-	var hasDelivery bool
-	unknown, err := journalDirectoryHasEntry(context.Background(), conf.Directory, func(entry os.DirEntry) bool {
-		switch entry.Name() {
-		case journalLockFileName:
-			return !entry.Type().IsRegular()
-		case journalWorkDirectoryName:
-			return !entry.IsDir() || entry.Type()&os.ModeSymlink != 0
-		case remoteDeliveryStateDirectoryName:
-			hasDelivery = true
-			return !entry.IsDir() || entry.Type()&os.ModeSymlink != 0
-		case producer:
-			return !entry.IsDir() || entry.Type()&os.ModeSymlink != 0
-		default:
-			return true
-		}
-	})
-	if err != nil {
-		return false, errors.System.Newf("cannot inspect shared audit journal %q: %w", conf.Directory, err)
-	}
-	if unknown {
-		return false, nil
-	}
-	workState, err := journalDirectoryHasEntry(context.Background(), filepath.Join(conf.Directory, journalWorkDirectoryName), func(os.DirEntry) bool { return true })
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return false, errors.System.Newf("cannot inspect shared audit journal workspace %q: %w", conf.Directory, err)
-	}
-	if workState {
-		return false, nil
-	}
-	if hasDelivery {
-		unknown, err = journalDirectoryHasEntry(context.Background(), filepath.Join(conf.Directory, remoteDeliveryStateDirectoryName), func(entry os.DirEntry) bool {
-			if entry.Name() == journalLockFileName {
-				return !entry.Type().IsRegular()
-			}
-			return entry.Name() != producer || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0
-		})
-		if err != nil {
-			return false, errors.System.Newf("cannot inspect shared audit delivery state %q: %w", conf.Directory, err)
-		}
-		if unknown {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 func (this *Identity) ProducerId() ProducerId {

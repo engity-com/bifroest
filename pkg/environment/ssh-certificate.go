@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	"maps"
 	"os"
 	"slices"
@@ -378,7 +379,7 @@ func (this *SshRepository) validateUserCertificateState(state *sshUserCertificat
 	fail := func(reason string) (*gossh.Certificate, error) {
 		return nil, fmt.Errorf("stored SSH certificate is incompatible with session %s: %s", sess.Id(), reason)
 	}
-	if state.SessionId != sess.Id().String() || state.Flow != sess.Flow().String() {
+	if !uuidtext.Equal(state.SessionId, sess.Id().String()) || state.Flow != sess.Flow().String() {
 		return fail("session identity changed")
 	}
 	if state.ConfigurationKey != this.certificateKeys.configurationKey {
@@ -446,9 +447,9 @@ func (this *SshRepository) validateUserCertificateState(state *sshUserCertificat
 		return fail(err.Error())
 	}
 	last := evidence.LastHop()
-	expectedKeyId := "bifroest:" + sess.Flow().String() + ":" + sess.Id().String()
-	if last == nil || last.SessionId != sess.Id().String() || last.Flow != sess.Flow().String() ||
-		last.KeyId != expectedKeyId || last.AuthorizationKind != state.AuthorizationKind ||
+	keyPrefix := "bifroest:" + sess.Flow().String() + ":"
+	if last == nil || !uuidtext.Equal(last.SessionId, sess.Id().String()) || last.Flow != sess.Flow().String() ||
+		!strings.HasPrefix(last.KeyId, keyPrefix) || !uuidtext.Equal(strings.TrimPrefix(last.KeyId, keyPrefix), sess.Id().String()) || last.AuthorizationKind != state.AuthorizationKind ||
 		last.Audience != state.Audience || !last.IssuedAt.Equal(state.IssuedAt) {
 		return fail("certificate evidence does not match its session metadata")
 	}

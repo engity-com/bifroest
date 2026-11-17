@@ -16,6 +16,7 @@ Use `bifroest` to run the server, inspect its state, manage SSH keys, and work w
 | [`audit`](audit/index.md) | Inspect audit logs and events; verify, export or merge journals. |
 | [`recording`](recording/index.md) | Find, inspect, verify, export and play session recordings. |
 | [`key`](key/index.md) | Generate keys and exchange SSH trust material. |
+| [`id`](id/index.md) | Convert UUID and Base58 representations locally. |
 | [`service`](service/index.md) | Install and control the Windows service or macOS LaunchDaemon. |
 | [`version`](version.md) | Show version and build information. |
 

@@ -55,9 +55,6 @@ func handleProducerID(ctx context.Context, o producerOptions) error {
 	if err != nil {
 		return err
 	}
-	if !configured.Enabled && !configured.Recording.Enabled {
-		return fmt.Errorf("auditlog %q and its Recording are disabled", configured.Name)
-	}
 	key, err := LoadAuditPrivateKey(configured.IdentityFile)
 	if err != nil {
 		return err

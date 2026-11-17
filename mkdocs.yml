@@ -13,10 +13,10 @@ plugins:
   - inline-svg
   - macros:
       module_name: docs/.theme/marcos/main
-      j2_block_start_string: '<%'
-      j2_block_end_string: '%>'
-      j2_variable_start_string: '<<'
-      j2_variable_end_string: '>>'
+      j2_block_start_string: "<%"
+      j2_block_end_string: "%>"
+      j2_variable_start_string: "<<"
+      j2_variable_end_string: ">>"
       on_error_fail: true
       on_undefined: strict
 
@@ -130,6 +130,7 @@ nav:
           - guides/index.md
           - SSH gateway: guides/ssh-gateway.md
           - OIDC login: guides/oidc.md
+          - Browser access: guides/browser-access.md
           - Session recording: guides/recording.md
           - Remote administration: guides/management.md
           - Remote public-key export: guides/keys.md
@@ -149,6 +150,7 @@ nav:
       - Connections:
           - reference/connection/index.md
           - SSH: reference/connection/ssh.md
+          - HTTP: reference/connection/http/index.md
       - reference/flow.md
       - Authorizations:
           - reference/authorization/index.md
@@ -226,6 +228,9 @@ nav:
                   - reference/cli/key/import/index.md
                   - ca: reference/cli/key/import/ca.md
                   - host: reference/cli/key/import/host.md
+          - id:
+              - reference/cli/id/index.md
+              - convert: reference/cli/id/convert.md
           - service:
               - reference/cli/service/index.md
               - install: reference/cli/service/install.md
@@ -238,9 +243,11 @@ nav:
       - Context Objects:
           - reference/context/index.md
           - Alternative Binary: reference/context/alternative-binary.md
+          - Authentication: reference/context/authentication.md
           - Authorization: reference/context/authorization.md
           - Authorization Request: reference/context/authorization-request.md
           - Connection: reference/context/connection.md
+          - Environment: reference/context/environment.md
           - Container: reference/context/container.md
           - Core: reference/context/core.md
           - Local Environment: reference/context/local-environment.md

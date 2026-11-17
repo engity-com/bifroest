@@ -12,7 +12,6 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	essh "github.com/engity-com/ssh-server-go"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
@@ -27,6 +26,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 const (
@@ -47,6 +47,10 @@ func (this *kubernetes) Banner(req Request) (io.ReadCloser, error) {
 }
 
 func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
+	return this.run(t)
+}
+func (this *kubernetes) RunTerminal(t TerminalTask) (int, error) { return this.run(t) }
+func (this *kubernetes) run(t TaskContext) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}
@@ -59,7 +63,11 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	if sess == nil {
 		return failf("authorization without session is not supported to run kubernetes environment")
 	}
-	sshSess := t.SshSession()
+	sshSess, releaseTerminal, err := taskTerminal(t)
+	if err != nil {
+		return fail(err)
+	}
+	defer releaseTerminal()
 	l := t.Connection().Logger()
 	executionId, err := execution.NewId()
 	if err != nil {
@@ -128,7 +136,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		}
 	}
 
-	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
+	if source := taskSshSession(t); source != nil && ssh.AgentRequested(source) && authorization.IsAgentForwardingAllowed(auth) {
 		user := this.user
 		if user == "" {
 			user = "0"
@@ -147,7 +155,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 			return fail(err)
 		} else {
 			defer common.IgnoreCloseError(ln)
-			go ssh.ForwardAgentConnections(ln, l, sshSess)
+			go ssh.ForwardAgentConnections(ln, l, source)
 			setReservedEnvironment(&ev, this.repository.conf.Os, ssh.AuthSockEnvName, ln.Path())
 		}
 	}
@@ -158,7 +166,8 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		opts.Stderr = false
 		streamOpts.Tty = true
 		streamOpts.Stderr = nil
-		streamOpts.TerminalSizeQueue = &terminalQueueSizeFromSsh{
+		streamOpts.TerminalSizeQueue = &terminalQueueSize{
+			ctx:     t.Context(),
 			initial: &remotecommand.TerminalSize{Width: uint16(ptyReq.Window.Width), Height: uint16(ptyReq.Window.Height)},
 			changes: winCh,
 		}
@@ -200,7 +209,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		return fail(err)
 	}
 
-	signals := make(chan essh.Signal, 1)
+	signals := make(chan terminal.Signal, 1)
 	streamDone := make(chan error, 1)
 	var activeRoutines sync.WaitGroup
 	defer func() {
@@ -295,24 +304,26 @@ func waitForKubernetesExecutionExitCode(ctx context.Context, executionId executi
 	}
 }
 
-type terminalQueueSizeFromSsh struct {
+type terminalQueueSize struct {
+	ctx     context.Context
 	initial *remotecommand.TerminalSize
-	changes <-chan essh.Window
+	changes <-chan terminal.Window
 }
 
-func (this *terminalQueueSizeFromSsh) Next() *remotecommand.TerminalSize {
+func (this *terminalQueueSize) Next() *remotecommand.TerminalSize {
 	if this.initial != nil {
 		result := this.initial
 		this.initial = nil
 		return result
 	}
-	win, ok := <-this.changes
-	if !ok {
+	select {
+	case <-this.ctx.Done():
 		return nil
-	}
-	return &remotecommand.TerminalSize{
-		Width:  uint16(win.Width),
-		Height: uint16(win.Height),
+	case win, ok := <-this.changes:
+		if !ok {
+			return nil
+		}
+		return &remotecommand.TerminalSize{Width: uint16(win.Width), Height: uint16(win.Height)}
 	}
 }
 
@@ -378,8 +389,8 @@ func retryExecutionSignal(ctx context.Context, signal func(context.Context) erro
 	}
 }
 
-func (this *kubernetes) signal(ctx context.Context, logger log.Logger, connectionId connection.Id, executionId execution.Id, sshSignal essh.Signal) {
-	signal, err := signalFromSsh(sshSignal)
+func (this *kubernetes) signal(ctx context.Context, logger log.Logger, connectionId connection.Id, executionId execution.Id, sshSignal terminal.Signal) {
+	signal, err := signalFromTerminal(sshSignal)
 	if err != nil {
 		logger.WithError(err).
 			With("signal", sshSignal).

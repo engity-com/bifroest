@@ -3,11 +3,10 @@ package audit
 import (
 	"context"
 	"fmt"
-	"io"
-	"math"
 	"os"
 	"path/filepath"
 
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
@@ -116,15 +115,7 @@ func verifyLiveJournal(ctx context.Context, source JournalSource, collect bool, 
 	if err != nil {
 		return VerifiedJournal{}, nil, err
 	}
-	unsigned, err := nativeformat.Unmarshal[nativeAuditHead](headBytes, nativeformat.MaxMetadataPayload)
-	if err != nil {
-		return VerifiedJournal{}, nil, err
-	}
-	identity, err := newJournalPublicIdentity(ProducerId(unsigned.ProducerId), unsigned.PublicKey)
-	if err != nil || identity.ProducerId() != source.ExpectedProducerId {
-		return VerifiedJournal{}, nil, fmt.Errorf("native audit head has invalid expected producer identity: %v", err)
-	}
-	head, err := decodeNativeAuditHead(headBytes, identity)
+	head, err := evidence.CaptureAuditProducerHead(headBytes, source.ExpectedProducerId, false)
 	if err != nil {
 		return VerifiedJournal{}, nil, err
 	}
@@ -135,7 +126,6 @@ func verifyLiveJournal(ctx context.Context, source JournalSource, collect bool, 
 			return VerifiedJournal{}, nil, err
 		}
 	}
-	checkpoint := journalHash(head.LastRecordHash)
 	// Rotation can move active between inventory and open. Retry the same
 	// captured checkpoint, never substitute a newer head on retry.
 	for attempt := 0; attempt < 3; attempt++ {
@@ -143,7 +133,7 @@ func verifyLiveJournal(ctx context.Context, source JournalSource, collect bool, 
 		if budget.selection != nil {
 			budget.selection = budget.selection.clone()
 		}
-		records, segments, err := verifyLiveProducer(ctx, source, directory, identity, identities, checkpoint, collect, budget, selected)
+		records, segments, err := verifyLiveProducer(ctx, source, directory, head, identities, collect, budget, selected)
 		if err == nil {
 			return VerifiedJournal{Name: source.Name, Directory: source.Directory, ProducerCount: 1, SegmentCount: segments, RecordCount: budget.records - start.records}, records, nil
 		}
@@ -155,145 +145,17 @@ func verifyLiveJournal(ctx context.Context, source JournalSource, collect bool, 
 	panic("unreachable")
 }
 
-func verifyLiveProducer(ctx context.Context, source JournalSource, directory string, identity journalIdentity, identities *bfcrypto.AgeSshIdentities, checkpoint journalHash, collect bool, budget *verifierBudget, selected []string) (result []VerifiedRecord, count uint64, resultErr error) {
-	encrypted := source.ExpectedEncryptionRecipient != ""
-	activeName := nativeActiveClear
-	if encrypted {
-		activeName = nativeActiveEncrypted
+func verifyLiveProducer(ctx context.Context, source JournalSource, directory string, head *evidence.AuditProducerHead, identities *bfcrypto.AgeSshIdentities, collect bool, budget *verifierBudget, selected []string) ([]VerifiedRecord, uint64, error) {
+	options := evidence.AuditProducerOptions{
+		Auditlog: source.Name, ExpectedProducerId: source.ExpectedProducerId, AllowUntrusted: source.ExpectedProducerId.IsZero(),
+		ExpectedEncryptionRecipient: source.ExpectedEncryptionRecipient, DecryptionIdentities: identities,
+		WithSensitive: source.WithSensitive, Mode: evidence.AuditProducerCapturedPrefix,
 	}
-	// The writer's atomic head replacement leaves a temporary file briefly.
-	// Its contents are never used as evidence or as a checkpoint.
-	temps, err := nativeHeadTempsForInventory(directory)
+	capture := newNativeAuditProducerSnapshot(source, directory, head.ProducerId(), selected, true)
+	var records []VerifiedRecord
+	verified, err := evidence.InspectCapturedAuditProducer(ctx, capture, head, options, nativeAuditRecordVisitor(budget, collect, &records))
 	if err != nil {
 		return nil, 0, err
 	}
-	// The captured head may already have been replaced. Keep the current head
-	// open so its inode cannot be reused by a new active file during this scan.
-	headFile, err := openVerifierFile(filepath.Join(directory, nativeHeadFileName))
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() {
-		if closeErr := headFile.Close(); closeErr != nil {
-			result, count, resultErr = nil, 0, closeErr
-		}
-	}()
-	currentHead, err := headFile.Stat()
-	if err != nil || !currentHead.Mode().IsRegular() {
-		return nil, 0, fmt.Errorf("native audit head changed: %v", err)
-	}
-	reserved := []os.FileInfo{currentHead}
-	if lock, err := os.Lstat(filepath.Join(source.Directory, journalLockFileName)); err == nil {
-		if !lock.Mode().IsRegular() || os.SameFile(lock, currentHead) {
-			return nil, 0, fmt.Errorf("native audit lock aliases head or is not a regular file")
-		}
-		reserved = append(reserved, lock)
-	} else if !os.IsNotExist(err) {
-		return nil, 0, err
-	}
-	for name := range temps {
-		info, err := os.Lstat(filepath.Join(directory, name))
-		if err != nil || !info.Mode().IsRegular() {
-			return nil, 0, fmt.Errorf("native audit head temp changed: %v", err)
-		}
-		for _, other := range reserved {
-			if os.SameFile(info, other) {
-				return nil, 0, fmt.Errorf("native audit head temp aliases repository data")
-			}
-		}
-		reserved = append(reserved, info)
-	}
-	inventory, err := newNativeSegmentInventory(ctx, directory, activeName, encrypted, temps, func() (*journalSegmentWorkspace, error) {
-		return newNativeVerifierWorkspace(selected)
-	})
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() {
-		if closeErr := inventory.segments.Close(); closeErr != nil {
-			result, count = nil, 0
-			resultErr = closeErr
-		}
-	}()
-	if !inventory.hasHead {
-		return nil, 0, fmt.Errorf("native audit head missing from inventory")
-	}
-	var seq uint64
-	reachedHead := false
-	var segmentHash, last journalHash
-	var activeInfo os.FileInfo
-	if inventory.hasActive {
-		info, err := os.Lstat(filepath.Join(directory, activeName))
-		if err != nil || !info.Mode().IsRegular() {
-			return nil, 0, fmt.Errorf("native active changed: %v", err)
-		}
-		activeInfo = info
-		for _, other := range reserved {
-			if os.SameFile(info, other) {
-				return nil, 0, fmt.Errorf("native active aliases repository data")
-			}
-		}
-	}
-	for {
-		entry, found, err := inventory.segments.Next(ctx)
-		if err != nil {
-			return nil, 0, err
-		}
-		if !found {
-			break
-		}
-		info, err := os.Lstat(entry.path)
-		if err != nil || !info.Mode().IsRegular() {
-			return nil, 0, fmt.Errorf("native segment changed: %v", err)
-		}
-		for _, other := range reserved {
-			if os.SameFile(info, other) {
-				return nil, 0, fmt.Errorf("native audit segment aliases repository data")
-			}
-		}
-		if activeInfo != nil && os.SameFile(info, activeInfo) {
-			return nil, 0, fmt.Errorf("native audit segment aliases active")
-		}
-		if seq == math.MaxUint64 || entry.sequence != seq+1 {
-			return nil, 0, fmt.Errorf("native audit segment sequence gap or duplicate")
-		}
-		data, _, err := readVerifierFile(entry.path, nativeMaxSize)
-		if err != nil {
-			return nil, 0, err
-		}
-		batch, hash, tip, sealed, reached, err := verifyNativeSegmentUntil(ctx, data, identity, source, identities, entry.sequence, segmentHash, last, budget, collect, &checkpoint, true, reachedHead)
-		if err != nil || !sealed || hash != entry.hash {
-			return nil, 0, fmt.Errorf("invalid native audit segment %q: %v", entry.path, err)
-		}
-		result = append(result, batch...)
-		reachedHead = reached
-		seq, segmentHash, last, count = entry.sequence, hash, tip, count+1
-	}
-	if reachedHead {
-		return result, count, nil
-	}
-	if !inventory.hasActive || seq == math.MaxUint64 {
-		return nil, 0, fmt.Errorf("signed native audit checkpoint not in available chain")
-	}
-	path := filepath.Join(directory, activeName)
-	file, err := openVerifierFile(path)
-	if err != nil {
-		return nil, 0, err
-	}
-	info, err := file.Stat()
-	if err != nil || !os.SameFile(info, activeInfo) || info.Size() < 0 || info.Size() > nativeMaxSize {
-		_ = file.Close()
-		return nil, 0, fmt.Errorf("native active changed or exceeds size cap: %v", err)
-	}
-	data := make([]byte, info.Size())
-	_, err = io.ReadFull(io.NewSectionReader(file, 0, info.Size()), data)
-	closeErr := file.Close()
-	if err != nil || closeErr != nil {
-		return nil, 0, fmt.Errorf("cannot read native active: %v, %v", err, closeErr)
-	}
-	batch, _, _, _, reached, err := verifyNativeSegmentUntil(ctx, data, identity, source, identities, seq+1, segmentHash, last, budget, collect, &checkpoint, false, false)
-	if err != nil || !reached {
-		return nil, 0, fmt.Errorf("signed native audit checkpoint not verified in active: %v", err)
-	}
-	return append(result, batch...), count + 1, nil
+	return records, verified.SegmentCount, nil
 }

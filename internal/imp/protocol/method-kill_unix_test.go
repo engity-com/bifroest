@@ -270,7 +270,7 @@ func TestKillProcessesScansForExecutionAfterStartingWrapperExited(t *testing.T) 
 	directory := t.TempDir()
 	pidPath := filepath.Join(directory, executionId.String()+".pid")
 	require.NoError(t, os.WriteFile(pidPath, []byte(execution.StateStartingMarker+" 2147483647 1"), 0600))
-	expectedEnv := "BIFROEST_TEST_EXECUTION=stale-starting-wrapper"
+	expectedEnv := "BIFROEST_TEST_EXECUTION=stale-starting-wrapper-" + executionId.String()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestKillProcessEnvironmentHelper$")
 	cmd.Env = append(os.Environ(), expectedEnv, killProcessEnvironmentHelper+"=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -293,6 +293,31 @@ func TestKillProcessesScansForExecutionAfterStartingWrapperExited(t *testing.T) 
 	)
 	require.NoError(t, response.error)
 	require.Error(t, cmd.Wait())
+}
+
+func TestKillProcessEnvironmentHelperPropagatesChildTermination(t *testing.T) {
+	childPidFile := filepath.Join(t.TempDir(), "child.pid")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestKillProcessEnvironmentHelper$")
+	cmd.Env = append(os.Environ(), killProcessEnvironmentHelper+"=1", killProcessEnvironmentChildPidFile+"="+childPidFile)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	})
+	var childPid int
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(childPidFile)
+		if err != nil {
+			return false
+		}
+		childPid, err = strconv.Atoi(strings.TrimSpace(string(data)))
+		return err == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	// Deliberately terminate only the fixture child. Even if group-signal
+	// scheduling lets the Go wrapper finish first, it must not report success.
+	require.NoError(t, syscall.Kill(childPid, syscall.SIGTERM))
+	require.Error(t, cmd.Wait(), "a terminated child cannot become a successful helper exit")
 }
 
 func processIdentityForTest(pid int) (string, error) {
@@ -417,5 +442,7 @@ func TestKillProcessEnvironmentHelper(t *testing.T) {
 	if path := os.Getenv(killProcessEnvironmentChildPidFile); path != "" {
 		require.NoError(t, os.WriteFile(path, []byte(strconv.Itoa(child.Process.Pid)), 0600))
 	}
-	_ = child.Wait()
+	// A group signal may reap the child before the wrapper handles its own
+	// signal. Preserve that failure instead of turning it into a zero exit.
+	require.NoError(t, child.Wait(), "execution helper child did not exit successfully")
 }

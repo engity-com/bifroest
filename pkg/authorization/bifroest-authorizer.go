@@ -92,6 +92,13 @@ func (this *BifroestAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 	if err != nil {
 		return fail(err)
 	}
+	if sess, handled, err := resolveAuthenticatedSessionWithReuse(req, auth, token, this.primarySessionReuse(auth)); handled || err != nil {
+		if err != nil {
+			return fail(err)
+		}
+		auth.session = sess
+		return auth, nil
+	}
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), token, (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
@@ -105,6 +112,37 @@ func (this *BifroestAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 	}
 	auth.session = sess
 	return auth, nil
+}
+
+func (this *BifroestAuthorizer) primarySessionReuse(auth *BifroestAuthorization) session.Predicate {
+	return func(ctx context.Context, candidate session.Session) (bool, error) {
+		raw, err := candidate.AuthorizationToken(ctx)
+		if err != nil {
+			return false, err
+		}
+		if len(raw) == 0 {
+			return false, nil
+		}
+		stored, err := decodeBifroestAuthorizationToken(raw)
+		if err != nil {
+			return false, fmt.Errorf("cannot inspect bound delegation evidence")
+		}
+		currentIdentity, err := AuthenticationOf(auth)
+		if err != nil {
+			return false, err
+		}
+		storedIdentity, err := AuthenticationOf(&BifroestAuthorization{evidence: &stored.Evidence})
+		if err != nil {
+			return false, err
+		}
+		if !currentIdentity.SameSubject(storedIdentity) {
+			return false, fmt.Errorf("stored delegation evidence differs from the bound primary identity")
+		}
+		// The original evidence is a creation snapshot, not the new connection's
+		// permission source. Every login has just validated a fresh certificate,
+		// audience, time bounds and possession proof and retains its own policy.
+		return true, nil
+	}
 }
 
 func (this *BifroestAuthorizer) AuthorizePassword(req PasswordRequest) (Authorization, error) {

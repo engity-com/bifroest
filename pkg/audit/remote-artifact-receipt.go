@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -308,7 +309,7 @@ func signRemoteArtifactReceipt(identity *Identity, content remoteArtifactReceipt
 
 func remoteArtifactRetentionOperationId(receipt remoteArtifactReceipt) string {
 	payload := append([]byte(remoteArtifactRetentionOperationDomain), receipt.Signature...)
-	return uuid.NewSHA1(uuid.NameSpaceOID, payload).String()
+	return uuidtext.Format(uuid.NewSHA1(uuid.NameSpaceOID, payload))
 }
 
 func validateRemoteArtifactReceiptIdentity(identity *Identity, auditlog configuration.AuditlogName, artifact RemoteArtifact) error {
@@ -399,8 +400,8 @@ func normalizeRemoteArtifactReceiptStatePadding(content remoteArtifactReceiptCon
 func validateRemoteArtifactReceiptTargetAudit(target remoteArtifactReceiptTarget, sealedAt time.Time, unaudited bool) error {
 	operationId := target.AuditOperationId
 	if operationId != "" {
-		parsed, err := uuid.Parse(operationId)
-		if err != nil || parsed == uuid.Nil || parsed.String() != operationId {
+		parsed, err := uuidtext.Parse(operationId)
+		if err != nil || parsed == [16]byte{} {
 			return errors.Config.Newf("remote artifact delivery receipt target %q has an illegal audit operation ID", target.Target)
 		}
 	}
@@ -522,7 +523,7 @@ func newRemoteArtifactDeliveryAuditOperationId(newUUID remoteArtifactReceiptUUID
 	if err != nil {
 		return "", errors.System.Newf("cannot generate remote artifact delivery audit operation ID: %w", err)
 	}
-	return value.String(), nil
+	return uuidtext.Format(value), nil
 }
 
 func (this remoteArtifactReceipt) retentionStartedAt() (time.Time, bool) {
@@ -1185,7 +1186,7 @@ func (this *remoteArtifactReceiptStore) markRetentionCompleted(ctx context.Conte
 	if err := validateRemoteArtifactRetentionReceipt(receipt, candidate, cutoff); err != nil {
 		return RemoteArtifactRetentionCandidate{}, err
 	}
-	if candidate.AuditOperationId != retentionOperationId(receipt) {
+	if expected := retentionOperationId(receipt); candidate.AuditOperationId != expected && !uuidtext.Equal(candidate.AuditOperationId, expected) {
 		return RemoteArtifactRetentionCandidate{}, errors.Config.Newf("remote artifact %q retention operation changed", candidate.FileName)
 	}
 	directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(candidate.FileName))
@@ -1245,7 +1246,7 @@ func (this *remoteArtifactReceiptStore) removeRetentionCandidate(ctx context.Con
 	if err := validateRemoteArtifactRetentionReceipt(receipt, candidate, cutoff); err != nil {
 		return err
 	}
-	if candidate.AuditOperationId != retentionOperationId(receipt) {
+	if expected := retentionOperationId(receipt); candidate.AuditOperationId != expected && !uuidtext.Equal(candidate.AuditOperationId, expected) {
 		return errors.Config.Newf("remote artifact %q retention operation changed", candidate.FileName)
 	}
 	deletionStarted, err := remoteArtifactReceiptRetentionDeleting(directory)
@@ -1313,8 +1314,8 @@ func validateRemoteArtifactRetentionCandidate(candidate RemoteArtifactRetentionC
 			return errors.Config.Newf("invalid remote artifact retention candidate completion")
 		}
 	} else {
-		operationId, err := uuid.Parse(candidate.AuditOperationId)
-		if err != nil || operationId == uuid.Nil || operationId.String() != candidate.AuditOperationId {
+		operationId, err := uuidtext.Parse(candidate.AuditOperationId)
+		if err != nil || operationId == [16]byte{} {
 			return errors.Config.Newf("invalid remote artifact retention candidate completion")
 		}
 	}
@@ -1576,7 +1577,7 @@ func (this *remoteArtifactReceiptStore) completeDeliveryAudit(ctx context.Contex
 		return err
 	}
 	target := receipt.Targets[index]
-	if target.AuditOperationId != event.OperationId {
+	if !uuidtext.Equal(target.AuditOperationId, event.OperationId) {
 		return errors.Config.Newf("remote artifact delivery audit operation for target %q changed", event.Scope.Target)
 	}
 	var occurredAt time.Time
@@ -2289,8 +2290,12 @@ func invalidateRemoteArtifactReceiptQuota(quota RemoteArtifactReceiptQuota, caus
 }
 
 func remoteArtifactReceiptStateUsage(directory string) (int64, error) {
+	names, err := remoteArtifactReceiptStateNames(directory, []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactLifecycleFileName, remoteArtifactLifecycleTempName, remoteArtifactReceiptRetentionTempName + remoteArtifactReceiptCleanupSuffix, remoteArtifactReceiptTempFileName + remoteArtifactReceiptCleanupSuffix, remoteArtifactLifecycleTempName + remoteArtifactReceiptCleanupSuffix})
+	if err != nil {
+		return 0, errors.System.Newf("cannot inspect remote artifact delivery receipt state usage: %w", err)
+	}
 	var result int64
-	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactLifecycleFileName, remoteArtifactLifecycleTempName, remoteArtifactReceiptRetentionTempName + remoteArtifactReceiptCleanupSuffix, remoteArtifactReceiptTempFileName + remoteArtifactReceiptCleanupSuffix, remoteArtifactLifecycleTempName + remoteArtifactReceiptCleanupSuffix} {
+	for _, name := range names {
 		info, err := os.Lstat(filepath.Join(directory, name))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -2304,6 +2309,67 @@ func remoteArtifactReceiptStateUsage(directory string) (int64, error) {
 		result += info.Size()
 	}
 	return result, nil
+}
+
+// Under the receipt-store writer lock, probe this small private directory once
+// instead of issuing a separate stat for every absent state file. Never reuse
+// size/type metadata: selected canonical paths retain fresh Lstat/type checks.
+func remoteArtifactReceiptStateNames(directory string, expected []string) ([]string, error) {
+	file, err := os.Open(directory)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	actual, err := file.Readdirnames(len(expected) + 1)
+	complete := errors.Is(err, io.EOF)
+	if err != nil && !complete {
+		return nil, err
+	}
+	if !complete && len(actual) < len(expected)+1 {
+		// Some platforms report EOF only on the following read. Probe one name,
+		// never enumerate an unexpectedly large directory to optimize a lookup.
+		tail, err := file.Readdirnames(1)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+		complete = len(tail) == 0 && errors.Is(err, io.EOF)
+	}
+	if !complete {
+		return expected, nil // Keep the original fixed-name lookup for larger directories.
+	}
+	for _, present := range actual {
+		known := false
+		for _, name := range expected {
+			known = known || strings.EqualFold(name, present)
+		}
+		if !known {
+			// Unknown names may expose native aliases not represented by this
+			// listing (including filesystem-specific Unicode/short-name rules).
+			return expected, nil
+		}
+	}
+	var selected []string
+	for _, name := range expected {
+		stem, extension, _ := strings.Cut(name, ".")
+		if len(stem) <= 8 && len(extension) <= 3 && !strings.Contains(extension, ".") {
+			// Canonical 8.3 spellings may resolve to short-name aliases of other
+			// known state files on Windows, even without a matching directory name.
+			selected = append(selected, name)
+			continue
+		}
+		for _, present := range actual {
+			// Keep using the canonical path for Lstat. This preserves native
+			// case-insensitive aliases without counting extra files on Unix.
+			if strings.EqualFold(name, present) {
+				selected = append(selected, name)
+				break
+			}
+		}
+	}
+	return selected, nil
 }
 
 func removeRemoteArtifactReceiptFile(path, directory string) error {

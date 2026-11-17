@@ -41,6 +41,16 @@ func (this *Messages) Validate() error {
 
 func (this *Messages) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Messages, node *yaml.Node) error {
+		fields, err := effectiveHttpFields(node)
+		if err != nil {
+			return err
+		}
+		if _, exists := fields["authentications"]; exists {
+			target.Authentications = nil
+		}
+		if _, exists := fields["ciphers"]; exists {
+			target.Ciphers = nil
+		}
 		type raw Messages
 		return node.Decode((*raw)(target))
 	})

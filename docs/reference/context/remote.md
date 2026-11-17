@@ -10,8 +10,12 @@ Represents a user who is connected to Bifröst.
 
 <<property("host", "Host", "../data-type.md#host")>>
 
-Host of the remote machine.
+Direct numeric peer IP address, without a port, of the incoming connection. For
+HTTP, this does not come from `Forwarded` or `X-Forwarded-*` headers and is not the HTTP host
+selection; that is `.connection.http.host`.
 
 <<property("user", "string")>>
 
-Host of the requested remote user. Usually: `<user>@my-great-domain.tld`
+Original username supplied by the requesting client, for example `foo@bar` in
+`ssh -l 'foo@bar' bifroest.example.org`. It remains unchanged by authorization's
+`remoteName` mapping and is not proof of an authenticated principal.

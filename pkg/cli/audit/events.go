@@ -23,9 +23,6 @@ func ReadAuditEvents(ctx context.Context, conf *configuration.Configuration, nam
 		if selected.Name != name {
 			continue
 		}
-		if !selected.Enabled {
-			return nil, fmt.Errorf("auditlog %q is disabled", name)
-		}
 		publicKey, err := audit.ResolveEncryptionPublicKey(selected.EncryptionPublicKey, selected.EncryptionPublicKeyFile)
 		if err != nil {
 			return nil, err

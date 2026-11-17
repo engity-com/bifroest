@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"io"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -355,7 +356,12 @@ func TestForcedCommandOverridesNamedSubsystem(t *testing.T) {
 }
 
 func TestInvalidSubsystemRequestsDoNotDisableBestEffortAudit(t *testing.T) {
-	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{})
+	root := t.TempDir()
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		auditlog := configureDefaultTestAuditlog(conf)
+		auditlog.IdentityFile = filepath.Join(root, "audit-key")
+		auditlog.Directory = filepath.Join(root, "journal")
+	})
 	flow := server.service.Configuration.Flows[0].Name
 	auditlog := server.service.flowAuditlogs[flow]
 	server.service.auditlogStates[auditlog].policy = configuration.AuditlogFailurePolicyBestEffort

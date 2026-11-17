@@ -4,6 +4,7 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
 	"math"
 	"os"
 	"path/filepath"
@@ -37,9 +38,6 @@ type nativeRecorder struct {
 func newNativeRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, error) {
 	if conf == nil {
 		return nil, fmt.Errorf("nil native audit configuration")
-	}
-	if !conf.Enabled {
-		return NewNoopRecorder(), nil
 	}
 	if identity == nil || identity.ProducerId().IsZero() {
 		return nil, fmt.Errorf("missing native audit identity")
@@ -390,6 +388,11 @@ func (r *nativeRecorder) RecordSuppressible(ctx context.Context, e Event) (bool,
 func (r *nativeRecorder) record(_ context.Context, e Event, suppressible bool) (bool, error) {
 	if err := validateAuditEventForWrite(e); err != nil {
 		return false, err
+	}
+	var normalizeErr error
+	e, normalizeErr = evidence.NormalizeEventIDs(e)
+	if normalizeErr != nil {
+		return false, normalizeErr
 	}
 	r.mutex.Lock()
 	defer r.mutex.Unlock()

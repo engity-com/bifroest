@@ -109,7 +109,7 @@ func TestEnvironmentSshAllowedSubsystems(t *testing.T) {
 	require.Error(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\nallowedSubsystems: '['\n"), &configured))
 	require.ErrorContains(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\nallowedSubsystems:\n"), &configured), "cannot be null")
 	require.ErrorContains(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\nbanner: &empty null\nallowedSubsystems: *empty\n"), &configured), "cannot be null")
-	require.ErrorContains(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\npolicy: &policy\n  allowedSubsystems: null\n<<: *policy\n"), &configured), "cannot be null")
+	require.ErrorContains(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\n<<: &policy {allowedSubsystems: null}\n"), &configured), "cannot be null")
 }
 
 func TestEnvironmentSshTargetOs(t *testing.T) {

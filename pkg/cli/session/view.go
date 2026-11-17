@@ -9,13 +9,16 @@ import (
 
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/cli/model"
+	managementview "github.com/engity-com/bifroest/pkg/management/view"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 )
 
 type SessionSource func(context.Context, func(context.Context, session.Info) (bool, error), session.FindDiagnosticConsumer) error
 
 func ListSessions(ctx context.Context, output io.Writer, selected cliformat.Format, source SessionSource, flow, user, state string, diagnostics session.FindDiagnosticConsumer) error {
 	entries := make([]model.SessionView, 0)
+	order := make(map[string]string)
 	err := source(ctx, func(ctx context.Context, info session.Info) (bool, error) {
 		if flow != "" && info.Flow().String() != flow {
 			return true, nil
@@ -31,6 +34,7 @@ func ListSessions(ctx context.Context, output io.Writer, selected cliformat.Form
 			return true, nil
 		}
 		entries = append(entries, view)
+		order[view.ID] = uuidtext.OrderKey(info.Id())
 		return true, nil
 	}, diagnostics)
 	if err != nil {
@@ -38,7 +42,7 @@ func ListSessions(ctx context.Context, output io.Writer, selected cliformat.Form
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].CreatedAt.Equal(entries[j].CreatedAt) {
-			return entries[i].ID < entries[j].ID
+			return order[entries[i].ID] < order[entries[j].ID]
 		}
 		return entries[i].CreatedAt.Before(entries[j].CreatedAt)
 	})
@@ -46,14 +50,7 @@ func ListSessions(ctx context.Context, output io.Writer, selected cliformat.Form
 }
 
 func matchesSessionState(view model.SessionView, state string, now time.Time) bool {
-	switch state {
-	case "all":
-		return true
-	case "active":
-		return view.State == session.StateAuthorized.String() && (view.ValidUntil == nil || now.Before(*view.ValidUntil))
-	default:
-		return view.State == state
-	}
+	return managementview.MatchesState(view, state, now)
 }
 
 func ShowSession(ctx context.Context, output io.Writer, selected cliformat.Format, source SessionSource, id session.Id, diagnostics session.FindDiagnosticConsumer) error {
@@ -82,33 +79,7 @@ func ShowSession(ctx context.Context, output io.Writer, selected cliformat.Forma
 }
 
 func newSessionView(ctx context.Context, info session.Info) (model.SessionView, error) {
-	view := model.SessionView{ID: info.Id().String(), Flow: info.Flow().String(), State: info.State().String()}
-	created, err := info.Created(ctx)
-	if err != nil {
-		return view, err
-	}
-	if created != nil {
-		view.CreatedAt = created.At()
-		if remote := created.Remote(); remote != nil {
-			view.Remote, view.User = remote.String(), remote.User()
-		}
-	}
-	last, err := info.LastAccessed(ctx)
-	if err != nil {
-		return view, err
-	}
-	if last != nil && !last.At().IsZero() {
-		value := last.At()
-		view.LastAccessed = &value
-	}
-	valid, err := info.ValidUntil(ctx)
-	if err != nil {
-		return view, err
-	}
-	if !valid.IsZero() {
-		view.ValidUntil = &valid
-	}
-	return view, nil
+	return managementview.Session(ctx, info)
 }
 
 func SessionSourceFromRepository(repository session.Repository) SessionSource {

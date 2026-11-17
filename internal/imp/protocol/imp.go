@@ -108,15 +108,52 @@ type executionResultDeliveryState struct {
 
 func (this *imp) serve(ctx context.Context, ln gonet.Listener) error {
 	this.logger().Debug("going to serve...")
-	defer common.IgnoreCloseError(ln)
 	defer this.logger().Debug("going to serve... DONE!")
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	var gate sync.Mutex
+	active := map[gonet.Conn]struct{}{}
+	stopped := false
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			cancel()
+			_ = ln.Close()
+			gate.Lock()
+			stopped = true
+			connections := make([]gonet.Conn, 0, len(active))
+			for conn := range active {
+				connections = append(connections, conn)
+			}
+			gate.Unlock()
+			for _, conn := range connections {
+				_ = conn.Close()
+			}
+		})
+	}
+	stopOnCancel := context.AfterFunc(ctx, stop)
+	defer func() {
+		stopOnCancel()
+		stop()
+		workers.Wait()
+	}()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-
+		gate.Lock()
+		if stopped || ctx.Err() != nil {
+			gate.Unlock()
+			_ = conn.Close()
+			return gonet.ErrClosed
+		}
+		active[conn] = struct{}{}
+		workers.Add(1)
+		gate.Unlock()
 		go func() {
+			defer workers.Done()
+			defer func() { gate.Lock(); delete(active, conn); gate.Unlock() }()
 			if err := this.serveConn(ctx, conn); err != nil && !sys.IsClosedError(err) {
 				this.logger().
 					WithError(err).
@@ -136,10 +173,14 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 	conn := codec.NewMsgPackConn(plainConn)
 	defer common.KeepCloseError(&rErr, conn)
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go bnet.NotifyClosedContext(ctx, plainConn, cancel, func(err error) {
-		this.logger().WithError(err).Warn("problems while watching for connection being closed; this could delay handler cancellation")
-	})
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		bnet.NotifyClosedContext(ctx, plainConn, cancel, func(err error) {
+			this.logger().WithError(err).Warn("problems while watching for connection being closed; this could delay handler cancellation")
+		})
+	}()
+	defer func() { cancel(); <-watchDone }()
 
 	var header Header
 	if err := header.DecodeMsgPack(conn); err != nil {

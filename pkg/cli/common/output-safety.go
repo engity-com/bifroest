@@ -76,13 +76,8 @@ func EnsureStandardOutputSafe(ctx context.Context, stdout io.Writer, configPath 
 	}
 	for index := range conf.Auditlogs {
 		configured := &conf.Auditlogs[index]
-		if !configured.Enabled && !configured.Recording.Enabled {
-			continue
-		}
-		if configured.Enabled {
-			if err := checkDirectory(configured.Directory, "journal file"); err != nil {
-				return err
-			}
+		if err := checkDirectory(configured.Directory, "journal file"); err != nil {
+			return err
 		}
 		if err := checkFile(configured.IdentityFile, "audit signing identity"); err != nil {
 			return err

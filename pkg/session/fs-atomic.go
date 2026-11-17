@@ -4,13 +4,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func writeFsFileAtomically(path string, data []byte, fileMode, dirMode os.FileMode) (rErr error) {
+	return writeFsFileAtomicallyUsing(path, data, fileMode, dirMode, os.CreateTemp)
+}
+
+func writeFsPrivateFileAtomically(path string, data []byte, dirMode os.FileMode) error {
+	return writeFsFileAtomicallyUsing(path, data, 0600, dirMode, func(parent, pattern string) (*os.File, error) {
+		return crypto.CreateProtectedTempFile(parent, pattern, 0600)
+	})
+}
+
+func writeFsFileAtomicallyUsing(path string, data []byte, fileMode, dirMode os.FileMode, create func(string, string) (*os.File, error)) (rErr error) {
 	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
 		return fmt.Errorf("cannot create parent directory for %q: %w", path, err)
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	temporary, err := create(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("cannot create temporary file for %q: %w", path, err)
 	}

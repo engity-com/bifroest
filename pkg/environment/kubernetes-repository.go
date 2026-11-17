@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	"strconv"
 	"strings"
 	"sync"
@@ -1130,7 +1131,7 @@ func (this *KubernetesRepository) ImpProtocolCompatibility(ctx context.Context, 
 		return false, false, 0, ResourceIdentity{}, err
 	}
 	list, err := client.List(ctx, metav1.ListOptions{
-		LabelSelector: KubernetesLabelSessionId + "=" + sess.Id().String() + "," + KubernetesLabelFlow + "=" + this.flow.String(),
+		LabelSelector: kubernetesSessionSelector(this.flow.String(), sess.Id()),
 		Limit:         2,
 	})
 	if err != nil || len(list.Items) == 0 {
@@ -1140,7 +1141,7 @@ func (this *KubernetesRepository) ImpProtocolCompatibility(ctx context.Context, 
 		return false, false, 0, ResourceIdentity{}, fmt.Errorf("multiple Kubernetes pods found for session %s; operator inspection required", sess)
 	}
 	pod := &list.Items[0]
-	if pod.Labels[KubernetesLabelFlow] != this.flow.String() || pod.Labels[KubernetesLabelSessionId] != sess.Id().String() {
+	if pod.Labels[KubernetesLabelFlow] != this.flow.String() || !uuidtext.Equal(pod.Labels[KubernetesLabelSessionId], sess.Id().String()) {
 		return false, false, 0, ResourceIdentity{}, fmt.Errorf("pod %s/%s does not belong to session %s; operator inspection required", pod.Namespace, pod.Name, sess)
 	}
 	identity = ResourceIdentity{KubernetesNamespace: pod.Namespace, KubernetesName: pod.Name, KubernetesUID: string(pod.UID)}
@@ -1266,8 +1267,8 @@ func (this *KubernetesRepository) findPodBySession(ctx context.Context, sess ses
 	}
 
 	candidates, err := client.List(ctx, metav1.ListOptions{
-		LabelSelector: KubernetesLabelSessionId + "=" + sess.Id().String() + "," + KubernetesLabelFlow + "=" + this.flow.String(),
-		Limit:         1,
+		LabelSelector: kubernetesSessionSelector(this.flow.String(), sess.Id()),
+		Limit:         2,
 	})
 	if err != nil {
 		return fail(err)
@@ -1275,12 +1276,19 @@ func (this *KubernetesRepository) findPodBySession(ctx context.Context, sess ses
 	if len(candidates.Items) == 0 {
 		return nil, nil
 	}
+	if len(candidates.Items) > 1 || candidates.Continue != "" {
+		return fail(fmt.Errorf("multiple Kubernetes pods found for session; operator inspection required"))
+	}
 
 	pod := &candidates.Items[0]
-	if pod.Labels[KubernetesLabelFlow] != this.flow.String() || pod.Labels[KubernetesLabelSessionId] != sess.Id().String() {
+	if pod.Labels[KubernetesLabelFlow] != this.flow.String() || !uuidtext.Equal(pod.Labels[KubernetesLabelSessionId], sess.Id().String()) {
 		return nil, nil
 	}
 	return pod, nil
+}
+
+func kubernetesSessionSelector(flow string, id session.Id) string {
+	return KubernetesLabelSessionId + " in (" + id.String() + "," + uuidtext.Classic(id) + ")," + KubernetesLabelFlow + "=" + flow
 }
 
 func (this *KubernetesRepository) podsClient() (v2.PodInterface, error) {

@@ -18,6 +18,7 @@ import (
 	log "github.com/echocat/slf4g"
 	"golang.org/x/oauth2"
 
+	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -36,6 +37,7 @@ type OidcDeviceAuthAuthorizer struct {
 	OnLostAccess func(session.Session)
 
 	oauth2Config oauth2.Config
+	issuer       string
 	provider     *coidc.Provider
 	verifier     *coidc.IDTokenVerifier
 	refreshLocks [64]struct {
@@ -116,8 +118,9 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	}
 
 	result := OidcDeviceAuthAuthorizer{
-		flow: flow,
-		conf: conf,
+		flow:   flow,
+		conf:   conf,
+		issuer: issuer.String(),
 
 		oauth2Config: oauth2.Config{
 			ClientID:     clientId,
@@ -748,6 +751,12 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 		if t.Subject == "" || t.Issuer == "" {
 			return failf("OIDC ID token has no subject or issuer")
 		}
+		auth.identity = authentication.Identity{Principal: t.Subject, Issuer: t.Issuer, Subject: t.Subject}
+	}
+	// Retain verified identity even when refresh/disposal is disabled or only
+	// verified UserInfo was requested. Never infer it from requesting names/JWTs.
+	if auth.identity.IsAuthenticated() {
+		t.Subject, t.Issuer, t.LastVerifiedAt = auth.identity.Subject, auth.identity.Issuer, time.Now()
 	}
 	auth.remote = req.Connection().Remote()
 
@@ -757,7 +766,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req, &t)
+	sess, err := this.ensureSessionFor(req, auth, &t)
 	if err != nil {
 		return fail(err)
 	}
@@ -768,6 +777,9 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 }
 
 func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
+	if !isPublicKeyVerified(req) {
+		return this.probePublicKey(req)
+	}
 	fail := func(err error) (Authorization, error) {
 		return nil, fmt.Errorf("cannot restore oidc authorization with public key: %w", err)
 	}
@@ -778,114 +790,11 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	var selectedAuth *oidc
 	var selectedToken *oidcToken
 	restoreCandidate := func(ctx context.Context, candidate session.Session) (bool, error) {
-		unlock, err := this.lockSession(ctx, candidate)
-		if err != nil {
+		auth, token, err := this.restoreSessionAccess(ctx, req, candidate, req.RemotePublicKey())
+		if err != nil || auth == nil {
 			return false, err
 		}
-		defer unlock()
-		at, err := candidate.AuthorizationToken(ctx)
-		if err != nil {
-			return false, err
-		}
-		if len(at) == 0 {
-			return false, nil
-		}
-		var token oidcToken
-		if err := json.Unmarshal(at, &token); err != nil {
-			return false, err
-		}
-		if token.Token == nil || token.AccessToken == "" {
-			return false, nil
-		}
-		if token.Pending != nil {
-			if _, lost, err := this.refreshSession(ctx, candidate, &token, false); lost {
-				if this.OnLostAccess != nil {
-					this.OnLostAccess(candidate)
-				}
-				return false, nil
-			} else if err != nil {
-				return false, err
-			}
-			updated, err := this.readSessionToken(ctx, candidate)
-			if err != nil {
-				return false, err
-			}
-			token = *updated
-		}
-		if this.conf != nil && this.conf.ForceDisposeSessionOn != "never" && (token.Expiry.IsZero() || time.Now().Before(token.Expiry)) {
-			if _, lost, err := this.refreshSession(ctx, candidate, &token, false); lost {
-				if this.OnLostAccess != nil {
-					this.OnLostAccess(candidate)
-				}
-				return false, nil
-			} else if err != nil {
-				return false, err
-			}
-			updated, err := this.readSessionToken(ctx, candidate)
-			if err != nil {
-				return false, err
-			}
-			token = *updated
-		}
-		if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
-			if this.conf == nil || !this.conf.RefreshEnabled() {
-				return false, nil
-			}
-			if _, lost, err := this.refreshSession(ctx, candidate, &token, true); lost {
-				if this.OnLostAccess != nil {
-					this.OnLostAccess(candidate)
-				}
-				return false, nil
-			} else if err != nil {
-				return false, err
-			}
-			updated, err := this.readSessionToken(ctx, candidate)
-			if err != nil {
-				return false, err
-			}
-			token = *updated
-			if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
-				return false, nil
-			}
-		}
-		if this.conf != nil && this.conf.RefreshEnabled() && this.conf.RetrieveIdToken && token.IdToken != "" {
-			if _, err := this.verifyToken(ctx, &token); errors.IsType(err, errors.Expired) {
-				if _, lost, err := this.refreshSession(ctx, candidate, &token, true); lost {
-					if this.OnLostAccess != nil {
-						this.OnLostAccess(candidate)
-					}
-					return false, nil
-				} else if err != nil {
-					return false, err
-				}
-				updated, err := this.readSessionToken(ctx, candidate)
-				if err != nil {
-					return false, err
-				}
-				token = *updated
-			}
-		}
-		if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
-			return false, nil
-		}
-		auth, err := this.finalizeAuth(ctx, req.Connection().Logger(), &token, true)
-		if errors.IsType(err, errors.Expired) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		auth.session = candidate
-		auth.sessionsPublicKey = req.RemotePublicKey()
-		accepted, err := req.Validate(auth)
-		if err != nil || !accepted {
-			return accepted, err
-		}
-		if err := this.updateSessionWith(ctx, &token, candidate); err != nil {
-			return false, err
-		}
-		selectedAuth = auth
-		selectedToken = &token
+		selectedAuth, selectedToken = auth, token
 		return true, nil
 	}
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
@@ -922,6 +831,9 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 	auth := oidc{
 		flow: this.flow,
 	}
+	if t.Issuer != "" && t.Subject != "" && !t.LastVerifiedAt.IsZero() {
+		auth.identity = authentication.Identity{Principal: t.Subject, Issuer: t.Issuer, Subject: t.Subject}
+	}
 
 	if err := auth.token.SetRaw(t.Token); err != nil {
 		return failf("cannot store token at response: %w", err)
@@ -936,6 +848,7 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 				return failf("OIDC ID token identity differs from session identity")
 			}
 			auth.idToken.IDToken = idToken
+			auth.identity = authentication.Identity{Principal: idToken.Subject, Issuer: idToken.Issuer, Subject: idToken.Subject}
 			logger.With("idToken", &auth.idToken).Debug("id token received")
 		}
 	} else if retrieveArtifactsAllowed && this.conf.RetrieveIdToken && !this.conf.RefreshEnabled() {
@@ -949,6 +862,12 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 		}
 
 		auth.userInfo.UserInfo = userInfo
+		if auth.identity.IsAuthenticated() && userInfo.Subject != auth.identity.Subject {
+			return failf("OIDC UserInfo subject differs from authenticated identity")
+		}
+		if !auth.identity.IsAuthenticated() && this.issuer != "" && userInfo.Subject != "" {
+			auth.identity = authentication.Identity{Principal: userInfo.Subject, Issuer: this.issuer, Subject: userInfo.Subject}
+		}
 
 		logger.With("userInfo", &auth.userInfo).Debug("user info received")
 	}
@@ -976,7 +895,7 @@ func (this *OidcDeviceAuthAuthorizer) updateSessionWith(ctx context.Context, t *
 	return nil
 }
 
-func (this *OidcDeviceAuthAuthorizer) ensureSessionFor(req Request, t *oidcToken) (session.Session, error) {
+func (this *OidcDeviceAuthAuthorizer) ensureSessionFor(req Request, auth *oidc, t *oidcToken) (session.Session, error) {
 	fail := func(err error) (session.Session, error) {
 		return nil, err
 	}
@@ -989,7 +908,11 @@ func (this *OidcDeviceAuthAuthorizer) ensureSessionFor(req Request, t *oidcToken
 		return failf("cannot marshal authorization token: %w", err)
 	}
 
-	// TODO! Maybe find a way to restore an existing one?
+	if auth.identity.IsAuthenticated() {
+		if sess, handled, err := resolveAuthenticatedSessionWithReuse(req, auth, at, this.primarySessionReuse(auth.identity, t)); handled || err != nil {
+			return sess, err
+		}
+	}
 	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), at)
 	if err != nil {
 		return fail(err)

@@ -65,9 +65,6 @@ func (this *service) managementAuditSources(names []configuration.AuditlogName, 
 			if conf.Name != name {
 				continue
 			}
-			if !conf.Enabled {
-				return nil, fmt.Errorf("auditlog %q is disabled", name)
-			}
 			publicKey, err := audit.ResolveEncryptionPublicKey(conf.EncryptionPublicKey, conf.EncryptionPublicKeyFile)
 			if err != nil {
 				return nil, err

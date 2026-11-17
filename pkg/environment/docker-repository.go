@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	gonet "net"
 	"net/netip"
 	"path/filepath"
@@ -747,19 +748,11 @@ func (this *DockerRepository) ImpProtocolCompatibility(ctx context.Context, sess
 		return false, false, 0, ResourceIdentity{}, nil
 	}
 	defer this.sessionIdMutex.RLock(sess.Id())()
-	containers, err := this.apiClient.ContainerList(ctx, client.ContainerListOptions{
-		All:     true,
-		Filters: client.Filters{}.Add("label", DockerLabelSessionId+"="+sess.Id().String(), DockerLabelFlow+"="+this.flow.String()),
-		Limit:   2,
-	})
-	if err != nil || len(containers.Items) == 0 {
+	c, _, err := this.findContainerBySession(ctx, sess)
+	if err != nil || c == nil {
 		return false, false, 0, ResourceIdentity{}, err
 	}
-	if len(containers.Items) > 1 {
-		return false, false, 0, ResourceIdentity{}, fmt.Errorf("multiple Docker containers found for session %s; operator inspection required", sess)
-	}
-	c := &containers.Items[0]
-	if c.Labels[DockerLabelFlow] != this.flow.String() || c.Labels[DockerLabelSessionId] != sess.Id().String() {
+	if c.Labels[DockerLabelFlow] != this.flow.String() || !uuidtext.Equal(c.Labels[DockerLabelSessionId], sess.Id().String()) {
 		return false, false, 0, ResourceIdentity{}, fmt.Errorf("container %s does not belong to session %s; operator inspection required", c.ID, sess)
 	}
 	identity.DockerID = c.ID
@@ -784,9 +777,25 @@ func (this *DockerRepository) removeContainer(ctx context.Context, id string) (b
 }
 
 func (this *DockerRepository) findContainerBySession(ctx context.Context, sess session.Session) (c *container.Summary, exitCode int, err error) {
-	c, exitCode, err = this.findContainerBy(ctx, client.Filters{}.Add("label", DockerLabelSessionId+"="+sess.Id().String(), DockerLabelFlow+"="+this.flow.String()))
-	if c != nil && (c.Labels[DockerLabelFlow] != this.flow.String() || c.Labels[DockerLabelSessionId] != sess.Id().String()) {
-		return nil, -1, nil
+	exitCode = -1
+	// Docker's label filters are conjunctive. Inspect both exact notation
+	// selectors to detect alias ambiguity, never retry on errors or broaden to
+	// a name/user/flow-only search. No container is changed by this lookup.
+	for _, text := range []string{sess.Id().String(), uuidtext.Classic(sess.Id())} {
+		found, code, findErr := this.findContainerBy(ctx, client.Filters{}.Add("label", DockerLabelSessionId+"="+text, DockerLabelFlow+"="+this.flow.String()))
+		if findErr != nil {
+			return nil, -1, findErr
+		}
+		if found == nil {
+			continue
+		}
+		if found.Labels[DockerLabelFlow] != this.flow.String() || !uuidtext.Equal(found.Labels[DockerLabelSessionId], sess.Id().String()) {
+			return nil, -1, fmt.Errorf("container does not belong to session; operator inspection required")
+		}
+		if c != nil && c.ID != found.ID {
+			return nil, -1, fmt.Errorf("multiple Docker containers found for session; operator inspection required")
+		}
+		c, exitCode = found, code
 	}
 	return c, exitCode, err
 }
@@ -796,7 +805,7 @@ func (this *DockerRepository) findContainerById(ctx context.Context, id string) 
 
 func (this *DockerRepository) findContainerBy(ctx context.Context, filters client.Filters) (c *container.Summary, exitCode int, err error) {
 	list, err := this.apiClient.ContainerList(ctx, client.ContainerListOptions{
-		Limit:   1,
+		Limit:   2,
 		All:     true,
 		Filters: filters,
 	})
@@ -805,6 +814,9 @@ func (this *DockerRepository) findContainerBy(ctx context.Context, filters clien
 	}
 	if len(list.Items) == 0 {
 		return nil, -1, nil
+	}
+	if len(list.Items) > 1 {
+		return nil, -1, fmt.Errorf("multiple Docker containers found for exact selector; operator inspection required")
 	}
 
 	c = &list.Items[0]

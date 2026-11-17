@@ -55,4 +55,4 @@ The ID can be transferred; the private signing key stays on the server. To estab
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-The selected configuration entry must have audit logging or Recording enabled. Recording-only entries are supported. Artifact-transfer permission is not required.
+The name must select a defined audit logger with an existing signing identity. Artifact-transfer permission is not required.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
+	"github.com/engity-com/bifroest/pkg/uuidtext"
 	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/audit"
@@ -152,21 +153,11 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 				return goerrors.Join(result, err)
 			}
 			var actionErr, auditErr error
-			if auditlog.Enabled {
-				_, actionErr, auditErr = this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
-					return repository.deleteRetentionCandidate(ctx, candidate, cutoff)
-				}, func(completed sessionRecordingRetentionCandidate) error {
-					return repository.completeRetentionCandidate(ctx, completed, cutoff)
-				})
-			} else if candidate.receipt.CompletionPending {
-				actionErr = repository.completeRetentionCandidate(ctx, candidate, cutoff)
-			} else {
-				_, completed, err := repository.deleteRetentionCandidate(ctx, candidate, cutoff)
-				actionErr = err
-				if err == nil && completed.receipt.CompletionPending {
-					actionErr = repository.completeRetentionCandidate(ctx, completed, cutoff)
-				}
-			}
+			_, actionErr, auditErr = this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
+				return repository.deleteRetentionCandidate(ctx, candidate, cutoff)
+			}, func(completed sessionRecordingRetentionCandidate) error {
+				return repository.completeRetentionCandidate(ctx, completed, cutoff)
+			})
 			if err := goerrors.Join(actionErr, auditErr); err != nil {
 				if ctx.Err() != nil {
 					return goerrors.Join(result, err, ctx.Err())
@@ -410,7 +401,7 @@ func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Se
 		Domain:      audit.EventDomainHousekeeping,
 		Flow:        sess.Flow().String(),
 		SessionId:   sess.Id().String(),
-		OperationId: operationId.String(),
+		OperationId: uuidtext.Format(operationId),
 		Reason:      reason,
 	}
 	if err := record(event); err != nil {
@@ -432,7 +423,7 @@ func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Se
 
 func (this *houseKeeper) hasEnabledAuditlog() bool {
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if auditlog.Enabled && !this.service.auditlogDisabled(auditlog.Name) {
+		if !this.service.auditlogDisabled(auditlog.Name) {
 			return true
 		}
 	}
@@ -442,7 +433,7 @@ func (this *houseKeeper) hasEnabledAuditlog() bool {
 func (this *houseKeeper) recordOrphanedSessionAudit(ctx context.Context, event audit.Event) error {
 	var result error
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if !auditlog.Enabled || this.service.auditlogDisabled(auditlog.Name) {
+		if this.service.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		recorder := this.service.auditRecorders[auditlog.Name]
@@ -459,7 +450,7 @@ func (this *houseKeeper) recordOrphanedSessionAudit(ctx context.Context, event a
 
 func (this *houseKeeper) sessionAutoRepairAllowed() bool {
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if auditlog.Enabled && !this.service.auditlogDisabled(auditlog.Name) {
+		if !this.service.auditlogDisabled(auditlog.Name) {
 			return false
 		}
 	}

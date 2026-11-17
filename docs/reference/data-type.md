@@ -35,7 +35,7 @@ Bifröst supports the following OpenSSH `authorized_keys` options:
 | `permitlisten="[host:]port"` | Restricts reverse port-forwarding listeners. May be specified more than once. |
 | `agent-forwarding`, `no-agent-forwarding` | Enables or disables access to a forwarded SSH agent. |
 | `cert-authority` | Treats the entry as a user certificate authority instead of a directly authorized key. Supported by the `simple` and `local` authorizations. |
-| `principals="name,..."` | Further restricts a `cert-authority` entry to certificates containing at least one listed principal. The requested SSH username must still be a certificate principal. |
+| `principals="name,..."` | Further restricts a `cert-authority` entry to certificates containing at least one listed principal. The resolved authorization `remoteName` (by default the requested SSH username) must still be a certificate principal. |
 
 Options not listed above are not supported. A key entry using an unsupported option, such as `tunnel`, `user-rc`, `x11-forwarding`, `no-touch-required`, or `verify-required`, is rejected instead of being treated as unrestricted. `principals` without `cert-authority` is also rejected.
 
@@ -88,6 +88,17 @@ Can be one of:
 * `at-least-256-bits`
 * `at-least-384-bits`
 * `at-least-521-bits`
+
+## Enforceable {: #enforceable }
+
+`Enforceable<T>` adds an optional server-enforced value to type `T`. Without a
+prefix, the user may change the value. Prefix it with `!` to prevent changes.
+For example, an `Enforceable<Duration>` accepts `10s` or `"!10s"`.
+Only properties declared with this wrapper support enforcement.
+
+The marker is read after template evaluation, so templates can decide whether
+to enforce the value. The remaining value follows the inner type's rules.
+Quote YAML values starting with `!` so they are not interpreted as tags.
 
 ## Environment Variable Name {: #environment-variable-name }
 The name of an environment variable. It has to fulfill the portable ASCII pattern `[A-Za-z_][A-Za-z0-9_]*`.
@@ -169,6 +180,21 @@ Can be one of:
 
 ## Regex
 Regular expression of [Go flavor](https://pkg.go.dev/regexp). You can play around with it at [regex.com](https://regex101.com/r/fRdVOl/1).
+
+## RememberMe {: #rememberme }
+
+Controls whether a client may be remembered for future logins without repeating password/MFA authentication.
+
+| Value | User choice |
+| - | - |
+| `forbidden` | Unavailable, including previously saved access. |
+| `allowed` | Off by default; users opt in. |
+| `allowedAndEnabledByDefault` | On by default; users may opt out. |
+| `enforced` | On without opt-out, when technically supported. |
+
+Aliases: `false`, `off`, `no`, `0`, and empty mean `forbidden`; `true`, `on`, `yes`, and `1` mean `allowed`.
+
+In the browser, use **Remember this browser**. For SSH, send `REMEMBER_ME=true` or `REMEMBER_ME=false`, for example `ssh -o SetEnv=REMEMBER_ME=true user@host`. This controls future access, not the current authentication. `enforced` ignores opt-out. Logout, revocation, session expiry and current access restrictions still apply.
 
 ## RSA Restriction
 Can be one of:

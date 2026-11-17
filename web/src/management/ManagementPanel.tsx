@@ -1,0 +1,769 @@
+import { CircularProgress } from '@mui/material';
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
+import {
+    exactFlow,
+    type ManagementLocation,
+    managementRoot,
+} from '../application/management-location';
+import type { WebAccess } from '../remember';
+import { RememberMeError } from '../remember';
+import { uuidEqual, uuidText } from '../shared/uuid';
+import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
+import { AdminDataGrid } from '../ui/AdminDataGrid';
+import { useAdminDetail } from '../ui/admin-navigation';
+import { useDetailRefresh } from '../ui/detail-preference';
+import { reportUiError } from '../ui/error-report';
+import { bookmarkPath as managementPath } from '../ui/hash-route';
+import { ManagementNotFound } from '../ui/ManagementNotFound';
+import { useManagementNavigation } from '../ui/management-navigation';
+import { Alert, Button } from '../ui/material';
+import { t } from '../ui/messages';
+import { profileResetEvent } from '../ui/profile-reset';
+import { useOwnerKey } from '../ui/use-owner-key';
+import type { SessionAction } from './action';
+import { FlowOverview } from './FlowOverview';
+import { m, sessionStateLabel } from './messages';
+import type { ColumnFilter, SessionItem, SessionOptions } from './protocol';
+import { SessionActionDialog } from './SessionActionDialog';
+import { SessionArtifactLinks } from './SessionArtifactLinks';
+import { SessionDetails } from './SessionDetails';
+import { SessionTarget, type SessionTargetValue } from './SessionTarget';
+import { sessionField as field, sessionTime as when } from './session-display';
+import { useManagementReads } from './use-management-reads';
+import { useSessionAction } from './use-session-action';
+import { VersionPage } from './VersionPage';
+
+interface ManagementPanelProps {
+    access: WebAccess;
+    active: boolean;
+    disabled: boolean;
+    onActionLock: (locked: boolean) => void;
+    view: 'sessions' | 'server' | 'version';
+}
+export function ManagementPanel(props: ManagementPanelProps) {
+    const ownerKey = useOwnerKey(props.access);
+    return <OwnedManagementPanel key={ownerKey} {...props} />;
+}
+function OwnedManagementPanel({
+    access,
+    active,
+    disabled,
+    onActionLock,
+    view,
+}: ManagementPanelProps) {
+    const [target, setTarget] = useState<SessionTargetValue>({
+        flow: '',
+        id: '',
+        action: 'details',
+    });
+    useEffect(() => {
+        const reset = () => setTarget({ flow: '', id: '', action: 'details' });
+        window.addEventListener(profileResetEvent, reset);
+        return () => window.removeEventListener(profileResetEvent, reset);
+    }, []);
+    const navigation = useManagementNavigation();
+    const route = navigation?.location.page === 'sessions' ? navigation.location : null;
+    const routeKey = JSON.stringify(route);
+    const routeNow = useRef(route);
+    routeNow.current = route;
+    const nativeFilterIntent = useRef<{
+        key: string;
+        query: string;
+        filter: ColumnFilter | null;
+    } | null>(null);
+    const mutationRoute = useRef<ManagementLocation | null>(null);
+    const consumedRoute = useRef<string | null>(null);
+    const returnRoute = useRef<ManagementLocation | null>(null);
+    const [error, setError] = useState<'denied' | 'unavailable' | 'not-found' | null>(null);
+    const attempted = useRef({ sessions: false, version: false, flows: false, build: false });
+    const detailElement = useRef<HTMLElement | null>(null);
+    const listElement = useRef<HTMLDivElement | null>(null);
+    const returningToList = useRef(false);
+    const detailID = useId();
+    const isActive = useRef(active);
+    isActive.current = active;
+    const [typed, setTyped] = useState('');
+    const { model: reads, state: readState } = useManagementReads(access, {
+        allowed: (): boolean =>
+            !disabled && ['idle', 'confirmed'].includes(mutation.owner.getSnapshot().phase),
+        sessionsMatch: (options) =>
+            !routeNow.current || routeNow.current.flow === (options.flow || undefined),
+        detailMatches: (item) =>
+            !routeNow.current ||
+            (routeNow.current.flow === item.flow && uuidEqual(routeNow.current.id, item.id)),
+        starting: () => setError(null),
+        failed: (error, resource) => {
+            reportUiError('management-read', error);
+            setError(
+                error instanceof RememberMeError && error.code === 'denied'
+                    ? 'denied'
+                    : resource === 'details' &&
+                        error instanceof RememberMeError &&
+                        error.code === 'not-found'
+                      ? 'not-found'
+                      : 'unavailable',
+            );
+        },
+    });
+    const {
+        flows,
+        version,
+        buildVersion,
+        sessions,
+        selected,
+        sessionFilter,
+        flowFilter,
+        loading,
+        sessionPage,
+        sessionQuery,
+        sessionSort,
+        flowPage,
+        flowQuery,
+        flowSort,
+        versionFailed,
+        completion: readCompletion,
+    } = readState;
+    const reading = loading !== null;
+    const mutation = useSessionAction(access, active, {
+        canPrepare: () => active && !disabled && !reads.busy,
+        canConfirm: () => active && !disabled && !reads.busy,
+        lock: onActionLock,
+        dispatched: () => {
+            mutationRoute.current = route?.id ? route : null;
+            setError(null);
+        },
+        settled: () => {
+            setTyped('');
+            reads.clearSessions();
+        },
+        failed: (error, changing) => {
+            if (changing) {
+                reportUiError('management-mutation', error, 'mutation-unknown');
+            } else if (!(error instanceof RememberMeError && error.code === 'cancelled')) {
+                reportUiError('management-read', error);
+                setError(
+                    error instanceof RememberMeError && error.code === 'denied'
+                        ? 'denied'
+                        : 'unavailable',
+                );
+            }
+        },
+    });
+    const busy =
+        reading || mutation.state.phase === 'preparing' || mutation.state.phase === 'sending';
+    const sending = mutation.state.phase === 'sending';
+    const preview =
+        mutation.state.phase === 'ready' || mutation.state.phase === 'sending'
+            ? mutation.state.preview
+            : null;
+    const notice =
+        mutation.state.phase === 'confirmed' || mutation.state.phase === 'unknown'
+            ? { kind: mutation.state.phase, preview: mutation.state.preview }
+            : null;
+    // Read intent belongs to the first active, enabled view of this access, not to
+    // mounting a background tab. Mark attempts before dispatch: failures, view
+    // changes and cleared mutation results must never cause an automatic retry.
+    const readInitialView = useEffectEvent(() => {
+        if (!active || disabled || busy || reads.busy || notice?.kind === 'unknown') {
+            return;
+        }
+        if (view === 'sessions' && !route && !attempted.current.sessions) {
+            attempted.current.sessions = true;
+            void loadSessions(false, { state: 'all' });
+        } else if (view === 'version' && !attempted.current.version) {
+            attempted.current.version = true;
+            void loadVersion();
+        } else if (view === 'version' && !attempted.current.build) {
+            attempted.current.build = true;
+            void loadVersion(true);
+        } else if (view === 'server' && !attempted.current.flows) {
+            attempted.current.flows = true;
+            void loadFlows();
+        }
+    });
+    // biome-ignore lint/correctness/useExhaustiveDependencies: Access/view are read intents. The completion counter also advances the serialized initial server reads when React batches busy=true/false.
+    useEffect(() => {
+        if (active && !disabled && !busy) {
+            const current = reads.epoch;
+            // Commit ownership before dispatch. StrictMode's setup/cleanup replay
+            // retires the first lease without sending a duplicate server request.
+            queueMicrotask(() => {
+                if (current === reads.epoch) {
+                    readInitialView();
+                }
+            });
+        }
+    }, [access, active, disabled, busy, view, readCompletion, reads]);
+    const readRoute = useEffectEvent(() => {
+        if (
+            !active ||
+            disabled ||
+            busy ||
+            reads.busy ||
+            !route ||
+            consumedRoute.current === routeKey
+        ) {
+            return;
+        }
+        consumedRoute.current = routeKey;
+        setError(null);
+        if (route.id && route.flow) {
+            if (!uuidEqual(selected?.id, route.id) || selected?.flow !== route.flow) {
+                reads.clearSelection();
+                void show({ flow: route.flow, id: route.id });
+            }
+            return;
+        }
+        reads.clearSelection();
+        if (readState.loadedFlow === (route.flow ?? '') && sessions !== null) {
+            return;
+        }
+        const native =
+            nativeFilterIntent.current?.key === routeKey ? nativeFilterIntent.current : null;
+        nativeFilterIntent.current = null;
+        const filter = native
+            ? native.filter
+            : route.flow
+              ? { field: 'flow', operator: 'equals', value: route.flow }
+              : exactFlow(sessionFilter)
+                ? null
+                : sessionFilter;
+        reads.sessionIntent(filter, native?.query ?? '');
+        void loadSessions(
+            false,
+            {
+                state: 'all',
+                ...(route.flow ? { flow: route.flow } : {}),
+                filter,
+                query: native?.query ?? '',
+                sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
+            },
+            0,
+        );
+    });
+    const finishMutationRoute = useEffectEvent(() => {
+        if (
+            !active ||
+            disabled ||
+            busy ||
+            notice?.kind === 'unknown' ||
+            !mutationRoute.current ||
+            !navigation
+        ) {
+            return;
+        }
+        const target = mutationRoute.current;
+        mutationRoute.current = null;
+        const { id: _id, ...list } = target;
+        const parent = returnRoute.current ?? list;
+        // The action invalidated this list. Match the old X/detail behavior: return
+        // to its URI, but require explicit Refresh rather than replaying a read.
+        attempted.current.sessions = true;
+        const filter = parent.flow
+            ? { field: 'flow', operator: 'equals', value: parent.flow }
+            : exactFlow(sessionFilter)
+              ? null
+              : sessionFilter;
+        reads.invalidateSessions({
+            ...reads.lastFilter,
+            flow: parent.flow ?? '',
+            filter,
+            after: '',
+        });
+        reads.sessionFilter(filter);
+        consumedRoute.current = JSON.stringify(parent);
+        navigation.navigate(parent, true);
+    });
+    // biome-ignore lint/correctness/useExhaustiveDependencies: Completion wakes a queued route intent when React batches busy transitions; consumed routes, including failures, are never retried.
+    useEffect(() => {
+        if (active && !disabled && !busy && routeKey !== consumedRoute.current) {
+            readRoute();
+        }
+    }, [routeKey, active, disabled, busy, readCompletion]);
+    useEffect(() => {
+        if (active && !disabled && !busy && notice?.kind !== 'unknown') {
+            finishMutationRoute();
+        }
+    }, [active, disabled, busy, notice?.kind]);
+    const focusDetails = useEffectEvent(() => {
+        if (active && view === 'sessions') {
+            detailElement.current?.focus({ preventScroll: true });
+        }
+    });
+    useEffect(() => {
+        if (selected !== null) {
+            focusDetails();
+        } else if (returningToList.current) {
+            returningToList.current = false;
+            if (isActive.current) {
+                const target =
+                    listElement.current?.querySelector<HTMLElement>(
+                        '[role="gridcell"][tabindex="0"]',
+                    ) ?? listElement.current?.querySelector<HTMLElement>('button:not([disabled])');
+                target?.focus({ preventScroll: true });
+            }
+        }
+    }, [selected]);
+    function returnToSessions() {
+        returningToList.current = true;
+        if (navigation && route) {
+            const { id: _id, ...parent } = route;
+            navigation.navigate(returnRoute.current ?? parent);
+            return;
+        }
+        reads.clearSelection();
+    }
+    function cancel() {
+        if (sending) {
+            mutation.owner.stopWaiting();
+            return;
+        }
+        reads.cancel();
+    }
+    async function loadFlows(
+        after = '',
+        index = 0,
+        query = flowQuery,
+        direction = flowSort,
+        filter = flowFilter,
+    ) {
+        attempted.current.flows = true;
+        await reads.flows(
+            { after, query, filter, ...(direction === 'desc' ? { sort: 'name-desc' } : {}) },
+            index,
+        );
+    }
+    async function loadVersion(long = false) {
+        if (!long) {
+            attempted.current.version = true;
+        }
+        await reads.version(long);
+    }
+    async function refreshSessions() {
+        await loadSessions(false, {
+            ...reads.lastFilter,
+            after: '',
+            flow: navigation ? (route?.flow ?? '') : (reads.lastFilter.flow ?? ''),
+            user: reads.lastFilter.user ?? '',
+            state: reads.lastFilter.state ?? 'all',
+        });
+    }
+    async function loadSessions(next = false, initial?: SessionOptions, index?: number) {
+        attempted.current.sessions = true;
+        const filters: SessionOptions =
+            initial ??
+            (next
+                ? { ...reads.lastFilter, after: sessions?.next ?? '' }
+                : {
+                      state: 'all',
+                      filter: sessionFilter,
+                      query: sessionQuery,
+                      sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
+                      ...(route?.flow ? { flow: route.flow } : {}),
+                  });
+        const pageIndex = index ?? (next ? sessionPage : 0);
+        await reads.sessions(filters, pageIndex);
+    }
+    async function show(item: Pick<SessionItem, 'flow' | 'id'>) {
+        await reads.detail(item);
+    }
+    function openSession(item: Pick<SessionItem, 'flow' | 'id'>) {
+        if (navigation) {
+            returnRoute.current = navigation.location;
+            navigation.navigate({
+                managementFlow: navigation.location.managementFlow,
+                page: 'sessions',
+                flow: item.flow,
+                id: item.id,
+            });
+        } else {
+            void show(item);
+        }
+    }
+    async function prepare(
+        action: SessionAction,
+        item: { readonly flow: string; readonly id: string },
+    ) {
+        setTyped('');
+        await mutation.owner.prepare(action, item);
+    }
+    function closeConfirmation() {
+        mutation.owner.cancelPreparation();
+        setTyped('');
+    }
+    async function confirmAction() {
+        await mutation.owner.confirm(typed);
+    }
+    const locked = disabled || busy;
+    function sessionArtifactActions(item: SessionItem, compact: boolean) {
+        const managementFlow = navigation?.location.managementFlow ?? access.snapshot().flow?.name;
+        return (
+            <SessionArtifactLinks
+                item={item}
+                scope={access.snapshot().scope}
+                managementFlow={managementFlow}
+                compact={compact}
+                disabled={locked}
+            />
+        );
+    }
+    const detailed = useDetailRefresh(
+        active && view !== 'version' && selected === null,
+        disabled,
+        busy,
+        () => {
+            if (view === 'sessions') {
+                void loadSessions(false, { ...reads.lastFilter, filter: null, after: '' }, 0);
+            } else if (view === 'server') {
+                void loadFlows('', 0, flowQuery, flowSort, null);
+            }
+        },
+    );
+    const integratedNavigation = useAdminDetail(
+        'sessions',
+        selected?.id ?? null,
+        returnToSessions,
+        selected ? [selected.flow] : [],
+    );
+    if (error === 'not-found' && view === 'sessions') {
+        return (
+            <section aria-label={t('managementTitle')}>
+                <ManagementNotFound />
+            </section>
+        );
+    }
+    return (
+        <section className="stack" aria-label={t('managementTitle')}>
+            {!integratedNavigation && (
+                <AdminBreadcrumbs
+                    items={
+                        view === 'server'
+                            ? [
+                                  {
+                                      label: t('workspaceBifroest'),
+                                      to: managementPath(access.snapshot().scope, {
+                                          managementFlow:
+                                              access.snapshot().flow?.name ?? 'management',
+                                          page: 'server',
+                                      }),
+                                  },
+                              ]
+                            : [
+                                  {
+                                      label: t('workspaceBifroest'),
+                                      to: managementPath(access.snapshot().scope, {
+                                          managementFlow:
+                                              access.snapshot().flow?.name ?? 'management',
+                                          page: 'server',
+                                      }),
+                                  },
+                                  {
+                                      label: t(
+                                          view === 'version'
+                                              ? 'workspaceVersion'
+                                              : 'workspaceSessions',
+                                      ),
+                                      to: managementPath(
+                                          access.snapshot().scope,
+                                          managementRoot(
+                                              access.snapshot().flow?.name ?? 'management',
+                                              view === 'version' ? 'version' : 'sessions',
+                                          ),
+                                      ),
+                                      ...(selected
+                                          ? { onClick: returnToSessions, disabled: locked }
+                                          : {}),
+                                  },
+                                  ...(selected
+                                      ? [
+                                            {
+                                                label: selected.flow,
+                                                to: managementPath(access.snapshot().scope, {
+                                                    managementFlow:
+                                                        access.snapshot().flow?.name ??
+                                                        'management',
+                                                    page: 'sessions',
+                                                    flow: selected.flow,
+                                                }),
+                                            },
+                                            {
+                                                label: uuidText(selected.id),
+                                                to: managementPath(access.snapshot().scope, {
+                                                    managementFlow:
+                                                        access.snapshot().flow?.name ??
+                                                        'management',
+                                                    page: 'sessions',
+                                                    flow: selected.flow,
+                                                    id: selected.id,
+                                                }),
+                                            },
+                                        ]
+                                      : []),
+                              ]
+                    }
+                />
+            )}
+            <VersionPage
+                visible={view === 'version'}
+                version={version}
+                buildVersion={buildVersion}
+                loading={loading === 'version'}
+                failed={versionFailed}
+                disabled={locked}
+                onRefresh={() => {
+                    void loadVersion(buildVersion !== null);
+                }}
+            />
+            {notice !== null && (
+                <Alert role="status" color={notice.kind === 'confirmed' ? 'green' : 'yellow'}>
+                    <p>
+                        {t(
+                            notice.kind === 'confirmed'
+                                ? 'managementActionConfirmed'
+                                : 'managementActionUnknown',
+                        )}
+                    </p>
+                    <p>
+                        {m(notice.preview.action === 'dispose' ? 'end' : 'disconnect')}:{' '}
+                        {notice.preview.target.flow}/{notice.preview.target.id}
+                    </p>
+                    {notice.kind === 'unknown' && (
+                        <Button
+                            variant="default"
+                            onClick={() => {
+                                mutation.owner.dismissUnknown();
+                            }}
+                        >
+                            {t('managementDismissUnknown')}
+                        </Button>
+                    )}
+                </Alert>
+            )}
+            {error && (
+                <Alert role="status" color="red">
+                    <p>{m(error === 'denied' ? 'readDenied' : 'readUnavailable')}</p>
+                    {error !== 'denied' && <p>{m('readNext')}</p>}
+                </Alert>
+            )}
+            <div hidden={view !== 'server'} className="stack">
+                <FlowOverview
+                    scope={access.snapshot().scope}
+                    active={active && view === 'server'}
+                    rows={flows}
+                    locked={locked}
+                    busy={busy || !attempted.current.flows}
+                    disabled={disabled || notice?.kind === 'unknown'}
+                    pagination={{
+                        index: flowPage - 1,
+                        query: flowQuery,
+                        filter: flowFilter,
+                        direction: flowSort,
+                    }}
+                    actions={{
+                        refresh: () => {
+                            void loadFlows();
+                        },
+                        search: (query, filter) => {
+                            void loadFlows('', 0, query, flowSort, filter);
+                        },
+                        page: (index) => {
+                            const cursor = reads.flowCursor(index);
+                            if (cursor !== undefined && index <= flowPage) {
+                                void loadFlows(cursor, index);
+                            }
+                        },
+                        query: (query) => {
+                            void loadFlows('', 0, query, flowSort);
+                        },
+                        sort: (direction) => {
+                            void loadFlows('', 0, flowQuery, direction);
+                        },
+                    }}
+                />
+            </div>
+            {busy && sending && (
+                <Button variant="default" onClick={cancel}>
+                    {t(sending ? 'managementStopWaiting' : 'managementCancel')}
+                </Button>
+            )}
+            <section hidden={view !== 'sessions'} className="stack">
+                <div
+                    hidden={(!route && selected !== null) || !!route?.id}
+                    className="stack"
+                    ref={listElement}
+                >
+                    {(sessions?.skipped ?? 0) > 0 && (
+                        <Alert color="yellow">
+                            {t('managementPartial')} ({sessions?.skipped})
+                        </Alert>
+                    )}
+                    <AdminDataGrid<SessionItem>
+                        active={active && view === 'sessions' && selected === null}
+                        actionField="details"
+                        label={t('managementSessionsCaption')}
+                        rows={
+                            !route || readState.loadedFlow === (route.flow ?? '')
+                                ? (sessions?.items ?? [])
+                                : []
+                        }
+                        onRefresh={() => {
+                            void refreshSessions();
+                        }}
+                        refreshLabel={m('refreshSessions')}
+                        detailsAvailable
+                        detailed={detailed}
+                        detailFields={['user', 'remote']}
+                        onOpen={openSession}
+                        openByID={
+                            <SessionTarget
+                                disabled={locked}
+                                value={target}
+                                onChange={setTarget}
+                                onOpen={(flow, id) => openSession({ flow, id })}
+                                onPrepare={(action, flow, id) => {
+                                    void prepare(action, { flow, id });
+                                }}
+                            />
+                        }
+                        openLabel={(item) => `${t('managementDetails')} ${item.id}`}
+                        getRowId={(item) => `${item.flow}/${item.id}`}
+                        columns={[
+                            { field: 'id', headerName: t('managementSessionId'), minWidth: 280 },
+                            {
+                                field: 'user',
+                                headerName: m('user'),
+                                minWidth: 170,
+                                flex: 1,
+                                valueGetter: (_value, item) => field(item, item.user),
+                            },
+                            { field: 'flow', headerName: t('managementFlow'), minWidth: 150 },
+                            {
+                                field: 'state',
+                                headerName: m('status'),
+                                minWidth: 130,
+                                type: 'singleSelect',
+                                valueOptions: ['new', 'authorized', 'disposed'].map((value) => ({
+                                    value,
+                                    label: sessionStateLabel(value),
+                                })),
+                            },
+                            {
+                                field: 'createdAt',
+                                headerName: m('started'),
+                                minWidth: 190,
+                                type: 'dateTime',
+                                valueGetter: (_value, item) => new Date(item.createdAt),
+                                valueFormatter: (value) => when((value as Date).toISOString()),
+                            },
+                            {
+                                field: 'remote',
+                                headerName: m('origin'),
+                                minWidth: 180,
+                                flex: 1,
+                                valueGetter: (_value, item) => field(item, item.remote),
+                            },
+                        ]}
+                        rowActions={(item) => <>{sessionArtifactActions(item, true)}</>}
+                        busy={busy || !attempted.current.sessions}
+                        disabled={disabled || notice?.kind === 'unknown'}
+                        page={sessionPage - 1}
+                        hasNext={(sessions?.next ?? '') !== ''}
+                        query={sessionQuery}
+                        columnFilter={sessionFilter}
+                        onSearch={(query, filter) => {
+                            const flow = exactFlow(filter);
+                            if (navigation && route && flow !== route.flow) {
+                                reads.sessionFilter(filter, query);
+                                const { flow: _flow, id: _id, ...parent } = route;
+                                const next = { ...parent, ...(flow ? { flow } : {}) };
+                                nativeFilterIntent.current = {
+                                    key: JSON.stringify(next),
+                                    query,
+                                    filter,
+                                };
+                                navigation.navigate(next);
+                                return;
+                            }
+                            void loadSessions(
+                                false,
+                                {
+                                    state: 'all',
+                                    ...(route?.flow ? { flow: route.flow } : {}),
+                                    query,
+                                    filter,
+                                    sort: sessionSort === 'asc' ? 'flow-asc' : 'flow-desc',
+                                },
+                                0,
+                            );
+                        }}
+                        sortField="flow"
+                        sortDirection={sessionSort}
+                        onPage={(index) => {
+                            const cursor = reads.sessionCursor(index);
+                            if (cursor !== undefined && index <= sessionPage) {
+                                void loadSessions(
+                                    false,
+                                    { ...reads.lastFilter, after: cursor },
+                                    index,
+                                );
+                            }
+                        }}
+                        onQuery={(query) => {
+                            void loadSessions(false, { ...reads.lastFilter, after: '', query }, 0);
+                        }}
+                        onSort={(direction) => {
+                            void loadSessions(
+                                false,
+                                {
+                                    ...reads.lastFilter,
+                                    after: '',
+                                    sort: direction === 'asc' ? 'flow-asc' : 'flow-desc',
+                                },
+                                0,
+                            );
+                        }}
+                    />
+                </div>
+                {route?.id &&
+                    busy &&
+                    (!selected ||
+                        !uuidEqual(selected.id, route.id) ||
+                        selected.flow !== route.flow) && (
+                        <CircularProgress aria-label={m('detailsLoading')} />
+                    )}
+                {selected !== null &&
+                    (!route ||
+                        (uuidEqual(selected.id, route.id) && selected.flow === route.flow)) && (
+                        <SessionDetails
+                            item={selected}
+                            detailed={detailed}
+                            id={detailID}
+                            element={detailElement}
+                            actions={sessionArtifactActions(selected, false)}
+                            mutationDisabled={
+                                locked || selected.policyLimited || notice?.kind === 'unknown'
+                            }
+                            onPrepare={(action, item) => {
+                                void prepare(action, item);
+                            }}
+                        />
+                    )}
+            </section>
+            <SessionActionDialog
+                owner={access.snapshot()}
+                active={active}
+                preview={preview}
+                typed={typed}
+                busy={busy}
+                sending={sending}
+                disabled={disabled}
+                onType={setTyped}
+                onClose={closeConfirmation}
+                onConfirm={() => {
+                    void confirmAction();
+                }}
+                onCancel={cancel}
+            />
+        </section>
+    );
+}

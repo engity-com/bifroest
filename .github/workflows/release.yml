@@ -6,7 +6,7 @@ env:
 
 on:
   release:
-    types: [ published ]
+    types: [published]
 
   workflow_dispatch:
     inputs:
@@ -111,7 +111,7 @@ jobs:
 
   documentation:
     name: "Documentation"
-    needs: [ evaluate, build ]
+    needs: [evaluate, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write

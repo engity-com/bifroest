@@ -26,7 +26,9 @@ func (this AuditlogName) String() string {
 
 func (this *AuditlogName) UnmarshalText(text []byte) error {
 	value := AuditlogName(text)
-	if err := value.Validate(); err != nil {
+	// An empty flow reference means root default, or no logging. Definition
+	// identities still call Validate and cannot be empty.
+	if err := value.Validate(); value != "" && err != nil {
 		return err
 	}
 	*this = value

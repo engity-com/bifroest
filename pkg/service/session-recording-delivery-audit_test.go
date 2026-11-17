@@ -34,11 +34,11 @@ func TestSessionRecordingDeliveryAuditorRecordsPersistentTransitions(t *testing.
 	require.Equal(t, []audit.Event{
 		{
 			Name: audit.EventNameSessionRecordingDeliveryFailed, Domain: audit.EventDomainSession, Outcome: audit.EventOutcomeFailure,
-			OperationId: base.OperationId, RecordingId: "fd70203b-ea19-4288-8ec2-577b623e92d0", Target: "archive", ErrorCategory: audit.ErrorCategoryNetwork,
+			OperationId: base58TestUUID(t, base.OperationId), RecordingId: "YJ9Qq4teF8U43DQJwmG9Ef", Target: "archive", ErrorCategory: audit.ErrorCategoryNetwork,
 		},
 		{
 			Name: audit.EventNameSessionRecordingDeliverySucceeded, Domain: audit.EventDomainSession, Outcome: audit.EventOutcomeSuccess,
-			OperationId: base.OperationId, RecordingId: "fd70203b-ea19-4288-8ec2-577b623e92d0", Target: "archive",
+			OperationId: base58TestUUID(t, base.OperationId), RecordingId: "YJ9Qq4teF8U43DQJwmG9Ef", Target: "archive",
 		},
 	}, events)
 }
