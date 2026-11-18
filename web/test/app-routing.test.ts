@@ -4,6 +4,7 @@ import { createMemoryRouter, type Location } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
+import type { LoginDialogActions } from '../src/login/LoginDialog';
 import type { ManagementConnection } from '../src/management/channel';
 import { BrowserBinding, BrowserClient } from '../src/remember';
 import { WebAccess } from '../src/remember/client';
@@ -27,6 +28,26 @@ const panels = vi.hoisted(() => ({
     pending: new Set<number>(),
     states: new Map<number, (state: TerminalState) => void>(),
 }));
+const loginCommits = vi.hoisted(() => ({
+    editOnOpen: null as ((actions: LoginDialogActions) => void) | null,
+}));
+vi.mock('../src/login/LoginDialog', async (original) => {
+    const actual = await original<typeof import('../src/login/LoginDialog')>();
+    const { createElement, useEffect } = await import('react');
+    return {
+        ...actual,
+        LoginDialog: (props: Parameters<typeof actual.LoginDialog>[0]) => {
+            useEffect(() => {
+                if (props.state.open) {
+                    const edit = loginCommits.editOnOpen;
+                    loginCommits.editOnOpen = null;
+                    edit?.(props.actions);
+                }
+            }, [props.state.open, props.actions]);
+            return createElement(actual.LoginDialog, props);
+        },
+    };
+});
 vi.mock('../src/terminal/TerminalPanel', async () => {
     const { createElement, useEffect } = await import('react');
     return {
@@ -58,6 +79,7 @@ vi.mock('../src/terminal/TerminalPanel', async () => {
 
 const cleanups: (() => void)[] = [];
 beforeEach(() => {
+    loginCommits.editOnOpen = null;
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.mocked(validateScope).mockImplementation((scope) => {
         protocol.validateScope(
@@ -379,6 +401,24 @@ it('pins each authenticated tab URL to its own original requesting username, not
     });
     await click(button('Close', dialog()));
     expect(app.router.state.location.hash).toMatch(/^#first-hint@Work\//u);
+});
+
+it('does not overwrite an edit made as a new login form opens with the preceding actor hint', async () => {
+    preserveUsernamePreference('Work');
+    const app = await mountApp('/#alice@Work', false, false, { requestUser: true });
+    await signIn();
+    // A child post-commit event runs before the parent's passive route effect.
+    // This models immediate input without relying on scheduler timing or sleeps.
+    loginCommits.editOnOpen = (actions) => actions.changeUser('bob');
+    await click(button('New connection'));
+    expect(dialog().querySelector<HTMLInputElement>('input[name="user"]')?.value).toBe('bob');
+    expect(app.router.state.location.hash).toBe('#bob@Work');
+    await signIn();
+    expect(
+        app.requests
+            .filter((request) => request.path.endsWith('/login/password'))
+            .map((request) => request.fields?.user),
+    ).toEqual(['alice', 'bob']);
 });
 
 it('marks empty usernames inline without native validation popups, notices or authentication requests', async () => {

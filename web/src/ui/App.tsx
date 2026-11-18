@@ -206,7 +206,9 @@ export function App({
         snapshot.scope.origin === loginMetadata.scope.origin &&
         snapshot.scope.slug === loginMetadata.scope.slug;
 
-    useEffect(() => {
+    // Commit the route's initial hint before exposing an editable form. A passive
+    // effect could run after the first input event and restore the previous actor.
+    useLayoutEffect(() => {
         if (
             !loginOpen ||
             !metadataReady ||
