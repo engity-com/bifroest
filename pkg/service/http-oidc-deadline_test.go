@@ -59,7 +59,7 @@ func awaitOidcPrimary(t *testing.T, svc *service, token string) {
 
 func TestOidcCodeExpiredWebClaimCannotIssueAccess(t *testing.T) {
 	svc, handler, provider, recorder := oidcCodeFixture(t, oidcDeadlineTestConfiguration)
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	browser := openOidcBrowser(t, handler, provider, link)
 	require.Equal(t, http.StatusOK, oidcCallbackRequest(handler, browser.callback, browser.cookie).Code)
 	awaitOidcPrimary(t, svc, token)
@@ -124,7 +124,8 @@ func TestOidcCodeFinalAuditCannotOutliveLoginDeadline(t *testing.T) {
 				done := make(chan bool, 1)
 				var browser oidcBrowserFixture
 				if transport == "web" {
-					token, link := startOidcWeb(t, handler)
+					token, link, initiatingBrowser := startOidcWeb(t, handler)
+					handler = initiatingBrowser
 					browser = openOidcBrowser(t, handler, provider, link)
 					require.Equal(t, http.StatusOK, oidcCallbackRequest(handler, browser.callback, browser.cookie).Code)
 					awaitOidcPrimary(t, svc, token)

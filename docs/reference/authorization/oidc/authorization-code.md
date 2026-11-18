@@ -21,6 +21,8 @@ Authenticates through an IdP browser redirect with PKCE S256. Compared with [Dev
 * **SSH:** Open your own login link; it redirects to the IdP automatically. After signing in, select your SSH client's two-character code from three choices, or decline. A wrong choice or decline aborts the login.
 * **WebUI:** Choose **OIDC**. Login opens in a separate tab, without code selection; use the fallback link if popups are blocked. The tab closes automatically when possible, keeping the original application and its sessions intact.
 
+The WebUI login tab or fallback link must stay in the initiating browser profile. A temporary `Secure`, `HttpOnly`, host-only cookie binds the original attempt before any IdP redirect; a forwarded link cannot authenticate a different browser's attempt. This cookie is required even without RememberMe and never grants workload access on its own. SSH may still use a browser on another device with its explicit code confirmation.
+
 Never approve someone else's SSH login link. Pending browser logins are memory-only; a Bifröst restart or loss of the initiating WebUI tab requires a new login.
 
 Browser success means the original login passed Bifröst's access, session and required audit checks, not just the IdP login. Code selection is an active confirmation, not MFA: guessing succeeds with probability 1/3 and it cannot prevent deliberate phishing. Configure MFA or passkeys at the IdP.

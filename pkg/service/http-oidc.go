@@ -36,6 +36,16 @@ type oidcAuthentication struct {
 	transactions []*oidcBrowserTransaction
 	current      *oidcBrowserTransaction
 	finished     bool
+	// Immutable after the HTTP adapter publishes the original login attempt.
+	initiator oidcInitiatorBinding
+}
+
+// This binds an HTTP login to the browser which STARTED it, not the first browser
+// claiming a forwarded ticket. It is never a session/workload credential. SSH
+// deliberately has no such binding and retains its explicit code confirmation.
+type oidcInitiatorBinding struct {
+	name string
+	hash [32]byte
 }
 
 // This is only a pending-login permission, never a workload/API credential.
@@ -49,6 +59,7 @@ type oidcBrowserTransaction struct {
 	ssh                                  bool
 	phase, reason                        string
 	binding                              [32]byte
+	initiator                            oidcInitiatorBinding
 	state, nonce, verifier               string
 	stateKey, callbackDigest             [32]byte
 	choices                              []string
@@ -235,7 +246,7 @@ func (this *webService) Login(req authorization.InteractiveRequest, client *auth
 	origin := conf.Origin()
 	if selection.Transport == bconn.TransportHttp {
 		conn, ok := req.Connection().(*webLoginConnection)
-		if !ok || conn.scope.Origin != origin {
+		if !ok || conn.scope.Origin != origin || attempt.initiator.name == "" {
 			return nil, fmt.Errorf("OIDC login requires its configured HTTPS origin")
 		}
 	}
@@ -278,7 +289,7 @@ func (this *webService) Login(req authorization.InteractiveRequest, client *auth
 	ctx, cancel := context.WithDeadline(parent, deadline)
 	stopShutdown := context.AfterFunc(this.ctx, cancel)
 	remote := req.Connection().Remote()
-	tx := &oidcBrowserTransaction{ctx: ctx, cancel: cancel, client: client, origin: origin, peer: remote.Host().String(), user: remote.User(), comparison: comparison, ssh: selection.Transport == bconn.TransportSsh, phase: "created", done: make(chan *authorization.OidcCodeResult, 1)}
+	tx := &oidcBrowserTransaction{ctx: ctx, cancel: cancel, client: client, origin: origin, peer: remote.Host().String(), user: remote.User(), comparison: comparison, ssh: selection.Transport == bconn.TransportSsh, initiator: attempt.initiator, phase: "created", done: make(chan *authorization.OidcCodeResult, 1)}
 	context.AfterFunc(ctx, func() {
 		stopShutdown()
 		this.oidcMutex.Lock()
@@ -377,18 +388,33 @@ func (this *webService) Login(req authorization.InteractiveRequest, client *auth
 func oidcCookieName(id string) string { return "__Host-bifroest-oidc-" + id }
 
 func oidcCookie(w http.ResponseWriter, id, value string, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{Name: oidcCookieName(id), Value: value, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: expires})
+	setOidcCookie(w, oidcCookieName(id), value, expires)
 }
 
-func oidcBound(r *http.Request, tx *oidcBrowserTransaction) bool {
+func setOidcCookie(w http.ResponseWriter, name, value string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: expires})
+}
+
+func oidcBoundCookie(r *http.Request, name string, expected [32]byte) bool {
+	if name == "" {
+		return false
+	}
 	count, value := 0, ""
 	for _, cookie := range r.Cookies() {
-		if cookie.Name == oidcCookieName(tx.id) {
+		if cookie.Name == name {
 			count++
 			value = cookie.Value
 		}
 	}
-	return tx.id != "" && count == 1 && oidcValidToken(value) && sha256.Sum256([]byte(value)) == tx.binding
+	return count == 1 && oidcValidToken(value) && sha256.Sum256([]byte(value)) == expected
+}
+
+func (this oidcInitiatorBinding) matches(r *http.Request) bool {
+	return oidcBoundCookie(r, this.name, this.hash)
+}
+
+func oidcBound(r *http.Request, tx *oidcBrowserTransaction) bool {
+	return tx.id != "" && oidcBoundCookie(r, oidcCookieName(tx.id), tx.binding)
 }
 
 // Documents never start/consume/exchange a login. Even a callback only loads
@@ -480,6 +506,12 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 		webError(w, 401, "login unavailable")
 		return
 	}
+	// Check BEFORE consuming the ticket or sending an IdP URL. A valid ticket is
+	// not permission to attach somebody else's browser identity to this attempt.
+	if !tx.ssh && !tx.initiator.matches(r) {
+		webError(w, 401, "login unavailable")
+		return
+	}
 	if action == "start" && tx.phase == "created" {
 		id, e1 := oidcRandom()
 		binding, e2 := oidcRandom()
@@ -495,6 +527,12 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 		tx.stateKey = sha256.Sum256([]byte(state))
 		this.oidcBrowsers[sha256.Sum256([]byte(id))], this.oidcStates[sha256.Sum256([]byte(state))] = tx, tx
 		expires, _ := tx.ctx.Deadline()
+		if !tx.ssh {
+			// Once the selected flow is known, shorten the initiating cookie to
+			// that login budget plus the retained outcome (not the generic 10m).
+			cookie, _ := r.Cookie(tx.initiator.name) // Already validated above.
+			setOidcCookie(w, tx.initiator.name, cookie.Value, expires.Add(time.Minute))
+		}
 		oidcCookie(w, id, binding, expires.Add(time.Minute))
 		view := this.oidcViewLocked(tx)
 		view.URL = tx.client.CodeAuthorizationURL(state, nonce, verifier)
@@ -568,7 +606,7 @@ func (this *webService) oidcCallback(w http.ResponseWriter, r *http.Request, raw
 	this.pruneOidcLocked()
 	tx := this.oidcStates[key]
 	_, hasIssuer := query["iss"]
-	if tx == nil || !oidcBound(r, tx) || scopeErr != nil || tx.origin != scope.Origin || hasIssuer && query.Get("iss") != tx.client.CodeIssuer() {
+	if tx == nil || !oidcBound(r, tx) || !tx.ssh && !tx.initiator.matches(r) || scopeErr != nil || tx.origin != scope.Origin || hasIssuer && query.Get("iss") != tx.client.CodeIssuer() {
 		this.oidcMutex.Unlock()
 		webError(w, 401, "callback denied")
 		return

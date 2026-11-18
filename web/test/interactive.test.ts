@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verificationLink } from '../src/login/links';
 import type { LoginStep } from '../src/remember';
 import { BrowserClient } from '../src/remember';
-import type { Transport } from '../src/remember/http';
+import { Http, type Transport } from '../src/remember/http';
 import { required } from './required';
 
 const scope = { origin: 'https://app.example.org', slug: 'Work' };
@@ -138,7 +138,33 @@ describe('bounded interactive login and device-flow adapter', () => {
         ]);
         expect(server.requests[0]?.bearer).toBeNull();
         expect(server.requests[1]?.bearer).toBe(attemptToken);
+        expect(
+            server.requests.every((request) => request.options.credentials === 'same-origin'),
+        ).toBe(true);
         expect(access.snapshot().principal).toBe('verified-principal');
+    });
+    it('confines the initiating cookie to an OIDC control client, never workload or other logins', async () => {
+        const transport = vi.fn<Transport>(async () => json({}));
+        const original = new Http(scope, transport);
+        const login = original.forOidcLogin();
+        await login.post('login/oidc', { user: '' }, undefined, 200);
+        await login.post('login/poll', {}, attemptToken, 200);
+        await login.post('login/reply', { sequence: '1' }, attemptToken, 200);
+        await login.post('login/cancel', {}, attemptToken, 200);
+        await login.post('access', {}, accessToken, 200);
+        await original.post('login/poll', {}, attemptToken, 200);
+        expect(transport.mock.calls.map(([, options]) => options?.credentials)).toEqual([
+            'same-origin',
+            'same-origin',
+            'same-origin',
+            'same-origin',
+            'omit',
+            'omit',
+        ]);
+        for (const [, options] of transport.mock.calls) {
+            expect(options).toMatchObject({ mode: 'same-origin', redirect: 'error' });
+            expect(new Headers(options?.headers).has('Cookie')).toBe(false);
+        }
     });
     it('acknowledges text, preserves prompt echo, sends each answer once and claims an opaque access', async () => {
         const server = new InteractiveServer();

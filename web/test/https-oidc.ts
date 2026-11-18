@@ -12,7 +12,79 @@ const browser = await chromium.launch({
 });
 try {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    if (process.argv[3] && !['blocked', 'named'].includes(process.argv[3])) {
+    if (process.argv[3] === 'forwarded') {
+        // A real independent profile must not attach its IdP identity to an
+        // attacker's attempt, even though the attacker knows the whole ticket.
+        const initiatingPage = await context.newPage();
+        await initiatingPage.goto(`${origin}/#Work`);
+        const post = (action: string, fields: Record<string, string>, token?: string) =>
+            initiatingPage.evaluate(
+                async ({ action, fields, token }) => {
+                    const response = await fetch(`/api/v1/${action}`, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                        },
+                        body: JSON.stringify(fields),
+                    });
+                    const body: unknown = response.status === 204 ? null : await response.json();
+                    return { status: response.status, body };
+                },
+                { action, fields, token },
+            );
+        const started = await post('login/oidc', { slug: 'Work', user: '' });
+        assert.equal(started.status, 202);
+        const pending = started.body as { attemptToken: string };
+        assert.match(pending.attemptToken, /^bwl1\.[A-Za-z0-9_-]{43}$/u);
+        let step: { sequence: string; message: string } | undefined;
+        for (let poll = 0; poll < 20 && !step; poll++) {
+            const response = await post('login/poll', { slug: 'Work' }, pending.attemptToken);
+            assert.equal(response.status, 200);
+            step = (response.body as { step?: typeof step }).step;
+            if (!step) {
+                await initiatingPage.waitForTimeout(250);
+            }
+        }
+        assert(step);
+        const link = required(/https:\/\/\S+/u.exec(step.message)?.[0]);
+        const reply = await post(
+            'login/reply',
+            { slug: 'Work', sequence: step.sequence },
+            pending.attemptToken,
+        );
+        assert.equal(reply.status, 202);
+        const binding = (await context.cookies(origin)).filter((cookie) =>
+            cookie.name.startsWith('__Host-bifroest-oidc-init-'),
+        );
+        assert.equal(binding.length, 1);
+        assert(required(binding[0]).secure && required(binding[0]).httpOnly);
+        assert.equal(await initiatingPage.evaluate(() => document.cookie), '');
+        const victim = await browser.newContext({ ignoreHTTPSErrors: true });
+        try {
+            const page = await victim.newPage();
+            const decision = page.waitForResponse(
+                (response) => new URL(response.url()).pathname === '/api/v1/oidc/start',
+            );
+            await page.goto(link);
+            assert.equal((await decision).status(), 401);
+            assert.deepEqual(await victim.cookies(origin), []);
+            assert.equal(await page.evaluate(() => document.cookie), '');
+            const claim = await post('login/poll', { slug: 'Work' }, pending.attemptToken);
+            assert.equal(claim.status, 200);
+            const result = claim.body as { status: string; accessToken?: string };
+            assert.equal(result.status, 'pending');
+            assert.equal(result.accessToken, undefined);
+        } finally {
+            await victim.close();
+            const cancelled = await post('login/cancel', { slug: 'Work' }, pending.attemptToken);
+            assert.equal(cancelled.status, 204);
+        }
+        process.stdout.write(
+            'PASS: real OIDC redirect rejects a forwarded WebUI ticket in another profile\n',
+        );
+    } else if (process.argv[3] && !['blocked', 'named'].includes(process.argv[3])) {
         const login = await context.newPage();
         await login.setViewportSize({ width: 390, height: 844 });
         await login.emulateMedia({ colorScheme: 'dark' });

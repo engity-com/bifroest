@@ -261,29 +261,68 @@ func openOidcBrowser(t *testing.T, handler http.Handler, p *oidcCodeProvider, li
 	require.Empty(t, page.Result().Cookies(), "document GETs must not consume tickets")
 	start := oidcAPI(handler, "start", map[string]string{"ticket": ticket})
 	require.Equal(t, 200, start.Code, start.Body.String())
-	cookies := start.Result().Cookies()
-	require.Len(t, cookies, 1)
-	require.True(t, cookies[0].Secure && cookies[0].HttpOnly)
-	require.Equal(t, http.SameSiteLaxMode, cookies[0].SameSite)
+	view := oidcView(t, start)
+	var cookie *http.Cookie
+	for _, candidate := range start.Result().Cookies() {
+		if candidate.Name == oidcCookieName(view.ID) {
+			require.Nil(t, cookie)
+			cookie = candidate
+		}
+	}
+	require.NotNil(t, cookie)
+	require.True(t, cookie.Secure && cookie.HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
 	client := *p.server.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	view := oidcView(t, start)
 	response, err := client.Get(view.URL)
 	require.NoError(t, err)
 	defer response.Body.Close()
 	require.Equal(t, 302, response.StatusCode)
 	callback, err := url.Parse(response.Header.Get("Location"))
 	require.NoError(t, err)
-	return oidcBrowserFixture{ticket: ticket, id: view.ID, callback: callback.RequestURI(), cookie: cookies[0]}
+	return oidcBrowserFixture{ticket: ticket, id: view.ID, callback: callback.RequestURI(), cookie: cookie}
 }
 
-func startOidcWeb(t *testing.T, handler http.Handler) (string, string) {
+// Return an explicitly bound initiating browser. Adversarial tests keep the raw
+// handler (or create a second browser) rather than inheriting this cookie.
+type oidcTestInitiatingBrowser struct {
+	server http.Handler
+	cookie *http.Cookie
+}
+
+func (this *oidcTestInitiatingBrowser) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.Clone(r.Context())
+	if _, err := r.Cookie(this.cookie.Name); err == http.ErrNoCookie {
+		r.AddCookie(this.cookie)
+	}
+	this.server.ServeHTTP(w, r)
+}
+
+func oidcTestInitiator(handler http.Handler, cookie *http.Cookie) http.Handler {
+	return &oidcTestInitiatingBrowser{server: handler, cookie: cookie}
+}
+
+func startOidcWeb(t *testing.T, handler http.Handler) (string, string, http.Handler) {
 	t.Helper()
-	token := startWebAttempt(t, handler, "oidc", "", "Work", nil)
+	response := webAttemptRequest(handler, "oidc", "", map[string]string{"slug": "Work", "user": ""})
+	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+	var pending webLoginPending
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &pending))
+	token := pending.AttemptToken
+	require.NotEmpty(t, token)
+	cookies := response.Result().Cookies()
+	require.Len(t, cookies, 1)
+	require.True(t, cookies[0].Secure && cookies[0].HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, cookies[0].SameSite)
+	require.Empty(t, cookies[0].Domain)
+	require.Equal(t, "/", cookies[0].Path)
+	require.NotContains(t, cookies[0].Name, token[5:])
+	require.NotContains(t, response.Body.String(), cookies[0].Value)
+	handler = oidcTestInitiator(handler, cookies[0])
 	step := waitWebLoginStep(t, handler, token, "Work")
 	link := strings.TrimPrefix(step.Message, "Open the following URL in your browser to login: ")
 	require.Equal(t, http.StatusAccepted, answerWebStep(handler, token, "Work", step, "").Code)
-	return token, link
+	return token, link, handler
 }
 
 func TestOidcCodeWebLoginUsesRealPKCEAndExistingSessionPolicy(t *testing.T) {
@@ -291,7 +330,7 @@ func TestOidcCodeWebLoginUsesRealPKCEAndExistingSessionPolicy(t *testing.T) {
 		conf.Flows[0].Authorization.V.(*configuration.AuthorizationOidcAuthorizationCode).Ssh.LoginMessage = template.MustNewString("SSH-only text without a browser link")
 	})
 	login := func() *webAccess {
-		token, link := startOidcWeb(t, handler)
+		token, link, handler := startOidcWeb(t, handler)
 		browser := openOidcBrowser(t, handler, provider, link)
 		callback := oidcCallbackRequest(handler, browser.callback, browser.cookie)
 		require.Equal(t, 200, callback.Code, callback.Body.String())
@@ -483,8 +522,8 @@ func oidcCodeSSHDecision(t *testing.T, decision string) {
 
 func TestOidcCodeTimeoutAndParallelTransactions(t *testing.T) {
 	svc, handler, p, _ := oidcCodeFixture(t)
-	token1, link1 := startOidcWeb(t, handler)
-	token2, link2 := startOidcWeb(t, handler)
+	token1, link1, handler := startOidcWeb(t, handler)
+	token2, link2, handler := startOidcWeb(t, handler)
 	first := openOidcBrowser(t, handler, p, link1)
 	second := openOidcBrowser(t, handler, p, link2)
 	require.NotEqual(t, first.cookie.Name, second.cookie.Name)
@@ -498,7 +537,7 @@ func TestOidcCodeTimeoutAndParallelTransactions(t *testing.T) {
 	svc2, handler2, p2, _ := oidcCodeFixture(t, func(conf *configuration.Configuration, _ *oidcCodeProvider) {
 		conf.Flows[0].Authorization.V.(*configuration.AuthorizationOidcAuthorizationCode).LoginTimeout = common.DurationOf(time.Second)
 	})
-	token, link := startOidcWeb(t, handler2)
+	token, link, handler2 := startOidcWeb(t, handler2)
 	browser := openOidcBrowser(t, handler2, p2, link)
 	require.Eventually(t, func() bool {
 		svc2.web.oidcMutex.Lock()
@@ -608,7 +647,7 @@ func TestOidcSSHInstructionDoesNotRequireANewlineOrEOF(t *testing.T) {
 
 func TestOidcCodeCallbackRequiresOriginalBrowserAndState(t *testing.T) {
 	svc, handler, provider, _ := oidcCodeFixture(t)
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	browser := openOidcBrowser(t, handler, provider, link)
 	require.Equal(t, 401, oidcCallbackRequest(handler, browser.callback).Code)
 	wrong := *browser.cookie
@@ -647,7 +686,7 @@ func TestOidcCodeRejectsInvalidIdentityAndProviderError(t *testing.T) {
 			case "missing-id":
 				p.noID.Store(true)
 			}
-			token, link := startOidcWeb(t, handler)
+			token, link, handler := startOidcWeb(t, handler)
 			browser := openOidcBrowser(t, handler, p, link)
 			response := oidcCallbackRequest(handler, browser.callback, browser.cookie)
 			require.Equal(t, "denied", oidcView(t, response).Status)
@@ -662,7 +701,7 @@ func TestOidcCodeRejectsInvalidIdentityAndProviderError(t *testing.T) {
 func TestOidcCodeRememberMeRefreshAndLossShareSessionPolicy(t *testing.T) {
 	svc, handler, p, _ := oidcCodeFixture(t)
 	p.release()
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	browser := openOidcBrowser(t, handler, p, link)
 	require.Equal(t, 200, oidcCallbackRequest(handler, browser.callback, browser.cookie).Code)
 	accessToken := webTestToken(t, finishWebAttempt(t, handler, token, "Work"))
@@ -687,7 +726,7 @@ func TestOidcCodeRememberMeRefreshAndLossShareSessionPolicy(t *testing.T) {
 	require.Contains(t, rotated["refresh_token"], "rotated-refresh-")
 	require.Equal(t, "authorization_code", rotated["grant"])
 	// A later primary login keeps the retained grant, rather than clobbering it.
-	token2, link2 := startOidcWeb(t, handler)
+	token2, link2, handler := startOidcWeb(t, handler)
 	browser2 := openOidcBrowser(t, handler, p, link2)
 	require.Equal(t, 200, oidcCallbackRequest(handler, browser2.callback, browser2.cookie).Code)
 	second := webTestAccess(t, svc, webTestToken(t, finishWebAttempt(t, handler, token2, "Work")), "Work")
@@ -719,7 +758,7 @@ func TestOidcCodeAlwaysVerifiesIdentityAndDoesNotRelaxRefreshRequirements(t *tes
 					p.noRefresh.Store(true)
 				}
 			})
-			token, link := startOidcWeb(t, handler)
+			token, link, handler := startOidcWeb(t, handler)
 			browser := openOidcBrowser(t, handler, p, link)
 			oidcCallbackRequest(handler, browser.callback, browser.cookie)
 			require.NotEqual(t, 200, finishWebAttempt(t, handler, token, "Work").Code)
@@ -730,7 +769,7 @@ func TestOidcCodeAlwaysVerifiesIdentityAndDoesNotRelaxRefreshRequirements(t *tes
 
 func TestOidcCodeConcurrentCallbacksConsumeOneCode(t *testing.T) {
 	svc, handler, p, _ := oidcCodeFixture(t)
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	browser := openOidcBrowser(t, handler, p, link)
 	responses := make(chan int, 2)
 	for range 2 {
@@ -788,7 +827,7 @@ func TestOidcCodeSSHDisconnectInvalidatesPendingLogin(t *testing.T) {
 
 func TestOidcCodeRejectsWrongPKCEAndMalformedCallbacks(t *testing.T) {
 	svc, handler, p, _ := oidcCodeFixture(t)
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	browser := openOidcBrowser(t, handler, p, link)
 	for _, suffix := range []string{"&state=duplicate", "&code=duplicate", "&error=denied", "&error_description=not-an-error", "&unknown=true", "&%ZZ=invalid"} {
 		require.Equal(t, 400, oidcCallbackRequest(handler, browser.callback+suffix, browser.cookie).Code)
@@ -811,7 +850,7 @@ func TestOidcCodeCancelInterruptsExchange(t *testing.T) {
 
 func TestOidcCodeScannerResumeAndForeignReplayDoNotConsumeOrCancelTheLogin(t *testing.T) {
 	svc, handler, p, _ := oidcCodeFixture(t)
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	parsed, err := url.Parse(link)
 	require.NoError(t, err)
 	ticket := strings.TrimPrefix(parsed.Fragment, "start/")
@@ -842,7 +881,7 @@ func TestOidcCodeScannerResumeAndForeignReplayDoNotConsumeOrCancelTheLogin(t *te
 
 func TestOidcCodeWebBrowserWaitsForOriginalClaimAndRequiredAudit(t *testing.T) {
 	svc, handler, p, recorder := oidcCodeFixture(t)
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	browser := openOidcBrowser(t, handler, p, link)
 	require.Equal(t, "authorizing", oidcView(t, oidcCallbackRequest(handler, browser.callback, browser.cookie)).Status)
 	require.Eventually(t, func() bool {
@@ -874,7 +913,7 @@ func TestOidcCodeWebBrowserWaitsForOriginalClaimAndRequiredAudit(t *testing.T) {
 
 func TestOidcCodeLostCallbackResponseCanResumeWithoutAnotherExchange(t *testing.T) {
 	svc, handler, p, _ := oidcCodeFixture(t, func(_ *configuration.Configuration, p *oidcCodeProvider) { p.hold = true })
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	browser := openOidcBrowser(t, handler, p, link)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -915,7 +954,7 @@ func TestOidcCodeLostCallbackResponseCanResumeWithoutAnotherExchange(t *testing.
 
 func oidcCodeInterruptExchange(t *testing.T, action string) {
 	svc, handler, p, _ := oidcCodeFixture(t, func(_ *configuration.Configuration, p *oidcCodeProvider) { p.hold = true })
-	token, link := startOidcWeb(t, handler)
+	token, link, handler := startOidcWeb(t, handler)
 	browser := openOidcBrowser(t, handler, p, link)
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() { done <- oidcCallbackRequest(handler, browser.callback, browser.cookie) }()

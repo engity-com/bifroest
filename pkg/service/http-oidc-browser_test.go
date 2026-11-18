@@ -24,13 +24,14 @@ func TestBrowserOidcCodeRedirectWithRealCookies(t *testing.T) {
 	if os.Getenv("BIFROEST_TEST_BROWSER_CLIENT") != "1" {
 		t.Skip("set BIFROEST_TEST_BROWSER_CLIENT=1 after building web/ and installing Chromium")
 	}
-	t.Run("WebUI", func(t *testing.T) { browserOidcCode(t, false) })
-	t.Run("WebUI-popup-blocked", func(t *testing.T) { browserOidcCode(t, false, true) })
-	t.Run("WebUI-named", func(t *testing.T) { browserOidcCode(t, false, false, true) })
-	t.Run("SSH", func(t *testing.T) { browserOidcCode(t, true) })
+	t.Run("WebUI", func(t *testing.T) { browserOidcCode(t, false, "") })
+	t.Run("WebUI-popup-blocked", func(t *testing.T) { browserOidcCode(t, false, "blocked") })
+	t.Run("WebUI-named", func(t *testing.T) { browserOidcCode(t, false, "named") })
+	t.Run("WebUI-forwarded-ticket", func(t *testing.T) { browserOidcCode(t, false, "forwarded") })
+	t.Run("SSH", func(t *testing.T) { browserOidcCode(t, true, "") })
 }
 
-func browserOidcCode(t *testing.T, isSSH bool, popupBlocked ...bool) {
+func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -44,7 +45,7 @@ func browserOidcCode(t *testing.T, isSSH bool, popupBlocked ...bool) {
 		conf.Http.Addresses = bnet.NetAddresses{bnet.MustNewAddress(listener.Addr().String())}
 		conf.Http.CustomJs, conf.Http.CustomCss = []string{customJS}, []string{customCSS}
 		conf.Http.CustomHtmlBody = `<span hidden id="custom-login-body">Operator content</span>`
-		if len(popupBlocked) > 1 && popupBlocked[1] {
+		if mode == "named" {
 			conf.Flows[0].Http.RequestUser = commonBool(true)
 			conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 		}
@@ -74,11 +75,8 @@ func browserOidcCode(t *testing.T, isSSH bool, popupBlocked ...bool) {
 	defer cancel()
 	code := svc.Configuration.Flows[0].Authorization.V.(*configuration.AuthorizationOidcAuthorizationCode)
 	arguments := []string{filepath.Join(root, "web", "test", "https-oidc.ts"), code.Origin()}
-	if len(popupBlocked) != 0 && popupBlocked[0] {
-		arguments = append(arguments, "blocked")
-	}
-	if len(popupBlocked) > 1 && popupBlocked[1] {
-		arguments = append(arguments, "named")
+	if mode != "" {
+		arguments = append(arguments, mode)
 	}
 	if isSSH {
 		address := serveOidcSSH(t, svc, p)
@@ -117,6 +115,11 @@ func browserOidcCode(t *testing.T, isSSH bool, popupBlocked ...bool) {
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	require.Contains(t, string(output), "PASS: real OIDC redirect")
+	if mode == "forwarded" {
+		require.Zero(t, p.logins.Load())
+		require.Zero(t, webSessionCount(t, svc))
+		return
+	}
 	require.EqualValues(t, 1, p.logins.Load())
 	require.Equal(t, 1, webSessionCount(t, svc))
 }

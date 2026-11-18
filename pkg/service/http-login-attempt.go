@@ -93,7 +93,7 @@ func webAttemptKey(token string) ([32]byte, bool) {
 	return sha256.Sum256([]byte(token)), true
 }
 
-func (this *webService) startAttempt(r *http.Request, scope webScope, peer netip.Addr, user string, method audit.AuthenticationMethod, key ssh.PublicKey) (string, *webLoginAttempt, error) {
+func (this *webService) startAttempt(w http.ResponseWriter, r *http.Request, scope webScope, peer netip.Addr, user string, method audit.AuthenticationMethod, key ssh.PublicKey) (string, *webLoginAttempt, error) {
 	var nonce [32]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", nil, err
@@ -117,8 +117,19 @@ func (this *webService) startAttempt(r *http.Request, scope webScope, peer netip
 	}
 	expires, _ := ctx.Deadline()
 	loginMethod := authorization.LoginMethodKeyboardInteractive
+	var initiatorCookie string
 	if r.URL.Path == webAPI+"login/oidc" {
 		loginMethod = authorization.LoginMethodOidc
+		initiatorCookie, err = oidcRandom()
+		if err != nil {
+			stopShutdown()
+			cancel()
+			_ = conn.Close()
+			return "", nil, err
+		}
+		// The cookie name is a one-way index, not the control bearer. Its secret
+		// value never enters a JSON response, ticket, URL or browser JavaScript.
+		oidcAttempt.initiator = oidcInitiatorBinding{name: "__Host-bifroest-oidc-init-" + base64.RawURLEncoding.EncodeToString(index[:]), hash: sha256.Sum256([]byte(initiatorCookie))}
 	}
 	attempt := &webLoginAttempt{oidcAuthentication: oidcAttempt, loginMethod: loginMethod, conn: conn, peer: peer, method: method, primaryKey: key, expires: expires, stopContext: cancel, stopShutdown: stopShutdown, done: make(chan struct{})}
 	attempt.idle = time.AfterFunc(webAttemptIdleTimeout, cancel)
@@ -142,6 +153,9 @@ func (this *webService) startAttempt(r *http.Request, scope webScope, peer netip
 	}
 	this.attempts[index] = attempt
 	this.mutex.Unlock()
+	if loginMethod == authorization.LoginMethodOidc {
+		setOidcCookie(w, oidcAttempt.initiator.name, initiatorCookie, expires)
+	}
 	go func() {
 		defer release()
 		var auth authorization.Authorization
@@ -288,7 +302,7 @@ func (this *webService) handleAttempt(w http.ResponseWriter, r *http.Request, sc
 			}
 			method = audit.AuthenticationMethodPublicKey
 		}
-		token, attempt, err := this.startAttempt(r, scope, peer, values["user"], method, key)
+		token, attempt, err := this.startAttempt(w, r, scope, peer, values["user"], method, key)
 		if err != nil {
 			w.Header().Set("Retry-After", "60")
 			webError(w, http.StatusTooManyRequests, "login attempt limit reached")
@@ -306,6 +320,12 @@ func (this *webService) handleAttempt(w http.ResponseWriter, r *http.Request, sc
 	}
 	attempt, err := this.findAttempt(scope, peer, webBearer(r))
 	if err != nil {
+		webError(w, http.StatusUnauthorized, "login attempt denied")
+		return
+	}
+	// The control bearer remains necessary, but is not sufficient for an OIDC
+	// claim, reply or cancellation from another browser profile.
+	if attempt.loginMethod == authorization.LoginMethodOidc && !attempt.oidcAuthentication.initiator.matches(r) {
 		webError(w, http.StatusUnauthorized, "login attempt denied")
 		return
 	}

@@ -226,6 +226,7 @@ export async function loginAttempt(
     oidc = false,
 ): Promise<unknown> {
     const key = publicKey !== undefined;
+    const loginHttp = oidc ? http.forOidcLogin() : http;
     const lifetime = AbortSignal.timeout((key ? 2 : 10) * 60_000);
     const stopped = signal === undefined ? lifetime : AbortSignal.any([signal, lifetime]);
     let token: string | null = null;
@@ -235,7 +236,7 @@ export async function loginAttempt(
     let messages = 0;
     let lastPoll = -Infinity;
     try {
-        const start = await http.post(
+        const start = await loginHttp.post(
             key ? 'login/public-key' : oidc ? 'login/oidc' : 'login/interactive',
             key ? { user, publicKey } : { user },
             undefined,
@@ -269,7 +270,7 @@ export async function loginAttempt(
             lastPoll = performance.now();
             let value: unknown;
             try {
-                value = await http.post('login/poll', {}, controlToken, 200, stopped);
+                value = await loginHttp.post('login/poll', {}, controlToken, 200, stopped);
             } catch (error) {
                 if (stopped.aborted) {
                     throw new RememberMeError('cancelled');
@@ -378,7 +379,7 @@ export async function loginAttempt(
                 }
                 try {
                     current = pending(
-                        await http.post('login/reply', fields, token, 202, stopped),
+                        await loginHttp.post('login/reply', fields, token, 202, stopped),
                         false,
                         key,
                     );
@@ -414,7 +415,7 @@ export async function loginAttempt(
         if (token !== null && !claimed) {
             // Independent bounded cleanup is logical-attempt cancellation only. A lost
             // response is not retried and may already have consumed the claim.
-            await http.post('login/cancel', {}, token, 204).catch(() => undefined);
+            await loginHttp.post('login/cancel', {}, token, 204).catch(() => undefined);
         }
         token = null;
     }
