@@ -8,7 +8,9 @@ Bifröst accepts SSH and optional HTTPS browser connections, selects an [authori
 
 ## Identity and SSH targets
 
-* An [OIDC Device login](guides/oidc.md) requires a browser and an identity provider that supports the flow. By default it also requires a refresh token: Bifröst checks the grant while the session is active, and closes its connections if access is lost. Check whether the IdP invalidates existing refresh grants on user disablement; this is not an instant global logout. Keep the client secret and session storage restricted to the service operator; Bifröst stores authorization data in its session repository.
+* **OIDC:** [Authorization Code and Device Authorization](reference/authorization/oidc/index.md) use an external IdP. Protect client secrets and session storage; MFA and passkeys remain with the IdP.
+* **Browser-assisted SSH:** Select the two-character code from your own SSH client. Approving someone else's login link can give them access; code selection is not MFA, and IdP sign-in alone does not approve SSH.
+* **OIDC access loss:** Default [refresh checks](reference/authorization/oidc/authorization-code.md#refresh-token) require a refresh token. Test the IdP's revocation behavior: disabling a user is not guaranteed to invalidate existing grants immediately.
 * An [SSH gateway](guides/ssh-gateway.md) ends the incoming SSH connection and opens a separately authenticated one to the target. Configure and verify the target's host key; the gateway's incoming host key does not prove the identity of that target.
 * [Connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) maximum lifetimes can be configured. For a time-bound [off-boarding requirement](usecases.md#offboard), test both new and existing access against the actual IdP and target systems.
 

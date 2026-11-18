@@ -155,7 +155,10 @@ nav:
       - Authorizations:
           - reference/authorization/index.md
           - Local: reference/authorization/local.md
-          - OIDC: reference/authorization/oidc.md
+          - OIDC:
+              - reference/authorization/oidc/index.md
+              - Authorization Code: reference/authorization/oidc/authorization-code.md
+              - Device Authorization: reference/authorization/oidc/device-authorization.md
           - Simple: reference/authorization/simple.md
           - Bifröst: reference/authorization/bifroest.md
           - Htpasswd: reference/authorization/htpasswd.md

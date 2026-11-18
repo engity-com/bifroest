@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { createMemoryRouter, type Location } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 import type { ManagementConnection } from '../src/management/channel';
 import { BrowserBinding, BrowserClient } from '../src/remember';
 import { WebAccess } from '../src/remember/client';
@@ -13,6 +14,7 @@ import type { TerminalState } from '../src/terminal/socket';
 import { App } from '../src/ui/App';
 import { parseHashTarget } from '../src/ui/hash-route';
 import type { LinkMetadata } from '../src/ui/link-metadata';
+import { saveSuccessfulUsername, usernamePreferencePrefix } from '../src/ui/preferences';
 
 vi.mock('../src/remember/protocol', { spy: true });
 const protocol = await vi.importActual<typeof import('../src/remember/protocol')>(
@@ -92,6 +94,7 @@ function metadata(
     rootAvailable = false,
     publishedSlugs: readonly string[] = ['docker', 'Other', 'Work'],
     rememberMe: RememberMePolicy = 'allowed',
+    requestUser = false,
 ): LinkMetadata {
     return {
         scope: { origin: location.origin, slug },
@@ -102,7 +105,7 @@ function metadata(
                 : [
                       {
                           method: 'password',
-                          requestUser: false,
+                          requestUser,
                           certificateRequired: false,
                           rememberMe,
                       },
@@ -122,6 +125,9 @@ async function mountApp(
         entrySlug?: string;
         flow?: { name: string; title: string };
         rememberMe?: RememberMePolicy;
+        requestUser?: boolean;
+        missingSlugs?: readonly string[];
+        initialFailure?: 'invalid-slug' | 'unavailable';
     } = {},
 ) {
     if (management) {
@@ -147,18 +153,23 @@ async function mountApp(
             ? (JSON.parse(String(options.body)) as Record<string, string>)
             : undefined;
         requests.push({ path, options, fields });
-        if (options?.method !== 'POST') {
+        if (path === '/api/v1/discovery') {
             return new Response(
                 JSON.stringify(
                     metadata(
-                        path.slice(1),
+                        fields?.slug ?? '',
                         rootAvailable,
                         scenario.publishedSlugs,
                         scenario.rememberMe,
+                        scenario.requestUser,
                     ),
                 ),
                 {
-                    status: failDiscovery ? 503 : 200,
+                    status: scenario.missingSlugs?.includes(fields?.slug ?? '')
+                        ? 404
+                        : failDiscovery
+                          ? 503
+                          : 200,
                     headers: { 'Content-Type': 'application/json' },
                 },
             );
@@ -173,6 +184,7 @@ async function mountApp(
                     expiresAt: new Date(Date.now() + 600_000).toISOString(),
                     scope: { origin: location.origin, slug: fields?.slug },
                     principal: first ? 'alice' : 'bob',
+                    ...(fields?.user ? { requestingUser: fields.user } : {}),
                     environment: management ? 'management' : 'terminal',
                     terminalAvailable: !management,
                     keepAlive: { interval: '15s', locked: false },
@@ -250,7 +262,9 @@ async function mountApp(
                         rootAvailable,
                         scenario.publishedSlugs,
                         scenario.rememberMe,
+                        scenario.requestUser,
                     ),
+                    initialDiscoveryFailure: scenario.initialFailure,
                     scheme: 'auto',
                     onScheme: () => {},
                 }),
@@ -292,6 +306,181 @@ function dialog(): HTMLElement {
     }
     return element;
 }
+
+function preserveUsernamePreference(slug: string) {
+    const key = usernamePreferencePrefix + encodeURIComponent(slug);
+    const previous = localStorage.getItem(key);
+    cleanups.push(() => {
+        if (previous === null) {
+            localStorage.removeItem(key);
+        } else {
+            localStorage.setItem(key, previous);
+        }
+    });
+}
+
+it('finishes login without a notification icon when an existing browser registration is retained', async () => {
+    const remember = vi
+        .spyOn(WebAccess.prototype, 'remember')
+        .mockRejectedValue(new RememberMeError('already-remembered'));
+    await mountApp('/#Work', false, false, { rememberMe: 'allowedAndEnabledByDefault' });
+    await signIn();
+    expect(remember).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(selectedID()).toBe('terminal-pane-1'));
+    expect(document.querySelector('button[aria-label="Notification details"]')).toBeNull();
+    expect(document.body.textContent).not.toContain(
+        'An existing browser registration was not changed.',
+    );
+    expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
+});
+
+it('synchronizes a prefilled username when switching from Saved to a named login without input events', async () => {
+    preserveUsernamePreference('Work');
+    saveSuccessfulUsername({ origin: location.origin, slug: 'Work' }, 'prefilled@example.org');
+    vi.mocked(BrowserBinding.load).mockResolvedValue({ binding: {} } as BrowserBinding);
+    const app = await mountApp('/#Work', false, false, { requestUser: true });
+    expect(dialog().querySelector('input[name="user"]')).toBeNull();
+    await click(dialog().querySelector<HTMLElement>('[role="radio"][value="password:named"]'));
+    expect(dialog().querySelector<HTMLInputElement>('input[name="user"]')?.value).toBe(
+        'prefilled@example.org',
+    );
+    expect(app.router.state.location.hash).toBe('#prefilled%40example.org@Work');
+    expect(app.requests).toEqual([]);
+});
+
+it('pins each authenticated tab URL to its own original requesting username, not the last edited field or principal', async () => {
+    preserveUsernamePreference('Work');
+    const app = await mountApp('/#first-hint@Work', false, false, { requestUser: true });
+    await signIn();
+    expect(app.router.state.location.hash).toMatch(/^#first-hint@Work\//u);
+    await click(button('New connection'));
+    expect(dialog().querySelector<HTMLInputElement>('input[name="user"]')?.value).toBe(
+        'first-hint',
+    );
+    expect(app.router.state.location.hash).toBe('#first-hint@Work');
+    const user = dialog().querySelector<HTMLInputElement>('input[name="user"]');
+    if (!user) {
+        throw new Error('Missing requesting username');
+    }
+    await act(async () => {
+        await userEvent.fill(user, 'second-hint');
+    });
+    await signIn();
+    expect(app.router.state.location.hash).toMatch(/^#second-hint@Work\//u);
+    await click(document.getElementById('terminal-tab-1'));
+    expect(app.router.state.location.hash).toMatch(/^#first-hint@Work\//u);
+    await click(button('New connection'));
+    const input = dialog().querySelector<HTMLInputElement>('input[name="user"]');
+    if (!input) {
+        throw new Error('Missing new login input');
+    }
+    await act(async () => {
+        await userEvent.fill(input, '');
+    });
+    await click(button('Close', dialog()));
+    expect(app.router.state.location.hash).toMatch(/^#first-hint@Work\//u);
+});
+
+it('marks empty usernames inline without native validation popups, notices or authentication requests', async () => {
+    preserveUsernamePreference('Work');
+    const app = await mountApp('/#Work', false, false, { requestUser: true });
+    const user = dialog().querySelector<HTMLInputElement>('input[name="user"]');
+    const form = dialog().querySelector('form');
+    if (!user || !form) {
+        throw new Error('Missing named form');
+    }
+    await act(async () => {
+        await userEvent.fill(user, '');
+        form.requestSubmit();
+    });
+    expect(user.getAttribute('aria-invalid')).toBe('true');
+    expect(dialog().textContent).toContain('Enter a user name before signing in.');
+    expect(dialog().querySelector('[role="status"]')).toBeNull();
+    expect(app.requests).toEqual([]);
+    await act(async () => {
+        await userEvent.fill(user, 'valid-user');
+    });
+    expect(user.getAttribute('aria-invalid')).toBe('false');
+});
+
+it('prefills shared usernames and replaces only the username without discovery, password loss or extra history entries', async () => {
+    preserveUsernamePreference('Work');
+    const app = await mountApp('/#alice%40example.org@Work', false, false, {
+        requestUser: true,
+        precedingPath: '/#Other',
+    });
+    const user = dialog().querySelector<HTMLInputElement>('input[name="user"]');
+    const password = dialog().querySelector<HTMLInputElement>('input[name="password"]');
+    if (!user || !password) {
+        throw new Error('Missing named login inputs');
+    }
+    expect(user.value).toBe('alice@example.org');
+    password.value = 'keep-this-private';
+    const key = app.router.state.location.key;
+    await act(async () => {
+        await userEvent.fill(user, 'bob@example.org');
+    });
+    expect(app.router.state.location.hash).toBe('#bob%40example.org@Work');
+    expect(app.router.state.historyAction).toBe('REPLACE');
+    expect(app.router.state.location.key).not.toBe(key);
+    expect(user.value).toBe('bob@example.org');
+    expect(password.value).toBe('keep-this-private');
+    expect(app.requests).toEqual([]);
+    await act(async () => {
+        await userEvent.fill(user, '');
+    });
+    expect(app.router.state.location.hash).toBe('#Work');
+    expect(user.value).toBe('');
+    expect(password.value).toBe('keep-this-private');
+    await act(async () => {
+        await app.router.navigate(-1);
+    });
+    expect(app.router.state.location.hash).toBe('#Other');
+});
+
+it('accepts an unpublished typed Slug and marks a missing Slug only at its editable field', async () => {
+    const app = await mountApp('/#Work', false, false, { missingSlugs: ['notexistent'] });
+    const input = dialog().querySelector<HTMLInputElement>('input[role="combobox"]');
+    if (!input) {
+        throw new Error('Missing editable Slug');
+    }
+    await act(async () => {
+        await userEvent.fill(input, 'hidden');
+        await userEvent.keyboard('{Enter}');
+    });
+    expect(app.router.state.location.hash).toBe('#hidden');
+    expect(app.requests.at(-1)?.path).toBe('/api/v1/discovery');
+    expect(app.requests.at(-1)?.fields).toEqual({ slug: 'hidden' });
+    expect(dialog().querySelector('form')).not.toBeNull();
+    await act(async () => {
+        await userEvent.fill(input, 'notexistent');
+        await userEvent.keyboard('{Enter}');
+    });
+    expect(app.router.state.location.hash).toBe('#notexistent');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(dialog().textContent).toContain('Invalid Slug.');
+    expect(dialog().querySelector('[role="alert"]')).toBeNull();
+    expect(dialog().querySelector('form')).toBeNull();
+    expect(dialog().textContent).not.toContain('Retry loading options');
+    await act(async () => {
+        await userEvent.fill(input, 'Work');
+        await userEvent.keyboard('{Enter}');
+    });
+    expect(input.getAttribute('aria-invalid')).toBe('false');
+    expect(dialog().querySelector('form')).not.toBeNull();
+});
+
+it('renders cold unknown Slugs in the same login dialog without retrying or exposing previous login methods', async () => {
+    const app = await mountApp('/#notexistent', false, false, { initialFailure: 'invalid-slug' });
+    expect(dialog().querySelector<HTMLInputElement>('input[role="combobox"]')?.value).toBe(
+        'notexistent',
+    );
+    expect(dialog().textContent).toContain('Invalid Slug.');
+    expect(dialog().querySelector('form')).toBeNull();
+    expect(app.requests).toEqual([]);
+    await chooseSlug('Work');
+    expect(dialog().querySelector('form')).not.toBeNull();
+});
 async function click(element: HTMLElement | null) {
     if (!element) {
         throw new Error('Missing element');
@@ -381,7 +570,11 @@ it('selects Saved before Password without credential fields and resumes only on 
     expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
     await signIn();
     expect(BrowserClient.prototype.resume).toHaveBeenCalledOnce();
-    expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(0);
+    expect(
+        app.requests.filter(
+            (request) => request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+        ),
+    ).toHaveLength(0);
 });
 
 it('allows a fresh password login and defaults back to Saved when reopening sign-in', async () => {
@@ -415,7 +608,11 @@ it('keeps saved registration selection scoped to its own Slug', async () => {
         dialog().querySelector('[role="radio"][value="saved"]')?.getAttribute('aria-checked'),
     ).toBe('true');
     expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
-    expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(0);
+    expect(
+        app.requests.filter(
+            (request) => request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+        ),
+    ).toHaveLength(0);
 });
 
 it('does not replace a user-selected password form after a delayed saved-access lookup', async () => {
@@ -556,18 +753,22 @@ describe('owned workspace view routing with the real router and workspace', () =
         });
         expect(fragmentScope(app.router.state.location)).toBe('foo');
         expect(app.router.state.historyAction).toBe('REPLACE');
-        expect(dialog().querySelector('[role="combobox"]')).toBeNull();
+        expect(dialog().querySelector('[role="combobox"]')).not.toBeNull();
         expect(dialog().querySelector('form')).not.toBeNull();
-        expect(app.requests.map((request) => request.path)).toEqual(['/foo']);
+        expect(app.requests.map((request) => request.path)).toEqual(['/api/v1/discovery']);
+        expect(app.requests[0]?.fields).toEqual({ slug: 'foo' });
         expect(app.requests[0]?.options).toMatchObject({
             credentials: 'omit',
             cache: 'no-store',
             mode: 'same-origin',
             redirect: 'error',
         });
-        expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(
-            0,
-        );
+        expect(
+            app.requests.filter(
+                (request) =>
+                    request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+            ),
+        ).toHaveLength(0);
         expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
         expect(panels.mounted).toEqual([]);
         await act(async () => {
@@ -588,7 +789,7 @@ describe('owned workspace view routing with the real router and workspace', () =
         async (initial) => {
             const app = await mountApp(initial, false, false, { publishedSlugs: ['foo'] });
             expect(fragmentScope(app.router.state.location)).toBe(initial.slice(1));
-            expect(Boolean(dialog().querySelector('[role="combobox"]'))).toBe(initial !== '/foo');
+            expect(dialog().querySelector('[role="combobox"]')).not.toBeNull();
             expect(app.requests).toEqual([]);
             expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
         },
@@ -597,16 +798,21 @@ describe('owned workspace view routing with the real router and workspace', () =
     it('does not skip a known alias tab when returning to a directory with one published slug', async () => {
         const app = await mountApp('/bla-bla', false, false, { publishedSlugs: ['foo'] });
         await signIn();
-        const posts = app.requests.filter((request) => request.options?.method === 'POST').length;
+        const posts = app.requests.filter(
+            (request) => request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+        ).length;
         await act(async () => {
             await app.router.navigate('/');
         });
         expect(app.router.state.location.pathname).toBe('/');
         expect(dialog().querySelector('[role="combobox"]')).not.toBeNull();
         expect(dialog().querySelector('form')).toBeNull();
-        expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(
-            posts,
-        );
+        expect(
+            app.requests.filter(
+                (request) =>
+                    request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+            ),
+        ).toHaveLength(posts);
         expect(panels.unmounted).toEqual([]);
         expect(panels.signals.get(1)?.aborted).toBe(false);
     });
@@ -617,12 +823,15 @@ describe('owned workspace view routing with the real router and workspace', () =
             failDiscovery: true,
         });
         expect(fragmentScope(app.router.state.location)).toBe('foo');
-        expect(app.requests.map((request) => request.path)).toEqual(['/foo']);
-        expect(dialog().querySelector('[role="combobox"]')).toBeNull();
+        expect(app.requests.map((request) => request.path)).toEqual(['/api/v1/discovery']);
+        expect(dialog().querySelector('[role="combobox"]')).not.toBeNull();
         expect(button('Retry loading options')).toBeDefined();
-        expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(
-            0,
-        );
+        expect(
+            app.requests.filter(
+                (request) =>
+                    request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+            ),
+        ).toHaveLength(0);
         expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
     });
 
@@ -786,7 +995,8 @@ describe('owned workspace view routing with the real router and workspace', () =
         expect(
             dialog().querySelector('[data-login-scope="bla-bla"][data-login-ready="true"]'),
         ).not.toBeNull();
-        expect(app.requests.at(-1)?.path).toBe('/bla-bla');
+        expect(app.requests.at(-1)?.path).toBe('/api/v1/discovery');
+        expect(app.requests.at(-1)?.fields).toEqual({ slug: 'bla-bla' });
     });
 
     it('does not revive closed IDs or IDs from a reload, and never automatically authenticates', async () => {
@@ -804,15 +1014,20 @@ describe('owned workspace view routing with the real router and workspace', () =
         await click(close ?? null);
         await click(button('Close terminal'));
         expect(document.getElementById('terminal-pane-1')).toBeNull();
-        const posts = app.requests.filter((request) => request.options?.method === 'POST').length;
+        const posts = app.requests.filter(
+            (request) => request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+        ).length;
         await act(async () => {
             await app.router.navigate('/bla-bla', { state: old.state });
         });
         expect(dialog().querySelector('form')).not.toBeNull();
         expect(selectedID()).toBeNull();
-        expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(
-            posts,
-        );
+        expect(
+            app.requests.filter(
+                (request) =>
+                    request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+            ),
+        ).toHaveLength(posts);
         await signIn();
         expect(document.getElementById('terminal-pane-1')).toBeNull();
         expect(selectedID()).toBe('terminal-pane-2');
@@ -938,9 +1153,20 @@ describe('owned workspace view routing with the real router and workspace', () =
         expect(selectedID()).toBe('terminal-pane-1');
         expect(panels.signals.get(1)?.aborted).toBe(false);
         expect(panels.unmounted).toEqual([]);
+        expect(dialog().textContent).toContain(
+            'Complete or resolve the current operation before changing the Slug.',
+        );
         await act(async () => {
             release();
         });
+        await vi.waitFor(() => expect(selectedID()).toBe('terminal-pane-2'));
+        await vi.waitFor(() =>
+            expect(
+                [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((node) =>
+                    node.checkVisibility({ visibilityProperty: true }),
+                ),
+            ).toEqual([]),
+        );
     });
 
     it('atomically blocks a same-Slug POP between different actors during targeted logout, without losing its completion', async () => {
@@ -1011,7 +1237,7 @@ describe('owned workspace view routing with the real router and workspace', () =
             const app = await mountApp('/', rootAvailable);
             const select = dialog().querySelector<HTMLElement>('[role="combobox"]');
             expect(select).not.toBeNull();
-            expect(select?.textContent?.replaceAll('\u200b', '')).toBe(rootAvailable ? '/' : '');
+            expect((select as HTMLInputElement | null)?.value).toBe('/');
             await act(async () => {
                 select?.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }));
             });
@@ -1051,10 +1277,15 @@ describe('owned workspace view routing with the real router and workspace', () =
         expect(
             dialog().querySelector('[data-login-scope="Other"][data-login-ready="true"]'),
         ).not.toBeNull();
-        expect(app.requests.slice(requests).map((request) => request.path)).toEqual(['/Other']);
-        expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(
-            2,
-        );
+        expect(app.requests.slice(requests).map((request) => request.path)).toEqual([
+            '/api/v1/discovery',
+        ]);
+        expect(
+            app.requests.filter(
+                (request) =>
+                    request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+            ),
+        ).toHaveLength(2);
         expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
         expect(panels.mounted).toEqual([1, 2]);
         expect(panels.unmounted).toEqual([]);
@@ -1153,7 +1384,9 @@ describe('owned workspace view routing with the real router and workspace', () =
     it('closes only the active management tab on Ctrl+D and does not close it behind sign-in', async () => {
         const app = await mountApp('/#Work', false, true);
         await signIn();
-        const posts = app.requests.filter((request) => request.options?.method === 'POST').length;
+        const posts = app.requests.filter(
+            (request) => request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+        ).length;
         await click(button('New connection'));
         await act(async () =>
             document.dispatchEvent(
@@ -1204,9 +1437,12 @@ describe('owned workspace view routing with the real router and workspace', () =
         expect(document.getElementById('terminal-pane-1')).toBeNull();
         expect(dialog().querySelector('form')).not.toBeNull();
         expect(app.requests.filter((request) => request.path.endsWith('/logout'))).toHaveLength(0);
-        expect(app.requests.filter((request) => request.options?.method === 'POST')).toHaveLength(
-            posts,
-        );
+        expect(
+            app.requests.filter(
+                (request) =>
+                    request.options?.method === 'POST' && request.path !== '/api/v1/discovery',
+            ),
+        ).toHaveLength(posts);
     });
 
     it('does not log in on failed root discovery or explicit retry', async () => {
@@ -1217,8 +1453,11 @@ describe('owned workspace view routing with the real router and workspace', () =
         });
         expect(dialog().querySelector('form')).toBeNull();
         await click(button('Retry loading options', dialog()));
-        expect(app.requests.map((request) => request.path)).toEqual(['/', '/']);
-        expect(app.requests.every((request) => request.options?.method !== 'POST')).toBe(true);
+        expect(app.requests.map((request) => request.path)).toEqual([
+            '/api/v1/discovery',
+            '/api/v1/discovery',
+        ]);
+        expect(app.requests.every((request) => request.path === '/api/v1/discovery')).toBe(true);
         expect(BrowserClient.prototype.resume).not.toHaveBeenCalled();
     });
 

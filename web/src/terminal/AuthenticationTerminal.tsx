@@ -2,7 +2,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { Box, Button, Stack, Typography, useTheme } from '@mui/material';
 import type { IDisposable, Terminal as Xterm } from '@xterm/xterm';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { verificationLink } from '../login/links';
 import { AuthenticationInput, authenticationText } from '../login/terminal-input';
 import type { LoginStep } from '../remember';
@@ -16,6 +16,7 @@ import {
 } from '../ui/terminal-font';
 import { protectAuthenticationComposition } from './authentication-composition';
 import type { AuthenticationView } from './authentication-view';
+import { terminalClipboardKey } from './clipboard';
 import { noncedDocument } from './document';
 import { ownTerminalKey } from './keyboard';
 import '@xterm/xterm/css/xterm.css';
@@ -35,6 +36,7 @@ export function AuthenticationTerminal({
     const editor = useRef(new AuthenticationInput());
     const ready = useRef<LoginStep | null>(null);
     const composition = useRef<ReturnType<typeof protectAuthenticationComposition> | null>(null);
+    const [clipboardFailed, setClipboardFailed] = useState(false);
     const current = useRef({ view, active });
     current.current = { view, active };
     const shown = useRef<string | null>(null);
@@ -43,6 +45,40 @@ export function AuthenticationTerminal({
     const fontSize = useTerminalFontSize();
     const background = mode === 'dark' ? '#101820' : '#ffffff';
     const providerURL = view.provider ? verificationLink(view.provider.message) : null;
+    const submit = useCallback((answer: string) => {
+        const owned = current.current;
+        const step = owned.view.step;
+        if (!owned.active || !owned.view.pending || ready.current !== step) {
+            return;
+        }
+        ready.current = null;
+        if (container.current) {
+            container.current.dataset.authReady = 'false';
+        }
+        owned.view.onAnswer(answer);
+    }, []);
+    const paste = useCallback(
+        (text: string) => {
+            const owned = current.current;
+            if (!owned.active || !owned.view.pending || ready.current !== owned.view.step) {
+                return;
+            }
+            if (composition.current?.pending()) {
+                owned.view.onCancel();
+                return;
+            }
+            const result = editor.current.consume(text);
+            if (result.display) {
+                terminal.current?.write(result.display);
+            }
+            if (result.cancelled) {
+                owned.view.onCancel();
+            } else if (result.answer !== undefined) {
+                submit(result.answer);
+            }
+        },
+        [submit],
+    );
     useEffect(() => {
         const host = container.current;
         if (!host) {
@@ -103,6 +139,29 @@ export function AuthenticationTerminal({
                 renderer.loadAddon(fit);
                 renderer.open(container.current);
                 renderer.attachCustomKeyEventHandler((event) => {
+                    if (
+                        terminalClipboardKey(event, {
+                            active: () => !disposed && current.current.active,
+                            selection: () => renderer.getSelection(),
+                            capturePaste: () => {
+                                const step = ready.current;
+                                return step && current.current.view.pending
+                                    ? (text) => {
+                                          if (
+                                              ready.current === step &&
+                                              current.current.view.step === step
+                                          ) {
+                                              paste(text);
+                                          }
+                                      }
+                                    : null;
+                            },
+                            failed: () => setClipboardFailed(true),
+                            succeeded: () => setClipboardFailed(false),
+                        })
+                    ) {
+                        return false;
+                    }
                     const zoom = terminalZoomKey(event);
                     if (current.current.active && zoom) {
                         event.preventDefault();
@@ -216,11 +275,7 @@ export function AuthenticationTerminal({
                         if (result.cancelled) {
                             owned.view.onCancel();
                         } else if (result.answer !== undefined) {
-                            ready.current = null;
-                            if (container.current) {
-                                container.current.dataset.authReady = 'false';
-                            }
-                            owned.view.onAnswer(result.answer);
+                            submit(result.answer);
                         }
                     }),
                 );
@@ -252,7 +307,7 @@ export function AuthenticationTerminal({
             terminal.current?.dispose();
             terminal.current = null;
         };
-    }, [background, mode]);
+    }, [background, mode, paste, submit]);
     useEffect(() => {
         current.current = { view, active };
         redraw.current?.();
@@ -278,7 +333,11 @@ export function AuthenticationTerminal({
             >
                 {view.step?.message ?? view.message ?? t('authenticationWaiting')}
             </Box>
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', px: 1, py: 0.5 }}>
+            <Stack
+                direction="row"
+                spacing={1}
+                sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 0.5, px: 1, py: 0.5 }}
+            >
                 <Typography variant="body2" sx={{ flexGrow: 1 }}>
                     {view.pending ? t('authenticationInProgress') : t('authenticationStopped')}
                 </Typography>
@@ -303,6 +362,16 @@ export function AuthenticationTerminal({
                 >
                     {view.pending ? t('cancel') : t('close')}
                 </Button>
+                {clipboardFailed && (
+                    <Typography
+                        role="status"
+                        variant="body2"
+                        color="error"
+                        sx={{ flexBasis: '100%' }}
+                    >
+                        {t('terminalClipboardFailed')}
+                    </Typography>
+                )}
             </Stack>
             <section
                 ref={container}
@@ -313,29 +382,7 @@ export function AuthenticationTerminal({
                 onPasteCapture={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    if (!current.current.active || !current.current.view.pending) {
-                        return;
-                    }
-                    if (composition.current?.pending()) {
-                        current.current.view.onCancel();
-                        return;
-                    }
-                    if (ready.current !== current.current.view.step) {
-                        return;
-                    }
-                    const result = editor.current.consume(event.clipboardData.getData('text'));
-                    if (result.display) {
-                        terminal.current?.write(result.display);
-                    }
-                    if (result.cancelled) {
-                        current.current.view.onCancel();
-                    } else if (result.answer !== undefined) {
-                        ready.current = null;
-                        if (container.current) {
-                            container.current.dataset.authReady = 'false';
-                        }
-                        current.current.view.onAnswer(result.answer);
-                    }
+                    paste(event.clipboardData.getData('text'));
                 }}
             />
         </div>

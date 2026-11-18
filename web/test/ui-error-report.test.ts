@@ -33,7 +33,7 @@ describe('browser error console without retaining secrets', () => {
     });
     it('preserves only already loaded public asset callsites, not messages, names or arbitrary URLs', () => {
         const log = vi.spyOn(console, 'error').mockImplementation(() => {});
-        const asset = `${location.origin}/_bifroest/files/assets/index-PUBLIC.js`;
+        const asset = `${location.origin}/assets/index-PUBLIC.js`;
         vi.spyOn(performance, 'getEntriesByType').mockReturnValue([
             { name: asset },
         ] as PerformanceEntry[]);
@@ -42,7 +42,7 @@ describe('browser error console without retaining secrets', () => {
         reportUiError('artifact', original);
         const error = log.mock.calls[0]?.[1] as Error;
         expect(error).toMatchObject({ name: 'TypeError' });
-        expect(error.stack).toContain('/_bifroest/files/assets/index-PUBLIC.js:12:34');
+        expect(error.stack).toContain('/assets/index-PUBLIC.js:12:34');
         expect(JSON.stringify(log.mock.calls) + error.stack).not.toContain('PRIVATE-');
     });
     it('does not let console/performance failure change application behavior or hide unknown mutation outcomes', () => {

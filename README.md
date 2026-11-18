@@ -7,7 +7,7 @@ Bifröst is a configurable SSH server and gateway for teams managing access to h
 ## Features
 
 * **Standard SSH clients:** Connect using OpenSSH, PuTTY or another regular SSH client without installing a Bifröst-specific client.
-* **Flexible authorization:** Choose local accounts, SSH keys or [OIDC Device Authorization](docs/guides/oidc.md) through configurable access flows.
+* **Flexible authorization:** Choose local accounts, SSH keys or [OIDC](docs/reference/authorization/oidc/index.md) through configurable access flows.
 * **Host and container sessions:** Work as a local user, in a Docker container or in a Kubernetes Pod; optionally provision and clean up managed local accounts.
 * **SSH gateway:** Reach private SSH servers through a [separately authenticated connection](docs/guides/ssh-gateway.md) with target host-key verification.
 * **Audit and recording:** Optionally write signed audit events and verifiable [terminal recordings](docs/guides/recording.md).

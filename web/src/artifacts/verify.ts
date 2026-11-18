@@ -132,7 +132,7 @@ async function verifyArtifactImage(
         if (session) {
             worker = session.worker;
         } else {
-            worker = new Worker('/_bifroest/files/browser-evidence-worker.js', {
+            worker = new Worker('/assets/browser-evidence-worker.js', {
                 type: 'module',
                 credentials: 'omit',
                 name: 'bifroest-evidence',
@@ -263,7 +263,7 @@ async function createRecordingRuntimeInstance(
     }
     let worker: Worker;
     try {
-        worker = new Worker('/_bifroest/files/browser-evidence-worker.js', {
+        worker = new Worker('/assets/browser-evidence-worker.js', {
             type: 'module',
             credentials: 'omit',
             name: recordingID ? 'bifroest-recording-open' : 'bifroest-recording-verification',

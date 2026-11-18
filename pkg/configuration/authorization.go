@@ -207,7 +207,7 @@ func (this Authorization) SupportsRememberMe() bool {
 	if this.V != nil {
 		for _, kind := range this.V.Types() {
 			switch kind {
-			case "local", "simple", "htpasswd", "oidcDeviceAuth":
+			case "local", "simple", "htpasswd", "oidcDeviceAuth", "oidcAuthorizationCode":
 				return true
 			}
 		}

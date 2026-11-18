@@ -23,11 +23,11 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
-const Prefix = "/_bifroest/files/"
+const Prefix = "/assets/"
 const KeyWorkerPath = Prefix + "browser-key-worker.js"
 const TransferWorkerPath = Prefix + "browser-transfer-worker.js"
 const EvidenceWorkerPath = Prefix + "browser-evidence-worker.js"
-const CustomPrefix = "/_bifroest/custom/"
+const CustomPrefix = Prefix + "custom/"
 const maxFile = 8 << 20
 const maxIndex = 512 << 10
 
@@ -202,7 +202,7 @@ func (this *Assets) Read(name string) ([]byte, error) {
 		return nil, ErrAsset
 	}
 	limit := int64(maxFile)
-	if name == "index.html" {
+	if name == "index.html" || name == "login.html" {
 		limit = maxIndex
 	}
 	if this.overlay != nil {
@@ -229,9 +229,9 @@ func (this *Assets) Resource(urlPath string) ([]byte, string, error) {
 	var data []byte
 	var err error
 	var extension string
-	if strings.HasPrefix(urlPath, Prefix) {
+	if strings.HasPrefix(urlPath, Prefix) && !strings.HasPrefix(urlPath, CustomPrefix) {
 		name := strings.TrimPrefix(urlPath, Prefix)
-		if name == "index.html" {
+		if name == "index.html" || name == "login.html" {
 			return nil, "", fs.ErrNotExist
 		}
 		data, err = this.Read(name)
@@ -270,7 +270,15 @@ func (this *Assets) Resource(urlPath string) ([]byte, string, error) {
 }
 
 func (this *Assets) Document() ([]byte, string, error) {
-	raw, err := this.Read("index.html")
+	return this.document("index.html")
+}
+
+func (this *Assets) LoginDocument() ([]byte, string, error) {
+	return this.document("login.html")
+}
+
+func (this *Assets) document(name string) ([]byte, string, error) {
+	raw, err := this.Read(name)
 	if err != nil {
 		return nil, "", err
 	}

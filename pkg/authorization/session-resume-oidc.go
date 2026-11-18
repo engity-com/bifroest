@@ -12,7 +12,7 @@ import (
 )
 
 func (this *OidcDeviceAuthAuthorizer) ResumeSession(req SessionResumeRequest) (Authorization, error) {
-	sess, key, err := beginSessionResume(req, "oidc-device-auth", this.flow)
+	sess, key, err := beginSessionResume(req, this.authorizationKind(), this.flow)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +62,9 @@ func (this *OidcDeviceAuthAuthorizer) restoreSessionAccess(ctx context.Context, 
 		return nil, nil, err
 	}
 	if token.Token == nil || token.AccessToken == "" {
+		return nil, nil, nil
+	}
+	if !this.matchesTokenGrant(&token) {
 		return nil, nil, nil
 	}
 	if resume, ok := req.(SessionResumeRequest); ok && !oidcTokenHasIdentity(&token, resume.ResumeIdentity()) {

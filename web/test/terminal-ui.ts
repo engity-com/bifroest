@@ -125,6 +125,25 @@ export async function exerciseTerminal(page: Page, login: Login) {
     assert.equal(page.context().pages().length, pages, 'remote links must not open windows');
     await type('hello');
     await output('STDIN:hello');
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+        origin: new URL(page.url()).origin,
+    });
+    await page.evaluate(() => navigator.clipboard.writeText('clipboard-input'));
+    await pane().locator('.xterm-helper-textarea').focus();
+    functionInput = [];
+    await page.keyboard.press('Control+Shift+C');
+    await page.keyboard.press('Control+Shift+V');
+    await page.keyboard.press('Enter');
+    await output('STDIN:clipboard-input');
+    assert(
+        !Buffer.concat(functionInput).includes(Buffer.from('\x03')),
+        'copy must not interrupt the shell',
+    );
+    assert(
+        !Buffer.concat(functionInput).includes(Buffer.from('\x16')),
+        'paste must not emit Ctrl+V',
+    );
+    functionInput = null;
     await pane().locator('.xterm-helper-textarea').focus();
     await page.evaluate(() => {
         window.testTerminalKeys = [];

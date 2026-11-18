@@ -48,7 +48,7 @@ refreshToken:
   mode: never
 ```
 
-See the [OIDC authorization reference](../reference/authorization/oidc.md#device-auth) for the full configuration and examples.
+See the [Device Authorization reference](../reference/authorization/oidc/device-authorization.md) for the full configuration and examples.
 
 ## Environments
 

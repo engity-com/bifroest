@@ -13,7 +13,7 @@ export async function loadLoginWasm(signal: AbortSignal): Promise<ArrayBuffer> {
         if (stopped.aborted) {
             throw new Error('WASM download cancelled');
         }
-        const response = await fetch('/_bifroest/files/browser-key.wasm', {
+        const response = await fetch('/assets/browser-key.wasm', {
             credentials: 'omit',
             mode: 'same-origin',
             cache: 'no-store',

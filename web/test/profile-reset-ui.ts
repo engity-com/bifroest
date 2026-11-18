@@ -31,7 +31,10 @@ async function bulk(page: Page, name: string) {
 export async function exerciseProfileReset(page: Page, login: Login) {
     const calls: string[] = [];
     const observe = (request: Request) => {
-        if (request.method() === 'POST') {
+        if (
+            request.method() === 'POST' &&
+            new URL(request.url()).pathname !== '/api/v1/discovery'
+        ) {
             calls.push(new URL(request.url()).pathname);
         }
     };
@@ -84,7 +87,7 @@ export async function exerciseProfileReset(page: Page, login: Login) {
     peer.on('pageerror', (error) => peerErrors.push(error.name));
     peer.on('request', observe);
     try {
-        assert.equal(required(await peer.goto(new URL('/Other', page.url()).href)).status(), 200);
+        assert.equal(required(await peer.goto(new URL('/#Other', page.url()).href)).status(), 200);
         await login(peer, true);
         await workspace(peer, 'Overview');
         assert.equal(await countBindings(page), 2);

@@ -24,6 +24,9 @@ import { BrowserBinding } from './store';
 export interface AccessSnapshot {
     readonly scope: Scope;
     readonly principal: string;
+    // Original requesting name, not the verified OIDC principal or a login hint
+    // borrowed from another tab. Absent for name-free authentication.
+    readonly requestingUser?: string;
     readonly expiresAt: string;
     readonly environment: 'terminal' | 'management';
     readonly terminalAvailable: boolean;
@@ -66,6 +69,9 @@ function accessResponse(value: unknown, scope: Scope): AccessResponse {
         'expiresAt',
         'scope',
         'principal',
+        ...(value !== null && typeof value === 'object' && Object.hasOwn(value, 'requestingUser')
+            ? ['requestingUser']
+            : []),
         'environment',
         'terminalAvailable',
         'keepAlive',
@@ -85,6 +91,11 @@ function accessResponse(value: unknown, scope: Scope): AccessResponse {
         typeof body.principal !== 'string' ||
         body.principal.length > 4096 ||
         /[\p{Cc}]/u.test(body.principal) ||
+        (body.requestingUser !== undefined &&
+            (typeof body.requestingUser !== 'string' ||
+                body.requestingUser.length > 256 ||
+                !body.requestingUser.isWellFormed() ||
+                /[\p{Cc}]/u.test(body.requestingUser))) ||
         (body.environment !== 'terminal' && body.environment !== 'management') ||
         body.terminalAvailable !== (body.environment === 'terminal')
     ) {
@@ -113,6 +124,7 @@ function accessResponse(value: unknown, scope: Scope): AccessResponse {
         expiresAt: time(body.expiresAt),
         scope: Object.freeze({ ...scope }),
         principal: body.principal,
+        ...(typeof body.requestingUser === 'string' ? { requestingUser: body.requestingUser } : {}),
         environment: body.environment,
         terminalAvailable: body.terminalAvailable as boolean,
         keepAlive: keepAlivePolicy(body.keepAlive),
@@ -207,6 +219,7 @@ export class WebAccess {
         const {
             scope,
             principal,
+            requestingUser,
             expiresAt,
             environment,
             terminalAvailable,
@@ -217,6 +230,7 @@ export class WebAccess {
         return Object.freeze({
             scope,
             principal,
+            ...(requestingUser === undefined ? {} : { requestingUser }),
             expiresAt,
             environment,
             terminalAvailable,
@@ -695,6 +709,7 @@ export class BrowserClient {
         user: string,
         handler: StepHandler,
         signal?: AbortSignal,
+        oidc = false,
     ): Promise<WebAccess> {
         if (this.#loginActive) {
             throw new RememberMeError('busy');
@@ -709,7 +724,7 @@ export class BrowserClient {
         }
         this.#loginActive = true;
         try {
-            const value = await interactive(this.#http, user, handler, signal);
+            const value = await interactive(this.#http, user, handler, signal, oidc);
             if (signal?.aborted) {
                 throw new RememberMeError('cancelled');
             }

@@ -88,7 +88,8 @@ class DocsConfigurationTypesTest(TestCase):
         self.assertIn('Includes the [Environment context](environment.md), plus:', context)
         http = (DOCS / 'reference/connection/http/index.md').read_text(encoding='utf-8')
         introduction = http.split('# HTTP connection', 1)[1].split('## Configuration', 1)[0]
-        self.assertEqual(1, len(introduction.strip().splitlines()))
+        self.assertEqual(1, len(introduction.strip().split('\n\n', 1)[0].splitlines()))
+        self.assertLessEqual(len(introduction.strip().splitlines()), 8)
         self.assertNotIn('<tab-id>', http)
         self.assertNotIn('Legacy', http)
 
@@ -121,10 +122,11 @@ class DocsConfigurationTypesTest(TestCase):
         self.assertIn('## RememberMe {: #rememberme }', data_types)
         for value in ['forbidden', 'allowed', 'allowedAndEnabledByDefault', 'enforced']:
             self.assertIn(f'`{value}`', data_types)
-        for kind in ['local', 'simple', 'htpasswd', 'oidc']:
+        for kind in ['local', 'simple', 'htpasswd', 'oidc/authorization-code', 'oidc/device-authorization']:
             prop = next(call for call in properties(f'reference/authorization/{kind}.md') if ast.literal_eval(call.args[0]) == 'rememberMe')
             self.assertEqual('RememberMe', ast.literal_eval(prop.args[1]))
-            self.assertEqual('../data-type.md#rememberme', ast.literal_eval(prop.args[2]))
+            prefix = '../../' if kind.startswith('oidc/') else '../'
+            self.assertEqual(prefix + 'data-type.md#rememberme', ast.literal_eval(prop.args[2]))
         for kind in ['index', 'none', 'bifroest']:
             self.assertNotIn('rememberMe', [ast.literal_eval(call.args[0]) for call in properties(f'reference/authorization/{kind}.md')])
         for page in DOCS.rglob('*.md'):

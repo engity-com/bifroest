@@ -812,7 +812,7 @@ class PlaybackWorker extends EventTarget {
     requests: unknown[] = [];
     constructor(url: string, config: WorkerOptions) {
         super();
-        expect(url).toBe('/_bifroest/files/browser-evidence-worker.js');
+        expect(url).toBe('/assets/browser-evidence-worker.js');
         expect(config.credentials).toBe('omit');
         PlaybackWorker.instances.push(this);
         queueMicrotask(() =>

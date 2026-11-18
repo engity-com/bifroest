@@ -29,8 +29,10 @@ var (
 )
 
 type OidcDeviceAuthAuthorizer struct {
-	flow configuration.FlowName
-	conf *configuration.AuthorizationOidcDeviceAuth
+	flow    configuration.FlowName
+	conf    *configuration.AuthorizationOidcDeviceAuth
+	code    *configuration.AuthorizationOidcAuthorizationCode
+	browser OidcBrowser
 
 	Logger       log.Logger
 	OnVerified   func(session.Session, time.Time)
@@ -47,6 +49,12 @@ type OidcDeviceAuthAuthorizer struct {
 }
 
 func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *configuration.AuthorizationOidcDeviceAuth) (*OidcDeviceAuthAuthorizer, error) {
+	return newOidcAuthorizer(ctx, flow, conf, nil)
+}
+
+// The legacy public type name is retained for source compatibility. Both grant
+// factories use this single implementation of token, session and refresh policy.
+func newOidcAuthorizer(ctx context.Context, flow configuration.FlowName, conf *configuration.AuthorizationOidcDeviceAuth, code *configuration.AuthorizationOidcAuthorizationCode) (*OidcDeviceAuthAuthorizer, error) {
 	fail := func(err error) (*OidcDeviceAuthAuthorizer, error) {
 		return nil, err
 	}
@@ -102,9 +110,28 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	endpoint := provider.Endpoint()
 	var metadata struct {
 		TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
+		CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
 	}
 	if err := provider.Claims(&metadata); err != nil {
 		return failf("cannot evaluate OIDC provider metadata: %w", err)
+	}
+	if code != nil {
+		openid := false
+		for _, scope := range scopes {
+			openid = openid || scope == "openid"
+		}
+		if !openid {
+			return failf("OIDC code flow requires the openid scope")
+		}
+		if len(metadata.CodeChallengeMethodsSupported) > 0 {
+			s256 := false
+			for _, method := range metadata.CodeChallengeMethodsSupported {
+				s256 = s256 || method == "S256"
+			}
+			if !s256 {
+				return failf("OIDC provider does not support PKCE S256")
+			}
+		}
 	}
 	endpoint.AuthStyle, err = oidcClientAuthStyle(metadata.TokenEndpointAuthMethodsSupported)
 	if err != nil {
@@ -113,13 +140,18 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	if err := requireOidcHttpsEndpoint("token endpoint", endpoint.TokenURL); err != nil {
 		return fail(err)
 	}
-	if err := requireOidcHttpsEndpoint("device authorization endpoint", endpoint.DeviceAuthURL); err != nil {
+	grantEndpoint, grantName := endpoint.DeviceAuthURL, "device authorization endpoint"
+	if code != nil {
+		grantEndpoint, grantName = endpoint.AuthURL, "authorization endpoint"
+	}
+	if err := requireOidcHttpsEndpoint(grantName, grantEndpoint); err != nil {
 		return fail(err)
 	}
 
 	result := OidcDeviceAuthAuthorizer{
 		flow:   flow,
 		conf:   conf,
+		code:   code,
 		issuer: issuer.String(),
 
 		oauth2Config: oauth2.Config{
@@ -132,6 +164,16 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 		verifier: provider.Verifier(&coidc.Config{
 			ClientID: clientId,
 		}),
+	}
+	if code != nil {
+		result.oauth2Config.RedirectURL = code.RedirectURL()
+		if result.oauth2Config.RedirectURL == "" {
+			return failf("OIDC code flow requires a resolved HTTP domain")
+		}
+		result.browser, _ = ctx.Value(oidcBrowserContextKey{}).(OidcBrowser)
+		if result.browser == nil {
+			return failf("OIDC browser coordinator is unavailable")
+		}
 	}
 
 	return &result, nil
@@ -419,6 +461,9 @@ func (this *OidcDeviceAuthAuthorizer) readSessionToken(ctx context.Context, sess
 	if err := json.Unmarshal(raw, &t); err != nil || t.Token == nil || t.AccessToken == "" {
 		return nil, fmt.Errorf("%w: invalid persisted OIDC session token", ErrUnusableAuthorizationToken)
 	}
+	if !this.matchesTokenGrant(&t) {
+		return nil, ErrNoSuchAuthorization
+	}
 	return &t, nil
 }
 
@@ -476,7 +521,7 @@ func (this *OidcDeviceAuthAuthorizer) refreshSession(ctx context.Context, sess s
 		}
 		verifyCtx, cancel := context.WithDeadline(ctx, pendingDeadline)
 		defer cancel()
-		fresh := oidcToken{Token: t.Pending.Token, IdToken: t.Pending.IdToken, ReceivedAt: t.Pending.ReceivedAt}
+		fresh := oidcToken{Grant: t.Grant, Token: t.Pending.Token, IdToken: t.Pending.IdToken, ReceivedAt: t.Pending.ReceivedAt}
 		verified, verifyErr := this.verifyToken(verifyCtx, &fresh)
 		if verifyErr != nil {
 			if !time.Now().Before(pendingDeadline) {
@@ -545,6 +590,7 @@ func (this *OidcDeviceAuthAuthorizer) refreshSession(ctx context.Context, sess s
 		return time.Time{}, true, fmt.Errorf("OIDC refresh verification deadline exceeded")
 	}
 	fresh := newOidcToken(updated)
+	fresh.Grant = t.Grant
 	if !fresh.Expiry.IsZero() && !time.Now().Before(fresh.Expiry) {
 		return retry, lostAccess && !time.Now().Before(deadline), fmt.Errorf("OIDC refresh returned an expired access token")
 	}
@@ -618,6 +664,9 @@ func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, se
 	}
 	if t.Token == nil || t.AccessToken == "" {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token has no access token"))
+	}
+	if !this.matchesTokenGrant(&t) {
+		return nil, ErrNoSuchAuthorization
 	}
 	refreshEnabled := this.conf != nil && this.conf.RefreshEnabled()
 	if this.conf != nil && this.conf.RetrieveIdToken && t.IdToken == "" && (!refreshEnabled || t.LastVerifiedAt.IsZero() || t.Subject == "" || t.Issuer == "") {
@@ -701,6 +750,9 @@ func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, se
 }
 
 func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
+	if this.code != nil {
+		return this.authorizeCode(req)
+	}
 	fail := func(err error) (Authorization, error) {
 		return nil, fmt.Errorf("cannot authorize via oidc device auth: %w", err)
 	}
@@ -715,14 +767,22 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 		return fail(err)
 	}
 
-	var verificationMessage string
-	if v := dar.VerificationURIComplete; v != "" {
-		verificationMessage = fmt.Sprintf("Open the following URL in your browser to login: %s", v)
-	} else {
-		verificationMessage = fmt.Sprintf("Open the following URL in your browser and provide the code %q to login: %s", dar.UserCode, dar.VerificationURI)
+	var infoErr error
+	verificationURL := dar.VerificationURIComplete
+	if verificationURL == "" {
+		verificationURL = dar.VerificationURI
 	}
-	if err := req.SendInfo(verificationMessage); err != nil {
-		return failf("cannot send device code request to user: %w", err)
+	if browser, ok := req.(interface{ SendOidcDeviceInfo(string, string) error }); ok {
+		infoErr = browser.SendOidcDeviceInfo(dar.UserCode, verificationURL)
+	} else {
+		message, err := RenderOidcSshLoginMessage(req, this.conf.Ssh.LoginMessage, verificationURL, dar.UserCode, dar.VerificationURIComplete == "")
+		if err != nil {
+			return fail(err)
+		}
+		infoErr = req.SendInfo(message)
+	}
+	if infoErr != nil {
+		return failf("cannot send device code request to user: %w", infoErr)
 	}
 
 	buf, err := this.retrieveDeviceAuthToken(ctx, dar)
@@ -730,8 +790,26 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 		return fail(err)
 	}
 	req.Connection().Logger().Debug("token received")
+	return this.finishPrimary(req, buf)
+}
+
+func (this *OidcDeviceAuthAuthorizer) finishPrimary(req InteractiveRequest, buf *oauth2.Token) (Authorization, error) {
+	ctx := req.Context()
+	fail := func(err error) (Authorization, error) { return nil, err }
+	failf := func(message string, args ...any) (Authorization, error) { return nil, fmt.Errorf(message, args...) }
 
 	t := newOidcToken(buf)
+	if this.code != nil {
+		t.Grant = "authorization_code"
+		// Bind UserInfo to the verified code identity even when ID-token
+		// artifact exposure is disabled. Never infer identity from UserInfo
+		// first and then silently replace it with a different ID-token subject.
+		verified, err := this.verifyToken(ctx, &t)
+		if err != nil {
+			return fail(err)
+		}
+		t.Subject, t.Issuer, t.LastVerifiedAt = verified.Subject, verified.Issuer, time.Now()
+	}
 	if this.conf.RefreshEnabled() && t.RefreshToken == "" {
 		return failf("OIDC provider did not issue a refresh token required for configured refresh")
 	}
@@ -739,7 +817,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 	if err != nil {
 		return fail(err)
 	}
-	if this.conf.ForceDisposeSessionOn != "never" || (this.conf.RefreshEnabled() && t.IdToken != "") {
+	if this.code != nil || this.conf.ForceDisposeSessionOn != "never" || (this.conf.RefreshEnabled() && t.IdToken != "") {
 		verified := auth.idToken.IDToken
 		if verified == nil {
 			verified, err = this.verifyToken(ctx, &t)
@@ -830,6 +908,7 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 
 	auth := oidc{
 		flow: this.flow,
+		kind: this.authorizationKind(),
 	}
 	if t.Issuer != "" && t.Subject != "" && !t.LastVerifiedAt.IsZero() {
 		auth.identity = authentication.Identity{Principal: t.Subject, Issuer: t.Issuer, Subject: t.Subject}
@@ -849,7 +928,7 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 			}
 			auth.idToken.IDToken = idToken
 			auth.identity = authentication.Identity{Principal: idToken.Subject, Issuer: idToken.Issuer, Subject: idToken.Subject}
-			logger.With("idToken", &auth.idToken).Debug("id token received")
+			logger.Debug("ID token verified")
 		}
 	} else if retrieveArtifactsAllowed && this.conf.RetrieveIdToken && !this.conf.RefreshEnabled() {
 		return failf("token does not contain id_token")
@@ -869,7 +948,7 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 			auth.identity = authentication.Identity{Principal: userInfo.Subject, Issuer: this.issuer, Subject: userInfo.Subject}
 		}
 
-		logger.With("userInfo", &auth.userInfo).Debug("user info received")
+		logger.Debug("UserInfo verified")
 	}
 
 	return &auth, nil
@@ -1023,6 +1102,14 @@ func (this *OidcDeviceAuthAuthorizer) verifyToken(ctx context.Context, token *oi
 	if err != nil {
 		return failf(errors.Permission, "cannot verify ID token: %w", err)
 	}
+	if this.code != nil {
+		var claims struct {
+			AuthorizedParty string `json:"azp"`
+		}
+		if idToken.Claims(&claims) != nil || (len(idToken.Audience) > 1 || claims.AuthorizedParty != "") && claims.AuthorizedParty != this.oauth2Config.ClientID {
+			return failf(errors.Permission, "OIDC code audience verification failed")
+		}
+	}
 
 	return idToken, nil
 }
@@ -1041,6 +1128,9 @@ func (this *OidcDeviceAuthAuthorizer) getUserInfo(ctx context.Context, token *oi
 
 	result, err := this.provider.UserInfo(ctx, oauth2.StaticTokenSource(token.Token))
 	if err != nil {
+		if this.code != nil {
+			return failf(errors.Permission, "OIDC UserInfo request failed")
+		}
 		return failf(errors.Permission, "%w", err)
 	}
 

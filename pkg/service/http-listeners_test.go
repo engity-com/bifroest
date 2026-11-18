@@ -255,7 +255,7 @@ func TestJointListenersServeSshAndHttpsAndStopTogether(t *testing.T) {
 			t.Cleanup(transport.CloseIdleConnections)
 			client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
 			require.Eventually(t, func() bool {
-				response, err := client.Get("https://app.example.org/work")
+				response, err := client.Get("https://app.example.org/")
 				if response != nil {
 					_ = response.Body.Close()
 				}

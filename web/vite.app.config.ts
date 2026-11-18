@@ -18,10 +18,11 @@ const xtermVersion = JSON.parse(
 
 // Vite 8's native Oxc/Rolldown JSX pipeline; no Webpack/Babel build chain.
 export default defineConfig({
-    base: '/_bifroest/files/',
+    base: '/assets/',
     build: {
         target: 'es2022',
         outDir: '../pkg/webui/assets',
+        assetsDir: '',
         emptyOutDir: true,
         // Speculative shared-chunk fetches must not crowd out ordered operator
         // scripts under the server's existing per-peer admission budget.
@@ -29,6 +30,7 @@ export default defineConfig({
         rolldownOptions: {
             input: {
                 index: fileURLToPath(new URL('index.html', import.meta.url)),
+                login: fileURLToPath(new URL('login.html', import.meta.url)),
                 'browser-key-worker': fileURLToPath(
                     new URL('src/login/key-worker.ts', import.meta.url),
                 ),
@@ -49,7 +51,7 @@ export default defineConfig({
                             // Leave room for the protocol and bundler helpers inside
                             // the existing four-file initial dependency budget.
                             name: 'ui-runtime',
-                            test: /[/\\]node_modules[/\\](?:(?:react|react-dom|react-router|scheduler)|@emotion[/\\][^/\\]+)[/\\]/,
+                            test: /[/\\]node_modules[/\\](?:(?:react|react-dom|scheduler)|@emotion[/\\][^/\\]+)[/\\]/,
                             tags: ['$initial'],
                             priority: 20,
                         },
@@ -66,7 +68,7 @@ export default defineConfig({
                         'browser-evidence-worker',
                     ].includes(chunk.name)
                         ? `${chunk.name}.js`
-                        : 'assets/[name]-[hash].js',
+                        : '[name]-[hash].js',
             },
             onwarn(warning, handler) {
                 // This bundle is client-only, not a React Server Components boundary.

@@ -59,8 +59,14 @@ export function WorkspaceTabBar({
         if (!owner) {
             return;
         }
-        const url = new URL(bookmarkPath(owner.scope, locations?.get(owner.id)), owner.scope.origin)
-            .href;
+        const url = new URL(
+            bookmarkPath(
+                owner.scope,
+                locations?.get(owner.id),
+                owner.access.snapshot().requestingUser,
+            ),
+            owner.scope.origin,
+        ).href;
         void Promise.resolve()
             .then(() => navigator.clipboard.writeText(url))
             .catch(() => controller.showCopyLink(id, url));
@@ -161,6 +167,7 @@ export function WorkspaceTabBar({
                                     tab.scope,
                                     tab.routeId ?? null,
                                     locations?.get(tab.id),
+                                    tab.access.snapshot().requestingUser,
                                 )}
                                 kind={tab.kind}
                                 access={tab.access}

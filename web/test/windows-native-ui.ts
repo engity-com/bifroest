@@ -109,7 +109,7 @@ try {
         pendingRequests.delete(request);
     });
     page.on('requestfinished', (request) => {
-        if (new URL(request.url()).pathname === '/_bifroest/files/browser-key.wasm') {
+        if (new URL(request.url()).pathname === '/assets/browser-key.wasm') {
             assetRequests.push({ ...required(pendingRequests.get(request)), finishedStage: stage });
         }
         pendingRequests.delete(request);
@@ -128,7 +128,7 @@ try {
             request: ++requestNumber,
             startedStage: stage,
         };
-        if (new URL(request.url()).pathname === '/_bifroest/files/browser-key.wasm') {
+        if (new URL(request.url()).pathname === '/assets/browser-key.wasm') {
             try {
                 observation.owner = request.frame() === page.mainFrame() ? 'tab' : 'other';
             } catch {
@@ -232,7 +232,7 @@ try {
         const number = ++loginNumber;
         stage = `login-${number}-begin`;
         if (navigate) {
-            const response = await page.goto(`${origin}/Work`);
+            const response = await page.goto(`${origin}/#Work`);
             assert(response);
             assert.equal(response.status(), 200);
             assert(

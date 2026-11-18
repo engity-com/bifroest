@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
@@ -35,32 +38,40 @@ const (
 // A worker retains its slot until it has actually returned, including after
 // cancellation. A misbehaving authorizer cannot create unbounded detached work.
 type webLoginAttempt struct {
-	conn         *webLoginConnection
-	peer         netip.Addr
-	method       audit.AuthenticationMethod
-	primaryKey   ssh.PublicKey
-	expires      time.Time
-	stopContext  context.CancelFunc
-	stopShutdown func() bool
-	idle         *time.Timer
-	done         chan struct{}
-	mutex        sync.Mutex
-	consumed     bool
-	claiming     bool
-	sequence     uint64
-	messageBytes int
-	step         *webLoginStep
-	replies      chan string
-	auth         authorization.Authorization
-	err          error
+	oidcAuthentication *oidcAuthentication
+	loginMethod        authorization.LoginMethod
+	conn               *webLoginConnection
+	peer               netip.Addr
+	method             audit.AuthenticationMethod
+	primaryKey         ssh.PublicKey
+	expires            time.Time
+	stopContext        context.CancelFunc
+	stopShutdown       func() bool
+	idle               *time.Timer
+	done               chan struct{}
+	mutex              sync.Mutex
+	consumed           bool
+	claiming           bool
+	sequence           uint64
+	messageBytes       int
+	step               *webLoginStep
+	replies            chan string
+	auth               authorization.Authorization
+	err                error
 }
 
 type webLoginStep struct {
-	Sequence  string `json:"sequence"`
-	Kind      string `json:"kind"`
-	Message   string `json:"message,omitempty"`
-	Echo      bool   `json:"echo"`
-	Challenge string `json:"challenge,omitempty"`
+	Sequence  string             `json:"sequence"`
+	Kind      string             `json:"kind"`
+	Message   string             `json:"message,omitempty"`
+	Echo      bool               `json:"echo"`
+	Challenge string             `json:"challenge,omitempty"`
+	Device    *webOidcDeviceInfo `json:"device,omitempty"`
+}
+
+type webOidcDeviceInfo struct {
+	UserCode string `json:"userCode"`
+	URL      string `json:"url"`
 }
 
 type webLoginPending struct {
@@ -95,7 +106,8 @@ func (this *webService) startAttempt(r *http.Request, scope webScope, peer netip
 	}
 	// Keep trusted request values (e.g. the operator's OIDC HTTP client), not its
 	// cancellation: normal HTTP completion must not cancel a multi-step login.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), lifetime)
+	oidcAttempt := &oidcAuthentication{}
+	ctx, cancel := context.WithTimeout(context.WithValue(context.WithoutCancel(r.Context()), oidcAuthenticationKey{}, oidcAttempt), lifetime)
 	stopShutdown := context.AfterFunc(this.ctx, cancel)
 	conn, err := newWebLoginConnection(ctx, r, scope, user)
 	if err != nil {
@@ -104,7 +116,11 @@ func (this *webService) startAttempt(r *http.Request, scope webScope, peer netip
 		return "", nil, err
 	}
 	expires, _ := ctx.Deadline()
-	attempt := &webLoginAttempt{conn: conn, peer: peer, method: method, primaryKey: key, expires: expires, stopContext: cancel, stopShutdown: stopShutdown, done: make(chan struct{})}
+	loginMethod := authorization.LoginMethodKeyboardInteractive
+	if r.URL.Path == webAPI+"login/oidc" {
+		loginMethod = authorization.LoginMethodOidc
+	}
+	attempt := &webLoginAttempt{oidcAuthentication: oidcAttempt, loginMethod: loginMethod, conn: conn, peer: peer, method: method, primaryKey: key, expires: expires, stopContext: cancel, stopShutdown: stopShutdown, done: make(chan struct{})}
 	attempt.idle = time.AfterFunc(webAttemptIdleTimeout, cancel)
 	this.mutex.Lock()
 	this.pruneLocked(time.Now())
@@ -134,6 +150,9 @@ func (this *webService) startAttempt(r *http.Request, scope webScope, peer netip
 			auth, err = this.service.authorizer.AuthorizeInteractive(&webInteractiveRequest{authorizeRequest: authorizeRequest{service: this.service, connection: conn}, attempt: attempt})
 		} else {
 			auth, err = this.authorizeWebKey(attempt, key)
+		}
+		if err != nil || auth == nil || !auth.IsAuthorized() {
+			this.finishOidcAuthentication(oidcAttempt, false, "access_denied")
 		}
 		attempt.mutex.Lock()
 		attempt.auth, attempt.err = auth, err
@@ -174,22 +193,32 @@ func (this *webService) findAttempt(scope webScope, peer netip.Addr, token strin
 // Exactly one outstanding step and one bounded reply. Messages are plain text,
 // not HTML, terminal output or shell input. Answers are never returned by polls.
 func (this *webLoginAttempt) exchange(step webLoginStep) (string, error) {
-	if len(step.Message) > webMaximumLoginMessage || !utf8.ValidString(step.Message) {
+	return this.exchangeContext(this.conn.Lifetime(), step)
+}
+
+func (this *webLoginAttempt) exchangeContext(ctx context.Context, step webLoginStep) (string, error) {
+	size := len(step.Message)
+	if step.Device != nil {
+		size += len(step.Device.UserCode) + len(step.Device.URL)
+	}
+	if size > webMaximumLoginMessage || !utf8.ValidString(step.Message) {
 		return "", fmt.Errorf("login message exceeds limit")
 	}
 	this.mutex.Lock()
-	if this.consumed || this.conn.IsClosed() || this.step != nil || this.replies != nil || this.sequence >= webMaximumLoginSteps || this.messageBytes+len(step.Message) > webMaximumLoginMessages {
+	if this.consumed || this.conn.IsClosed() || this.step != nil || this.replies != nil || this.sequence >= webMaximumLoginSteps || this.messageBytes+size > webMaximumLoginMessages {
 		this.mutex.Unlock()
 		return "", fmt.Errorf("login interaction unavailable")
 	}
 	this.sequence++
-	this.messageBytes += len(step.Message)
+	this.messageBytes += size
 	step.Sequence = strconv.FormatUint(this.sequence, 10)
 	replies := make(chan string, 1)
 	this.step = &step
 	this.replies = replies
 	this.mutex.Unlock()
 	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
 	case <-this.conn.Lifetime().Done():
 		return "", this.conn.Lifetime().Err()
 	case answer := <-replies:
@@ -205,6 +234,26 @@ type webInteractiveRequest struct {
 	attempt *webLoginAttempt
 }
 
+func (this *webInteractiveRequest) HttpLoginMethod() authorization.LoginMethod {
+	return this.attempt.loginMethod
+}
+
+func (this *webInteractiveRequest) SendOidcInfo(ctx context.Context, message string) error {
+	_, err := this.attempt.exchangeContext(ctx, webLoginStep{Kind: "info", Message: message})
+	return err
+}
+
+// Structured instructions are available only through the trusted HTTP adapter.
+// SSH clients retain their existing plain-text device authorization message.
+func (this *webInteractiveRequest) SendOidcDeviceInfo(code, address string) error {
+	target, err := url.Parse(address)
+	if err != nil || target.Scheme != "https" || target.Host == "" || target.User != nil || len(address) > 4096 || strings.IndexFunc(address, unicode.IsControl) >= 0 || len(code) == 0 || len(code) > 256 || !utf8.ValidString(code) || strings.IndexFunc(code, unicode.IsControl) >= 0 {
+		return fmt.Errorf("invalid device authorization instructions")
+	}
+	_, err = this.attempt.exchange(webLoginStep{Kind: "info", Device: &webOidcDeviceInfo{UserCode: code, URL: target.String()}})
+	return err
+}
+
 func (this *webInteractiveRequest) SendInfo(message string) error {
 	_, err := this.attempt.exchange(webLoginStep{Kind: "info", Message: message})
 	return err
@@ -218,7 +267,7 @@ func (this *webInteractiveRequest) Prompt(message string, echo bool) (string, er
 }
 
 func (this *webService) handleAttempt(w http.ResponseWriter, r *http.Request, scope webScope, peer netip.Addr, values map[string]string) {
-	if r.URL.Path == webAPI+"login/interactive" || r.URL.Path == webAPI+"login/public-key" {
+	if r.URL.Path == webAPI+"login/interactive" || r.URL.Path == webAPI+"login/oidc" || r.URL.Path == webAPI+"login/public-key" {
 		isKey := r.URL.Path == webAPI+"login/public-key"
 		expected := 2
 		if isKey {

@@ -1,5 +1,5 @@
-// Provider text is never HTML or an automatic navigation. Offer only explicit
-// HTTPS links without embedded credentials; keep the original message visible.
+// Extract only HTTPS links without embedded credentials, never HTML. Automatic
+// OIDC navigation additionally validates the exact same-origin ticket route.
 export function verificationLink(message: string): string | null {
     for (const value of message.match(/\bhttps:\/\/[^\s<>"']+/gu) ?? []) {
         try {

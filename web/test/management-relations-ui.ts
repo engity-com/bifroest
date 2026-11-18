@@ -133,7 +133,9 @@ export async function exerciseManagementRelations(page: Page, login: Login) {
     await recordingPanel.getByRole('region', { name: 'Recording playback', exact: true }).waitFor();
     const metadata = recordingPanel.locator('.recording-evidence');
     await metadata.getByRole('heading', { name: 'Details', exact: true }).waitFor();
-    const target = `/${prefix.replace(/\/[^/]+$/u, '/-')}/sessions/${selected.flow}/${selected.id}`;
+    // Artifact references are identity-neutral bookmarks. The optional username
+    // in the current login route is not the artifact's requesting identity.
+    const target = `/${prefix.replace(/^#[^/]*@/u, '#').replace(/\/[^/]+$/u, '/-')}/sessions/${selected.flow}/${selected.id}`;
     assert.equal(
         await metadata.getByRole('link', { name: selected.id, exact: true }).getAttribute('href'),
         target,

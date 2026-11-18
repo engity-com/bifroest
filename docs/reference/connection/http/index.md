@@ -5,7 +5,11 @@ toc_depth: 5
 
 # HTTP connection
 
-Provides browser terminals and management over HTTPS. HTTP is optional and disabled by default; see [Browser access](../../../guides/browser-access.md) for a setup example.
+Provides browser terminals and management over HTTP/TLS and a login page if [OIDC Authorization Code](../../authorization/oidc/authorization-code.md) is used.
+
+This connection type is optional and disabled by default; see [Browser access](../../../guides/browser-access.md) for a setup example.
+
+Workload links use browser fragments, such as `/#Shell` or `/#alice@Shell`; see [access links and hidden Slugs](../../../guides/browser-access.md#access-links-and-hidden-slugs). Slugs are sent in API request bodies, never in API paths or query strings. Public discovery uses `POST /api/v1/discovery` with `{"slug":"Shell"}`. Only `/` serves the workspace document; workload and management targets remain in its fragment.
 
 ## Configuration
 
@@ -114,7 +118,7 @@ These properties belong to `http.tls.acme`.
 Obtain and renew certificates for domains not covered by existing certificates.
 
 <<property("acceptTerms", "bool", default=False, id_prefix="acme-", heading=5)>>
-Accepts the selected CA's terms. Must be `true` when ACME is enabled.
+`true` means you accept the terms of the ACME directory, you defined via [`directoryUrl`](#acme-property-directoryUrl). In case of Let's Encrypt you can find them at https://letsencrypt.org/repository/. This is mandatory, when ACME is enabled.
 
 <<property("email", "string", default="", id_prefix="acme-", heading=5)>>
 Optional contact email address, without a display name.

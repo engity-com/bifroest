@@ -43,6 +43,7 @@ it('keeps slug, UI connection and target in the fragment and omits the managemen
     const target = parseHashTarget(scope.origin, new URL(path, scope.origin).hash);
     expect(target).toEqual({
         scope,
+        user: null,
         connection,
         management: { ...route, sessionId: uuidText(id), managementFlow: '' },
     });
@@ -50,10 +51,33 @@ it('keeps slug, UI connection and target in the fragment and omits the managemen
     expect(hashPath(scope, null)).toBe('/#admin');
 });
 
-it('allows an api-named hash scope without treating the real API path as navigation', () => {
-    const api = { ...scope, slug: 'api' };
-    expect(hashPath(api, null)).toBe('/#api');
-    expect(parseHashTarget(api.origin, '#api')?.scope).toEqual(api);
+it('reserves API, assets and login scopes even in hash navigation', () => {
+    for (const slug of ['api', 'api/Work', 'assets', 'assets/Work', 'login', 'login/Work']) {
+        expect(() => hashPath({ ...scope, slug }, null)).toThrow();
+        expect(parseHashTarget(scope.origin, `#${slug}`)).toBeNull();
+    }
+});
+
+it('roundtrips optional login usernames without confusing email addresses, slugs or management targets', () => {
+    for (const user of ['alice', 'alice@example.org', 'domain\\alice', 'üser /?#']) {
+        const path = hashPath(scope, '-', { managementFlow: 'ignored', page: 'version' }, user);
+        const url = new URL(path, scope.origin);
+        expect(url.pathname).toBe('/');
+        expect(url.search).toBe('');
+        expect(parseHashTarget(scope.origin, url.hash)).toMatchObject({ scope, user });
+    }
+    expect(hashPath(scope, null, undefined, 'alice@example.org')).toBe(
+        '/#alice%40example.org@admin',
+    );
+    for (const hash of [
+        '#@admin',
+        '#alice@example.org@admin',
+        '#alice%0A@admin',
+        `#${'a'.repeat(257)}@admin`,
+        '#%ZZ@admin',
+    ]) {
+        expect(parseHashTarget(scope.origin, hash)).toBeNull();
+    }
 });
 it('disambiguates nested/root slugs and rejects malformed or credential-bearing targets', () => {
     for (const slug of ['', 'team/Admin']) {

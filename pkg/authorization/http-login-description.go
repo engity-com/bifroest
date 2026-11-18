@@ -15,6 +15,7 @@ const (
 	LoginMethodKeyboardInteractive LoginMethod = "keyboard-interactive"
 	LoginMethodPublicKey           LoginMethod = "public-key"
 	LoginMethodNone                LoginMethod = "none"
+	LoginMethodOidc                LoginMethod = "oidc"
 )
 
 type LoginOption struct {
@@ -91,11 +92,16 @@ func (this *AuthorizerFacade) DescribeHttpLogin(host, slug string) (HttpLoginDes
 		}
 		add(LoginMethodPassword, capabilities.Password)
 		add(LoginMethodKeyboardInteractive, capabilities.KeyboardInteractive)
+		codeHost := true
+		if oidc, ok := candidate.CloseableAuthorizer.(*OidcDeviceAuthAuthorizer); ok && oidc.code != nil {
+			codeHost = oidc.matchesCodeHost(selection.Host)
+		}
+		add(LoginMethodOidc, capabilities.OidcAuthorizationCode && codeHost)
 		add(LoginMethodPublicKey, capabilities.PublicKey)
 		add(LoginMethodNone, capabilities.Secretless)
 	}
 	for _, named := range []bool{true, false} {
-		for _, method := range []LoginMethod{LoginMethodPassword, LoginMethodKeyboardInteractive, LoginMethodPublicKey, LoginMethodNone} {
+		for _, method := range []LoginMethod{LoginMethodPassword, LoginMethodKeyboardInteractive, LoginMethodOidc, LoginMethodPublicKey, LoginMethodNone} {
 			if option, exists := options[optionKey{method, named}]; exists {
 				result.Options = append(result.Options, option)
 			}

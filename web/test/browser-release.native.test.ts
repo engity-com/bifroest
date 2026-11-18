@@ -46,18 +46,57 @@ function staticJavaScriptGraph(entry: string): Set<string> {
     return visited;
 }
 
-test('initial JavaScript graph fits the existing four-worker admission budget without eager xterm or grid loading', () => {
+test('initial JavaScript graph fits the four-worker admission budget after the entry document without eager xterm or grid loading', () => {
     const html = readFileSync(join(output, 'index.html'), 'utf8');
-    const entry = /src="\/_bifroest\/files\/(assets\/[A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
+    const entry = /src="\/assets\/([A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
     assert(entry, 'built document must name its same-origin module entry');
     const visited = staticJavaScriptGraph(entry);
-    assert(visited.size <= 4, `initial module graph must stay bounded: ${[...visited].join(', ')}`);
+    assert(visited.size <= 5, `initial module graph must stay bounded: ${[...visited].join(', ')}`);
     assert(
         [...visited].every(
             (file) => !/(?:xterm|AdminDataGrid|ArtifactPanel|ManagementPanel)-/u.test(file),
         ),
         'heavy views remain explicit lazy imports',
     );
+});
+
+test('standalone login shares its UI but never loads application, terminal, management, recording or key dependencies', () => {
+    const entry = (document: string) => {
+        const html = readFileSync(join(output, document), 'utf8');
+        assert(!html.includes('/assets/assets/') && !html.includes('/_bifroest/'));
+        const module = /src="\/assets\/([A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
+        assert(module);
+        return staticJavaScriptGraph(module);
+    };
+    const app = entry('index.html');
+    const login = entry('login.html');
+    assert(login.size <= 4);
+    assert(
+        [...login].some(
+            (name) =>
+                app.has(name) &&
+                readFileSync(join(output, name), 'utf8').includes('bifroest-login-card'),
+        ),
+        'both entries share the exact same login view',
+    );
+    assert(
+        [...login].every(
+            (name) =>
+                !/^(?:index|browser-protocol|xterm|AdminDataGrid|ArtifactPanel|ManagementPanel|wasm-key|browser-.*worker)-/u.test(
+                    name,
+                ),
+        ),
+    );
+    const source = [...login].map((name) => readFileSync(join(output, name), 'utf8')).join('\n');
+    for (const forbidden of [
+        '@xterm',
+        'createBrowserRouter',
+        'browser-key.wasm',
+        'browser-evidence.wasm',
+        '/api/v1/discovery',
+    ]) {
+        assert(!source.includes(forbidden), `standalone login contains ${forbidden}`);
+    }
 });
 
 test('production JavaScript chunks stay below 500 kB without hiding Vite size warnings', () => {
@@ -198,7 +237,7 @@ test('release inventory binds actual built assets, Go/project inputs and separat
     assert(manifest.inputs.some((input) => input.name === 'pkg/recording/cast/verifier.go'));
     assert(manifest.inputs.some((input) => input.name === 'web/bun.lock'));
     const favicon = manifest.assets.find((asset) =>
-        /^assets\/favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name),
+        /^favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name),
     );
     assert(favicon, 'the documentation favicon must be a bundled local asset');
     const faviconSource = readFileSync(new URL('../../docs/assets/favicon.svg', import.meta.url));
@@ -261,7 +300,7 @@ for (const mode of [
             if (mode === 'missing favicon') {
                 const manifest = JSON.parse(before.toString('utf8')) as BrowserManifest;
                 const favicon = manifest.assets.find((asset) =>
-                    /^assets\/favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name),
+                    /^favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name),
                 );
                 assert(favicon);
                 unlinkSync(join(temporary, favicon.name));

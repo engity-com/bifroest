@@ -83,7 +83,7 @@ try {
     });
     const login = async () => {
         stage = 'navigation';
-        const response = await page.goto(`${origin}/Work`);
+        const response = await page.goto(`${origin}/#Work`);
         assert(response);
         assert.equal(response.status(), 200);
         assert(

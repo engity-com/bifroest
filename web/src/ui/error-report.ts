@@ -74,9 +74,7 @@ function publicFrames(error: unknown): string[] {
                         !url.hash &&
                         !url.username &&
                         !url.password &&
-                        /^\/_bifroest\/files\/(?:assets\/[A-Za-z0-9_-]+\.js|browser-[a-z-]+-worker\.js|go-wasm-exec\.js)$/u.test(
-                            url.pathname,
-                        )
+                        /^\/assets\/(?:[A-Za-z0-9_-]+\.js)$/u.test(url.pathname)
                         ? [url.href]
                         : [];
                 } catch {

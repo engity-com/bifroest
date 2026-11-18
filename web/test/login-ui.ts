@@ -73,6 +73,9 @@ export async function exerciseRememberRecovery(page: Page, login: Login, restart
 }
 
 export async function exerciseInteractive(page: Page, login: Login, logout: Logout) {
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+        origin: new URL(page.url()).origin,
+    });
     await login(page, false);
     await logout(page);
     let shells = 0;
@@ -160,10 +163,17 @@ export async function exerciseInteractive(page: Page, login: Login, logout: Logo
         '',
         'next secret prompt must not inherit the previous answer',
     );
-    await answerAuthentication(page, 'secret-transition', {
+    console = await authenticationConsole(page, {
         text: 'Secret transition response',
         echo: false,
     });
+    await page.evaluate(() => navigator.clipboard.writeText('secret-transition'));
+    await console.locator('textarea').focus();
+    await page.keyboard.press('Control+Shift+V');
+    assert(
+        !required(await console.locator('.xterm-rows').textContent()).includes('secret-transition'),
+    );
+    await page.keyboard.press('Enter');
     await answerAuthentication(page, 'public-transition', {
         text: 'Public transition response',
         echo: true,
@@ -311,19 +321,35 @@ export async function exerciseInteractive(page: Page, login: Login, logout: Logo
 }
 
 export async function exerciseDevice(page: Page, cancel: boolean) {
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+        origin: new URL(page.url()).origin,
+    });
     assert.equal(await page.getByLabel('User name', { exact: true }).count(), 0);
     await chooseLoginMethod(page, 'Interactive / device login');
     if (!cancel) {
         await page.getByRole('checkbox', { name: 'Remember this browser', exact: true }).check();
     }
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await authenticationConsole(page, { text: 'test-code', kind: 'info' });
-    const console = page.locator('[data-auth-terminal-active="true"]');
-    const link = console.getByRole('link');
+    const device = page
+        .getByRole('dialog', { name: 'Sign in', exact: true })
+        .getByRole('group', { name: 'Device sign-in', exact: true });
+    await device.getByText('test-code', { exact: true }).waitFor();
+    await device.getByText(/is copied to your clipboard/).waitFor();
+    assert.equal(
+        await page.evaluate(() => navigator.clipboard.readText()),
+        'test-code',
+        'the code is copied before pressing Enter or opening the provider',
+    );
+    assert.equal(
+        await page.locator('[data-auth-terminal-active="true"]').count(),
+        0,
+        'Bifröst DeviceAuth stays in the login dialog, not the terminal',
+    );
+    const link = device.getByRole('link', { name: 'Open verification page' });
     const target = await link.getAttribute('href');
     assert.match(required(target), /^https:\/\/127\.0\.0\.1:[0-9]+\/verify$/);
     assert.equal(await link.getAttribute('rel'), 'noopener noreferrer');
-    assert.equal(await console.locator('iframe').count(), 0);
+    assert.equal(await device.locator('iframe').count(), 0);
     // The Go cancellation fixture holds this real reply until its provider call
     // has started; no extra browser fetch or request replay is needed to observe it.
     const providerStarted = cancel
@@ -332,31 +358,37 @@ export async function exerciseDevice(page: Page, cancel: boolean) {
                   response.url().endsWith('/api/v1/login/reply') && response.status() === 202,
           )
         : null;
-    await answerAuthentication(page);
+    const devicePopup = page.waitForEvent('popup');
+    await link.focus();
+    await page.keyboard.press('Enter');
+    const verification = await devicePopup;
+    await verification.waitForURL(/^https:\/\/127\.0\.0\.1:[0-9]+\/verify$/);
+    await verification.close();
+    await page.bringToFront();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'test-code');
     if (cancel) {
         await providerStarted;
         const stopped = page.waitForResponse(
             (response) =>
                 response.url().endsWith('/api/v1/login/cancel') && response.status() === 204,
         );
-        await page.getByRole('button', { name: 'Cancel authentication', exact: true }).click();
+        await device.getByRole('button', { name: 'Cancel', exact: true }).click();
         await stopped;
-        await notification(page, 'Operation cancelled. Cancellation is not server logout.');
+        await page
+            .getByRole('dialog', { name: 'Sign in', exact: true })
+            .getByText('Operation cancelled. Cancellation is not server logout.', { exact: true })
+            .waitFor();
         assert.equal(await activeAccessCount(page, 'verified-subject'), 0);
     } else {
-        await page.waitForFunction(() =>
-            document
-                .querySelector('[data-auth-terminal-active="true"] .xterm-rows')
-                ?.textContent?.includes('Waiting for authentication'),
-        );
+        await device.getByText('Waiting for authentication…', { exact: true }).waitFor();
         assert.equal(
             await link.getAttribute('href'),
             target,
             'the current provider link must remain available while waiting',
         );
-        assert(required(await console.locator('.xterm-rows').textContent()).includes('test-code'));
+        assert.deepEqual(await device.locator('code').allTextContents(), ['test-code']);
         assert.equal(
-            await console.getByRole('radio').count(),
+            await device.getByRole('radio').count(),
             0,
             'pending device auth is not a disabled new-login form',
         );

@@ -7,6 +7,7 @@ import {
     linkSlugs,
     loadEntryMetadata,
     loadLinkMetadata,
+    loadWorkspaceEntry,
     loginOptionFor,
     loginOptionKey,
     parseLinkMetadata,
@@ -16,6 +17,33 @@ const scope = { origin: 'https://app.example.org', slug: 'Work' };
 const option = { method: 'password', requestUser: true, certificateRequired: false };
 
 describe('independent link discovery, never authorization', () => {
+    it('discovers OIDC separately from device interaction and keeps saved access policy', () => {
+        const metadata = parseLinkMetadata(
+            {
+                scope,
+                rootAvailable: false,
+                loginOptions: [
+                    {
+                        method: 'oidc',
+                        requestUser: false,
+                        certificateRequired: false,
+                        rememberMe: 'allowed',
+                    },
+                    {
+                        method: 'keyboard-interactive',
+                        requestUser: false,
+                        certificateRequired: false,
+                    },
+                ],
+            },
+            scope,
+        );
+        expect(metadata.loginOptions.map(loginOptionKey)).toEqual([
+            'oidc:nameless',
+            'keyboard-interactive:nameless',
+        ]);
+        expect(loginOptionFor(metadata, 'oidc:nameless')?.rememberMe).toBe('allowed');
+    });
     it('binds metadata to the exact requested origin and case-sensitive link and copies it', () => {
         const inputOption = { ...option };
         const value = {
@@ -123,7 +151,7 @@ describe('independent link discovery, never authorization', () => {
         });
         expect(transport).not.toHaveBeenCalled();
     });
-    it('loads only public discovery from the same cold deep URL and preserves its validated original scope', async () => {
+    it('loads fragment targets exclusively through POST bodies, never URL paths or query strings', async () => {
         const original = await vi.importActual<typeof import('../src/remember/protocol')>(
             '../src/remember/protocol',
         );
@@ -136,9 +164,9 @@ describe('independent link discovery, never authorization', () => {
         );
         const entryScope = { ...scope, origin: location.origin };
         const current = {
-            pathname: '/Work/admin/recordings/docker/34e34ab8-7457-4d88-a5e4-c57791775c3a',
-            search: '?auditlog=default',
-            hash: '',
+            pathname: '/',
+            search: '',
+            hash: '#alice%40example.org@Work/-/auditlogs/default/recordings',
         };
         const transport = vi.fn(
             async (_input: RequestInfo | URL, _options?: RequestInit) =>
@@ -157,18 +185,20 @@ describe('independent link discovery, never authorization', () => {
                 (await loadEntryMetadata(entryScope.origin, current, undefined, transport)).scope,
             ).toEqual(entryScope);
             expect(String(transport.mock.calls[0]?.[0])).toBe(
-                entryScope.origin + current.pathname + current.search,
+                `${entryScope.origin}/api/v1/discovery`,
             );
             expect(transport.mock.calls[0]?.[1]).toMatchObject({
                 credentials: 'omit',
                 mode: 'same-origin',
                 redirect: 'error',
                 cache: 'no-store',
-                headers: { Accept: 'application/json' },
+                method: 'POST',
+                body: JSON.stringify({ slug: 'Work' }),
+                headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
             });
             for (const invalid of [
                 { ...current, search: '?accessToken=must-not-fetch' },
-                { ...current, hash: '#private' },
+                { ...current, hash: '#private/invalid-connection' },
                 { ...current, pathname: '/Work/admin/sessions/%64ocker' },
             ]) {
                 await expect(
@@ -191,6 +221,48 @@ describe('independent link discovery, never authorization', () => {
                 loadEntryMetadata(entryScope.origin, current, undefined, transport),
             ).rejects.toMatchObject({ code: 'unavailable' });
         } finally {
+            vi.mocked(validateScope).mockRestore();
+        }
+    });
+
+    it('keeps cold missing links in the editable workspace and only recovers published suggestions', async () => {
+        vi.mocked(validateScope).mockImplementation((value) => {
+            if (value.origin !== location.origin) {
+                throw new Error('unexpected origin');
+            }
+        });
+        const requests: { path: string; slug: string }[] = [];
+        const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+            const body = JSON.parse(String(options?.body));
+            requests.push({ path: String(input), slug: body.slug });
+            return new Response(
+                body.slug
+                    ? ''
+                    : JSON.stringify({
+                          scope: { origin: location.origin, slug: '' },
+                          rootAvailable: false,
+                          publishedSlugs: ['Work'],
+                          loginOptions: [],
+                      }),
+                { status: body.slug ? 404 : 200, headers: { 'Content-Type': 'application/json' } },
+            );
+        });
+        try {
+            const entry = await loadWorkspaceEntry(location.origin, {
+                pathname: '/',
+                search: '',
+                hash: '#notexistent',
+            });
+            expect(entry.failure).toBe('invalid-slug');
+            expect(entry.metadata.scope.slug).toBe('notexistent');
+            expect(entry.metadata.loginOptions).toEqual([]);
+            expect(entry.metadata.publishedSlugs).toEqual(['Work']);
+            expect(requests.map((request) => request.path)).toEqual(
+                Array(2).fill(`${location.origin}/api/v1/discovery`),
+            );
+            expect(requests.map((request) => request.slug)).toEqual(['notexistent', '']);
+        } finally {
+            fetch.mockRestore();
             vi.mocked(validateScope).mockRestore();
         }
     });

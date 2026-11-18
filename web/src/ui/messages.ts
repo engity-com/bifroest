@@ -1,5 +1,35 @@
 // All user-facing application text goes through this initial en-US catalog.
 export const messages = {
+    oidcAccepted: 'Login successful',
+    oidcDenied: 'Login not completed',
+    oidcChoose: 'Confirm your SSH login',
+    oidcWaiting: 'Signing in',
+    oidcSSHSuccess: 'You can close this browser tab and continue in your SSH client.',
+    oidcWebSuccess: 'You are signed in. You can close this tab and return to Bifröst.',
+    oidcChooseHint: 'Select the code shown in your own SSH client.',
+    oidcCode: 'Code',
+    oidcWrongCodeWarning:
+        'Choosing a different code cancels this login. Only approve a login you started yourself.',
+    oidcDecline: 'Decline login',
+    oidcWrongCode:
+        'The code did not match. This login has been cancelled. Start a new login in your SSH client.',
+    oidcAccessDenied:
+        'Your identity was verified, but access was not allowed. Return to your client to check the result.',
+    oidcFailed:
+        'This login was declined, expired or could not be completed. Return to your client and start a new login if needed.',
+    oidcCheckingAccess: 'Checking access and completing your login…',
+    oidcLoading: 'Please wait…',
+    oidcOpen: 'Open identity-provider login',
+    deviceSignIn: 'Device sign-in',
+    deviceCopiedPrefix: 'Code',
+    deviceCopiedSuffix: ' is copied to your clipboard.',
+    deviceManualPrefix: 'Enter code',
+    deviceManualSuffix: ' on the verification page.',
+    deviceOpen: 'Open verification page',
+    devicePopupBlocked: 'Popup blocked. Allow popups or open the link in a new tab.',
+    deviceCopy: 'Copy device code',
+    terminalClipboardFailed:
+        'Clipboard access failed. Allow clipboard access in your browser and try again.',
     brand: 'Bifröst',
     title: 'Access your workspace',
     discovery: 'Published access links',
@@ -24,6 +54,8 @@ export const messages = {
     loginSavedTab: 'Saved',
     savedLoginHint: 'Use your last saved login.',
     loginInteractiveTab: 'Interactive',
+    loginOidcTab: 'OIDC',
+    oidcMethod: 'Sign in through your identity provider in a separate browser tab',
     loginKeyTab: 'SSH key',
     loginNoneTab: 'Continue',
     noneMethod: 'Continue without credentials',
@@ -124,8 +156,6 @@ export const messages = {
     registered: 'RememberMe setup confirmed for this browser.',
     unknown:
         'RememberMe setup may have created a server permission. Do not retry the claim. Keep this tab open and use Log out to reconcile it.',
-    already:
-        'An existing browser registration was not changed. Use it or explicitly revoke it before creating another.',
     denied: 'Access was denied. Sign in normally or check the current policy with your operator. No other connection was logged out by this attempt.',
     unavailable:
         'The operation could not be confirmed. Internal diagnostics are not displayed. Try again deliberately, not by replaying a claim.',
@@ -153,6 +183,7 @@ export const messages = {
     applicationMenu: 'Application menu',
     connectionTabs: 'Connections and terminals',
     connectionLink: 'Slug',
+    invalidSlug: 'Invalid Slug.',
     chooseSlug: 'Choose a published Slug to sign in.',
     loadingSlug: 'Loading sign-in options…',
     slugLoadFailed:

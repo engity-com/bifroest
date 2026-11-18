@@ -246,6 +246,7 @@ export class Http {
         const allowed = [
             'login/password',
             'login/interactive',
+            'login/oidc',
             'login/public-key',
             'login/poll',
             'login/reply',

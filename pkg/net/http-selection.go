@@ -84,6 +84,9 @@ func ValidateHttpSlug(slug string) error {
 		return nil
 	}
 	segments := strings.Split(slug, "/")
+	if segments[0] == "login" || segments[0] == "assets" || segments[0] == "api" {
+		return fmt.Errorf("login, assets and API paths are reserved")
+	}
 	if len(segments) > 2 {
 		return fmt.Errorf("HTTP slug must contain at most two segments")
 	}
@@ -108,8 +111,8 @@ func HttpSlugFromURL(value *url.URL) (string, error) {
 		return "", fmt.Errorf("invalid or encoded HTTP slug path")
 	}
 	path := value.Path
-	if path == "/api" || strings.HasPrefix(path, "/api/") {
-		return "", fmt.Errorf("API paths are not HTTP slug paths")
+	if path == "/api" || strings.HasPrefix(path, "/api/") || path == "/login" || strings.HasPrefix(path, "/login/") {
+		return "", fmt.Errorf("API and login paths are not HTTP slug paths")
 	}
 	if path == "" || path == "/" {
 		return "", nil

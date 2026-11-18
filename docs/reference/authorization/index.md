@@ -11,11 +11,12 @@ Each [flow](../flow.md#property-authorization) selects one authorization, either
 ## Types
 
 1. `local`: [Local](local.md)
-2. `oidcDeviceAuth`: [OpenID Connect (OIDC)](oidc.md)
-3. `simple`: [Simple](simple.md)
-4. `htpasswd`: [Htpasswd](htpasswd.md)
-5. `bifroest`: [Bifröst delegation](bifroest.md)
-6. `none`: [None](none.md)
+2. `oidcAuthorizationCode`: [OIDC Authorization Code](oidc/authorization-code.md)
+3. `oidcDeviceAuth`: [OIDC Device Authorization](oidc/device-authorization.md)
+4. `simple`: [Simple](simple.md)
+5. `htpasswd`: [Htpasswd](htpasswd.md)
+6. `bifroest`: [Bifröst delegation](bifroest.md)
+7. `none`: [None](none.md)
 
 The resulting identity is available through [Context Authentication](../context/authentication.md).
 
@@ -26,7 +27,7 @@ The resulting identity is available through [Context Authentication](../context/
    type: local
    rememberMe: allowedAndEnabledByDefault
    ```
-2. Using [OpenID Connect DeviceAuth authorization](oidc.md#device-auth):
+2. Using [OpenID Connect Device Authorization](oidc/device-authorization.md):
    ```yaml
    type: oidcDeviceAuth
    rememberMe: allowedAndEnabledByDefault

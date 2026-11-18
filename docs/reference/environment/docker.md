@@ -184,7 +184,7 @@ Will be displayed to the user upon connection to its environment.
    ```yaml
    banner: "Hello, {{.authorization.user.name}}!\n"
    ```
-2. If [users authorized via OIDC](../authorization/oidc.md) is used, show its name in a message:
+2. If [users authorized via OIDC](../authorization/oidc/index.md) is used, show its name in a message:
    ```yaml
    banner: "Hello, {{.authorization.idToken.name}}!\n"
    ```

@@ -19,6 +19,7 @@ type DiscoveryInput struct {
 type AuthenticationCapabilities struct {
 	Password                     bool
 	KeyboardInteractive          bool
+	OidcAuthorizationCode        bool
 	PublicKey                    bool
 	Secretless                   bool
 	SessionPublicKey             bool
@@ -78,7 +79,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthenticationCapabilities(input Discovery
 	if !input.supported() || this == nil || this.conf == nil {
 		return AuthenticationCapabilities{}
 	}
-	return AuthenticationCapabilities{KeyboardInteractive: true, SessionPublicKey: true}
+	return AuthenticationCapabilities{KeyboardInteractive: this.code == nil || input.Transport == connection.TransportSsh, OidcAuthorizationCode: this.code != nil, SessionPublicKey: true}
 }
 
 func (this *BifroestAuthorizer) AuthenticationCapabilities(input DiscoveryInput) AuthenticationCapabilities {

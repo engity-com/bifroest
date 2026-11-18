@@ -1,4 +1,12 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import {
+    type ReactNode,
+    useCallback,
+    useEffect,
+    useEffectEvent,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+} from 'react';
 import {
     type BlockerFunction,
     createBrowserRouter,
@@ -20,17 +28,20 @@ import { hashPath, parseHashTarget } from './hash-route';
 
 export interface SlugRoute {
     readonly scope: Scope | null;
+    readonly user: string | null;
     readonly key: string;
     readonly view: number | null;
     readonly management: ManagementLocation | null;
     readonly canonicalizing: boolean;
     navigate(slug: string, replace?: boolean): Promise<void>;
+    changeUser(user: string): Promise<void>;
     activate(
         slug: string,
         view: number,
         replace?: boolean,
         management?: ManagementLocation,
         routeId?: string,
+        user?: string,
     ): Promise<void>;
 }
 
@@ -90,6 +101,9 @@ export function useSlugRoute(
     slugs: readonly string[] = [],
     connections: readonly ConnectionView[] = [],
 ): SlugRoute {
+    // Notices observe the latest UI state, but changing a notice must not
+    // restart an in-progress blocked-location repair.
+    const notifyBlocked = useEffectEvent(onBlocked);
     const incoming = useLocation();
     const accepted = useRef(incoming);
     const repairing = useRef(false);
@@ -143,7 +157,7 @@ export function useSlugRoute(
         if (blockedChange) {
             const previous = accepted.current;
             repairing.current = true;
-            onBlocked();
+            notifyBlocked();
             void Promise.resolve(
                 routerNavigate(previous.pathname + previous.search + previous.hash, {
                     replace: true,
@@ -153,7 +167,7 @@ export function useSlugRoute(
                 repairing.current = false;
             });
         }
-    }, [blockedChange, routerNavigate, onBlocked]);
+    }, [blockedChange, routerNavigate]);
     const origin = window.location.origin;
     const { pathname, search, hash } = current;
     const fragment = useMemo(
@@ -232,13 +246,21 @@ export function useSlugRoute(
             return;
         }
         if (missingConnection && fragment && activation.current?.key !== current.key) {
-            void routerNavigate(hashPath(fragment.scope, '-', fragment.management ?? undefined), {
-                replace: true,
-                state: null,
-            });
+            void routerNavigate(
+                hashPath(fragment.scope, '-', fragment.management ?? undefined, fragment.user),
+                {
+                    replace: true,
+                    state: null,
+                },
+            );
         } else if (fragment && pathname !== '/') {
             void routerNavigate(
-                hashPath(fragment.scope, fragment.connection, fragment.management ?? undefined),
+                hashPath(
+                    fragment.scope,
+                    fragment.connection,
+                    fragment.management ?? undefined,
+                    fragment.user,
+                ),
                 { replace: true, state: current.state },
             );
         } else if (hash === '' && scope && (pathname !== '/' || search !== '')) {
@@ -292,13 +314,13 @@ export function useSlugRoute(
     useEffect(() => {
         if (blocker.state === 'blocked') {
             try {
-                onBlocked();
+                notifyBlocked();
             } finally {
                 activation.current = null;
                 blocker.reset();
             }
         }
-    }, [blocker, onBlocked]);
+    }, [blocker]);
 
     const navigate = useCallback(
         async (slug: string, replace = false): Promise<void> => {
@@ -312,6 +334,23 @@ export function useSlugRoute(
         },
         [origin, pathname, search, hash, current.state, routerNavigate],
     );
+    const changeUser = useCallback(
+        async (user: string): Promise<void> => {
+            if (!scope || blocked) {
+                return;
+            }
+            const path = hashPath(
+                scope,
+                fragment?.connection ?? null,
+                fragment?.management ?? undefined,
+                user,
+            );
+            if (pathname + search + hash !== path) {
+                await routerNavigate(path, { replace: true, state: current.state });
+            }
+        },
+        [fragment, scope, blocked, pathname, search, hash, current.state, routerNavigate],
+    );
     const activate = useCallback(
         async (
             slug: string,
@@ -319,6 +358,7 @@ export function useSlugRoute(
             replace = false,
             target?: ManagementLocation,
             routeId?: string,
+            user?: string,
         ): Promise<void> => {
             validateScope({ origin, slug });
             if (!Number.isSafeInteger(nextView) || nextView < 1) {
@@ -326,7 +366,17 @@ export function useSlugRoute(
             }
             const publicId = routeId ?? publicIds.current.get(nextView) ?? newViewID();
             publicIds.current.set(nextView, publicId);
-            const path = hashPath({ origin, slug }, publicId, target);
+            const path = hashPath(
+                { origin, slug },
+                publicId,
+                target,
+                user ??
+                    connections.find((connection) => connection.id === nextView)?.access.snapshot()
+                        .requestingUser ??
+                    (fragment?.scope.slug === slug && (view === null || view === nextView)
+                        ? fragment.user
+                        : null),
+            );
             if (pathname + search + hash === path && view === nextView) {
                 return;
             }
@@ -355,11 +405,47 @@ export function useSlugRoute(
                 throw error;
             }
         },
-        [origin, pathname, search, hash, view, current.key, routerNavigate],
+        [origin, pathname, search, hash, view, current.key, routerNavigate, fragment, connections],
     );
     // Native fragment navigation can reuse history.state/key (or "default").
     // Location.key alone would miss a second manually edited hash and keep the
     // preceding actor/view active. This key is volatile navigation identity only.
-    const key = JSON.stringify([current.key, pathname, search, hash]);
-    return { scope, key, view, management, canonicalizing, navigate, activate };
+    const locationIdentity = useRef({
+        location: current,
+        key: JSON.stringify([current.key, pathname, search, hash]),
+    });
+    if (locationIdentity.current.location !== current) {
+        const previous = locationIdentity.current.location;
+        const previousFragment = parseHashTarget(origin, previous.hash || '#');
+        const onlyUserChanged =
+            fragment &&
+            previousFragment &&
+            fragment.user !== previousFragment.user &&
+            pathname === previous.pathname &&
+            search === previous.search &&
+            JSON.stringify(current.state) === JSON.stringify(previous.state) &&
+            hashPath(fragment.scope, fragment.connection, fragment.management ?? undefined) ===
+                hashPath(
+                    previousFragment.scope,
+                    previousFragment.connection,
+                    previousFragment.management ?? undefined,
+                );
+        locationIdentity.current = {
+            location: current,
+            key: onlyUserChanged
+                ? locationIdentity.current.key
+                : JSON.stringify([current.key, pathname, search, hash]),
+        };
+    }
+    return {
+        scope,
+        user: fragment?.user ?? null,
+        key: locationIdentity.current.key,
+        view,
+        management,
+        canonicalizing,
+        navigate,
+        changeUser,
+        activate,
+    };
 }

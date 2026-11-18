@@ -67,6 +67,7 @@ func TestHttpSlugFromURL(t *testing.T) {
 func TestHttpSlugRejectsAliasesAndInternalPaths(t *testing.T) {
 	for _, path := range []string{
 		"foo", "/foo/", "/foo//bar", "/one/two/three", "/.", "/..", "/foo/..", "/foo_bar", "/é",
+		"/login", "/login/approve", "/login/callback",
 		"/_bifroest", "/api", "/api/v1/access", "/api/unknown", "/_bifroest/assets/main.js", "/assets/main.js", "/%66oo", "/foo%2fbar", "/foo%2Fbar", "/foo%252fbar",
 		"/" + strings.Repeat("a", 65),
 	} {

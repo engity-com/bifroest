@@ -62,7 +62,30 @@ func TestHTTPSBoundaryEnforcesHostSniOriginAndHeaders(t *testing.T) {
 			r.Header.Set("Sec-Fetch-Site", "cross-site")
 		}, 403},
 		{"cross-site asset fetch", func(r *http.Request) {
-			r.URL.Path = "/_bifroest/files/browser-key.wasm"
+			r.URL.Path = "/assets/browser-key.wasm"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+		}, 403},
+		{"OIDC callback top-level redirect", func(r *http.Request) {
+			r.URL.Path = configuration.OidcCallbackPath
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Origin", "https://idp.example.org")
+		}, 204},
+		{"OIDC callback POST not exempt", func(r *http.Request) {
+			r.Method, r.URL.Path = "POST", configuration.OidcCallbackPath
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Origin", "https://idp.example.org")
+		}, 403},
+		{"OIDC callback websocket not exempt", func(r *http.Request) {
+			r.URL.Path = configuration.OidcCallbackPath
+			r.Header.Set("Upgrade", "websocket")
+			r.Header.Set("Origin", "https://idp.example.org")
+		}, 403},
+		{"OIDC other route not exempt", func(r *http.Request) {
+			r.URL.Path = "/login/request/anything"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+		}, 403},
+		{"OIDC callback suffix not exempt", func(r *http.Request) {
+			r.URL.Path = configuration.OidcCallbackPath + "/"
 			r.Header.Set("Sec-Fetch-Site", "cross-site")
 		}, 403},
 		{"encoded alias", func(r *http.Request) { r.URL.RawPath = "/%77ork"; r.URL.Path = "/work" }, 400},

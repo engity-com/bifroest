@@ -76,7 +76,7 @@ export class WasmLoginKey implements LoginKey {
                 throw new RememberMeError('cancelled');
             }
             phase = 'worker-start';
-            worker = new Worker('/_bifroest/files/browser-key-worker.js', {
+            worker = new Worker('/assets/browser-key-worker.js', {
                 type: 'module',
                 credentials: 'omit',
                 name: 'bifroest-key',

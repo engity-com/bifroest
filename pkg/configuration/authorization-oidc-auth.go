@@ -16,6 +16,7 @@ var (
 	DefaultAuthorizationOidcDefaultClientId                     = template.MustNewString("")
 	DefaultAuthorizationOidcDefaultClientSecret                 = template.MustNewString("")
 	DefaultAuthorizationOidcScopes                              = template.MustNewStrings(oidc.ScopeOpenID, "profile", "email")
+	DefaultAuthorizationOidcSshLoginMessage                     = template.MustNewString(`Open the following URL in your browser{{if .codeRequired}} and provide the code {{printf "%q" .code}}{{end}} to login: {{.url}}`)
 	DefaultAuthorizationOidcRetrieveIdToken                     = true
 	DefaultAuthorizationOidcRetrieveUserInfo                    = false
 	DefaultAuthorizationOidcForceDisposeSessionOn               = "lostAccess"
@@ -30,10 +31,11 @@ var (
 )
 
 type AuthorizationOidcDeviceAuth struct {
-	Issuer       template.Url     `yaml:"issuer"`
-	ClientId     template.String  `yaml:"clientId" sensitive:"true"`
-	ClientSecret template.String  `yaml:"clientSecret" sensitive:"true"`
-	Scopes       template.Strings `yaml:"scopes"`
+	Issuer       template.Url         `yaml:"issuer"`
+	ClientId     template.String      `yaml:"clientId" sensitive:"true"`
+	ClientSecret template.String      `yaml:"clientSecret" sensitive:"true"`
+	Scopes       template.Strings     `yaml:"scopes"`
+	Ssh          AuthorizationOidcSsh `yaml:"ssh,omitempty"`
 
 	RetrieveIdToken       bool                          `yaml:"retrieveIdToken,omitempty"`
 	RetrieveUserInfo      bool                          `yaml:"retrieveUserInfo,omitempty"`
@@ -47,6 +49,7 @@ func (this *AuthorizationOidcDeviceAuth) SetDefaults() error {
 		fixedDefault("clientId", func(v *AuthorizationOidcDeviceAuth) *template.String { return &v.ClientId }, DefaultAuthorizationOidcDefaultClientId),
 		fixedDefault("clientSecret", func(v *AuthorizationOidcDeviceAuth) *template.String { return &v.ClientSecret }, DefaultAuthorizationOidcDefaultClientSecret),
 		fixedDefault("scopes", func(v *AuthorizationOidcDeviceAuth) *template.Strings { return &v.Scopes }, DefaultAuthorizationOidcScopes),
+		func(v *AuthorizationOidcDeviceAuth) (string, defaulter) { return "ssh", &v.Ssh },
 
 		fixedDefault("retrieveIdToken", func(v *AuthorizationOidcDeviceAuth) *bool { return &v.RetrieveIdToken }, DefaultAuthorizationOidcRetrieveIdToken),
 		fixedDefault("retrieveUserInfo", func(v *AuthorizationOidcDeviceAuth) *bool { return &v.RetrieveUserInfo }, DefaultAuthorizationOidcRetrieveUserInfo),
@@ -61,6 +64,7 @@ func (this *AuthorizationOidcDeviceAuth) Trim() error {
 		noopTrim[AuthorizationOidcDeviceAuth]("clientId"),
 		noopTrim[AuthorizationOidcDeviceAuth]("clientSecret"),
 		noopTrim[AuthorizationOidcDeviceAuth]("scopes"),
+		func(v *AuthorizationOidcDeviceAuth) (string, trimmer) { return "ssh", &v.Ssh },
 
 		noopTrim[AuthorizationOidcDeviceAuth]("retrieveIdToken"),
 		noopTrim[AuthorizationOidcDeviceAuth]("retrieveUserInfo"),
@@ -81,6 +85,7 @@ func (this *AuthorizationOidcDeviceAuth) Validate() error {
 		notZeroValidate("clientSecret", func(v *AuthorizationOidcDeviceAuth) *template.String { return &v.ClientSecret }),
 		func(v *AuthorizationOidcDeviceAuth) (string, validator) { return "scopes", &v.Scopes },
 		notZeroValidate("scopes", func(v *AuthorizationOidcDeviceAuth) *template.Strings { return &v.Scopes }),
+		func(v *AuthorizationOidcDeviceAuth) (string, validator) { return "ssh", &v.Ssh },
 
 		noopValidate[AuthorizationOidcDeviceAuth]("retrieveIdToken"),
 		noopValidate[AuthorizationOidcDeviceAuth]("retrieveUserInfo"),
@@ -130,6 +135,7 @@ func (this AuthorizationOidcDeviceAuth) isEqualTo(other *AuthorizationOidcDevice
 		isEqual(&this.ClientId, &other.ClientId) &&
 		isEqual(&this.ClientSecret, &other.ClientSecret) &&
 		isEqual(&this.Scopes, &other.Scopes) &&
+		this.Ssh.IsEqualTo(other.Ssh) &&
 		this.RetrieveIdToken == other.RetrieveIdToken &&
 		this.RetrieveUserInfo == other.RetrieveUserInfo &&
 		forceDisposeSessionOn == otherForceDisposeSessionOn &&

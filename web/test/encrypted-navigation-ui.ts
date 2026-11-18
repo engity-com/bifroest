@@ -40,7 +40,7 @@ try {
             assert(!(request.postData() ?? '').includes('tab fixture secret'));
         }
     });
-    const response = await page.goto(`${origin}/Work`);
+    const response = await page.goto(`${origin}/#Work`);
     assert(response);
     assert.equal(response.status(), 200);
     await page.getByLabel('User name', { exact: true }).fill('alice');
@@ -273,7 +273,10 @@ try {
     const deepURL = `${origin}/#Work/-/auditlogs/default/events?flow=${entry.flow}`;
     assert.equal(required(await deep.goto(deepURL)).status(), 200);
     await deep.getByLabel('User name', { exact: true }).waitFor();
-    assert.equal(new URL(deep.url()).hash, `#Work/-/auditlogs/default/events?flow=${entry.flow}`);
+    assert.equal(
+        new URL(deep.url()).hash,
+        `#alice@Work/-/auditlogs/default/events?flow=${entry.flow}`,
+    );
     assert.equal(new URL(deep.url()).pathname, '/');
     assert.equal(new URL(deep.url()).search, '');
     assert.equal(

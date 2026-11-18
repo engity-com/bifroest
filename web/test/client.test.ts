@@ -242,6 +242,34 @@ beforeEach(async () => {
 });
 
 describe('browser HTTP RememberMe orchestration', () => {
+    it('retains the original requesting user separately from the verified principal in snapshots', async () => {
+        const server = new Server();
+        const original = server.access.bind(server);
+        server.access = (principal, bindingId) => ({
+            ...(original(principal, bindingId) as object),
+            requestingUser: 'route-hint@example.org',
+        });
+        const access = await server.client().password('alice', 'correct');
+        expect(access.snapshot().principal).toBe('alice');
+        expect(access.snapshot().requestingUser).toBe('route-hint@example.org');
+        expect(JSON.stringify(access)).not.toContain('bwa1.');
+    });
+
+    it.each([null, 123, 'a'.repeat(257), 'unsafe\nname'])(
+        'rejects malformed requesting username metadata: %s',
+        async (requestingUser) => {
+            const server = new Server();
+            const original = server.access.bind(server);
+            server.access = (principal, bindingId) => ({
+                ...(original(principal, bindingId) as object),
+                requestingUser,
+            });
+            await expect(server.client().password('alice', 'correct')).rejects.toMatchObject({
+                code: 'unavailable',
+            });
+        },
+    );
+
     it('keeps primary grants only in opaque tab memory; no implicit enrollment', async () => {
         const server = new Server();
         const access = await server.client().password('alice', 'correct');

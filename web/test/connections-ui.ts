@@ -84,8 +84,9 @@ export async function exerciseConnections(page: Page, login: Login) {
                     pane.getAttribute('data-connection-principal') === user &&
                     location.pathname === '/' &&
                     location.search === '' &&
-                    decodeURIComponent(location.hash.slice(1).split('/')[0] ?? '') ===
-                        pane.getAttribute('data-connection-scope') &&
+                    decodeURIComponent(
+                        (location.hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ?? '',
+                    ) === pane.getAttribute('data-connection-scope') &&
                     history.state?.usr?.view === id
                 );
             },
@@ -98,7 +99,8 @@ export async function exerciseConnections(page: Page, login: Login) {
         await dialog.getByLabel('Slug', { exact: true }).click();
         const metadata = page.waitForResponse(
             (response) =>
-                new URL(response.url()).pathname === `/${slug}` &&
+                new URL(response.url()).pathname === '/api/v1/discovery' &&
+                response.request().postDataJSON()?.slug === slug &&
                 response.request().headers().accept === 'application/json',
         );
         await page.getByRole('option', { name: slug, exact: true }).click();
@@ -110,12 +112,16 @@ export async function exerciseConnections(page: Page, login: Login) {
                 document
                     .querySelector('.login-dialog [data-login-ready="true"]')
                     ?.getAttribute('data-login-scope') === slug &&
-                document.querySelector('.login-dialog [role="combobox"]')?.textContent === slug,
+                document.querySelector<HTMLInputElement>('.login-dialog input[role="combobox"]')
+                    ?.value === slug,
             slug,
         );
+        const target = new URL(page.url());
+        assert.equal(target.origin, documentOrigin);
+        assert.equal(target.pathname, '/');
         assert.equal(
-            page.url(),
-            `${documentOrigin}/#${encodeURIComponent(slug)}`,
+            (target.hash.slice(1).split('/')[0] ?? '').split('@').at(-1),
+            encodeURIComponent(slug),
             'the selected Slug must be reflected in the URL',
         );
         assert.equal(documentReloads, 0, 'Slug routing must preserve the live document');

@@ -60,6 +60,13 @@ func TestBrowserBootstrapMetadataRetryDoesNotStartAuthentication(t *testing.T) {
 	testBrowserLoginUi(t, true, "bootstrap-retry")
 }
 
+func TestBrowserHiddenSlugsUserHintsAndFieldValidationNeverLeakIntoRequestURLs(t *testing.T) {
+	testBrowserLoginUi(t, true, "slug-input", func(conf *configuration.Configuration) {
+		conf.Flows[0].DiscoverAsSlug = "Work"
+		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^(Work|x7Vq2Ha9Rm4Dz8Kp6Nw3Yt5Bc1Fs0LjE)$")
+	})
+}
+
 func TestBrowserSlugNavigationRetiresStoppedAuthenticationAtTabLimit(t *testing.T) {
 	testBrowserLoginUi(t, true, "stopped-auth-route", func(conf *configuration.Configuration) {
 		conf.Flows[0].DiscoverAsSlug = "Work"
@@ -393,7 +400,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		if r.URL.Path == webAPI+"terminal" {
 			terminalSockets.Add(1)
 		}
-		if mode == "bootstrap-retry" && r.Method == http.MethodGet && r.URL.Path == "/Work" && r.Header.Get("Accept") == "application/json" {
+		if mode == "bootstrap-retry" && r.Method == http.MethodPost && r.URL.Path == webAPI+"discovery" && r.Header.Get("Accept") == "application/json" {
 			metadataRequests.Add(1)
 			if interrupt.CompareAndSwap(false, true) {
 				interrupted.Add(1)
@@ -632,12 +639,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	}
 	if mode == "bootstrap-retry" {
 		require.EqualValues(t, 1, interrupted.Load(), "exactly one metadata failure precedes the explicit retry")
-		require.EqualValues(t, 2, metadataRequests.Load(), "double-clicking retry must not create another bootstrap")
+		require.EqualValues(t, 3, metadataRequests.Load(), "failed entry, public directory and one explicit retry; double-clicking must not duplicate discovery")
 	} else {
 		require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
 	}
 	expectedSessions := 1
-	if mode == "no-login-options" || mode == "oidc-cancel" || mode == "bootstrap-retry" || mode == "root-access" || mode == "root-directory" || mode == "single-root-directory" {
+	if mode == "no-login-options" || mode == "oidc-cancel" || mode == "bootstrap-retry" || mode == "slug-input" || mode == "root-access" || mode == "root-directory" || mode == "single-root-directory" {
 		expectedSessions = 0
 	}
 	if mode == "root-access" || mode == "root-directory" || mode == "single-root-directory" {

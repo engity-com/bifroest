@@ -21,7 +21,8 @@ export async function exerciseStoppedAuthRoute(page: Page) {
             (url) =>
                 url.pathname === '/' &&
                 url.search === '' &&
-                url.hash === `#${encodeURIComponent(value)}`,
+                (url.hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ===
+                    encodeURIComponent(value),
         );
         await page.waitForFunction(
             (value) =>

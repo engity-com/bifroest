@@ -18,7 +18,7 @@ class OpenWorker extends EventTarget {
     requests: Record<string, unknown>[] = [];
     constructor(url: string, config: WorkerOptions) {
         super();
-        expect(url).toBe('/_bifroest/files/browser-evidence-worker.js');
+        expect(url).toBe('/assets/browser-evidence-worker.js');
         expect(config).toMatchObject({
             type: 'module',
             credentials: 'omit',

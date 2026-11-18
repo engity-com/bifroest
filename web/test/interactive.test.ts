@@ -57,7 +57,7 @@ class InteractiveServer {
         const fields = JSON.parse(required(options).body as string) as Record<string, string>;
         const bearer = new Headers(options?.headers).get('Authorization')?.slice(7) ?? null;
         this.requests.push({ action, fields, bearer, options: required(options) });
-        if (action === 'login/interactive') {
+        if (action === 'login/interactive' || action === 'login/oidc') {
             return json(this.transform?.(this.pending(true)) ?? this.pending(true), 202);
         }
         if (bearer !== attemptToken) {
@@ -110,6 +110,36 @@ class InteractiveServer {
 afterEach(() => vi.useRealTimers());
 
 describe('bounded interactive login and device-flow adapter', () => {
+    it('passes validated structured device instructions without scraping provider prose', async () => {
+        const server = new InteractiveServer();
+        const device = {
+            userCode: 'ABCD-EFGH',
+            url: 'https://idp.example.org/device?user_code=ABCD-EFGH',
+        };
+        server.steps = [{ ...info, message: '', device }];
+        const seen: LoginStep[] = [];
+        await server.client().interactive('', async (step) => {
+            seen.push(step);
+        });
+        expect(seen[0]?.device).toEqual(device);
+        expect(Object.isFrozen(seen[0]?.device)).toBe(true);
+        expect(server.requests.find((request) => request.action === 'login/reply')?.fields).toEqual(
+            { slug: 'Work', sequence: '1' },
+        );
+    });
+    it('uses the distinct OIDC start route and retains the original tab proof for completion', async () => {
+        const server = new InteractiveServer();
+        server.steps = [{ ...info, message: 'Open https://app.example.org/login/request/ticket' }];
+        const access = await server.client().interactive('', async () => '', undefined, true);
+        expect(server.requests.map((request) => request.action)).toEqual([
+            'login/oidc',
+            'login/reply',
+            'login/poll',
+        ]);
+        expect(server.requests[0]?.bearer).toBeNull();
+        expect(server.requests[1]?.bearer).toBe(attemptToken);
+        expect(access.snapshot().principal).toBe('verified-principal');
+    });
     it('acknowledges text, preserves prompt echo, sends each answer once and claims an opaque access', async () => {
         const server = new InteractiveServer();
         const seen: LoginStep[] = [];
@@ -179,6 +209,16 @@ describe('bounded interactive login and device-flow adapter', () => {
             { ...info, challenge: 'unexpected' },
             { ...info, message: 'x'.repeat(8193) },
             { ...info, message: '\ud800' },
+            { ...info, device: { userCode: '', url: 'https://idp.example.org' } },
+            { ...info, device: { userCode: 'A'.repeat(257), url: 'https://idp.example.org' } },
+            { ...info, device: { userCode: 'AB\nCD', url: 'https://idp.example.org' } },
+            { ...info, device: { userCode: 'ABCD', url: 'http://idp.example.org' } },
+            { ...info, device: { userCode: 'ABCD', url: 'https://user:secret@idp.example.org' } },
+            {
+                ...info,
+                kind: 'prompt',
+                device: { userCode: 'ABCD', url: 'https://idp.example.org' },
+            },
         ]) {
             const server = new InteractiveServer();
             server.transform = (value) => ({ ...(value as object), step: changed });

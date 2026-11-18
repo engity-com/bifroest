@@ -16,7 +16,7 @@ import (
 
 func webTestLoginOptions(t *testing.T, handler http.Handler, slug string) []authorization.LoginOption {
 	t.Helper()
-	response := webTestRequest(handler, http.MethodGet, "app.example.org", "/"+slug, "", "")
+	response := webTestDiscovery(handler, slug)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var body struct {
 		Options []authorization.LoginOption `json:"loginOptions"`
@@ -33,10 +33,10 @@ func TestWebRootPublishedDirectoryDoesNotEnableRootAuthentication(t *testing.T) 
 		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 	})
 	require.Empty(t, webTestLoginOptions(t, handler, ""))
-	response := webTestRequest(handler, http.MethodGet, "app.example.org", "/", "", "")
+	response := webTestDiscovery(handler, "")
 	require.Contains(t, response.Body.String(), `"publishedSlugs":["Work"]`)
 	require.Contains(t, response.Body.String(), `"rootAvailable":false`, "a directory is not a root login option")
-	require.Contains(t, webTestRequest(handler, http.MethodGet, "app.example.org", "/Work", "", "").Body.String(), `"rootAvailable":false`)
+	require.Contains(t, webTestDiscovery(handler, "Work").Body.String(), `"rootAvailable":false`)
 	require.Empty(t, svc.web.access)
 	require.Empty(t, recorder.eventsSnapshot(), "discovery must not authenticate or audit a task")
 	require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "alice", "correct", "").Code)
@@ -89,7 +89,7 @@ func TestWebLoginOptionsReflectConfiguredPrimaryMethodsOnly(t *testing.T) {
 			require.Equal(t, test.options, webTestLoginOptions(t, handler, "Work"))
 			require.Empty(t, svc.web.access)
 			require.Empty(t, recorder.eventsSnapshot())
-			response := webTestRequest(handler, http.MethodGet, "app.example.org", "/Work", "", "")
+			response := webTestDiscovery(handler, "Work")
 			require.NotContains(t, response.Body.String(), "plain:correct")
 			require.NotContains(t, response.Body.String(), string(key))
 		})
@@ -138,7 +138,7 @@ func TestWebDiscoveryDistinguishesActualRootAccessFromDirectory(t *testing.T) {
 				}
 			})
 			for _, slug := range []string{"", "Work"} {
-				response := webTestRequest(handler, http.MethodGet, "app.example.org", "/"+slug, "", "")
+				response := webTestDiscovery(handler, slug)
 				require.Equal(t, http.StatusOK, response.Code)
 				var metadata struct {
 					RootAvailable *bool `json:"rootAvailable"`

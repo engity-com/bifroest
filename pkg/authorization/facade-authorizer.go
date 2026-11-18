@@ -164,6 +164,14 @@ func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Auth
 		return nil, err
 	}
 	for _, candidate := range candidates {
+		// The HTTP adapter supplies this capability, not unverified credentials.
+		// Keep the explicit OIDC option separate from device/PAM interaction.
+		if selected, ok := req.(interface{ HttpLoginMethod() LoginMethod }); ok && selection.Transport == connection.TransportHttp {
+			caps := candidate.capabilityProvider.AuthenticationCapabilities(DiscoveryInput{Transport: selection.Transport, RequestingName: req.Connection().Remote().User() != ""})
+			if selected.HttpLoginMethod() == LoginMethodOidc && !caps.OidcAuthorizationCode || selected.HttpLoginMethod() != LoginMethodOidc && !caps.KeyboardInteractive {
+				continue
+			}
+		}
 		if ok, err := candidate.canHandle(req, selection); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {

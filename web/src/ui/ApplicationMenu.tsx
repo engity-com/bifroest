@@ -51,7 +51,7 @@ export function ApplicationMenu({
                 <Menu.Item
                     component="a"
                     icon={<DescriptionIcon fontSize="small" />}
-                    href="/_bifroest/files/third-party-licenses.txt"
+                    href="/assets/third-party-licenses.txt"
                     target="_blank"
                     rel="noopener noreferrer"
                 >

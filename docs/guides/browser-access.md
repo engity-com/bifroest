@@ -72,6 +72,20 @@ sudo systemctl restart bifroest.service
 
 Reloading opens a new shell, not the old execution. Closing a tab is not logout; choose **Log out** to revoke browser access. The example enables [RememberMe](../reference/data-type.md#rememberme) by default; clear **Remember this browser** before login to opt out.
 
+In terminals, use **Ctrl+Shift+C** to copy selected text and **Ctrl+Shift+V** to paste. **Ctrl+C** remains interrupt/cancel. Clipboard access may require browser permission.
+
+## Access links and hidden Slugs
+
+Use `https://bifroest.example.org/#alice@Shell` to prefill the user name. Editing the user name updates the link without reloading; email-style names are encoded, for example `#alice%40example.org@Shell`. User names in shared links are visible to their recipients and may be retained in browser history and bookmarks. They are hints, not verified identities.
+
+Prefilled user names are also reflected in the link when a name-based login method is selected. After login, each tab and its copied access link retain that access's original requesting name, including after saved-login resumption. This name is separate from the identity verified by an external IdP. A missing required name is marked directly at its field.
+
+The **Slug** field accepts free input as well as published suggestions. Enter a Slug and press **Enter**, or choose a suggestion. An unknown Slug is marked as invalid directly at the field; network and server errors remain separate and can be retried.
+
+For a hidden link, omit `discoverAsSlug` and explicitly allow its Slug through `requirement.http.includedSlug`. A password manager can generate a long random alphanumeric Slug. Hidden Slugs are not listed to other visitors, but still require the flow's normal authentication and authorization.
+
+Slugs and optional user names stay in the browser fragment, not document paths or request query strings. Discovery sends the Slug in a JSON body to `POST /api/v1/discovery`; other API calls also use request bodies, and WebSocket channels send it in their opening message. This keeps Slugs out of ordinary URL access logs, not out of explicitly configured body logging. Paths such as `/Shell` are not access links and return `404`.
+
 ## Next steps
 
 * [Manage a host remotely](management.md) adds a management flow; terminal access alone grants no management access.

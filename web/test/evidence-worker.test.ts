@@ -37,7 +37,7 @@ class EvidenceWorker extends EventTarget {
 
     constructor(url: string, config: WorkerOptions) {
         super();
-        expect(url).toBe('/_bifroest/files/browser-evidence-worker.js');
+        expect(url).toBe('/assets/browser-evidence-worker.js');
         expect(config).toMatchObject({ type: 'module', credentials: 'omit' });
         EvidenceWorker.instances.push(this);
         queueMicrotask(() =>

@@ -162,14 +162,18 @@ func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, pass
 	return true, nil
 }
 
-func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ gossh.ConnMetadata, challenger gossh.KeyboardInteractiveChallenge) (bool, error) {
+func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ gossh.ConnMetadata, challenger gossh.KeyboardInteractiveChallenge) (accepted bool, rErr error) {
 	conn := this.connection(ctx)
 	if conn == nil {
 		return false, nil
 	}
 	l := conn.logger
 
-	authReq := authorizeRequest{service: this, connection: conn}
+	attempt := &oidcAuthentication{}
+	if this.web != nil {
+		defer func() { this.web.finishOidcAuthentication(attempt, accepted && rErr == nil, "access_denied") }()
+	}
+	authReq := authorizeRequest{service: this, connection: conn, requestContext: context.WithValue(ctx, oidcAuthenticationKey{}, attempt)}
 	auth, err := this.authorizer.AuthorizeInteractive(&interactiveAuthorizeRequest{
 		authorizeRequest: authReq,
 		challenger:       challenger,
@@ -193,6 +197,23 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 		}
 		l.Debug("interactive session is incompatible with the current environment")
 		return false, nil
+	}
+
+	// A browser must not publish success for an expired/revoked session or a
+	// changed target merely because the provider identity was valid earlier.
+	if this.web != nil {
+		this.web.oidcMutex.Lock()
+		hasOidc := len(attempt.transactions) != 0
+		this.web.oidcMutex.Unlock()
+		if hasOidc {
+			if auth.FindSession() == nil || auth.FindSession().Flow() != auth.Flow() || conn.IsClosed() || ctx.Err() != nil {
+				return false, nil
+			}
+			base := &environmentContext{service: this, connection: conn, authorization: auth, executionContext: ctx}
+			if err := this.validateTerminalAuthorization(base); err != nil || this.sessionConnections.isRevoked(auth.FindSession()) {
+				return false, nil
+			}
+		}
 	}
 
 	if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodKeyboardInteractive, audit.EventOutcomeSuccess, ""); err != nil {

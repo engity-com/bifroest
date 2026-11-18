@@ -203,7 +203,7 @@ export async function exerciseManagement(page: Page, login: Login, logout: Logou
         await login(cold, false);
         await cold.getByRole('region', { name: 'Build information', exact: true }).waitFor();
         const restored = new URL(cold.url());
-        assert.match(restored.hash, /^#Work\/[1-9A-HJ-NP-Za-km-z]{16,22}\/version$/u);
+        assert.match(restored.hash, /^#alice@Work\/[1-9A-HJ-NP-Za-km-z]{16,22}\/version$/u);
         assert.notEqual(
             restored.hash,
             new URL(versionURL).hash,

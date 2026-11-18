@@ -28,7 +28,7 @@ export async function prepareRecordingPlayback(
     const terminate = () => worker?.terminate();
     stopped.addEventListener('abort', terminate, { once: true });
     try {
-        worker = new Worker('/_bifroest/files/browser-evidence-worker.js', {
+        worker = new Worker('/assets/browser-evidence-worker.js', {
             type: 'module',
             credentials: 'omit',
             name: 'bifroest-playback',

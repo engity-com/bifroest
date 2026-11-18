@@ -4,7 +4,7 @@ description: How to access context information about a user's ID Token of its su
 
 # Context OpenID Connect (OIDC) ID Token
 
-Holds the ID information about a user who was authorized via [OIDC](../authorization/oidc.md), if configured and available.
+Holds the ID information about a user who was authorized via [OIDC](../authorization/oidc/index.md), if configured and available.
 
 ## Properties
 
@@ -39,5 +39,4 @@ Holds the `iat` property of the [ID Token](https://openid.net/specs/openid-conne
 <<property("*", "any", optional=True)>>
 
 Any other possible value which was added to the ID Token can be referenced. Like: `idToken.groups` or `idToken.tid`. This depends on the Identity Provider itself, see IdP specific documentation.
-
 
