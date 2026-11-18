@@ -21,12 +21,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/oauth2"
@@ -568,21 +570,20 @@ func TestOidcCodeWithUnmodifiedOpenSSH(t *testing.T) {
 		"-o", "PreferredAuthentications=keyboard-interactive", "-o", "PubkeyAuthentication=no", "-o", "PasswordAuthentication=no", "alice@"+host)
 	// -F must name a real empty file, also on non-Unix test hosts.
 	require.NoError(t, os.WriteFile(cmd.Args[2], nil, 0600))
-	stderr, err := cmd.StderrPipe()
-	require.NoError(t, err)
-	require.NoError(t, cmd.Start())
+	output := startOidcOpenSSH(t, cmd)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	t.Cleanup(func() { cancel(); <-done })
+	t.Cleanup(func() { cancel(); _ = output.Close(); <-done })
 	instructions := make(chan string, 1)
 	go func() {
-		instructions <- readOidcSSHInstruction(stderr)
+		instructions <- readOidcSSHInstruction(output)
 	}()
 	var instruction string
 	select {
 	case instruction = <-instructions:
 	case <-ctx.Done():
-		t.Fatal("OpenSSH did not display the login URL")
+		_ = output.Close()
+		t.Fatalf("OpenSSH did not display a complete login instruction: %s", <-instructions)
 	}
 	link := regexp.MustCompile(`https://[^\s]+/login/#start/[A-Za-z0-9_-]{43}`).FindString(instruction)
 	require.NotEmpty(t, link, "OpenSSH ended without a complete login instruction: %s", instruction)
@@ -602,6 +603,22 @@ func TestOidcCodeWithUnmodifiedOpenSSH(t *testing.T) {
 	svc.web.mutex.Lock()
 	require.Empty(t, svc.web.access)
 	svc.web.mutex.Unlock()
+}
+
+func startOidcOpenSSH(t *testing.T, cmd *exec.Cmd) io.ReadCloser {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		output, err := cmd.StderrPipe()
+		require.NoError(t, err)
+		require.NoError(t, cmd.Start())
+		return output
+	}
+	// Ubuntu's client routes zero-prompt instructions through notify_start:
+	// stderr must be a terminal, otherwise it tries an unavailable GUI Askpass.
+	// Exercise what an actual terminal user sees, without relying on debug logs.
+	output, err := pty.Start(cmd)
+	require.NoError(t, err)
+	return output
 }
 
 // OpenSSH on Unix prints a zero-prompt instruction without appending a newline.
