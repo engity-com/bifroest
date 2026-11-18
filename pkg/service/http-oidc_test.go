@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bufio"
 	"context"
 	stdcrypto "crypto"
 	"crypto/rand"
@@ -12,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +37,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/template"
+	"github.com/engity-com/bifroest/pkg/webui"
 )
 
 // A real TLS/JWKS/token provider that deliberately has NO device endpoint.
@@ -182,6 +184,19 @@ func oidcCodeFixture(t *testing.T, configure ...func(*configuration.Configuratio
 	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepareContext(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	// Protocol tests exercise document GET safety, not the generated SPA. Keep
+	// source-only Go jobs independent of a previous frontend build. Actual browser
+	// jobs still use their built resources, including customization and CSP.
+	if _, _, err := svc.web.assets.LoginDocument(); errors.Is(err, fs.ErrNotExist) {
+		public := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(public, "login.html"), []byte(`<!doctype html><html><head></head><body><div id="root"></div></body></html>`), 0600))
+		assetsConf := *conf.Http
+		assetsConf.AssetsDirectory = public
+		assets, err := webui.New(&assetsConf)
+		require.NoError(t, err)
+		require.NoError(t, svc.web.assets.Close())
+		svc.web.assets = assets
+	}
 	recorder := &recordingAuditRecorder{}
 	for _, flow := range conf.Flows {
 		svc.flowAuditRecorders[flow.Name] = recorder
@@ -520,36 +535,26 @@ func TestOidcCodeWithUnmodifiedOpenSSH(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	t.Cleanup(func() { cancel(); <-done })
-	links := make(chan string, 1)
-	codes := make(chan string, 1)
+	instructions := make(chan string, 1)
 	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			if link := regexp.MustCompile(`https://\S+`).FindString(scanner.Text()); link != "" {
-				links <- link
-				if match := regexp.MustCompile(`code "([3479CDFHJKMNPRTUVWXY]{2})"`).FindStringSubmatch(scanner.Text()); len(match) == 2 {
-					codes <- match[1]
-				}
-			}
-		}
+		instructions <- readOidcSSHInstruction(stderr)
 	}()
-	var link string
+	var instruction string
 	select {
-	case link = <-links:
+	case instruction = <-instructions:
 	case <-ctx.Done():
 		t.Fatal("OpenSSH did not display the login URL")
 	}
+	link := regexp.MustCompile(`https://[^\s]+/login/#start/[A-Za-z0-9_-]{43}`).FindString(instruction)
+	require.NotEmpty(t, link, "OpenSSH ended without a complete login instruction: %s", instruction)
 	browser := openOidcBrowser(t, handler, p, link)
 	callback := oidcCallbackRequest(handler, browser.callback, browser.cookie)
 	require.Equal(t, 200, callback.Code, callback.Body.String())
 	require.Empty(t, auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted))
 	view := oidcView(t, callback)
-	var code string
-	select {
-	case code = <-codes:
-	case <-ctx.Done():
-		t.Fatal("OpenSSH did not display the comparison code")
-	}
+	comparison := regexp.MustCompile(`code "([3479CDFHJKMNPRTUVWXY]{2})"`).FindStringSubmatch(instruction)
+	require.Len(t, comparison, 2)
+	code := comparison[1]
 	require.Contains(t, view.Choices, code)
 	require.Equal(t, 200, oidcAPI(handler, "approve", map[string]string{"id": browser.id, "csrf": view.CSRF, "code": code}, browser.cookie).Code)
 	require.Eventually(t, func() bool {
@@ -558,6 +563,47 @@ func TestOidcCodeWithUnmodifiedOpenSSH(t *testing.T) {
 	svc.web.mutex.Lock()
 	require.Empty(t, svc.web.access)
 	svc.web.mutex.Unlock()
+}
+
+// OpenSSH on Unix prints a zero-prompt instruction without appending a newline.
+// A line scanner therefore waits until authentication ends: read bounded chunks
+// and require the COMPLETE ticket and comparison code instead of a partial URL.
+func readOidcSSHInstruction(reader io.Reader) string {
+	reader = io.LimitReader(reader, 64<<10)
+	link := regexp.MustCompile(`https://[^\s]+/login/#start/[A-Za-z0-9_-]{43}`)
+	code := regexp.MustCompile(`code "[3479CDFHJKMNPRTUVWXY]{2}"`)
+	var message strings.Builder
+	var buffer [4096]byte
+	for {
+		n, err := reader.Read(buffer[:])
+		_, _ = message.Write(buffer[:n])
+		text := message.String()
+		if link.MatchString(text) && code.MatchString(text) || err != nil {
+			return text
+		}
+	}
+}
+
+func TestOidcSSHInstructionDoesNotRequireANewlineOrEOF(t *testing.T) {
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
+	done := make(chan string, 1)
+	go func() { done <- readOidcSSHInstruction(reader) }()
+	_, err := io.WriteString(writer, `Login with code "CD" at https://app.example.org/login/#start/`+strings.Repeat("x", 42))
+	require.NoError(t, err)
+	select {
+	case <-done:
+		t.Fatal("accepted a truncated ticket")
+	default:
+	}
+	_, err = io.WriteString(writer, "x")
+	require.NoError(t, err)
+	select {
+	case message := <-done:
+		require.Contains(t, message, strings.Repeat("x", 43))
+	case <-time.After(time.Second):
+		t.Fatal("waited for a newline or EOF after the complete instruction")
+	}
 }
 
 func TestOidcCodeCallbackRequiresOriginalBrowserAndState(t *testing.T) {
@@ -816,7 +862,11 @@ func TestOidcCodeWebBrowserWaitsForOriginalClaimAndRequiredAudit(t *testing.T) {
 	require.Equal(t, 503, finishWebAttempt(t, handler, token, "Work").Code)
 	final := oidcView(t, oidcAPI(handler, "status", map[string]string{"id": browser.id}, browser.cookie))
 	require.Equal(t, "denied", final.Status)
-	require.Equal(t, "access_denied", final.Error)
+	// Required-audit failure also closes the original connection. Its cancellation
+	// may reach the browser before the adapter's explicit denial; neither outcome
+	// is success and no private recorder diagnostic may be exposed.
+	require.Contains(t, []string{"access_denied", "canceled"}, final.Error)
+	require.Empty(t, auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted))
 	svc.web.mutex.Lock()
 	require.Empty(t, svc.web.access)
 	svc.web.mutex.Unlock()

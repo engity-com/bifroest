@@ -126,7 +126,7 @@ func (this *authorizeRequest) IsSessionCompatible(auth authorization.Authorizati
 	if !ok {
 		return true, nil
 	}
-	ctx := &environmentContext{service: this.service, connection: this.connection, authorization: auth}
+	ctx := &environmentContext{service: this.service, connection: this.connection, authorization: auth, executionContext: this.Context()}
 	return checker.IsSessionCompatibleWith(ctx, sess)
 }
 

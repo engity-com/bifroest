@@ -67,6 +67,8 @@ The callback is `https://<domain>/login/callback`. A non-standard port comes fro
 <<property("loginTimeout", "Duration", "../../data-type.md#duration", default="2m")>>
 Maximum time for the login, including browser approval. Must be greater than zero and at most `10m`. SSH also applies its remaining [`handshakeTimeout`](../../connection/ssh.md#property-handshakeTimeout).
 
+The same deadline covers final target validation and required audit recording. A delayed WebUI claim or audit completion cannot grant access after expiration.
+
 <<property("retrieveIdToken", "bool", default=True)>>
 Exposes verified ID-token claims as [`.authorization.idToken`](../../context/authorization.md#oidc-property-idToken).
 

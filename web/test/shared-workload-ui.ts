@@ -83,6 +83,9 @@ try {
     });
     const login = async () => {
         stage = 'navigation';
+        // A fragment-only goto reuses the document (and returns null). Retire
+        // the old in-memory access before testing a genuinely fresh login.
+        await page.goto('about:blank');
         const response = await page.goto(`${origin}/#Work`);
         assert(response);
         assert.equal(response.status(), 200);

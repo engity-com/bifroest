@@ -232,6 +232,8 @@ try {
         const number = ++loginNumber;
         stage = `login-${number}-begin`;
         if (navigate) {
+            // Hash navigation alone does not retire the previous document's grant.
+            await page.goto('about:blank');
             const response = await page.goto(`${origin}/#Work`);
             assert(response);
             assert.equal(response.status(), 200);

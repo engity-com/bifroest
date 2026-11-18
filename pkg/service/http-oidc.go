@@ -34,6 +34,7 @@ type oidcAuthenticationKey struct{}
 // Only the transport adapter may publish its final accepted/denied outcome.
 type oidcAuthentication struct {
 	transactions []*oidcBrowserTransaction
+	current      *oidcBrowserTransaction
 	finished     bool
 }
 
@@ -125,7 +126,7 @@ func (this *webService) finishOidcLocked(tx *oidcBrowserTransaction, phase, reas
 func (this *webService) pruneOidcLocked() {
 	now := time.Now()
 	for key, tx := range this.oidcTickets {
-		if !oidcTerminal(tx) && tx.ctx.Err() != nil {
+		if !oidcTerminal(tx) && oidcTransactionError(tx) != nil {
 			this.expireOidcLocked(tx)
 		}
 		if oidcTerminal(tx) && !now.Before(tx.retainUntil) {
@@ -140,7 +141,7 @@ func (this *webService) pruneOidcLocked() {
 
 func (this *webService) expireOidcLocked(tx *oidcBrowserTransaction) {
 	phase, reason := "denied", "canceled"
-	if tx.ctx.Err() == context.DeadlineExceeded {
+	if oidcTransactionError(tx) == context.DeadlineExceeded {
 		phase, reason = "expired", "timeout"
 	}
 	if this.ctx.Err() != nil {
@@ -149,14 +150,61 @@ func (this *webService) expireOidcLocked(tx *oidcBrowserTransaction) {
 	this.finishOidcLocked(tx, phase, reason)
 }
 
-func (this *webService) finishOidcAuthentication(attempt *oidcAuthentication, accepted bool, reason string) {
+// Check the absolute deadline too: a busy scheduler may not have delivered the
+// context's cancellation yet. Final transport acceptance must still fail closed.
+func oidcTransactionError(tx *oidcBrowserTransaction) error {
+	if err := tx.ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := tx.ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// Keep final target validation and required audit inside the ORIGINAL login
+// budget, including the gap between primary authorization and an HTTP claim.
+func (this *webService) oidcCompletionContext(ctx context.Context, attempt *oidcAuthentication) (context.Context, context.CancelFunc) {
+	this.oidcMutex.Lock()
+	defer this.oidcMutex.Unlock()
+	if attempt == nil || len(attempt.transactions) == 0 {
+		return ctx, func() {}
+	}
+	tx := attempt.current
+	if tx == nil {
+		bounded, cancel := context.WithCancel(ctx)
+		cancel()
+		return bounded, cancel
+	}
+	deadline, _ := tx.ctx.Deadline()
+	bounded, cancel := context.WithDeadline(ctx, deadline)
+	stop := context.AfterFunc(tx.ctx, cancel)
+	if attempt.finished || tx.phase != "authorizing" || oidcTransactionError(tx) != nil {
+		cancel()
+	}
+	return bounded, func() { stop(); cancel() }
+}
+
+// An accepted result is committed under the same lock as browser expiration.
+// Callers MUST check the return value before publishing SSH auth or a new grant;
+// cleanup callers may discard it. No slow I/O is performed while holding this lock.
+func (this *webService) finishOidcAuthentication(attempt *oidcAuthentication, accepted bool, reason string) bool {
 	if attempt == nil {
-		return
+		return accepted
 	}
 	this.oidcMutex.Lock()
 	defer this.oidcMutex.Unlock()
 	if attempt.finished {
-		return
+		return false
+	}
+	if accepted && len(attempt.transactions) != 0 {
+		tx := attempt.current
+		if tx == nil || tx.phase != "authorizing" || oidcTransactionError(tx) != nil {
+			accepted = false
+			if tx != nil && oidcTransactionError(tx) != nil {
+				this.expireOidcLocked(tx)
+			}
+		}
 	}
 	attempt.finished = true
 	phase := "denied"
@@ -164,9 +212,14 @@ func (this *webService) finishOidcAuthentication(attempt *oidcAuthentication, ac
 		phase, reason = "accepted", ""
 	}
 	for _, tx := range attempt.transactions {
+		if oidcTransactionError(tx) == context.DeadlineExceeded {
+			this.expireOidcLocked(tx)
+		}
 		this.finishOidcLocked(tx, phase, reason)
 	}
 	attempt.transactions = nil
+	attempt.current = nil
+	return accepted
 }
 
 func (this *webService) Login(req authorization.InteractiveRequest, client *authorization.OidcDeviceAuthAuthorizer) (*oauth2.Token, error) {
@@ -200,6 +253,7 @@ func (this *webService) Login(req authorization.InteractiveRequest, client *auth
 				continue
 			}
 			token := previous.result.Token
+			attempt.current = previous
 			this.oidcMutex.Unlock()
 			return token, nil
 		}
@@ -259,6 +313,7 @@ func (this *webService) Login(req authorization.InteractiveRequest, client *auth
 	}
 	this.oidcTickets[key] = tx
 	attempt.transactions = append(attempt.transactions, tx)
+	attempt.current = tx
 	this.oidcMutex.Unlock()
 	message := "Open the following URL in your browser to login: " + origin + oidcBrowserPrefix + "#start/" + ticket
 	if tx.ssh {

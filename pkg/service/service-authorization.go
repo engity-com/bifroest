@@ -189,10 +189,20 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 		l.Debug("interactive rejected")
 		return false, nil
 	}
+	completionCtx := context.Context(ctx)
+	if this.web != nil {
+		var cancel context.CancelFunc
+		completionCtx, cancel = this.web.oidcCompletionContext(completionCtx, attempt)
+		defer cancel()
+	}
+	if completionCtx.Err() != nil {
+		return false, nil
+	}
+	authReq.requestContext = completionCtx
 	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
 		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
 	} else if !compatible {
-		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodKeyboardInteractive, audit.EventOutcomeDenied, audit.EventReasonSessionIncompatible); err != nil {
+		if err := this.recordAuthenticationCompletedFor(completionCtx, conn, auth, audit.AuthenticationMethodKeyboardInteractive, audit.EventOutcomeDenied, audit.EventReasonSessionIncompatible); err != nil {
 			return false, err
 		}
 		l.Debug("interactive session is incompatible with the current environment")
@@ -209,15 +219,21 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 			if auth.FindSession() == nil || auth.FindSession().Flow() != auth.Flow() || conn.IsClosed() || ctx.Err() != nil {
 				return false, nil
 			}
-			base := &environmentContext{service: this, connection: conn, authorization: auth, executionContext: ctx}
+			base := &environmentContext{service: this, connection: conn, authorization: auth, executionContext: completionCtx}
 			if err := this.validateTerminalAuthorization(base); err != nil || this.sessionConnections.isRevoked(auth.FindSession()) {
 				return false, nil
 			}
 		}
 	}
 
-	if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodKeyboardInteractive, audit.EventOutcomeSuccess, ""); err != nil {
+	if err := this.recordAuthenticationCompletedFor(completionCtx, conn, auth, audit.AuthenticationMethodKeyboardInteractive, audit.EventOutcomeSuccess, ""); err != nil {
 		return false, err
+	}
+	if completionCtx.Err() != nil || conn.IsClosed() || this.sessionConnections.isRevoked(auth.FindSession()) {
+		return false, nil
+	}
+	if this.web != nil && !this.web.finishOidcAuthentication(attempt, true, "access_denied") {
+		return false, nil
 	}
 	ctx.SetValue(authorizationCtxKey, auth)
 	if this.sessions != nil {

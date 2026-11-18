@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -255,7 +256,15 @@ func TestJointListenersServeSshAndHttpsAndStopTogether(t *testing.T) {
 			t.Cleanup(transport.CloseIdleConnections)
 			client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
 			require.Eventually(t, func() bool {
-				response, err := client.Get("https://app.example.org/")
+				// Test the live HTTPS protocol, not availability of generated SPA
+				// resources in a source-only backend job. Slugs belong in bodies.
+				request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://app.example.org/api/v1/discovery", strings.NewReader(`{"slug":"work"}`))
+				if err != nil {
+					return false
+				}
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("Origin", "https://app.example.org")
+				response, err := client.Do(request)
 				if response != nil {
 					_ = response.Body.Close()
 				}

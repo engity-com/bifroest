@@ -384,8 +384,9 @@ func validWebLoginUser(user string) bool {
 // signature or a public-key eligibility decision cannot substitute for proof.
 func (this *webService) completeAuthentication(w http.ResponseWriter, ctx context.Context, conn *webLoginConnection, auth authorization.Authorization, method audit.AuthenticationMethod, primaryKey ...ssh.PublicKey) {
 	attempt, _ := conn.Lifetime().Value(oidcAuthenticationKey{}).(*oidcAuthentication)
-	accepted := false
-	defer func() { this.finishOidcAuthentication(attempt, accepted, "access_denied") }()
+	defer func() { this.finishOidcAuthentication(attempt, false, "access_denied") }()
+	ctx, cancel := this.oidcCompletionContext(ctx, attempt)
+	defer cancel()
 	if auth == nil || !auth.IsAuthorized() || auth.FindSession() == nil {
 		webError(w, http.StatusUnauthorized, "authentication denied")
 		return
@@ -426,7 +427,6 @@ func (this *webService) completeAuthentication(w http.ResponseWriter, ctx contex
 		return
 	}
 	this.service.oidcRefresh.register(auth.FindSession())
-	accepted = true
 	webJSONResponse(w, http.StatusOK, this.accessResponse(access, token))
 }
 

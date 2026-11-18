@@ -86,6 +86,12 @@ func (this *webService) issue(scope webScope, base *environmentContext, credenti
 	if _, exists := this.access[key]; exists {
 		return "", nil, fmt.Errorf("web access collision")
 	}
+	// All fallible/slow preparation is complete. Commit browser acceptance only
+	// here, immediately before publication, never from an already expired claim.
+	attempt, _ := base.connection.Lifetime().Value(oidcAuthenticationKey{}).(*oidcAuthentication)
+	if !this.finishOidcAuthentication(attempt, true, "access_denied") {
+		return "", nil, fmt.Errorf("OIDC login expired before access publication")
+	}
 	this.access[key] = access
 	return token, access, nil
 }
