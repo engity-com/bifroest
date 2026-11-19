@@ -379,7 +379,7 @@ func serveOidcSSH(t *testing.T, svc *service, p *oidcCodeProvider) string {
 }
 
 func TestOidcCodeSSHNeedsExplicitApprovalWithoutHTTPWorkloadAccess(t *testing.T) {
-	for _, decision := range []string{"approve", "deny", "wrong-code", "policy-denied", "policy-fallback", "audit-failed", "custom-message"} {
+	for _, decision := range []string{"approve", "deny", "wrong-code", "policy-denied", "policy-fallback", "audit-failed", "custom-message", "external-link"} {
 		t.Run(decision, func(t *testing.T) { oidcCodeSSHDecision(t, decision) })
 	}
 }
@@ -411,7 +411,7 @@ func oidcCodeSSHDecision(t *testing.T, decision string) {
 	if decision == "audit-failed" {
 		recorder.setErrorBeforeRecordForName(audit.EventNameAuthenticationCompleted, errors.New("private-audit-failure"))
 	}
-	accepted := decision == "approve" || decision == "policy-fallback" || decision == "custom-message"
+	accepted := decision == "approve" || decision == "policy-fallback" || decision == "custom-message" || decision == "external-link"
 	for _, accept := range []string{"text/html", "application/json", "*/*"} {
 		for _, method := range []string{"GET", "HEAD"} {
 			root := oidcRequest(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -449,6 +449,26 @@ func oidcCodeSSHDecision(t *testing.T, decision string) {
 	if decision == "custom-message" {
 		require.True(t, strings.HasPrefix(message, "[Custom] code "))
 	}
+	if decision == "external-link" {
+		parsed, err := url.Parse(link)
+		require.NoError(t, err)
+		foreign := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Header.Set("Origin", "https://mail.example.net")
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+			handler.ServeHTTP(w, r)
+		})
+		page := oidcRequest(foreign, http.MethodGet, parsed.Path, "")
+		require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+		require.Empty(t, page.Result().Cookies(), "navigation must not start or bind the SSH login")
+		ticket := strings.TrimPrefix(parsed.Fragment, "start/")
+		require.Equal(t, http.StatusForbidden, oidcAPI(foreign, "start", map[string]string{"ticket": ticket}).Code)
+		svc.web.oidcMutex.Lock()
+		phase := svc.web.oidcTickets[sha256.Sum256([]byte(ticket))].phase
+		svc.web.oidcMutex.Unlock()
+		require.Equal(t, "created", phase, "neither navigation nor a foreign API call may consume the ticket")
+	}
 	browser := openOidcBrowser(t, handler, p, link)
 	callback := oidcCallbackRequest(handler, browser.callback, browser.cookie)
 	require.Equal(t, 200, callback.Code, callback.Body.String())
@@ -469,7 +489,7 @@ func oidcCodeSSHDecision(t *testing.T, decision string) {
 	require.Len(t, view.Choices, 3)
 	require.Contains(t, view.Choices, comparison[1])
 	action := decision
-	if decision == "policy-denied" || decision == "policy-fallback" || decision == "audit-failed" || decision == "custom-message" {
+	if decision == "policy-denied" || decision == "policy-fallback" || decision == "audit-failed" || decision == "custom-message" || decision == "external-link" {
 		action = "approve"
 	}
 	code := comparison[1]

@@ -50,7 +50,14 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 			conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 		}
 	})
+	navigations := make(chan [3]string, 4)
 	endpoint, err := https.NewEndpoint(svc.Configuration.Http, https.EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isSSH && r.Method == http.MethodGet && r.URL.Path == "/login/" {
+			select {
+			case navigations <- [3]string{r.Header.Get("Sec-Fetch-Site"), r.Header.Get("Sec-Fetch-Mode"), r.Header.Get("Sec-Fetch-Dest")}:
+			default:
+			}
+		}
 		svc.web.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), oauth2.HTTPClient, p.server.Client())))
 	})})
 	require.NoError(t, err)
@@ -115,6 +122,14 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	require.Contains(t, string(output), "PASS: real OIDC redirect")
+	if isSSH {
+		select {
+		case headers := <-navigations:
+			require.Equal(t, [3]string{"cross-site", "navigate", "document"}, headers, "the HTTPS server must see the real webmail navigation, not forged test headers")
+		default:
+			t.Fatal("no SSH login document navigation observed")
+		}
+	}
 	if mode == "forwarded" {
 		require.Zero(t, p.logins.Load())
 		require.Zero(t, webSessionCount(t, svc))

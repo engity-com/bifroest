@@ -42,16 +42,24 @@ export function OidcLogin({ title = t('brand') }: { title?: string }) {
     }, []);
     useEffect(() => {
         const controller = new AbortController();
+        owner.current++;
         mounted.current = controller;
+        const dispose = () => {
+            controller.abort();
+            if (mounted.current === controller) {
+                mounted.current = null;
+            }
+        };
         const current = new URL(route);
         const entry = oidcEntry(current);
         setView(null);
         setFailed(false);
+        setBusy(false);
         if (!entry) {
             if (current.hash !== '#waiting') {
                 setFailed(true);
             }
-            return () => controller.abort();
+            return dispose;
         }
         void oidcRequest(entry.action, entry.fields, controller.signal)
             .then(async (next) => {
@@ -74,10 +82,7 @@ export function OidcLogin({ title = t('brand') }: { title?: string }) {
                     setFailed(true);
                 }
             });
-        return () => {
-            controller.abort();
-            mounted.current = null;
-        };
+        return dispose;
     }, [route]);
     useEffect(() => {
         if (
@@ -126,23 +131,32 @@ export function OidcLogin({ title = t('brand') }: { title?: string }) {
         if (!view?.csrf || busy || view.status !== 'approval' || !mounted.current) {
             return;
         }
-        owner.current++;
+        // Capture this exact route/decision owner. The mutable ref may already
+        // point at another login when a response (or its abort error) arrives.
+        const controller = mounted.current;
+        const generation = ++owner.current;
+        const current = () =>
+            mounted.current === controller &&
+            !controller.signal.aborted &&
+            owner.current === generation;
         setBusy(true);
         try {
             const next = await oidcRequest(
                 code === null ? 'deny' : 'approve',
                 { id: view.id, csrf: view.csrf, ...(code === null ? {} : { code }) },
-                mounted.current.signal,
+                controller.signal,
             );
-            if (!mounted.current.signal.aborted) {
+            if (current()) {
                 setView(next);
             }
         } catch {
-            if (mounted.current && !mounted.current.signal.aborted) {
+            if (current()) {
                 setFailed(true);
             }
         } finally {
-            setBusy(false);
+            if (current()) {
+                setBusy(false);
+            }
         }
     };
     const accepted = view?.status === 'accepted';

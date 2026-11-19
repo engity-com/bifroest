@@ -88,7 +88,30 @@ try {
         const login = await context.newPage();
         await login.setViewportSize({ width: 390, height: 844 });
         await login.emulateMedia({ colorScheme: 'dark' });
-        await login.goto(process.argv[3]);
+        // Follow the user's own SSH link from an independent webmail origin.
+        // Chromium supplies the real cross-site navigation headers; no IdP or
+        // authentication request is intercepted or replayed.
+        const link = new URL(process.argv[3]);
+        assert.equal(link.origin, origin);
+        assert.equal(link.pathname, '/login/');
+        assert.match(link.hash, /^#start\/[A-Za-z0-9_-]{43}$/u);
+        const mail = 'https://mail.example.net/owned-ssh-link';
+        await login.route(mail, (route) =>
+            route.fulfill({
+                contentType: 'text/html',
+                body: '<!doctype html><a href="#">Open my SSH login</a>',
+            }),
+        );
+        await login.goto(mail);
+        const ownedLink = login.getByRole('link', { name: 'Open my SSH login', exact: true });
+        await ownedLink.evaluate((element, href) => element.setAttribute('href', href), link.href);
+        const navigation = login.waitForResponse(
+            (response) =>
+                response.request().isNavigationRequest() && response.url() === `${origin}/login/`,
+        );
+        await ownedLink.click();
+        const loginDocument = await navigation;
+        assert.equal(loginDocument.status(), 200);
         await login.getByRole('heading', { name: 'Confirm your SSH login' }).waitFor();
         assert.equal(await login.title(), 'Fixture sign-in');
         assert.deepEqual(

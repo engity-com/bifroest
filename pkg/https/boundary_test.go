@@ -65,6 +65,64 @@ func TestHTTPSBoundaryEnforcesHostSniOriginAndHeaders(t *testing.T) {
 			r.URL.Path = "/assets/browser-key.wasm"
 			r.Header.Set("Sec-Fetch-Site", "cross-site")
 		}, 403},
+		{"OIDC login top-level navigation", func(r *http.Request) {
+			r.URL.Path = "/login/"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+		}, 204},
+		{"OIDC login without slash top-level navigation", func(r *http.Request) {
+			r.URL.Path = "/login"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+			r.Header.Set("Origin", "https://mail.example.net")
+		}, 204},
+		{"OIDC login HEAD navigation", func(r *http.Request) {
+			r.Method, r.URL.Path = "HEAD", "/login/"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+		}, 204},
+		{"OIDC login fetch not exempt", func(r *http.Request) {
+			r.URL.Path = "/login/"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "cors")
+			r.Header.Set("Sec-Fetch-Dest", "empty")
+		}, 403},
+		{"OIDC login frame not exempt", func(r *http.Request) {
+			r.URL.Path = "/login/"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "iframe")
+		}, 403},
+		{"OIDC login POST navigation not exempt", func(r *http.Request) {
+			r.Method, r.URL.Path = "POST", "/login/"
+			r.Header.Set("Origin", "https://app.example.org")
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+		}, 403},
+		{"OIDC login websocket not exempt", func(r *http.Request) {
+			r.URL.Path = "/login/"
+			r.Header.Set("Upgrade", "websocket")
+			r.Header.Set("Origin", "https://app.example.org")
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+		}, 403},
+		{"OIDC API navigation not exempt", func(r *http.Request) {
+			r.URL.Path = "/api/v1/oidc/start"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+		}, 403},
+		{"asset navigation not exempt", func(r *http.Request) {
+			r.URL.Path = "/assets/browser-key.wasm"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+		}, 403},
 		{"OIDC callback top-level redirect", func(r *http.Request) {
 			r.URL.Path = configuration.OidcCallbackPath
 			r.Header.Set("Sec-Fetch-Site", "cross-site")

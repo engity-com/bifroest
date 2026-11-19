@@ -92,14 +92,18 @@ func Boundary(domains configuration.HttpDomains, next http.Handler) (http.Handle
 			return
 		}
 		oidcCallback := r.URL.Path == configuration.OidcCallbackPath && r.Method == http.MethodGet && !upgrade
-		if len(origins) == 1 && !oidcCallback {
+		// Login documents are public and side-effect free. Opening one's own SSH
+		// link from webmail must work, without exempting API calls, frames or fetches.
+		oidcDocument := safe && !upgrade && (r.URL.Path == "/login" || r.URL.Path == "/login/") && r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
+		oidcNavigation := oidcCallback || oidcDocument
+		if len(origins) == 1 && !oidcNavigation {
 			origin, err := url.Parse(origins[0])
 			if err != nil || origin.Scheme != "https" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.ForceQuery || strings.Contains(origins[0], "#") || origin.Opaque != "" || !sameHTTPSAuthority(origin.Host, r.Host) {
 				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				return
 			}
 		}
-		if !oidcCallback && r.Header.Get("Sec-Fetch-Site") == "cross-site" && (!safe || upgrade || r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/assets" || strings.HasPrefix(r.URL.Path, "/assets/") || r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/login/")) {
+		if !oidcNavigation && r.Header.Get("Sec-Fetch-Site") == "cross-site" && (!safe || upgrade || r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/assets" || strings.HasPrefix(r.URL.Path, "/assets/") || r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/login/")) {
 			http.Error(w, "cross-site request rejected", http.StatusForbidden)
 			return
 		}
