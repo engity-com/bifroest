@@ -30,7 +30,7 @@ func (this *OidcDeviceAuthAuthorizer) probePublicKey(req PublicKeyRequest) (Auth
 		if err := json.Unmarshal(raw, &token); err != nil {
 			return false, fmt.Errorf("cannot decode remembered OIDC credentials")
 		}
-		return token.Token != nil && token.AccessToken != "", nil
+		return token.Token != nil && token.AccessToken != "" && this.matchesTokenGrant(&token), nil
 	}
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
@@ -45,5 +45,5 @@ func (this *OidcDeviceAuthAuthorizer) probePublicKey(req PublicKeyRequest) (Auth
 		return nil, fmt.Errorf("cannot probe remembered OIDC session: %w", err)
 	}
 	// This response deliberately contains no restored identity or token claims.
-	return &oidc{flow: this.flow, remote: req.Connection().Remote(), session: sess, sessionsPublicKey: req.RemotePublicKey()}, nil
+	return &oidc{kind: this.authorizationKind(), flow: this.flow, remote: req.Connection().Remote(), session: sess, sessionsPublicKey: req.RemotePublicKey()}, nil
 }

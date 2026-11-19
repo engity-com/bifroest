@@ -45,8 +45,8 @@ func (this *oidcRefreshManager) init(svc *service) error {
 	}
 	authorizers := make(map[configuration.FlowName]*authorization.OidcDeviceAuthAuthorizer)
 	for _, flow := range svc.Configuration.Flows {
-		conf, ok := flow.Authorization.V.(*configuration.AuthorizationOidcDeviceAuth)
-		if !ok || !conf.RefreshEnabled() {
+		conf := configuration.OidcSettings(flow.Authorization.V)
+		if conf == nil || !conf.RefreshEnabled() {
 			continue
 		}
 		if authorizer := facade.OidcRefreshAuthorizer(flow.Name); authorizer != nil {
@@ -192,7 +192,7 @@ func (this *oidcRefreshManager) verificationDeadline(ctx context.Context, key se
 	}
 	for _, flow := range this.service.Configuration.Flows {
 		if flow.Name == key.flow {
-			if conf, ok := flow.Authorization.V.(*configuration.AuthorizationOidcDeviceAuth); ok {
+			if conf := configuration.OidcSettings(flow.Authorization.V); conf != nil {
 				maxUnverified := conf.RefreshToken.MaxUnverifiedFor.Native()
 				if maxUnverified <= 0 {
 					maxUnverified = 30 * time.Minute
@@ -267,7 +267,7 @@ func (this *oidcRefreshManager) invalidate(key sessionConnectionKey, sess sessio
 func (this *oidcRefreshManager) failClosed(flow configuration.FlowName) bool {
 	for _, configured := range this.service.Configuration.Flows {
 		if configured.Name == flow {
-			if conf, ok := configured.Authorization.V.(*configuration.AuthorizationOidcDeviceAuth); ok {
+			if conf := configuration.OidcSettings(configured.Authorization.V); conf != nil {
 				return conf.ForceDisposeSessionOn != "never"
 			}
 		}

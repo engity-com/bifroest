@@ -1,5 +1,5 @@
 import type { IDisposable, ITheme, Terminal as Xterm } from '@xterm/xterm';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useComputedColorScheme } from '../ui/material';
 import '@xterm/xterm/css/xterm.css';
 import type { WebAccess } from '../remember';
@@ -8,6 +8,7 @@ import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import { preferredKeepAlive, saveKeepAlivePreference } from '../ui/preferences';
 import { preferredTerminalFontSize, useTerminalFontSize } from '../ui/terminal-font';
+import { terminalClipboardKey } from './clipboard';
 import type { TerminalActions } from './connection-actions';
 import { noncedDocument } from './document';
 import { ownTerminalKey } from './keyboard';
@@ -88,6 +89,7 @@ export function TerminalPanel({
     const layout = useRef<(() => void) | null>(null);
     const state = useRef<TerminalState>({ phase: 'connecting' });
     const eof = useRef(false);
+    const [clipboardFailed, setClipboardFailed] = useState(false);
     const interaction = useRef({ active, inputAllowed, focusOnActivate });
     interaction.current = { active, inputAllowed, focusOnActivate };
     const palette = useComputedColorScheme('light');
@@ -199,11 +201,29 @@ export function TerminalPanel({
                     interaction.current.active &&
                     interaction.current.inputAllowed &&
                     !eof.current;
-                terminal.attachCustomKeyEventHandler((event) =>
-                    mayInput() && state.current.phase === 'connected'
+                terminal.attachCustomKeyEventHandler((event) => {
+                    if (
+                        terminalClipboardKey(event, {
+                            active: () => !disposed && interaction.current.active,
+                            selection: () => terminal.getSelection(),
+                            capturePaste: () =>
+                                mayInput() && state.current.phase === 'connected'
+                                    ? (text) => {
+                                          if (mayInput() && state.current.phase === 'connected') {
+                                              terminal.paste(text);
+                                          }
+                                      }
+                                    : null,
+                            failed: () => setClipboardFailed(true),
+                            succeeded: () => setClipboardFailed(false),
+                        })
+                    ) {
+                        return false;
+                    }
+                    return mayInput() && state.current.phase === 'connected'
                         ? ownTerminalKey(event)
-                        : true,
-                );
+                        : true;
+                });
                 subscriptions.push(
                     terminal.onData((value) => {
                         if (mayInput()) {
@@ -387,11 +407,32 @@ export function TerminalPanel({
             className="terminal-surface"
             data-terminal-font-size={fontSize}
             ref={container}
-            style={{ backgroundColor: (palette === 'dark' ? dark : light).background, padding: 4 }}
+            style={{
+                backgroundColor: (palette === 'dark' ? dark : light).background,
+                padding: 4,
+                position: 'relative',
+            }}
             aria-label={t('terminalViewport')}
             onContextMenuCapture={(event) => {
                 event.preventDefault();
             }}
-        />
+        >
+            {clipboardFailed && (
+                <div
+                    role="status"
+                    style={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        zIndex: 1,
+                        padding: 8,
+                        background: 'var(--app-paper)',
+                        color: 'var(--app-text)',
+                    }}
+                >
+                    {t('terminalClipboardFailed')}
+                </div>
+            )}
+        </section>
     );
 }

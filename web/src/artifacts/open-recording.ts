@@ -72,7 +72,7 @@ export async function openRecordingWithWorker(
     try {
         worker =
             existing ??
-            new Worker('/_bifroest/files/browser-evidence-worker.js', {
+            new Worker('/assets/browser-evidence-worker.js', {
                 type: 'module',
                 credentials: 'omit',
                 name: 'bifroest-recording-open',

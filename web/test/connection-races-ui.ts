@@ -80,7 +80,11 @@ export async function exerciseConnectionRaces(page: Page) {
     const entering = new Promise<void>((resolve) => {
         entered = resolve;
     });
-    await page.route('**/Other', async (route) => {
+    await page.route('**/api/v1/discovery', async (route) => {
+        if (route.request().postDataJSON()?.slug !== 'Other') {
+            await route.continue();
+            return;
+        }
         entered();
         await holding;
         await route.fulfill({
@@ -110,7 +114,7 @@ export async function exerciseConnectionRaces(page: Page) {
         )
         .waitFor();
     await signIn.getByRole('button', { name: 'Close', exact: true }).click();
-    await page.unroute('**/Other');
+    await page.unroute('**/api/v1/discovery');
     assert.equal(await terminal(page, 1, 'alice').getAttribute('aria-selected'), 'true');
     await duplicateTab(page);
     await activeOutput(page, 'EXECUTION_START:3');
@@ -185,8 +189,9 @@ export async function exerciseManagementOwner(
                     pane.getAttribute('data-connection-principal') === user &&
                     location.pathname === '/' &&
                     location.search === '' &&
-                    decodeURIComponent(location.hash.slice(1).split('/')[0] ?? '') ===
-                        pane.getAttribute('data-connection-scope') &&
+                    decodeURIComponent(
+                        (location.hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ?? '',
+                    ) === pane.getAttribute('data-connection-scope') &&
                     history.state?.usr?.view === id
                 );
             },

@@ -527,7 +527,7 @@ func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Lo
 	}
 	for _, flow := range this.service.Configuration.Flows {
 		if flow.Name == sess.Flow() {
-			if _, oidc := flow.Authorization.V.(*configuration.AuthorizationOidcDeviceAuth); oidc {
+			if configuration.OidcSettings(flow.Authorization.V) != nil {
 				token, err := sess.AuthorizationToken(ctx)
 				if err != nil {
 					return fail(err)

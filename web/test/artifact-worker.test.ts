@@ -20,7 +20,7 @@ class ArtifactWorker extends EventTarget {
 
     constructor(url: string, options: WorkerOptions) {
         super();
-        expect(url).toBe('/_bifroest/files/browser-transfer-worker.js');
+        expect(url).toBe('/assets/browser-transfer-worker.js');
         expect(options).toMatchObject({ type: 'module', credentials: 'omit' });
         ArtifactWorker.instances.push(this);
         queueMicrotask(() =>

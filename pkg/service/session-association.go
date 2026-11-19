@@ -22,6 +22,11 @@ func (this *authorizeRequest) ResolveAuthenticatedSessionWithReuse(auth authoriz
 	return this.service.resolveAuthenticatedSessionWithReuse(&environmentContext{service: this.service, connection: this.connection, authorization: auth}, token, reuse)
 }
 
+func (this *authorizeRequest) ResolveAuthenticatedSessionWithReuseContext(ctx context.Context, auth authorization.Authorization, token []byte, reuse session.Predicate) (session.Session, bool, error) {
+	base := &environmentContext{service: this.service, connection: this.connection, authorization: auth}
+	return this.service.resolveAuthenticatedSessionWithReuse(&associationCandidateContext{associationBaseContext: base, ctx: ctx, auth: auth}, token, reuse)
+}
+
 func (this *publicKeyAuthorizeRequest) ResolveAuthenticatedSession(auth authorization.Authorization, token []byte) (session.Session, bool, error) {
 	if !this.verified {
 		return nil, true, fmt.Errorf("session association requires verified key possession")

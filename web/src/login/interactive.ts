@@ -6,6 +6,7 @@ export interface LoginStep {
     readonly kind: 'info' | 'error' | 'prompt';
     readonly message: string;
     readonly echo: boolean;
+    readonly device?: { readonly userCode: string; readonly url: string };
 }
 // biome-ignore lint/suspicious/noConfusingVoidType: Callers may acknowledge an info/error step with a Promise<void>, while prompts return a string.
 type StepAnswer = string | void;
@@ -52,6 +53,9 @@ function step(value: unknown, key: boolean): Step {
             'sequence',
             'kind',
             'echo',
+            ...(value !== null && typeof value === 'object' && Object.hasOwn(value, 'device')
+                ? ['device']
+                : []),
             ...(value !== null && typeof value === 'object' && Object.hasOwn(value, 'message')
                 ? ['message']
                 : []),
@@ -70,11 +74,34 @@ function step(value: unknown, key: boolean): Step {
         if (!message.isWellFormed() || encoder.encode(message).byteLength > 8 << 10) {
             throw new RememberMeError('invalid-step');
         }
+        let device: LoginStep['device'];
+        if (body.device !== undefined) {
+            const info = object(body.device, ['userCode', 'url']);
+            if (
+                body.kind !== 'info' ||
+                typeof info.userCode !== 'string' ||
+                info.userCode.length === 0 ||
+                encoder.encode(info.userCode).byteLength > 256 ||
+                !info.userCode.isWellFormed() ||
+                /[\p{Cc}]/u.test(info.userCode) ||
+                typeof info.url !== 'string' ||
+                info.url.length > 4096 ||
+                /[\p{Cc}]/u.test(info.url)
+            ) {
+                throw new RememberMeError('invalid-step');
+            }
+            const url = new URL(info.url);
+            if (url.protocol !== 'https:' || url.username || url.password) {
+                throw new RememberMeError('invalid-step');
+            }
+            device = Object.freeze({ userCode: info.userCode, url: url.href });
+        }
         return Object.freeze({
             sequence: body.sequence,
             kind: body.kind as LoginStep['kind'],
             message,
             echo: body.echo,
+            ...(device ? { device } : {}),
         });
     } catch {
         throw new RememberMeError('invalid-step');
@@ -171,6 +198,7 @@ export async function interactive(
     user: string,
     handler: StepHandler,
     signal?: AbortSignal,
+    oidc = false,
 ): Promise<unknown> {
     return loginAttempt(
         http,
@@ -182,6 +210,8 @@ export async function interactive(
             return handler(selected, stopped);
         },
         signal,
+        undefined,
+        oidc,
     );
 }
 
@@ -193,8 +223,10 @@ export async function loginAttempt(
     handler: AttemptHandler,
     signal?: AbortSignal,
     publicKey?: string,
+    oidc = false,
 ): Promise<unknown> {
     const key = publicKey !== undefined;
+    const loginHttp = oidc ? http.forOidcLogin() : http;
     const lifetime = AbortSignal.timeout((key ? 2 : 10) * 60_000);
     const stopped = signal === undefined ? lifetime : AbortSignal.any([signal, lifetime]);
     let token: string | null = null;
@@ -204,8 +236,8 @@ export async function loginAttempt(
     let messages = 0;
     let lastPoll = -Infinity;
     try {
-        const start = await http.post(
-            key ? 'login/public-key' : 'login/interactive',
+        const start = await loginHttp.post(
+            key ? 'login/public-key' : oidc ? 'login/oidc' : 'login/interactive',
             key ? { user, publicKey } : { user },
             undefined,
             202,
@@ -238,7 +270,7 @@ export async function loginAttempt(
             lastPoll = performance.now();
             let value: unknown;
             try {
-                value = await http.post('login/poll', {}, controlToken, 200, stopped);
+                value = await loginHttp.post('login/poll', {}, controlToken, 200, stopped);
             } catch (error) {
                 if (stopped.aborted) {
                     throw new RememberMeError('cancelled');
@@ -281,6 +313,11 @@ export async function loginAttempt(
                     throw new RememberMeError('invalid-step');
                 }
                 messages += encoder.encode(selected.message).byteLength;
+                if ('device' in selected && selected.device) {
+                    messages += encoder.encode(
+                        selected.device.userCode + selected.device.url,
+                    ).byteLength;
+                }
                 if (messages > 32 << 10) {
                     throw new RememberMeError('invalid-step');
                 }
@@ -342,7 +379,7 @@ export async function loginAttempt(
                 }
                 try {
                     current = pending(
-                        await http.post('login/reply', fields, token, 202, stopped),
+                        await loginHttp.post('login/reply', fields, token, 202, stopped),
                         false,
                         key,
                     );
@@ -378,7 +415,7 @@ export async function loginAttempt(
         if (token !== null && !claimed) {
             // Independent bounded cleanup is logical-attempt cancellation only. A lost
             // response is not retried and may already have consumed the claim.
-            await http.post('login/cancel', {}, token, 204).catch(() => undefined);
+            await loginHttp.post('login/cancel', {}, token, 204).catch(() => undefined);
         }
         token = null;
     }

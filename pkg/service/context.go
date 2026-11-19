@@ -5,6 +5,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"time"
 
 	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
@@ -48,9 +49,10 @@ func (this *remote) String() string {
 }
 
 type authorizeRequest struct {
-	service       *service
-	connection    bconn.LifetimeAware
-	authorization authorization.Authorization
+	service        *service
+	connection     bconn.LifetimeAware
+	authorization  authorization.Authorization
+	requestContext context.Context
 }
 
 func (this *authorizeRequest) GetField(name string) (any, bool, error) {
@@ -69,6 +71,9 @@ func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 }
 
 func (this *authorizeRequest) Context() context.Context {
+	if this.requestContext != nil {
+		return this.requestContext
+	}
 	return this.connection.Lifetime()
 }
 
@@ -121,7 +126,7 @@ func (this *authorizeRequest) IsSessionCompatible(auth authorization.Authorizati
 	if !ok {
 		return true, nil
 	}
-	ctx := &environmentContext{service: this.service, connection: this.connection, authorization: auth}
+	ctx := &environmentContext{service: this.service, connection: this.connection, authorization: auth, executionContext: this.Context()}
 	return checker.IsSessionCompatibleWith(ctx, sess)
 }
 
@@ -178,6 +183,27 @@ func (this *interactiveAuthorizeRequest) GetField(name string) (any, bool, error
 func (this *interactiveAuthorizeRequest) SendInfo(message string) error {
 	_, err := this.challenger("", message, nil, nil)
 	return markInteractiveClientDisconnect(err)
+}
+
+// A client must not retain a browser-transaction slot by refusing to acknowledge
+// the information request. Closing the SSH socket also unblocks its challenger.
+func (this *interactiveAuthorizeRequest) SendOidcInfo(ctx context.Context, message string) error {
+	stop := context.AfterFunc(ctx, func() {
+		if conn, ok := this.connection.(*connection); ok {
+			_ = conn.Close()
+		}
+	})
+	defer stop()
+	return this.SendInfo(message)
+}
+
+func (this *interactiveAuthorizeRequest) AuthenticationDeadline() time.Time {
+	if conn, ok := this.connection.(*connection); ok {
+		if timeout := this.service.Configuration.Ssh.HandshakeTimeout.Native(); timeout > 0 {
+			return conn.createdAt.Add(timeout)
+		}
+	}
+	return time.Time{}
 }
 
 func (this *interactiveAuthorizeRequest) SendError(message string) error {

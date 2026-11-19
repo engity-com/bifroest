@@ -58,16 +58,26 @@ export function time(value: unknown): string {
     return value;
 }
 
-// No retry, redirect, URL credential, cookie, persistence or unbounded response
+// No retry, redirect, URL credential, ambient workload authority, persistence or unbounded response
 // body. The native same-origin fetch mode also prevents forwarding a bearer to
 // another origin, even if a caller accidentally supplies a foreign scope.
 export class Http {
     readonly #scope: Scope;
     readonly #transport: Transport;
+    #oidcLogin = false;
     constructor(scope: Scope, transport: Transport = globalThis.fetch.bind(globalThis)) {
         validateScope(scope);
         this.#scope = Object.freeze({ ...scope });
         this.#transport = transport;
+    }
+
+    // A short-lived clone opts ONLY this OIDC attempt's control POSTs into the
+    // HttpOnly initiating-browser binding. Access, RememberMe and management stay
+    // cookie-free, and the original client cannot inherit this login-only mode.
+    forOidcLogin(): Http {
+        const login = new Http(this.#scope, this.#transport);
+        login.#oidcLogin = true;
+        return login;
     }
 
     // The response image is provisional, even after HTTP EOF. The owned Go/WASM
@@ -246,6 +256,7 @@ export class Http {
         const allowed = [
             'login/password',
             'login/interactive',
+            'login/oidc',
             'login/public-key',
             'login/poll',
             'login/reply',
@@ -314,7 +325,11 @@ export class Http {
                 method: 'POST',
                 headers,
                 body,
-                credentials: 'omit',
+                credentials:
+                    this.#oidcLogin &&
+                    ['login/oidc', 'login/poll', 'login/reply', 'login/cancel'].includes(action)
+                        ? 'same-origin'
+                        : 'omit',
                 cache: 'no-store',
                 mode: 'same-origin',
                 redirect: 'error',

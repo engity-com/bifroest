@@ -2,7 +2,7 @@ import { RememberMeError, type Scope } from '../remember/protocol';
 import { OperationSlot } from '../shared/operation';
 import { SnapshotObservers } from '../shared/snapshot-observers';
 import type { ConnectionView } from '../workspace/model';
-import type { LinkMetadata } from './link-metadata';
+import { type DiscoveryFailure, discoveryFailure, type LinkMetadata } from './link-metadata';
 import type { ManagementLocation } from './management-location';
 
 export interface ApplicationRouteIntent {
@@ -30,6 +30,7 @@ export interface NavigationBoundary {
 }
 export interface NavigationState {
     readonly phase: 'ready' | 'loading' | 'failed';
+    readonly failure?: DiscoveryFailure;
 }
 
 // Own only public discovery and route-intent consumption. Selecting an owned
@@ -41,17 +42,22 @@ export class ApplicationNavigation {
     readonly #observers = new SnapshotObservers();
     constructor(
         private readonly load: (scope: Scope, signal: AbortSignal) => Promise<LinkMetadata>,
-    ) {}
+        initialFailure?: DiscoveryFailure,
+    ) {
+        if (initialFailure) {
+            this.#state = { phase: 'failed', failure: initialFailure };
+        }
+    }
     readonly getSnapshot = () => this.#state;
     readonly subscribe = this.#observers.subscribe;
     get busy(): boolean {
         return this.#operation.busy;
     }
-    #publish(phase: NavigationState['phase']): void {
-        if (this.#state.phase === phase) {
+    #publish(phase: NavigationState['phase'], failure?: DiscoveryFailure): void {
+        if (this.#state.phase === phase && this.#state.failure === failure) {
             return;
         }
-        this.#state = Object.freeze({ phase });
+        this.#state = Object.freeze({ phase, ...(failure ? { failure } : {}) });
         this.#observers.notify();
     }
     retire(): void {
@@ -77,6 +83,9 @@ export class ApplicationNavigation {
         const initial = this.#seen === null;
         const retry = this.#seen !== null && this.#seen.revision !== intent.revision;
         this.#seen = { key: intent.key, revision: intent.revision };
+        if (initial && this.#state.phase === 'failed') {
+            return;
+        }
         const selected = boundary.views.find(
             (view) =>
                 view.id === intent.view &&
@@ -116,7 +125,7 @@ export class ApplicationNavigation {
         const publication = boundary.discover(intent.scope);
         const scope = intent.scope;
         if (!scope) {
-            this.#publish('failed');
+            this.#publish('failed', 'invalid-slug');
             publication.failed(new RememberMeError('unavailable'));
             return;
         }
@@ -139,7 +148,7 @@ export class ApplicationNavigation {
             })
             .catch((error) => {
                 if (operation.current() && publication.current()) {
-                    this.#publish('failed');
+                    this.#publish('failed', discoveryFailure(error));
                     publication.failed(error);
                 }
             })

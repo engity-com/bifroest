@@ -16,6 +16,7 @@ import {
     exerciseRootAccess,
     exerciseRootDirectory,
     exerciseSingleRootDirectory,
+    exerciseSlugInput,
     observeSingleRootDirectory,
 } from './login-options-ui.ts';
 import {
@@ -104,6 +105,12 @@ try {
             await context.addInitScript(installDrawerDiagnostics);
         }
         const page = await context.newPage();
+        if (mode === 'workspace') {
+            // Keep the real production username/route race reproducible on fast
+            // hosts too, rather than relying on an occasionally loaded CI runner.
+            const cpu = await context.newCDPSession(page);
+            await cpu.send('Emulation.setCPUThrottlingRate', { rate: 3 });
+        }
         if (process.argv[3] === 'profile-reset') {
             diagnosticPages.push(page);
         }
@@ -159,8 +166,10 @@ try {
               ? 'Mixed'
               : process.argv[3] === 'slug-history'
                 ? 'bla-bla'
-                : 'Work';
-        const response = await page.goto(`${origin}/${initialSlug}`);
+                : mode === 'slug-input'
+                  ? 'notexistent'
+                  : 'Work';
+        const response = await page.goto(`${origin}/${initialSlug ? `#${initialSlug}` : ''}`);
         assert(response);
         assert.equal(response.status(), 200);
         const policy = response.headers()['content-security-policy'];
@@ -172,15 +181,21 @@ try {
                 !policy.includes('unsafe-eval'),
         );
         if (process.argv[3] === 'bootstrap-retry') {
-            await page
-                .getByText('Access-link metadata is unavailable or invalid.', { exact: true })
+            const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
+            await dialog
+                .getByText(
+                    'Sign-in options for this Slug could not be loaded. Existing connections are unchanged.',
+                    { exact: true },
+                )
                 .waitFor();
             await page
                 .getByRole('button', { name: 'Retry loading options', exact: true })
                 .waitFor();
-            assert.equal(await page.locator('.login-dialog').count(), 0);
+            assert.equal(await page.locator('.login-dialog').count(), 1);
             await page.evaluate(() => {
-                const button = document.querySelector('#root button');
+                const button = [
+                    ...document.querySelectorAll<HTMLButtonElement>('.login-dialog button'),
+                ].find((node) => node.textContent === 'Retry loading options');
                 if (!button) {
                     throw new Error('Expected retry button');
                 }
@@ -212,10 +227,7 @@ try {
         assert.equal(await favicon.getAttribute('type'), 'image/svg+xml');
         const faviconURL = new URL(required(await favicon.getAttribute('href')), origin);
         assert.equal(faviconURL.origin, origin);
-        assert.match(
-            faviconURL.pathname,
-            /^\/_bifroest\/files\/assets\/favicon-[A-Za-z0-9_-]+\.svg$/u,
-        );
+        assert.match(faviconURL.pathname, /^\/assets\/favicon-[A-Za-z0-9_-]+\.svg$/u);
         assert.equal(faviconURL.search, '');
         const image = await page.evaluate(async (url) => {
             const response = await fetch(url, {
@@ -422,13 +434,18 @@ try {
         if (process.argv[3] === 'bootstrap-retry') {
             await page.getByLabel('User name', { exact: true }).waitFor();
             assert.deepEqual(errors, []);
-            assert.deepEqual(failedResources, [{ path: '/Work', status: 503 }]);
+            assert.deepEqual(failedResources, [{ path: '/api/v1/discovery', status: 503 }]);
             assert.equal(loginResponses.length, 0, 'retrying metadata must not authenticate');
             assert.equal(await page.locator('[data-connection-principal]').count(), 0);
             return;
         }
         if (process.argv[3] === 'login-options') {
             await exerciseLoginOptions(page);
+            assert.deepEqual(errors, []);
+            return;
+        }
+        if (mode === 'slug-input') {
+            await exerciseSlugInput(page);
             assert.deepEqual(errors, []);
             return;
         }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verificationLink } from '../src/login/links';
 import type { LoginStep } from '../src/remember';
 import { BrowserClient } from '../src/remember';
-import type { Transport } from '../src/remember/http';
+import { Http, type Transport } from '../src/remember/http';
 import { required } from './required';
 
 const scope = { origin: 'https://app.example.org', slug: 'Work' };
@@ -57,7 +57,7 @@ class InteractiveServer {
         const fields = JSON.parse(required(options).body as string) as Record<string, string>;
         const bearer = new Headers(options?.headers).get('Authorization')?.slice(7) ?? null;
         this.requests.push({ action, fields, bearer, options: required(options) });
-        if (action === 'login/interactive') {
+        if (action === 'login/interactive' || action === 'login/oidc') {
             return json(this.transform?.(this.pending(true)) ?? this.pending(true), 202);
         }
         if (bearer !== attemptToken) {
@@ -110,6 +110,62 @@ class InteractiveServer {
 afterEach(() => vi.useRealTimers());
 
 describe('bounded interactive login and device-flow adapter', () => {
+    it('passes validated structured device instructions without scraping provider prose', async () => {
+        const server = new InteractiveServer();
+        const device = {
+            userCode: 'ABCD-EFGH',
+            url: 'https://idp.example.org/device?user_code=ABCD-EFGH',
+        };
+        server.steps = [{ ...info, message: '', device }];
+        const seen: LoginStep[] = [];
+        await server.client().interactive('', async (step) => {
+            seen.push(step);
+        });
+        expect(seen[0]?.device).toEqual(device);
+        expect(Object.isFrozen(seen[0]?.device)).toBe(true);
+        expect(server.requests.find((request) => request.action === 'login/reply')?.fields).toEqual(
+            { slug: 'Work', sequence: '1' },
+        );
+    });
+    it('uses the distinct OIDC start route and retains the original tab proof for completion', async () => {
+        const server = new InteractiveServer();
+        server.steps = [{ ...info, message: 'Open https://app.example.org/login/request/ticket' }];
+        const access = await server.client().interactive('', async () => '', undefined, true);
+        expect(server.requests.map((request) => request.action)).toEqual([
+            'login/oidc',
+            'login/reply',
+            'login/poll',
+        ]);
+        expect(server.requests[0]?.bearer).toBeNull();
+        expect(server.requests[1]?.bearer).toBe(attemptToken);
+        expect(
+            server.requests.every((request) => request.options.credentials === 'same-origin'),
+        ).toBe(true);
+        expect(access.snapshot().principal).toBe('verified-principal');
+    });
+    it('confines the initiating cookie to an OIDC control client, never workload or other logins', async () => {
+        const transport = vi.fn<Transport>(async () => json({}));
+        const original = new Http(scope, transport);
+        const login = original.forOidcLogin();
+        await login.post('login/oidc', { user: '' }, undefined, 200);
+        await login.post('login/poll', {}, attemptToken, 200);
+        await login.post('login/reply', { sequence: '1' }, attemptToken, 200);
+        await login.post('login/cancel', {}, attemptToken, 200);
+        await login.post('access', {}, accessToken, 200);
+        await original.post('login/poll', {}, attemptToken, 200);
+        expect(transport.mock.calls.map(([, options]) => options?.credentials)).toEqual([
+            'same-origin',
+            'same-origin',
+            'same-origin',
+            'same-origin',
+            'omit',
+            'omit',
+        ]);
+        for (const [, options] of transport.mock.calls) {
+            expect(options).toMatchObject({ mode: 'same-origin', redirect: 'error' });
+            expect(new Headers(options?.headers).has('Cookie')).toBe(false);
+        }
+    });
     it('acknowledges text, preserves prompt echo, sends each answer once and claims an opaque access', async () => {
         const server = new InteractiveServer();
         const seen: LoginStep[] = [];
@@ -179,6 +235,16 @@ describe('bounded interactive login and device-flow adapter', () => {
             { ...info, challenge: 'unexpected' },
             { ...info, message: 'x'.repeat(8193) },
             { ...info, message: '\ud800' },
+            { ...info, device: { userCode: '', url: 'https://idp.example.org' } },
+            { ...info, device: { userCode: 'A'.repeat(257), url: 'https://idp.example.org' } },
+            { ...info, device: { userCode: 'AB\nCD', url: 'https://idp.example.org' } },
+            { ...info, device: { userCode: 'ABCD', url: 'http://idp.example.org' } },
+            { ...info, device: { userCode: 'ABCD', url: 'https://user:secret@idp.example.org' } },
+            {
+                ...info,
+                kind: 'prompt',
+                device: { userCode: 'ABCD', url: 'https://idp.example.org' },
+            },
         ]) {
             const server = new InteractiveServer();
             server.transform = (value) => ({ ...(value as object), step: changed });

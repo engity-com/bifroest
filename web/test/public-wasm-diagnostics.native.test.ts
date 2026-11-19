@@ -17,7 +17,7 @@ class Session extends EventEmitter {
     }
 }
 const origin = 'https://app.example.org:8443';
-const url = `${origin}/_bifroest/files/browser-key.wasm`;
+const url = `${origin}/assets/browser-key.wasm`;
 
 test('public WASM diagnostics retain only bounded transport observations, never credentials or arbitrary errors', async () => {
     const session = new Session();
@@ -38,7 +38,7 @@ test('public WASM diagnostics retain only bounded transport observations, never 
             initiator: { type: 'script', stack: { secret: 'never-log-secret' } },
         });
     start('ignored', `${origin}/api/v1/login/public-key`, 'POST');
-    start('wrong-origin', `https://other.example/_bifroest/files/browser-key.wasm`);
+    start('wrong-origin', `https://other.example/assets/browser-key.wasm`);
     start('not-get', url, 'POST');
     assert.equal(observer.events.length, 0);
     start('one');

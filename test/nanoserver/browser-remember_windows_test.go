@@ -115,10 +115,12 @@ func exerciseNativePasswordRemember(t *testing.T, ctx context.Context, h windows
 		case strings.HasPrefix(message.Checkpoint, "restart-"):
 			h.mustDocker("exec", h.container, `C:\smoke\s4u-probe.exe`, "browser-restart")
 			h.ready(func() error {
-				request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://app.example.org:8443/Work", nil)
+				request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://app.example.org:8443/api/v1/discovery", strings.NewReader(`{"slug":"Work"}`))
 				if err != nil {
 					return err
 				}
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("Origin", "https://app.example.org:8443")
 				response, err := client.Do(request)
 				if err != nil {
 					return err

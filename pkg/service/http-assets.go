@@ -4,12 +4,15 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/webui"
 )
+
+var webVersionedAsset = regexp.MustCompile(`-[A-Za-z0-9_-]{8}\.(?:js|css|svg|woff2?)$`)
 
 func (this *webService) admitAsset(w http.ResponseWriter, r *http.Request) (func(), bool) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -56,6 +59,10 @@ func (this *webService) serveAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	if webVersionedAsset.MatchString(r.URL.Path) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
 	if r.URL.Path == webui.KeyWorkerPath || r.URL.Path == webui.TransferWorkerPath || r.URL.Path == webui.EvidenceWorkerPath {
 		w.Header().Set("Content-Security-Policy", https.BrowserWasmWorkerPolicy)
 	}
@@ -66,10 +73,21 @@ func (this *webService) serveAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (this *webService) serveDocument(w http.ResponseWriter, r *http.Request) bool {
+	return this.serveBrowserDocument(w, r, false)
+}
+
+func (this *webService) serveBrowserDocument(w http.ResponseWriter, r *http.Request, login bool) bool {
 	if this.assets == nil {
 		return false
 	}
-	data, nonce, err := this.assets.Document()
+	var data []byte
+	var nonce string
+	var err error
+	if login {
+		data, nonce, err = this.assets.LoginDocument()
+	} else {
+		data, nonce, err = this.assets.Document()
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		return false
 	}

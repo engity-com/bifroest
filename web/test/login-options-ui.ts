@@ -2,13 +2,7 @@ import assert from 'node:assert/strict';
 import type { Request } from 'playwright';
 import type { LoginRequest, Page } from './fixture-types.ts';
 import { required } from './required.ts';
-import {
-    activeAccess,
-    answerAuthentication,
-    assertUiPreferences,
-    loginLayout,
-    notification,
-} from './workspace-ui.ts';
+import { activeAccess, assertUiPreferences, loginLayout } from './workspace-ui.ts';
 
 export async function exerciseLoginOptions(page: Page) {
     const logins: LoginRequest[] = [];
@@ -37,7 +31,8 @@ export async function exerciseLoginOptions(page: Page) {
                 user: body.user,
             });
         }
-        if (request.method() === 'GET' && request.headers().accept === 'application/json') {
+        if (url.pathname === '/api/v1/discovery') {
+            assert.equal(request.method(), 'POST');
             assert.equal(request.headers().authorization === undefined, true);
             assert.equal(request.headers().cookie === undefined, true);
             assert.equal(url.search === '', true);
@@ -56,7 +51,9 @@ export async function exerciseLoginOptions(page: Page) {
             (url) =>
                 url.pathname === '/' &&
                 url.search === '' &&
-                (url.hash === `#${encodeURIComponent(slug)}` || (slug === '' && url.hash === '')),
+                ((url.hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ===
+                    encodeURIComponent(slug) ||
+                    (slug === '' && url.hash === '')),
         );
         await page.waitForFunction(
             (slug) =>
@@ -174,14 +171,33 @@ export async function exerciseLoginOptions(page: Page) {
     await page.evaluate(() => {
         history.back();
     });
-    await notification(page, 'Complete or resolve the current operation before changing the Slug.');
+    await dialog()
+        .getByText('Complete or resolve the current operation before changing the Slug.', {
+            exact: true,
+        })
+        .waitFor();
     assert.equal(
         new URL(page.url()).hash,
         '#Mixed',
         'an in-flight login retains its original route',
     );
-    await answerAuthentication(page, '', { kind: 'info', text: 'test-code' });
+    const device = dialog().getByRole('group', { name: 'Device sign-in', exact: true });
+    await device.getByText('test-code', { exact: true }).waitFor();
+    assert.equal(await page.locator('[data-auth-terminal-active="true"]').count(), 0);
+    const popup = page.waitForEvent('popup');
+    await device.getByRole('link', { name: 'Open verification page', exact: true }).click();
+    const verification = await popup;
+    await verification.close();
+    await page.bringToFront();
     await activeAccess(page, 'verified-subject');
+    // Wait for the login dialog's exit transition before checking for a
+    // mistakenly deferred warning modal.
+    await dialog().waitFor({ state: 'hidden' });
+    assert.deepEqual(
+        await page.getByRole('dialog').allTextContents(),
+        [],
+        'an inline login warning must not turn into another modal after successful authentication',
+    );
     assert.deepEqual(logins, [
         { method: 'password', slug: 'Work', user: 'alice' },
         { method: 'interactive', slug: 'Mixed', user: '' },
@@ -189,7 +205,12 @@ export async function exerciseLoginOptions(page: Page) {
     await page.getByRole('tab', { name: 'Terminal 1 alice', exact: true }).click();
     await activeAccess(page, 'alice');
     assert.equal(new URL(page.url()).pathname, '/');
-    assert.equal(decodeURIComponent(new URL(page.url()).hash.slice(1).split('/')[0] ?? ''), 'Work');
+    assert.equal(
+        decodeURIComponent(
+            (new URL(page.url()).hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ?? '',
+        ),
+        'Work',
+    );
     await input('still-the-original-execution');
     assert.equal(sockets, 2);
 
@@ -238,17 +259,71 @@ export async function exerciseLoginOptions(page: Page) {
     await assertUiPreferences(page);
 }
 
+export async function exerciseSlugInput(page: Page) {
+    const hidden = 'x7Vq2Ha9Rm4Dz8Kp6Nw3Yt5Bc1Fs0LjE';
+    const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
+    const slug = dialog.getByRole('combobox', { name: 'Slug', exact: true });
+    const requests: { path: string; body: Record<string, string> | null }[] = [];
+    page.on('request', (request) => {
+        const url = new URL(request.url());
+        assert(!url.pathname.includes(hidden));
+        assert(!url.search.includes(hidden));
+        assert(!url.pathname.includes('notexistent'));
+        if (url.pathname.startsWith('/api/')) {
+            requests.push({ path: url.pathname, body: request.postDataJSON() });
+        }
+    });
+    await slug.waitFor();
+    assert.equal(await slug.inputValue(), 'notexistent');
+    assert.equal(await slug.getAttribute('aria-invalid'), 'true');
+    await dialog.getByText('Invalid Slug.', { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('alert').count(), 0);
+    assert.equal(await dialog.locator('form').count(), 0);
+    await slug.click();
+    await page.getByRole('option', { name: 'Work', exact: true }).waitFor();
+    assert.equal(await page.getByRole('option', { name: hidden, exact: true }).count(), 0);
+    await page.keyboard.press('Escape');
+    await slug.fill(hidden);
+    await slug.press('Enter');
+    const user = dialog.getByLabel('User name', { exact: true });
+    await user.waitFor();
+    assert.equal(new URL(page.url()).hash, `#${hidden}`);
+    assert.equal(await slug.getAttribute('aria-invalid'), 'false');
+    const reads = requests.length;
+    await dialog.getByLabel('Password', { exact: true }).fill('keep-local');
+    const history = await page.evaluate(() => window.history.length);
+    await user.fill('alice@example.org');
+    await page.waitForURL((url) => url.hash === `#alice%40example.org@${hidden}`);
+    assert.equal(await dialog.getByLabel('Password', { exact: true }).inputValue(), 'keep-local');
+    assert.equal(requests.length, reads, 'username edits never rediscover or authenticate');
+    assert.equal(await page.evaluate(() => window.history.length), history);
+    await page.reload();
+    await user.waitFor();
+    assert.equal(await user.inputValue(), 'alice@example.org');
+    assert.equal(await dialog.getByLabel('Password', { exact: true }).inputValue(), '');
+    await slug.fill('notexistent');
+    await slug.press('Enter');
+    await dialog.getByText('Invalid Slug.', { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('alert').count(), 0);
+    assert.equal(await dialog.locator('form').count(), 0);
+    assert(requests.every((request) => request.path === '/api/v1/discovery'));
+    assert(requests.some((request) => request.body?.slug === hidden));
+}
+
 export async function exerciseRootAccess(page: Page) {
     let authentications = 0;
     page.on('request', (request) => {
-        if (request.method() === 'POST') {
+        if (
+            request.method() === 'POST' &&
+            new URL(request.url()).pathname !== '/api/v1/discovery'
+        ) {
             authentications++;
         }
     });
     assert.equal(new URL(page.url()).pathname, '/');
     const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
     const select = dialog.getByLabel('Slug', { exact: true });
-    assert.equal(await select.textContent(), '/');
+    assert.equal(await select.inputValue(), '/');
     await select.click();
     await page.getByRole('option', { name: '/', exact: true }).waitFor();
     await page.keyboard.press('Escape');
@@ -261,7 +336,10 @@ export async function exerciseRootDirectory(page: Page) {
     let sockets = 0;
     let documents = 0;
     page.on('request', (request) => {
-        if (request.method() === 'POST') {
+        if (
+            request.method() === 'POST' &&
+            new URL(request.url()).pathname !== '/api/v1/discovery'
+        ) {
             authentications++;
         }
         if (request.resourceType() === 'document') {
@@ -274,7 +352,7 @@ export async function exerciseRootDirectory(page: Page) {
     await dialog.getByText('Choose a published Slug to sign in.', { exact: true }).waitFor();
     assert.equal(await dialog.locator('form').count(), 0);
     const select = dialog.getByLabel('Slug', { exact: true });
-    assert.equal(required(await select.textContent()).replaceAll('\u200b', ''), '');
+    assert.equal(await select.inputValue(), '/');
     await select.click();
     assert.equal(await page.getByRole('option', { name: '/', exact: true }).count(), 0);
     await page.getByRole('option', { name: 'Work', exact: true }).click();
@@ -296,7 +374,10 @@ export function observeSingleRootDirectory(page: {
 }) {
     const state = { metadata: [] as string[], posts: 0, documents: 0, sockets: 0 };
     page.on('request', (request) => {
-        if (request.method() === 'POST') {
+        if (
+            request.method() === 'POST' &&
+            new URL(request.url()).pathname !== '/api/v1/discovery'
+        ) {
             state.posts++;
         }
         if (request.resourceType() === 'document') {
@@ -321,8 +402,8 @@ export async function exerciseSingleRootDirectory(
     const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
     await dialog.getByLabel('User name', { exact: true }).waitFor();
     await dialog.getByLabel('Password', { exact: true }).waitFor();
-    assert.equal(await dialog.getByLabel('Slug', { exact: true }).count(), 0);
-    assert.deepEqual(state.metadata, ['/', '/foo']);
+    assert.equal(await dialog.getByLabel('Slug', { exact: true }).inputValue(), 'foo');
+    assert.deepEqual(state.metadata, ['/api/v1/discovery', '/api/v1/discovery']);
     assert.equal(
         state.posts,
         0,
@@ -348,8 +429,12 @@ export async function exerciseSingleRootDirectory(
     await dialog.getByLabel('User name', { exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, '/');
     assert.equal(new URL(page.url()).hash, '#foo');
-    assert.equal(await dialog.getByLabel('Slug', { exact: true }).count(), 0);
-    assert.deepEqual(state.metadata, ['/', '/foo', '/foo']);
+    assert.equal(await dialog.getByLabel('Slug', { exact: true }).inputValue(), 'foo');
+    assert.deepEqual(state.metadata, [
+        '/api/v1/discovery',
+        '/api/v1/discovery',
+        '/api/v1/discovery',
+    ]);
     assert.equal(state.posts, 0);
     assert.equal(state.sockets, 0);
     assert.equal(state.documents, 2);

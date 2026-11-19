@@ -28,7 +28,7 @@ describe('tab-owned public WASM transport, not a cryptographic verifier', () => 
         const bytes = await loadLoginWasm(new AbortController().signal);
         expect(new Uint8Array(bytes)).toEqual(new Uint8Array([0, 97, 115, 109]));
         expect(fetch).toHaveBeenCalledExactlyOnceWith(
-            '/_bifroest/files/browser-key.wasm',
+            '/assets/browser-key.wasm',
             expect.objectContaining({
                 credentials: 'omit',
                 mode: 'same-origin',

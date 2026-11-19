@@ -51,7 +51,7 @@ export async function observePublicKeyWasm(page: Page, origin: string, stage: ()
         }
         if (
             url.origin !== origin ||
-            url.pathname !== '/_bifroest/files/browser-key.wasm' ||
+            url.pathname !== '/assets/browser-key.wasm' ||
             event.request.method !== 'GET' ||
             requests.size >= 16
         ) {

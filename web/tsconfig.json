@@ -5,6 +5,7 @@
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
     "paths": {
+      "/login/test-client.js": ["./src/client.ts"],
       "/_bifroest/test/client.js": ["./src/client.ts"],
       "/src/remember/index.ts": ["./src/remember/index.ts"],
       "/src/remember/protocol.ts": ["./src/remember/protocol.ts"]

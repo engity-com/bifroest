@@ -25,8 +25,8 @@ Customer contracts or certification requirements can set an off-boarding deadlin
 
 ### Put the control in place
 
-1. Use [OIDC Device Authorization](reference/authorization/oidc.md) so that your IdP can reject new logins after access is withdrawn. By default Bifröst requires a refresh token and checks it while the session is active, including sessions reused with a remembered SSH key. A permanently rejected refresh grant closes the associated Bifröst SSH connections and disposes the session. Check whether disabling a user actually invalidates their refresh grant at your IdP, and when the next verification will run.
-2. Set **both** [`ssh.maxTimeout`](reference/connection/ssh.md#property-maxTimeout) and [`session.maxTimeout`](reference/session/fs.md#property-maxTimeout) to fit your deadline. Both default to unlimited. For OIDC, also review [`refreshToken.maxUnverifiedFor`](reference/authorization/oidc.md#device-auth-refresh-token-property-maxUnverifiedFor): it defaults to 30 minutes before disposal during an IdP outage. The `5m` values below illustrate a short time budget; neither idle timeout nor SSH certificate expiry alone ends every active connection.
+1. Use [OIDC Device Authorization](reference/authorization/oidc/device-authorization.md) so that your IdP can reject new logins after access is withdrawn. By default Bifröst requires a refresh token and checks it while the session is active, including sessions reused with a remembered SSH key. A permanently rejected refresh grant closes the associated Bifröst SSH connections and disposes the session. Check whether disabling a user actually invalidates their refresh grant at your IdP, and when the next verification will run.
+2. Set **both** [`ssh.maxTimeout`](reference/connection/ssh.md#property-maxTimeout) and [`session.maxTimeout`](reference/session/fs.md#property-maxTimeout) to fit your deadline. Both default to unlimited. For OIDC, also review [`refreshToken.maxUnverifiedFor`](reference/authorization/oidc/device-authorization.md#refresh-token-property-maxUnverifiedFor): it defaults to 30 minutes before disposal during an IdP outage. The `5m` values below illustrate a short time budget; neither idle timeout nor SSH certificate expiry alone ends every active connection.
 3. If the requirement is actual off-boarding, measure from the recorded decision to the last possible access: test new logins **and existing** shells, SFTP, forwards and downstream access. An IdP change is not necessarily reflected in an existing refresh grant or independent processes on a target. If the deadline cannot be met, add an explicit termination step and test it.
 
 ```yaml
@@ -63,7 +63,7 @@ Often admins have to ask themselves: "Did I really give them access everywhere?"
 
 ### Solution
 
-Use [OIDC authorization](reference/authorization/oidc.md) with a configured [IdP](https://openid.net/developers/how-connect-works/) to authenticate the user. A Docker or Kubernetes session does not require a matching local host account; a [local environment](reference/environment/local.md) needs an existing account or explicit provisioning settings.
+Use [OIDC authorization](reference/authorization/oidc/index.md) with a configured [IdP](https://openid.net/developers/how-connect-works/) to authenticate the user. A Docker or Kubernetes session does not require a matching local host account; a [local environment](reference/environment/local.md) needs an existing account or explicit provisioning settings.
 
 Check the permissions of the selected environment and any downstream services separately.
 
@@ -87,7 +87,7 @@ The following cases are usually used:
 1. Set up a bastion host, either:
     1. Inside the private network itself (in case of [AWS a dedicated EC2 instance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html) for example of [instance-type `t2.micro`](https://aws.amazon.com/ec2/instance-types/))
     2. or outside the network with a fixed VPN connection to get inside the private network.
-2. Configure an appropriate [authorization](reference/authorization/index.md), for example [OpenID Connect](reference/authorization/oidc.md), and review session reuse and revocation behavior.
+2. Configure an appropriate [authorization](reference/authorization/index.md), for example [OpenID Connect](reference/authorization/oidc/index.md), and review session reuse and revocation behavior.
 3. For an existing private OpenSSH server, follow the [SSH gateway guide](guides/ssh-gateway.md). For a separate workspace, choose the [Docker environment](reference/environment/docker.md); its isolation depends on privileges, mounts and runtime access.
 
 ## Access Kubernetes clusters without publicly exposing their APIs {: #kubernetes-firewall}
@@ -103,11 +103,11 @@ Usually, you either make the Kubernetes cluster's API directly accessible over t
 ### Solution
 
 1. Have a Bifröst instance inside your protected network, which port 22 is exposed to the internet.
-2. Protect the access with every mechanism you like [OpenID Connect](reference/authorization/oidc.md).
+2. Protect the access with every mechanism you like [OpenID Connect](reference/authorization/oidc/index.md).
 3. Pick an OCI/Docker image which holds [kubectl](https://kubernetes.io/docs/reference/kubectl/).
 4. Configure the [kubernetes environment](reference/environment/kubernetes.md) with a [kubeconfig](reference/environment/kubernetes.md#property-config) which is able to access the Kubernetes cluster inside your network.
 
-As a result your people can use a standard SSH client with [OpenID Connect](reference/authorization/oidc.md) (including a browser verification step) to access a kubectl instance without exposing the cluster API directly to the public internet. The kubeconfig and Pod permissions still determine what they can do.
+As a result your people can use a standard SSH client with [OpenID Connect](reference/authorization/oidc/index.md) (including a browser verification step) to access a kubectl instance without exposing the cluster API directly to the public internet. The kubeconfig and Pod permissions still determine what they can do.
 
 As a plus, the users accessing this instance have easier access to the resources like databases and rest APIs inside Kubernetes, because they can directly use the cluster internal domain names, instance `kubectl port-forward`.
 
@@ -123,7 +123,7 @@ As a plus, the users accessing this instance have easier access to the resources
 ### Solution
 
 1. Choose your favorite [authorization mechanism](reference/authorization/index.md), such as:
-    1. [OpenID Connect](reference/authorization/oidc.md) to ensure, that only users are already registered at your application are able to connect to your service or even using public social accounts like [GitHub](https://docs.github.com/v3/oauth) or [Google](https://developers.google.com/identity/openid-connect/openid-connect) to freely connect to your service.
+    1. [OpenID Connect](reference/authorization/oidc/index.md) to ensure, that only users are already registered at your application are able to connect to your service or even using public social accounts like [GitHub](https://docs.github.com/v3/oauth) or [Google](https://developers.google.com/identity/openid-connect/openid-connect) to freely connect to your service.
     2. Maybe you want to use [fixed passwords](reference/authorization/simple.md).
     3. :material-alert-octagon:{: .warning } Disable any kind of password request, which is only recommended for these kinds of purposes, nothing else. In this case, you can use the [none authorization](reference/authorization/none.md).
 2. Create an OCI/Docker image with the applications you want to show.

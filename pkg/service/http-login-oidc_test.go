@@ -54,13 +54,17 @@ func webOidcLoginFixtureConfigured(t *testing.T, holdDevice bool, configure ...f
 }
 
 func TestWebOidcDeviceLoginKeepsVerifiedIdentityAndRotatedGrant(t *testing.T) {
-	svc, handler, provider, recorder := webOidcLoginFixture(t)
+	svc, handler, provider, recorder := webOidcLoginFixtureConfigured(t, false, func(conf *configuration.Configuration) {
+		conf.Flows[0].Authorization.V.(*configuration.AuthorizationOidcDeviceAuth).Ssh.LoginMessage = template.MustNewString("SSH-only device instruction")
+	})
 	login := func() string {
 		token := startWebAttempt(t, handler, "interactive", "", "Work", nil)
 		step := waitWebLoginStep(t, handler, token, "Work")
 		require.Equal(t, "info", step.Kind)
-		require.Contains(t, step.Message, provider.server.URL+"/verify")
-		require.Contains(t, step.Message, "test-code")
+		require.NotNil(t, step.Device)
+		require.Equal(t, provider.server.URL+"/verify", step.Device.URL)
+		require.Equal(t, "test-code", step.Device.UserCode)
+		require.Empty(t, step.Message, "browser instructions are structured, never scraped from SSH prose")
 		require.Equal(t, http.StatusAccepted, answerWebStep(handler, token, "Work", step, "").Code)
 		return webTestToken(t, finishWebAttempt(t, handler, token, "Work"))
 	}

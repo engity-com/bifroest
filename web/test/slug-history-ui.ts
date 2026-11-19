@@ -49,7 +49,7 @@ export async function exerciseSlugHistory(page: Page, login: Login) {
                     url.pathname === '/' &&
                     url.search === '' &&
                     new RegExp(
-                        `^#${encodeURIComponent(slug)}/[1-9A-HJ-NP-Za-km-z]{16,22}$`,
+                        `^#(?:[^/@]+@)?${encodeURIComponent(slug)}/[1-9A-HJ-NP-Za-km-z]{16,22}$`,
                         'u',
                     ).test(url.hash),
             );
@@ -161,19 +161,22 @@ export async function exerciseSlugHistory(page: Page, login: Login) {
     await page.goBack();
     await dialog().waitFor();
     assert.equal(new URL(page.url()).pathname, '/');
-    assert.equal(new URL(page.url()).hash, '#bla-bla/-');
+    assert.equal(new URL(page.url()).hash, '#alice@bla-bla/-');
     assert.equal(sockets, 3, 'a closed history view becomes a login, never a restored execution');
     await dialog().getByRole('button', { name: 'Close', exact: true }).click();
     await activeAccess(page, 'alice');
     await selected(1, 'bla-bla');
     await input('still-the-initial-alias-execution');
     assert.equal(documents, 0);
-    const authRequests = () => requests.filter((request) => request.method === 'POST').length;
+    const authRequests = () =>
+        requests.filter(
+            (request) => request.method === 'POST' && request.path !== '/api/v1/discovery',
+        ).length;
     const beforeReload = authRequests();
     await page.reload();
     await dialog().getByLabel('User name', { exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, '/');
-    assert.equal(new URL(page.url()).hash, '#bla-bla/-');
+    assert.equal(new URL(page.url()).hash, '#alice@bla-bla/-');
     assert.equal(await page.getByRole('tab').count(), 0);
     assert.equal(
         authRequests(),

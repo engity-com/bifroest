@@ -1,19 +1,16 @@
 import createCache from '@emotion/cache';
 import { CacheProvider } from '@emotion/react';
-import {
-    CssBaseline,
-    createTheme,
-    GlobalStyles,
-    ThemeProvider,
-    useMediaQuery,
-} from '@mui/material';
+import { CssBaseline, GlobalStyles, ThemeProvider, useMediaQuery } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router/dom';
+import { OidcApplication } from './login/OidcLogin';
+import { bifroestTheme } from './ui/theme';
 import './ui/app.css';
 import { App } from './ui/App';
+import { afterDocumentReady, configureBrowserTitle } from './ui/customization';
 import { reportUiError } from './ui/error-report';
-import { type LinkMetadata, loadEntryMetadata } from './ui/link-metadata';
+import { type DiscoveryFailure, type LinkMetadata, loadWorkspaceEntry } from './ui/link-metadata';
 import { t } from './ui/messages';
 import {
     isThemePreference,
@@ -29,7 +26,15 @@ const cache = createCache({
     nonce: document.querySelector<HTMLMetaElement>('meta[name="bifroest-nonce"]')?.content ?? '',
 });
 
-function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string }) {
+function Workspace({
+    metadata,
+    title,
+    failure,
+}: {
+    metadata: LinkMetadata;
+    title: string;
+    failure?: DiscoveryFailure | undefined;
+}) {
     const [scheme, setScheme] = useState(preferredTheme);
     useEffect(() => {
         const reset = () => setScheme(preferredTheme());
@@ -48,31 +53,7 @@ function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string 
     const dark = useMediaQuery('(prefers-color-scheme: dark)');
     const mode =
         scheme === 'auto' ? (dark ? 'dark' : 'light') : scheme === 'dark' ? 'dark' : 'light';
-    const theme = useMemo(
-        () =>
-            createTheme({
-                palette: { mode },
-                typography: {
-                    fontFamily: 'Roboto, system-ui, sans-serif',
-                    fontSize: 14,
-                    button: { textTransform: 'none' },
-                },
-                components: {
-                    MuiTooltip: {
-                        styleOverrides: {
-                            // The exit-transition portal otherwise retains stale desktop
-                            // coordinates and can enlarge a resized mobile document while
-                            // its tooltip is already closed/invisible.
-                            popperClose: { display: 'none' },
-                        },
-                    },
-                    MuiButton: { defaultProps: { disableElevation: true, size: 'small' } },
-                    MuiTab: { styleOverrides: { root: { textTransform: 'none', minHeight: 48 } } },
-                    MuiDialogTitle: { styleOverrides: { root: { fontSize: '1.125rem' } } },
-                },
-            }),
-        [mode],
-    );
+    const theme = useMemo(() => bifroestTheme(mode), [mode]);
     useEffect(() => {
         document.documentElement.dataset.colorScheme = mode;
     }, [mode]);
@@ -101,6 +82,7 @@ function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string 
                 />
                 <App
                     metadata={metadata}
+                    initialDiscoveryFailure={failure}
                     title={title}
                     scheme={scheme}
                     onScheme={(next) => {
@@ -128,15 +110,16 @@ async function start() {
     }
     starting = true;
     try {
-        const metadata = await loadEntryMetadata(location.origin, location);
-        const customization = { version: 1, title: t('brand') };
-        window.dispatchEvent(new CustomEvent('bifroest:configure', { detail: customization }));
-        const title =
-            typeof customization.title === 'string' && customization.title.length <= 128
-                ? customization.title
-                : t('brand');
-        document.title = title;
-        const router = createSlugRouter(<Workspace metadata={metadata} title={title} />);
+        if (location.pathname === '/login' || location.pathname.startsWith('/login/')) {
+            createRoot(container).render(<OidcApplication title={configureBrowserTitle()} />);
+            started = true;
+            return;
+        }
+        const { metadata, failure } = await loadWorkspaceEntry(location.origin, location);
+        const title = configureBrowserTitle();
+        const router = createSlugRouter(
+            <Workspace metadata={metadata} title={title} failure={failure} />,
+        );
         createRoot(container).render(<RouterProvider router={router} />);
         started = true;
     } catch (error) {
@@ -158,14 +141,6 @@ async function start() {
 
 // Deferred classic customization files must finish before this init event. A
 // module running while readyState=interactive must still wait for DOMContentLoaded.
-if (document.readyState === 'complete') {
+afterDocumentReady(() => {
     void start();
-} else {
-    document.addEventListener(
-        'DOMContentLoaded',
-        () => {
-            void start();
-        },
-        { once: true },
-    );
-}
+});

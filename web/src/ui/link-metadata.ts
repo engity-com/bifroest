@@ -1,11 +1,21 @@
-import type { LinkMetadata, LoginMethod, LoginOption } from '../application/link-metadata';
-import { parseManagementLocation } from '../application/management-location';
+import {
+    type DiscoveryFailure,
+    discoveryFailure,
+    type LinkMetadata,
+    type LoginMethod,
+    type LoginOption,
+} from '../application/link-metadata';
 import type { Scope } from '../remember';
 import { rememberMePolicy } from '../remember/policy';
 import { RememberMeError, validateScope } from '../remember/protocol';
 import { parseHashTarget } from './hash-route';
 
-export type { LinkMetadata, LoginMethod, LoginOption } from '../application/link-metadata';
+export type {
+    DiscoveryFailure,
+    LinkMetadata,
+    LoginMethod,
+    LoginOption,
+} from '../application/link-metadata';
 
 // The directory itself is never a selectable root access. Only the explicit
 // configuration-derived flag permits '', including for old root tab scopes.
@@ -46,78 +56,68 @@ export async function loadLinkMetadata(
     transport: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<LinkMetadata> {
     validateScope(scope);
-    const value = await readMetadataURL(new URL(`/${scope.slug}`, scope.origin), signal, transport);
+    const value = await readMetadataURL(
+        new URL('/api/v1/discovery', scope.origin),
+        scope.slug,
+        signal,
+        transport,
+    );
     return parseLinkMetadata(value, scope);
 }
 
-// A static SPA entry may be a deep management URL. Fetch only bounded public
-// JSON discovery from that SAME URL; no JS/React rendering occurs on the server.
+// Only the fragment selects a workload. Never copy it into a request URL.
 export async function loadEntryMetadata(
     origin: string,
     current: { pathname: string; search: string; hash: string },
     signal?: AbortSignal,
     transport: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<LinkMetadata> {
-    if (current.hash !== '' && origin === location.origin && current.search === '') {
+    if (current.pathname !== '/' || current.search !== '' || origin !== location.origin) {
+        throw new RememberMeError('unavailable');
+    }
+    if (current.hash !== '') {
         const target = parseHashTarget(origin, current.hash);
         if (!target) {
             throw new RememberMeError('unavailable');
         }
         return loadLinkMetadata(target.scope, signal, transport);
     }
-    if (
-        origin !== location.origin ||
-        current.hash !== '' ||
-        !current.pathname.startsWith('/') ||
-        current.pathname.length > 2048 ||
-        current.pathname.includes('%') ||
-        current.pathname.includes('\\')
-    ) {
-        throw new RememberMeError('unavailable');
-    }
-    let valid = false;
-    if (current.search === '') {
-        try {
-            validateScope({
-                origin,
-                slug: current.pathname === '/' ? '' : current.pathname.slice(1),
-            });
-            valid = true;
-        } catch {}
-    }
-    const segments = current.pathname.slice(1).split('/');
-    for (let count = 0; count <= 2 && count < segments.length; count++) {
-        if (
-            parseManagementLocation({ origin, slug: segments.slice(0, count).join('/') }, current)
-        ) {
-            valid = true;
+    return loadLinkMetadata({ origin, slug: '' }, signal, transport);
+}
+
+// Failed link discovery must still render the same editable login dialog. Only
+// explicitly published directory entries are recovered; hidden links stay private.
+export async function loadWorkspaceEntry(
+    origin: string,
+    current: { pathname: string; search: string; hash: string },
+): Promise<{ metadata: LinkMetadata; failure?: DiscoveryFailure }> {
+    try {
+        return { metadata: await loadEntryMetadata(origin, current) };
+    } catch (error) {
+        const target = current.hash === '' ? null : parseHashTarget(origin, current.hash);
+        let directory: LinkMetadata = {
+            scope: { origin, slug: '' },
+            loginOptions: [],
+            publishedSlugs: [],
+            rootAvailable: false,
+        };
+        if (current.hash !== '') {
+            try {
+                directory = await loadLinkMetadata(directory.scope);
+            } catch {
+                /* Keep the field usable even offline. */
+            }
         }
+        return {
+            metadata: { ...directory, scope: target?.scope ?? directory.scope, loginOptions: [] },
+            failure: current.hash !== '' && !target ? 'invalid-slug' : discoveryFailure(error),
+        };
     }
-    if (!valid) {
-        throw new RememberMeError('unavailable');
-    }
-    const value = await readMetadataURL(
-        new URL(current.pathname + current.search, origin),
-        signal,
-        transport,
-    );
-    if (value === null || typeof value !== 'object' || !Object.hasOwn(value, 'scope')) {
-        throw new RememberMeError('unavailable');
-    }
-    const scope = (value as { scope: Scope }).scope;
-    validateScope(scope);
-    if (scope.origin !== origin) {
-        throw new RememberMeError('unavailable');
-    }
-    const legacy = current.search === '' && current.pathname === `/${scope.slug}`;
-    if (!legacy && !parseManagementLocation(scope, current)) {
-        throw new RememberMeError('unavailable');
-    }
-    return parseLinkMetadata(value, scope);
 }
 
 async function readMetadataURL(
     url: URL,
+    slug: string,
     signal: AbortSignal | undefined,
     transport: typeof fetch,
 ): Promise<unknown> {
@@ -131,13 +131,19 @@ async function readMetadataURL(
         throw new RememberMeError('cancelled');
     }
     const response = await transport(url, {
-        headers: { Accept: 'application/json' },
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug }),
         credentials: 'omit',
         cache: 'no-store',
         mode: 'same-origin',
         redirect: 'error',
         signal: stopped,
     });
+    if (response.status === 404) {
+        await response.body?.cancel();
+        throw new RememberMeError('not-found');
+    }
     if (
         !response.ok ||
         response.redirected ||
@@ -217,7 +223,7 @@ export function parseLinkMetadata(value: unknown, scope: Scope): LinkMetadata {
         typeof body.rootAvailable !== 'boolean' ||
         (body.frontendAvailable !== undefined && typeof body.frontendAvailable !== 'boolean') ||
         !Array.isArray(body.loginOptions) ||
-        body.loginOptions.length > 8
+        body.loginOptions.length > 10
     ) {
         throw new RememberMeError('unavailable');
     }
@@ -232,7 +238,7 @@ export function parseLinkMetadata(value: unknown, scope: Scope): LinkMetadata {
                 .filter((key) => key !== 'rememberMe')
                 .sort()
                 .join(',') !== 'certificateRequired,method,requestUser' ||
-            !['password', 'keyboard-interactive', 'public-key', 'none'].includes(
+            !['password', 'keyboard-interactive', 'oidc', 'public-key', 'none'].includes(
                 option.method as string,
             ) ||
             typeof option.requestUser !== 'boolean' ||

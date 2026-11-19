@@ -19,7 +19,7 @@ func assetFixture(t *testing.T) (*Assets, string) {
 	directory := t.TempDir()
 	root, err := openPublicRoot(directory)
 	require.NoError(t, err)
-	assets := &Assets{overlay: root, embedded: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte(`<html><head><link rel="stylesheet" href="/_bifroest/files/assets/main.css"></head><body><div id="root"></div><script type="module" src="/_bifroest/files/assets/main.js"></script></body></html>`)}, "assets/main.js": &fstest.MapFile{Data: []byte("embedded-js")}, "assets/main.css": &fstest.MapFile{Data: []byte("embedded-css")}}}
+	assets := &Assets{overlay: root, embedded: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte(`<html><head><link rel="stylesheet" href="/assets/assets/main.css"></head><body><div id="root"></div><script type="module" src="/assets/assets/main.js"></script></body></html>`)}, "assets/main.js": &fstest.MapFile{Data: []byte("embedded-js")}, "assets/main.css": &fstest.MapFile{Data: []byte("embedded-css")}}}
 	t.Cleanup(func() { require.NoError(t, assets.Close()) })
 	return assets, directory
 }
@@ -42,6 +42,8 @@ func TestPublicAssetsUsePerFileOverlayWithoutCleaningAliases(t *testing.T) {
 	_, _, err = assets.Resource("/api/v1/login/password")
 	require.ErrorIs(t, err, fs.ErrNotExist)
 	_, _, err = assets.Resource(Prefix + "index.html")
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	_, _, err = assets.Resource(Prefix + "login.html")
 	require.ErrorIs(t, err, fs.ErrNotExist)
 	_, _, err = assets.Resource(Prefix + "assets/missing.js")
 	require.ErrorIs(t, err, fs.ErrNotExist)
@@ -83,7 +85,7 @@ func TestPublicAssetsRejectSymlinksHardlinksDirectoriesAndOversizeWithoutFallbac
 
 func TestPublicDocumentNoncesCustomizationOrderAndMissingHeadBody(t *testing.T) {
 	directory := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(directory, "index.html"), []byte(`<div id="root"></div><script src="/_bifroest/files/assets/main.js"></script><meta name="bifroest-nonce" content="old">`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "index.html"), []byte(`<div id="root"></div><script src="/assets/assets/main.js"></script><meta name="bifroest-nonce" content="old">`), 0644))
 	css1, css2, js := filepath.Join(directory, "first.css"), filepath.Join(directory, "second.css"), filepath.Join(directory, "last.js")
 	for file, body := range map[string]string{css1: "first", css2: "second", js: "custom"} {
 		require.NoError(t, os.WriteFile(file, []byte(body), 0644))

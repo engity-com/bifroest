@@ -104,7 +104,10 @@ export async function exercisePreferences(page: Page) {
             slug,
         );
         assert.equal(new URL(page.url()).pathname, '/');
-        assert.equal(new URL(page.url()).hash, `#${encodeURIComponent(slug)}`);
+        assert.equal(
+            (new URL(page.url()).hash.slice(1).split('/')[0] ?? '').split('@').at(-1),
+            encodeURIComponent(slug),
+        );
     }
     await flow('Other');
     assert.equal(
@@ -139,9 +142,11 @@ export async function exercisePreferences(page: Page) {
     assert.equal(await pref('NameFree'), null);
     await dialog().getByRole('button', { name: 'Close', exact: true }).click();
     await dialog().waitFor({ state: 'hidden' });
-    await page.waitForURL((url) => url.pathname === '/' && url.hash.startsWith('#Other/'));
+    await page.waitForURL((url) => url.pathname === '/' && url.hash.startsWith('#bob@Other/'));
     assert.equal(
-        decodeURIComponent(new URL(page.url()).hash.slice(1).split('/')[0] ?? ''),
+        decodeURIComponent(
+            (new URL(page.url()).hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ?? '',
+        ),
         'Other',
         'closing sign-in restores the active tab entry scope, not the unselected NameFree login scope',
     );
@@ -150,7 +155,9 @@ export async function exercisePreferences(page: Page) {
     await page.reload();
     await dialog().waitFor({ state: 'visible' });
     assert.equal(
-        decodeURIComponent(new URL(page.url()).hash.slice(1).split('/')[0] ?? ''),
+        decodeURIComponent(
+            (new URL(page.url()).hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ?? '',
+        ),
         'Other',
         'reload retains the last active tab entry scope after its explicit logout',
     );

@@ -4,7 +4,7 @@ description: How to access context information about an user's token of its succ
 
 # Context OpenID Connect (OIDC) Token
 
-Holds the main information about a user who was authorized via [OIDC](../authorization/oidc.md).
+Holds the main information about a user who was authorized via [OIDC](../authorization/oidc/index.md).
 
 ## Properties
 

@@ -170,7 +170,7 @@ try {
     });
     page.on('requestfailed', (request) => {
         const path = new URL(request.url()).pathname;
-        if (path.startsWith('/_bifroest/files/')) {
+        if (path.startsWith('/assets/')) {
             assetObservations.push({ path, error: request.failure()?.errorText ?? 'failed' });
         }
     });
@@ -225,7 +225,7 @@ try {
             transfers.push({ path, body, channel: request.channel() });
         }
     });
-    const reply = await page.goto(`${origin}/Work`);
+    const reply = await page.goto(`${origin}/#Work`);
     assert(reply);
     assert.equal(reply.status(), 200);
     assert(!required(reply.headers()['content-security-policy']).includes('wasm-unsafe-eval'));

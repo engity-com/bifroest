@@ -106,6 +106,7 @@ export function writeBrowserRelease(
     }
     for (const name of [
         'index.html',
+        'login.html',
         'go-wasm-exec.js',
         'browser-key-worker.js',
         'browser-transfer-worker.js',
@@ -120,14 +121,10 @@ export function writeBrowserRelease(
             throw new Error('Browser release output is incomplete');
         }
     }
-    const favicon = assets.find((asset) =>
-        /^assets\/favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name),
-    );
+    const favicon = assets.find((asset) => /^favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name));
     if (
         favicon === undefined ||
-        !readFileSync(join(target, 'index.html'), 'utf8').includes(
-            `href="/_bifroest/files/${favicon.name}"`,
-        )
+        !readFileSync(join(target, 'index.html'), 'utf8').includes(`href="/assets/${favicon.name}"`)
     ) {
         throw new Error(
             'Browser release favicon is missing or not referenced by its local asset URL',
@@ -288,6 +285,7 @@ export function captureBrowserInputs(
         'web/bun.lock',
         'web/bunfig.toml',
         'web/index.html',
+        'web/login.html',
         'docs/assets/favicon.svg',
         'web/vite.app.config.ts',
         'web/.tool-versions',

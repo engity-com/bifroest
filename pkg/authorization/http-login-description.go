@@ -4,6 +4,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 // LoginMethod is a discovery/UI choice, separate from authentication audit values.
@@ -15,6 +16,7 @@ const (
 	LoginMethodKeyboardInteractive LoginMethod = "keyboard-interactive"
 	LoginMethodPublicKey           LoginMethod = "public-key"
 	LoginMethodNone                LoginMethod = "none"
+	LoginMethodOidc                LoginMethod = "oidc"
 )
 
 type LoginOption struct {
@@ -30,18 +32,34 @@ type HttpLoginDescription struct {
 }
 
 type HttpLoginDescriber interface {
-	DescribeHttpLogin(host, slug string) (HttpLoginDescription, error)
+	// authority includes the port, if any; flow requirements use only its host.
+	DescribeHttpLogin(authority, slug string) (HttpLoginDescription, error)
 }
 
 var _ HttpLoginDescriber = (*AuthorizerFacade)(nil)
+
+// Discovery and the HTTP adapter must agree before invoking an OIDC candidate.
+// A foreign code origin is ineligible, not a failed login that stops fallback.
+// Other methods (including remembered-key access) retain their own capabilities.
+func (this *facaded) httpLoginCapabilities(origin string, named bool) AuthenticationCapabilities {
+	capabilities := this.capabilityProvider.AuthenticationCapabilities(DiscoveryInput{Transport: connection.TransportHttp, RequestingName: named})
+	if oidc, ok := this.CloseableAuthorizer.(*OidcDeviceAuthAuthorizer); ok && oidc.code != nil {
+		capabilities.OidcAuthorizationCode = capabilities.OidcAuthorizationCode && oidc.matchesCodeOrigin(origin)
+	}
+	return capabilities
+}
 
 // DescribeHttpLogin shares the authoritative facade's canonical selection and
 // published-slug pinning, but never attempts authentication. Unknown remote names
 // must not eliminate named flows; nameless flows still check the concrete empty
 // name. Capabilities are unioned by input mode, not across incompatible username
 // prompts. Availability depends on requirements, not on credentials or methods.
-func (this *AuthorizerFacade) DescribeHttpLogin(host, slug string) (HttpLoginDescription, error) {
-	selection, err := (connection.Selection{Transport: connection.TransportHttp, Host: host, Slug: slug}).Canonical()
+func (this *AuthorizerFacade) DescribeHttpLogin(authority, slug string) (HttpLoginDescription, error) {
+	origin, err := net.CanonicalHttpsOrigin(authority)
+	if err != nil {
+		return HttpLoginDescription{}, err
+	}
+	selection, err := (connection.Selection{Transport: connection.TransportHttp, Host: authority, Slug: slug}).Canonical()
 	if err != nil {
 		return HttpLoginDescription{}, err
 	}
@@ -67,7 +85,7 @@ func (this *AuthorizerFacade) DescribeHttpLogin(host, slug string) (HttpLoginDes
 		if candidate.capabilityProvider == nil {
 			return HttpLoginDescription{}, errors.System.Newf("authorization flow %q does not provide authentication capabilities", candidate.flow)
 		}
-		capabilities := candidate.capabilityProvider.AuthenticationCapabilities(DiscoveryInput{Transport: connection.TransportHttp, RequestingName: named})
+		capabilities := candidate.httpLoginCapabilities(origin, named)
 		add := func(method LoginMethod, possible bool) {
 			if !possible {
 				return
@@ -91,11 +109,12 @@ func (this *AuthorizerFacade) DescribeHttpLogin(host, slug string) (HttpLoginDes
 		}
 		add(LoginMethodPassword, capabilities.Password)
 		add(LoginMethodKeyboardInteractive, capabilities.KeyboardInteractive)
+		add(LoginMethodOidc, capabilities.OidcAuthorizationCode)
 		add(LoginMethodPublicKey, capabilities.PublicKey)
 		add(LoginMethodNone, capabilities.Secretless)
 	}
 	for _, named := range []bool{true, false} {
-		for _, method := range []LoginMethod{LoginMethodPassword, LoginMethodKeyboardInteractive, LoginMethodPublicKey, LoginMethodNone} {
+		for _, method := range []LoginMethod{LoginMethodPassword, LoginMethodKeyboardInteractive, LoginMethodOidc, LoginMethodPublicKey, LoginMethodNone} {
 			if option, exists := options[optionKey{method, named}]; exists {
 				result.Options = append(result.Options, option)
 			}

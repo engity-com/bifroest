@@ -230,7 +230,7 @@ async function open(profile: string) {
             } catch {}
         }),
     );
-    const response = await page.goto(`${origin}/Work`);
+    const response = await page.goto(`${origin}/#Work`);
     assert(response);
     assert.equal(response.status(), 200);
     assert(
@@ -544,7 +544,9 @@ try {
                     readyState: document.readyState,
                     expectedPath:
                         location.pathname === '/' &&
-                        decodeURIComponent(location.hash.slice(1).split('/')[0] ?? '') === 'Work',
+                        decodeURIComponent(
+                            (location.hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ?? '',
+                        ) === 'Work',
                     rootChildren: document.getElementById('root')?.childElementCount ?? 0,
                     newConnectionDisabled:
                         document.querySelector<HTMLButtonElement>(

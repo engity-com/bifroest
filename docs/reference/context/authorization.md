@@ -13,7 +13,7 @@ There are more specialized variants of the authorization available, based on whi
 | [Bifröst](#bifroest)           | [Bifröst delegation](../authorization/bifroest.md) |
 | [Htpasswd](#htpasswd)          | [Htpasswd](../authorization/htpasswd.md)          |
 | [Local](#local)                | [Local](../authorization/local.md)                |
-| [OpenID Connect (OIDC)](#oidc) | [OpenID Connect (OIDC)](../authorization/oidc.md) |
+| [OpenID Connect (OIDC)](#oidc) | [OpenID Connect (OIDC)](../authorization/oidc/index.md) |
 | [Simple](#simple)              | [Simple](../authorization/simple.md)              |
 | [None](#none)                  | [None](../authorization/none.md)                  |
 
@@ -59,7 +59,7 @@ Holds the successfully authorized user.
 
 ## OpenID Connect (OIDC) {: #oidc}
 
-Is the result of a successful authorization via [OpenID Connect (OIDC) authorization](../authorization/oidc.md).
+Is the result of a successful authorization via [OpenID Connect (OIDC) authorization](../authorization/oidc/index.md).
 
 ### Properties
 

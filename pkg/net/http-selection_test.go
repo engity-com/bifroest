@@ -42,6 +42,33 @@ func TestCanonicalHttpHostRejectsMalformedAuthority(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			_, err := CanonicalHttpHost(value)
 			require.Error(t, err)
+			_, err = CanonicalHttpsOrigin(value)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestCanonicalHttpsOrigin(t *testing.T) {
+	for _, test := range []struct{ authority, expected string }{
+		{"EXAMPLE.org", "https://example.org"},
+		{"Example.org.:00443", "https://example.org"},
+		{"example.org:08443", "https://example.org:8443"},
+		{"example.org:9443", "https://example.org:9443"},
+		{"bücher.example:443", "https://xn--bcher-kva.example"},
+		{"127.0.0.1:8443", "https://127.0.0.1:8443"},
+		{"[2001:0db8::1]:00443", "https://[2001:db8::1]"},
+		{"[2001:0db8::1]:08443", "https://[2001:db8::1]:8443"},
+		{"[::1]", "https://[::1]"},
+	} {
+		t.Run(test.authority, func(t *testing.T) {
+			actual, err := CanonicalHttpsOrigin(test.authority)
+			require.NoError(t, err)
+			require.Equal(t, test.expected, actual)
+			parsed, err := url.Parse(actual)
+			require.NoError(t, err)
+			repeated, err := CanonicalHttpsOrigin(parsed.Host)
+			require.NoError(t, err)
+			require.Equal(t, actual, repeated)
 		})
 	}
 }
@@ -67,6 +94,7 @@ func TestHttpSlugFromURL(t *testing.T) {
 func TestHttpSlugRejectsAliasesAndInternalPaths(t *testing.T) {
 	for _, path := range []string{
 		"foo", "/foo/", "/foo//bar", "/one/two/three", "/.", "/..", "/foo/..", "/foo_bar", "/é",
+		"/login", "/login/approve", "/login/callback",
 		"/_bifroest", "/api", "/api/v1/access", "/api/unknown", "/_bifroest/assets/main.js", "/assets/main.js", "/%66oo", "/foo%2fbar", "/foo%2Fbar", "/foo%252fbar",
 		"/" + strings.Repeat("a", 65),
 	} {

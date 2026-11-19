@@ -7,7 +7,7 @@ import { keyLoginError } from './diagnostic';
 import { verificationLink } from './links';
 
 export interface LoginSubmission {
-    readonly method: 'password' | 'none' | 'keyboard-interactive' | 'public-key';
+    readonly method: 'password' | 'none' | 'keyboard-interactive' | 'oidc' | 'public-key';
     readonly user: string;
     readonly password: string;
     readonly scope: Scope;
@@ -108,7 +108,10 @@ export class LoginAttempt {
                 ...this.#state,
                 prompt: step,
                 provider:
-                    step.kind === 'info' && verificationLink(step.message) !== null ? step : null,
+                    step.kind === 'info' &&
+                    (step.device !== undefined || verificationLink(step.message) !== null)
+                        ? step
+                        : null,
             });
         });
     }
@@ -119,6 +122,8 @@ export class LoginAttempt {
             readonly signal: AbortSignal;
             current(): boolean;
             admit(access: WebAccess): boolean;
+            onOidcLink?(url: string): void;
+            onInteraction?(step: LoginStep): void;
         },
     ): Promise<LoginCompletion> {
         if (this.#state.phase === 'uncertain') {
@@ -186,11 +191,34 @@ export class LoginAttempt {
                 } finally {
                     key.close();
                 }
-            } else if (request.method === 'keyboard-interactive') {
+            } else if (request.method === 'keyboard-interactive' || request.method === 'oidc') {
                 access = await client.interactive(
                     request.user,
-                    (step, stopped) => this.#prompt(step, stopped, current),
+                    (step, stopped) => {
+                        if (!current() || stopped.aborted) {
+                            throw new RememberMeError('cancelled');
+                        }
+                        if (request.method !== 'oidc') {
+                            ports.onInteraction?.(step);
+                            return this.#prompt(step, stopped, current);
+                        }
+                        const link = verificationLink(step.message);
+                        if (
+                            step.kind !== 'info' ||
+                            link === null ||
+                            new URL(link).origin !== request.scope.origin ||
+                            new URL(link).pathname !== '/login/' ||
+                            new URL(link).search !== '' ||
+                            !/^#start\/[A-Za-z0-9_-]{43}$/u.test(new URL(link).hash)
+                        ) {
+                            throw new RememberMeError('invalid-step');
+                        }
+                        this.#publish({ ...this.#state, prompt: null, provider: step });
+                        ports.onOidcLink?.(link);
+                        return Promise.resolve('');
+                    },
                     signal,
+                    request.method === 'oidc',
                 );
             } else {
                 access = await client.password(

@@ -9,7 +9,7 @@ description: Use SSH clients or optional HTTPS browser access with configurable 
 
 ## SSH and browser access with identity and session control
 
-Bifröst lets platform teams combine authorization with the environment in which a session runs. Users connect with a standard SSH client or the optional [HTTPS browser interface](guides/browser-access.md). [OIDC Device Authorization](reference/authorization/oidc.md) requires a browser verification step and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
+Bifröst lets platform teams combine authorization with the environment in which a session runs. Users connect with a standard SSH client or the optional [HTTPS browser interface](guides/browser-access.md). [OIDC authorization](reference/authorization/oidc/index.md) requires a browser login step and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
 
 Bifröst was created for teams with [time-bound off-boarding requirements](usecases.md#offboard), whether the target is 15 minutes, 60 minutes or another defined limit. Meeting it depends on the IdP, bounded access and checks of existing connections.
 
@@ -26,7 +26,7 @@ Bifröst was created for teams with [time-bound off-boarding requirements](useca
 
 ### SSH access with your identity
 
-Connect using OpenSSH, PuTTY or another standard SSH client. Authorize with local accounts, SSH keys or [OIDC Device Authorization](guides/oidc.md); OIDC adds a browser verification step, not a separate SSH client.
+Connect using OpenSSH, PuTTY or another standard SSH client. Authorize with local accounts, SSH keys or [OIDC](reference/authorization/oidc/index.md); OIDC adds a browser login step, not a separate SSH client.
 
 ### Choose where sessions run
 

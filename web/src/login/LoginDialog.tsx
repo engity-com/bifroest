@@ -3,6 +3,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import { useState } from 'react';
 import { type ApplicationNotice, NoticeBody } from '../ui/ApplicationNotice';
 import {
     type LinkMetadata,
@@ -28,6 +29,9 @@ import {
 } from '../ui/material';
 import { type Message, t } from '../ui/messages';
 import { allowsSavedLogin, savedLoginChoice } from './choice';
+import { DeviceLogin } from './DeviceLogin';
+import type { LoginStep } from './interactive';
+import { SlugInput } from './SlugInput';
 
 export type SavedAccessState = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
 
@@ -39,6 +43,8 @@ export interface LoginDialogState {
         slug: string | null;
         origin: string | null;
         failed: boolean;
+        invalid?: boolean;
+        editing?: boolean;
         links: readonly string[];
     };
     saved: SavedAccessState;
@@ -51,11 +57,15 @@ export interface LoginDialogState {
     busy: boolean;
     managementLocked: boolean;
     rememberUncertain: boolean;
+    oidcLink?: string | null;
+    device?: LoginStep | null;
+    deviceReady?: boolean;
 }
 
 export interface LoginDialogActions {
     close(): void;
     chooseLink(slug: string): void;
+    editLink?(editing: boolean): void;
     chooseMethod(choice: string): void;
     changeUser(user: string): void;
     changeOptIn(value: boolean): void;
@@ -65,11 +75,13 @@ export interface LoginDialogActions {
     confirmSaved(action: 'revoke' | 'local'): void;
     retryMetadata(): void;
     showNotice(): void;
+    continueDevice?(): void;
 }
 
 const methodMessages: Record<LoginMethod, { label: Message; description: Message }> = {
     password: { label: 'loginPasswordTab', description: 'passwordMethod' },
     'keyboard-interactive': { label: 'loginInteractiveTab', description: 'interactiveMethod' },
+    oidc: { label: 'loginOidcTab', description: 'oidcMethod' },
     'public-key': { label: 'loginKeyTab', description: 'keyMethod' },
     none: { label: 'loginNoneTab', description: 'noneMethod' },
 };
@@ -87,6 +99,13 @@ export function LoginDialog({
     const savedAvailable = state.saved === 'ready' && allowsSavedLogin(state.metadata);
     const savedSelected = savedAvailable && state.choice === savedLoginChoice;
     const method = option?.method ?? null;
+    const userFieldOwner = JSON.stringify([
+        state.metadata.scope,
+        state.choice,
+        state.inputRevision,
+    ]);
+    const [invalidUserOwner, setInvalidUserOwner] = useState<string | null>(null);
+    const userInvalid = invalidUserOwner === userFieldOwner && state.user.trim().length === 0;
     const choices = state.metadata.loginOptions.map((entry) => {
         const messages = methodMessages[entry.method];
         const multipleNameModes = state.metadata.loginOptions.some(
@@ -185,37 +204,17 @@ export function LoginDialog({
                 data-login-scope={state.metadata.scope.slug}
                 data-login-ready={state.ready}
             >
-                {state.route.links.length > 1 ? (
-                    <Select
-                        label={t('connectionLink')}
-                        value={
-                            state.route.slug !== null &&
-                            state.route.links.includes(state.route.slug)
-                                ? state.route.slug
-                                : ''
-                        }
-                        data={state.route.links.map((slug) => ({
-                            value: slug,
-                            label: slug || '/',
-                        }))}
-                        disabled={state.busy}
-                        allowDeselect={false}
-                        onChange={(value) => {
-                            if (value !== null) {
-                                actions.chooseLink(value);
-                            }
-                        }}
+                {!state.device?.device && (
+                    <SlugInput
+                        slug={state.route.slug}
+                        origin={state.route.origin}
+                        options={state.route.links}
+                        invalid={state.route.invalid === true}
+                        disabled={state.busy || state.managementLocked || state.rememberUncertain}
+                        onCommit={actions.chooseLink}
+                        onEditing={(editing) => actions.editLink?.(editing)}
                     />
-                ) : (
-                    state.route.slug && (
-                        <Text size="sm" c="dimmed">
-                            {state.route.slug}
-                        </Text>
-                    )
                 )}
-                <Text size="xs" c="dimmed">
-                    {t('slugRouteHint')}
-                </Text>
                 {state.ready && state.saved === 'pending' && (
                     <Alert color="yellow">
                         <p>{t('pending')}</p>
@@ -230,7 +229,16 @@ export function LoginDialog({
                         )}
                     </Alert>
                 )}
-                {!state.ready ? (
+                {state.device?.device ? (
+                    <DeviceLogin
+                        key={`${state.inputRevision}:${state.device.sequence}:${state.device.device.userCode}`}
+                        device={state.device.device}
+                        ready={state.deviceReady === true}
+                        onContinue={() => actions.continueDevice?.()}
+                        onCancel={actions.cancel}
+                    />
+                ) : !state.ready &&
+                  (state.route.invalid || state.route.editing) ? null : !state.ready ? (
                     <Alert
                         color={state.route.failed || state.route.origin === null ? 'red' : 'blue'}
                     >
@@ -269,16 +277,30 @@ export function LoginDialog({
                     <form
                         key={`${state.metadata.scope.slug}:${state.choice}`}
                         method={
-                            savedSelected || method === 'public-key' || method === 'none'
+                            savedSelected ||
+                            method === 'public-key' ||
+                            method === 'none' ||
+                            method === 'oidc'
                                 ? 'dialog'
                                 : 'post'
                         }
                         action={
-                            savedSelected || method === 'public-key' || method === 'none'
+                            savedSelected ||
+                            method === 'public-key' ||
+                            method === 'none' ||
+                            method === 'oidc'
                                 ? undefined
                                 : '/api/v1/login/password'
                         }
                         className="login-form"
+                        onInvalidCapture={(event) => {
+                            const input = event.target;
+                            if (input instanceof HTMLInputElement && input.name === 'user') {
+                                event.preventDefault();
+                                setInvalidUserOwner(userFieldOwner);
+                                input.focus();
+                            }
+                        }}
                         onInput={() => {
                             if (!savedSelected) {
                                 actions.chooseMethod(state.choice);
@@ -289,6 +311,15 @@ export function LoginDialog({
                             if (savedSelected) {
                                 actions.resume();
                             } else {
+                                if (option?.requestUser && state.user.trim().length === 0) {
+                                    setInvalidUserOwner(userFieldOwner);
+                                    (
+                                        event.currentTarget.elements.namedItem(
+                                            'user',
+                                        ) as HTMLInputElement | null
+                                    )?.focus();
+                                    return;
+                                }
                                 actions.submit(event.currentTarget);
                             }
                         }}
@@ -317,6 +348,13 @@ export function LoginDialog({
                             />
                         )}
                         {savedSelected && <Text size="sm">{t('savedLoginHint')}</Text>}
+                        {state.busy && method === 'oidc' && state.oidcLink && (
+                            <Alert color="blue">
+                                <a href={state.oidcLink} target="_blank" rel="noopener noreferrer">
+                                    {t('oidcOpen')}
+                                </a>
+                            </Alert>
+                        )}
                         {option?.requestUser && (
                             <TextInput
                                 name="user"
@@ -326,6 +364,8 @@ export function LoginDialog({
                                 pattern={'.*\\S.*'}
                                 maxLength={256}
                                 value={state.user}
+                                error={userInvalid}
+                                helperText={userInvalid ? t('userRequired') : undefined}
                                 onChange={(event) => actions.changeUser(event.currentTarget.value)}
                                 autoComplete="username"
                                 data-autofocus

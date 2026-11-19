@@ -90,7 +90,7 @@ If defined this message will be displayed in the log files of Bifröst on startu
     ```
 
 3. ??? plain "Reusable Docker configuration with OpenID Connect authorization"
-    This example is using the [Docker environment](environment/docker.md) with [OpenID Connection authorization](authorization/oidc.md).
+    This example is using the [Docker environment](environment/docker.md) with [OpenID Connect authorization](authorization/oidc/index.md).
     ```yaml
     environments:
       docker:

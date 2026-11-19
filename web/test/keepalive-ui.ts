@@ -96,7 +96,9 @@ export async function exerciseKeepAlive(page: Page, login: Login) {
     await page.getByLabel('Slug', { exact: true }).click();
     await page.getByRole('option', { name: 'Other', exact: true }).click();
     await page.waitForFunction(
-        () => document.querySelector('.login-dialog [role="combobox"]')?.textContent === 'Other',
+        () =>
+            document.querySelector<HTMLInputElement>('.login-dialog input[role="combobox"]')
+                ?.value === 'Other',
     );
     await login(page, false);
     await activeAccess(page, 'alice');
@@ -114,7 +116,9 @@ export async function exerciseKeepAlive(page: Page, login: Login) {
     await page.reload();
     assert.equal(new URL(page.url()).pathname, '/');
     assert.equal(
-        decodeURIComponent(new URL(page.url()).hash.slice(1).split('/')[0] ?? ''),
+        decodeURIComponent(
+            (new URL(page.url()).hash.slice(1).split('/')[0] ?? '').split('@').at(-1) ?? '',
+        ),
         'Other',
         'reload retains the selected Slug',
     );

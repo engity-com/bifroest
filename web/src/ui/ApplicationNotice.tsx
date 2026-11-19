@@ -11,9 +11,13 @@ export interface ApplicationNotice {
     reset?: ProfileResetResult;
 }
 
-export function errorNotice(error: unknown): ApplicationNotice {
-    reportUiError('application', error);
+export function errorNotice(error: unknown): ApplicationNotice | null {
     const code = publicRememberErrorCode(error) ?? 'unavailable';
+    // Keeping an existing registration is normal, not an actionable UI warning.
+    if (code === 'already-remembered') {
+        return null;
+    }
+    reportUiError('application', error);
     const diagnostic = keyLoginDiagnostic(error);
     const key: Message =
         code === 'key-import'
@@ -26,17 +30,15 @@ export function errorNotice(error: unknown): ApplicationNotice {
                   ? 'loginBusy'
                   : code === 'outcome-unknown'
                     ? 'unknown'
-                    : code === 'already-remembered'
-                      ? 'already'
-                      : code === 'denied'
-                        ? 'denied'
-                        : code === 'rate-limited'
-                          ? 'limited'
-                          : code === 'cancelled'
-                            ? 'cancelled'
-                            : diagnostic
-                              ? 'keyUnavailable'
-                              : 'unavailable';
+                    : code === 'denied'
+                      ? 'denied'
+                      : code === 'rate-limited'
+                        ? 'limited'
+                        : code === 'cancelled'
+                          ? 'cancelled'
+                          : diagnostic
+                            ? 'keyUnavailable'
+                            : 'unavailable';
     return { key, color: code === 'denied' || code === 'unavailable' ? 'red' : 'yellow' };
 }
 

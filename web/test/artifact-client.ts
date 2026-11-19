@@ -83,10 +83,10 @@ try {
     assert.equal(response.status(), 200);
     assert(!required(response.headers()['content-security-policy']).includes('wasm-unsafe-eval'));
     const policies = await page.evaluate(async () => {
-        const worker = await fetch('/_bifroest/files/browser-transfer-worker.js', {
+        const worker = await fetch('/assets/browser-transfer-worker.js', {
             credentials: 'omit',
         });
-        const ordinary = await fetch('/_bifroest/files/go-wasm-exec.js', { credentials: 'omit' });
+        const ordinary = await fetch('/assets/go-wasm-exec.js', { credentials: 'omit' });
         return {
             workerStatus: worker.status,
             worker: worker.headers.get('Content-Security-Policy'),

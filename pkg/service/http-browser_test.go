@@ -85,6 +85,37 @@ func webTestPassword(handler http.Handler, user, password, slug string) *httptes
 	return webTestRequest(handler, "POST", "app.example.org", webAPI+"login/password", string(body), "")
 }
 
+func webTestDiscovery(handler http.Handler, slug string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"slug": slug})
+	return webTestRequest(handler, http.MethodPost, "app.example.org", webAPI+"discovery", string(body), "")
+}
+
+func TestWebDiscoveryAcceptsSlugsOnlyInBoundedSameOriginPostBodies(t *testing.T) {
+	svc, handler, recorder := webTestFixture(t)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		response := webTestRequest(handler, method, "app.example.org", webAPI+"discovery", "", "")
+		require.Equal(t, http.StatusMethodNotAllowed, response.Code)
+		require.Equal(t, "POST", response.Header().Get("Allow"))
+	}
+	for _, path := range []string{webAPI + "discovery/Work", webAPI + "discovery/hidden", "/Work", "/hidden", "/Work/admin/sessions"} {
+		response := webTestRequest(handler, http.MethodGet, "app.example.org", path, "", "")
+		require.Equal(t, http.StatusNotFound, response.Code)
+		require.Empty(t, response.Header().Get("Location"), "no URL-to-fragment compatibility redirect")
+	}
+	for _, body := range []string{`{}`, `{"slug":"Work","slug":"hidden"}`, `{"slug":null}`, `{"slug":"Work","user":"alice"}`, `{"slug":"Work/"}`, `{"slug":"` + strings.Repeat("x", webLoginBodyLimit) + `"}`} {
+		response := webTestRequest(handler, http.MethodPost, "app.example.org", webAPI+"discovery", body, "")
+		require.Equal(t, http.StatusBadRequest, response.Code)
+		require.NotContains(t, response.Body.String(), "Work")
+	}
+	response := webTestRequest(handler, http.MethodPost, "app.example.org", webAPI+"discovery?slug=Work", `{"slug":"Work"}`, "")
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Equal(t, http.StatusOK, webTestDiscovery(handler, "Work").Code)
+	require.Equal(t, http.StatusNotFound, webTestDiscovery(handler, "hidden").Code)
+	require.Empty(t, svc.web.access)
+	require.Empty(t, svc.web.attempts)
+	require.Empty(t, recorder.eventsSnapshot())
+}
+
 func webTestToken(t *testing.T, w *httptest.ResponseRecorder) string {
 	t.Helper()
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -113,7 +144,9 @@ func TestWebPasswordUsesHttpSelectionAndSharedAuthorizer(t *testing.T) {
 	denied := webTestPassword(handler, "alice", "wrong", "Work")
 	require.Equal(t, http.StatusUnauthorized, denied.Code)
 	require.Empty(t, svc.web.access)
-	token := webTestToken(t, webTestPassword(handler, "alice", "correct", "Work"))
+	response := webTestPassword(handler, "alice", "correct", "Work")
+	require.Contains(t, response.Body.String(), `"requestingUser":"alice"`)
+	token := webTestToken(t, response)
 	access := webTestAccess(t, svc, token, "Work")
 	require.Equal(t, "alice", access.identity.Principal)
 	bound, err := session.AssociationOf(t.Context(), access.auth.FindSession())
@@ -132,6 +165,7 @@ func TestWebPasswordUsesHttpSelectionAndSharedAuthorizer(t *testing.T) {
 	ok := webTestRequest(handler, "POST", "APP.EXAMPLE.ORG:443", webAPI+"access", `{"slug":"Work"}`, token)
 	require.Equal(t, http.StatusOK, ok.Code)
 	require.NotContains(t, ok.Body.String(), token)
+	require.Contains(t, ok.Body.String(), `"requestingUser":"alice"`, "access inspection retains the original requesting name")
 	require.Empty(t, ok.Header().Values("Set-Cookie"))
 }
 
@@ -149,7 +183,7 @@ func TestWebAliasPreservesTheActualEntryScope(t *testing.T) {
 		conf.Flows[0].DiscoverAsSlug = "docker"
 		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^(docker|bla-bla)$")
 	})
-	response := webTestRequest(handler, http.MethodGet, "app.example.org", "/bla-bla", "", "")
+	response := webTestDiscovery(handler, "bla-bla")
 	require.Equal(t, http.StatusOK, response.Code)
 	var metadata struct {
 		Scope          webScope `json:"scope"`
@@ -172,6 +206,28 @@ func TestWebAliasPreservesTheActualEntryScope(t *testing.T) {
 		require.Error(t, err, "an alias-scoped access token must not be accepted under the published scope or vice versa")
 	}
 	require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "alice", "correct", "Bla-bla").Code)
+}
+
+func TestWebUnknownDocumentReturnsAnEmpty404BeforeLoadingTheApplication(t *testing.T) {
+	_, handler, _ := webTestFixture(t, func(conf *configuration.Configuration) {
+		conf.Flows[0].DiscoverAsSlug = "Work"
+		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^(Work|my-alias)$")
+	})
+	documents := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Set("Accept", "text/html")
+		handler.ServeHTTP(w, r)
+	})
+	for _, path := range []string{"/df", "/Other", "/Work/no-such-page", "/Work", "/my-alias", "/Work/admin/sessions"} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			response := webTestRequest(documents, method, "app.example.org", path, "", "")
+			require.Equal(t, http.StatusNotFound, response.Code, path)
+			require.Empty(t, response.Body.String())
+		}
+	}
+	for _, path := range []string{"/"} {
+		response := webTestRequest(documents, http.MethodGet, "app.example.org", path, "", "")
+		require.Equal(t, http.StatusServiceUnavailable, response.Code, "eligible entries reach document loading in the source-only fixture: %s", path)
+	}
 }
 
 func TestWebPublishedSlugNeverFallsThroughAndDiscoveryIsNotAuthorization(t *testing.T) {
@@ -197,13 +253,13 @@ func TestWebPublishedSlugNeverFallsThroughAndDiscoveryIsNotAuthorization(t *test
 		onOther.Requirement.Http.IncludedHost = common.MustNewRegexp("^other\\.example\\.org$")
 		conf.Flows = configuration.Flows{first, fallback, disabled, onOther}
 	})
-	root := webTestRequest(handler, "GET", "app.example.org", "/", "", "")
+	root := webTestDiscovery(handler, "")
 	require.Equal(t, http.StatusOK, root.Code)
 	require.Contains(t, root.Body.String(), `"Private"`)
 	require.Contains(t, root.Body.String(), `"Public"`)
 	require.NotContains(t, root.Body.String(), "Hidden")
 	require.NotContains(t, root.Body.String(), "Elsewhere")
-	get := webTestRequest(handler, "GET", "app.example.org", "/Private", "", "")
+	get := webTestDiscovery(handler, "Private")
 	require.Equal(t, http.StatusOK, get.Code)
 	require.Empty(t, svc.web.access)
 	require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "alice", "correct", "Private").Code)
@@ -217,8 +273,8 @@ func TestWebPublishedSlugNeverFallsThroughAndDiscoveryIsNotAuthorization(t *test
 	r.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, ServerName: "app.example.org"}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
-	require.Contains(t, w.Header().Get("Content-Type"), "text/html")
-	require.Contains(t, w.Body.String(), `href="/Private"`)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "source-only builds do not serve an alternative HTML discovery application")
+	require.NotContains(t, w.Body.String(), `href="/Private"`)
 	require.NotContains(t, w.Body.String(), "Hidden")
 }
 
@@ -228,7 +284,7 @@ func TestWebRequestUserDisabledRetainsEmptyRemoteUser(t *testing.T) {
 		conf.Flows[0].Authorization.V = &configuration.AuthorizationNone{}
 		conf.Flows[0].Authorization.RememberMe = ""
 	})
-	metadata := webTestRequest(handler, "GET", "app.example.org", "/Work", "", "")
+	metadata := webTestDiscovery(handler, "Work")
 	require.Contains(t, metadata.Body.String(), `"requestUser":false`)
 	require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "alice", "", "Work").Code)
 	one := webTestToken(t, webTestPassword(handler, "", "", "Work"))
@@ -276,27 +332,18 @@ func TestWebRootUsesTheSameSlugRequirementsAsOtherPaths(t *testing.T) {
 					test.configure(&conf.Flows[0])
 				}
 			})
-			for _, method := range []string{http.MethodGet, http.MethodHead} {
-				for _, accept := range []string{"text/html", "application/json"} {
-					for _, path := range []struct {
-						name   string
-						status int
-					}{{"/", test.root}, {"/Work", test.work}} {
-						request := httptest.NewRequest(method, "https://app.example.org"+path.name, nil)
-						request.URL.Scheme, request.URL.Host = "", ""
-						request.Host = "app.example.org"
-						request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, ServerName: "app.example.org"}
-						request.Header.Set("Accept", accept)
-						response := httptest.NewRecorder()
-						handler.ServeHTTP(response, request)
-						require.Equal(t, path.status, response.Code, "%s %s %s", method, path.name, accept)
-						if path.status == http.StatusNotFound {
-							require.NotContains(t, response.Body.String(), "Published access links")
-							require.NotContains(t, response.Body.String(), "passwordLogin")
-						}
-					}
+			root := webTestDiscovery(handler, "")
+			if test.name == "HTTP disabled" {
+				require.Equal(t, http.StatusNotFound, root.Code)
+			} else {
+				require.Equal(t, http.StatusOK, root.Code, "the public directory remains usable even without root authentication")
+				var description struct {
+					RootAvailable bool `json:"rootAvailable"`
 				}
+				require.NoError(t, json.Unmarshal(root.Body.Bytes(), &description))
+				require.Equal(t, test.root == http.StatusOK, description.RootAvailable)
 			}
+			require.Equal(t, test.work, webTestDiscovery(handler, "Work").Code)
 			require.Empty(t, svc.web.access)
 			if test.root == http.StatusNotFound {
 				require.Equal(t, http.StatusUnauthorized, webTestPassword(handler, "alice", "correct", "").Code)
@@ -330,7 +377,11 @@ func TestWebJsonBoundaryRejectsAmbiguityBeforeAuthentication(t *testing.T) {
 			method = http.MethodPost
 		}
 		w := webTestRequest(handler, method, "app.example.org", path, `{"slug":"Work","user":"alice","password":"correct"}`, "")
-		require.Equal(t, http.StatusBadRequest, w.Code, path)
+		if path == "/Work/" || path == "/Work//Other" {
+			require.Equal(t, http.StatusNotFound, w.Code, path)
+		} else {
+			require.Equal(t, http.StatusBadRequest, w.Code, path)
+		}
 	}
 }
 

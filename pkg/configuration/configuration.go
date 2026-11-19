@@ -110,6 +110,9 @@ func (this *Configuration) Validate() error {
 			return errors.Config.Newf("[http][domains] invalid flow discovery: %w", err)
 		}
 	}
+	if err := this.validateOidcDomains(); err != nil {
+		return err
+	}
 	return this.validateRecordingSessionStoragePathOverlaps()
 }
 

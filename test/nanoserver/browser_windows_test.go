@@ -263,10 +263,12 @@ func exerciseServerCoreBrowserVariant(t *testing.T, parent context.Context, root
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	h.ready(func() error {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://app.example.org:8443/Work", nil)
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://app.example.org:8443/api/v1/discovery", strings.NewReader(`{"slug":"Work"}`))
 		if err != nil {
 			return err
 		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://app.example.org:8443")
 		response, err := client.Do(request)
 		if err != nil {
 			return err

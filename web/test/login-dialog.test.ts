@@ -66,7 +66,9 @@ it('keeps Saved, Password, Interactive and SSH key as four tabs with a field-fre
             'public-key:named',
         ]);
         expect(choices[0]?.getAttribute('aria-checked')).toBe('true');
-        expect(dialog?.querySelector('[role="combobox"]')).toBeNull();
+        expect(dialog?.querySelector<HTMLInputElement>('input[role="combobox"]')?.value).toBe(
+            'Work',
+        );
         expect(dialog?.querySelectorAll('form input')).toHaveLength(0);
         expect(dialog?.textContent).toContain('Use your last saved login.');
         expect(actions.resume).not.toHaveBeenCalled();

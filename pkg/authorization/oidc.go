@@ -18,6 +18,7 @@ import (
 )
 
 type oidc struct {
+	kind              string
 	token             OidcToken
 	idToken           OidcIdToken
 	userInfo          OidcUserInfo
@@ -28,7 +29,12 @@ type oidc struct {
 	identity          authentication.Identity
 }
 
-func (*oidc) AuthorizationKind() string { return "oidc-device-auth" }
+func (this *oidc) AuthorizationKind() string {
+	if this.kind != "" {
+		return this.kind
+	}
+	return "oidc-device-auth"
+}
 
 func (this *oidc) GetField(name string, ce ContextEnabled) (any, bool, error) {
 	return getField(name, ce, this, func() (any, bool, error) {
@@ -193,6 +199,8 @@ func newOidcToken(in *oauth2.Token) oidcToken {
 
 type oidcToken struct {
 	*oauth2.Token
+	// Empty denotes the historical Device Authorization format.
+	Grant          string                   `json:"grant,omitempty"`
 	IdToken        string                   `json:"id_token,omitempty"`
 	ReceivedAt     time.Time                `json:"receivedAt,omitempty"`
 	LastVerifiedAt time.Time                `json:"lastVerifiedAt,omitempty"`

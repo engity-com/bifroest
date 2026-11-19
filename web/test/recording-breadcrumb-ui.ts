@@ -40,7 +40,7 @@ try {
     assert.match(entry.managementFlow, /^[A-Za-z0-9.-]+$/u);
     assert.match(entry.flow, /^[A-Za-z0-9.-]+$/u);
     assert.match(entry.id, /^[1-9A-HJ-NP-Za-km-z]{16,22}$/u);
-    const prefix = `/Work/${entry.managementFlow}/auditlogs/default/recordings`;
+    const prefix = '/#Work/-/auditlogs/default/recordings';
     assert.equal(required(await page.goto(`${origin}${prefix}?flow=${entry.flow}`)).status(), 200);
     await page.getByLabel('User name', { exact: true }).fill('alice');
     await page.getByLabel('Password', { exact: true }).fill('correct');
@@ -55,7 +55,7 @@ try {
     const fragmentPrefix = required(new URL(page.url()).hash.split('?')[0]);
     assert.match(
         fragmentPrefix,
-        /^#Work\/[1-9A-HJ-NP-Za-km-z]{16,22}\/auditlogs\/default\/recordings$/u,
+        /^#alice@Work\/[1-9A-HJ-NP-Za-km-z]{16,22}\/auditlogs\/default\/recordings$/u,
     );
     assert.equal(new URL(page.url()).pathname, '/');
     assert.equal(new URL(page.url()).search, '');

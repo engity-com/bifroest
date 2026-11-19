@@ -88,7 +88,7 @@ export async function receiveArtifact(
     if (stopped.aborted) {
         throw new RememberMeError('cancelled');
     }
-    const worker = new Worker('/_bifroest/files/browser-transfer-worker.js', {
+    const worker = new Worker('/assets/browser-transfer-worker.js', {
         type: 'module',
         credentials: 'omit',
         name: 'bifroest-transfer',

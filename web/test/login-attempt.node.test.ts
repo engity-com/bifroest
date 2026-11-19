@@ -79,6 +79,46 @@ it('executes only an explicit login and never stores credentials in the observab
     );
     expect(JSON.stringify(f.attempt.getSnapshot())).not.toContain('PRIVATE-PASSWORD');
 });
+
+it('automatically acknowledges only the exact same-origin OIDC ticket and keeps a fallback provider link', async () => {
+    const f = fixture();
+    const link = `${scope.origin}/login/#start/${'A'.repeat(43)}`;
+    const onOidcLink = vi.fn();
+    f.client.interactive.mockImplementation(async (_user, handler, signal) => {
+        if (!signal) {
+            throw new Error('Missing signal');
+        }
+        const step = {
+            sequence: '1',
+            kind: 'info' as const,
+            message: `Open the following URL in your browser to login: ${link}`,
+            echo: false,
+        };
+        expect(await handler(step, signal)).toBe('');
+        expect(f.attempt.getSnapshot().prompt).toBeNull();
+        expect(f.attempt.getSnapshot().provider).toBe(step);
+        return f.access;
+    });
+    await f.attempt.start(f.client, { ...request(), method: 'oidc' }, { ...f.ports, onOidcLink });
+    expect(onOidcLink).toHaveBeenCalledExactlyOnceWith(link);
+    for (const invalid of [
+        link.replace(scope.origin, 'https://other.example.org'),
+        link.replace('/login/', '/sso/'),
+        link.replace('/login/#', '/login/?extra=true#'),
+    ]) {
+        f.client.interactive.mockImplementation(async (_user, handler, signal) => {
+            await handler(
+                { sequence: '1', kind: 'info', message: invalid, echo: false },
+                signal ?? new AbortController().signal,
+            );
+            return f.access;
+        });
+        await expect(
+            f.attempt.start(f.client, { ...request(), method: 'oidc' }, { ...f.ports, onOidcLink }),
+        ).rejects.toMatchObject({ code: 'invalid-step' });
+    }
+    expect(onOidcLink).toHaveBeenCalledOnce();
+});
 it('pins an interactive answer to its exact current step and retires pending answers on cancellation', async () => {
     const f = fixture();
     const step = { sequence: '1', kind: 'prompt' as const, message: 'Question', echo: false };

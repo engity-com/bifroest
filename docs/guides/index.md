@@ -7,7 +7,7 @@ description: Practical guides for SSH gateways, OIDC login, browser access, remo
 Choose the task you want to accomplish:
 
 * [SSH gateway to an OpenSSH server](ssh-gateway.md): authenticate at Bifröst, then connect to a private SSH target.
-* [OIDC login with a standard SSH client](oidc.md): approve a Device Authorization in the browser and open a container session.
+* [OIDC login](oidc.md): sign in through your IdP and open a container session via SSH or the WebUI.
 * [Browser access](browser-access.md): enable HTTPS and open a browser shell as an existing local account.
 * [Manage a Bifröst host remotely](management.md): configure workload and administration flows, then inspect live state from a workstation.
 * [Export server public keys remotely](keys.md): retrieve configured public SSH identities, certificate authorities and active host keys through management access.

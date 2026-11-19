@@ -247,7 +247,11 @@ func (this *Service) prepareContext(ctx context.Context) (svc *service, err erro
 		return fail(err)
 	}
 	svc.sessions = sessions
-	authorizer, err := authorization.NewAuthorizerFacadeWithObserver(ctx, &this.Configuration.Flows, svc.observeFlowAuthorization)
+	authorizerContext := ctx
+	if svc.web != nil {
+		authorizerContext = authorization.WithOidcBrowser(ctx, svc.web)
+	}
+	authorizer, err := authorization.NewAuthorizerFacadeWithObserver(authorizerContext, &this.Configuration.Flows, svc.observeFlowAuthorization)
 	if err != nil {
 		return fail(err)
 	}

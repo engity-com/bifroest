@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
-	htmltemplate "html/template"
 	"io"
 	"mime"
 	"net/http"
@@ -61,6 +60,11 @@ type webService struct {
 	rememberMutex   sync.Mutex // Durable binding commit/logout and linked-grant publication.
 	assets          *webui.Assets
 	confirmations   map[[32]byte]*webManagementConfirmation
+	oidcMutex       sync.Mutex
+	oidcTickets     map[[32]byte]*oidcBrowserTransaction
+	oidcStates      map[[32]byte]*oidcBrowserTransaction
+	oidcBrowsers    map[[32]byte]*oidcBrowserTransaction
+	oidcExchanges   int
 }
 
 func newWebService(svc *service) *webService {
@@ -178,16 +182,28 @@ func (this *webService) Close() error {
 func (this *webService) stop() { this.operations.stop(); this.loginWorkers.stop(); this.cancel() }
 
 func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, oidcBrowserPrefix) {
+		this.serveOidc(w, r)
+		return
+	}
 	// https.Boundary must already have validated TLS, authority and Origin. This
 	// handler is installed only behind that boundary, never exposed standalone.
 	api := r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/")
-	internal := strings.HasPrefix(r.URL.Path, "/_bifroest/")
-	if (api || internal) && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
+	asset := strings.HasPrefix(r.URL.Path, webui.Prefix)
+	if (api || asset) && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
 		webError(w, http.StatusBadRequest, "query parameters are not accepted")
 		return
 	}
-	if !api && !internal {
+	if r.URL.Path == webAPI+"discovery" {
 		this.describe(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, webAPI+"oidc/") {
+		this.serveOidcAPI(w, r)
+		return
+	}
+	if !api && !asset {
+		this.describeDocument(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, webui.Prefix) || strings.HasPrefix(r.URL.Path, webui.CustomPrefix) {
@@ -203,7 +219,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
-	case webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", webAPI + "login/poll", webAPI + "login/reply", webAPI + "login/cancel", webAPI + "access", webAPI + "logout":
+	case webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/oidc", webAPI + "login/public-key", webAPI + "login/poll", webAPI + "login/reply", webAPI + "login/cancel", webAPI + "access", webAPI + "logout":
 	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
 	case webAPI + "management/flows/list", webAPI + "management/sessions/list", webAPI + "management/sessions/show":
 	case webAPI + "management/auditlogs/list", webAPI + "management/recordings/list":
@@ -225,7 +241,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		webError(w, http.StatusBadRequest, "invalid direct peer")
 		return
 	}
-	isLogin := r.URL.Path == webAPI+"login/password" || r.URL.Path == webAPI+"login/interactive" || r.URL.Path == webAPI+"login/public-key"
+	isLogin := r.URL.Path == webAPI+"login/password" || r.URL.Path == webAPI+"login/interactive" || r.URL.Path == webAPI+"login/oidc" || r.URL.Path == webAPI+"login/public-key"
 	isLogin = isLogin || strings.HasPrefix(r.URL.Path, webAPI+"remember/") && r.URL.Path != webAPI+"remember/prove"
 	isLogin = isLogin || r.URL.Path == webAPI+"management/sessions/prepare"
 	isLogin = isLogin || r.URL.Path == webAPI+"management/artifacts/recording" || r.URL.Path == webAPI+"management/artifacts/audit"
@@ -367,6 +383,10 @@ func validWebLoginUser(user string) bool {
 // Every verified adapter converges here. An attempt token, certificate CA
 // signature or a public-key eligibility decision cannot substitute for proof.
 func (this *webService) completeAuthentication(w http.ResponseWriter, ctx context.Context, conn *webLoginConnection, auth authorization.Authorization, method audit.AuthenticationMethod, primaryKey ...ssh.PublicKey) {
+	attempt, _ := conn.Lifetime().Value(oidcAuthenticationKey{}).(*oidcAuthentication)
+	defer func() { this.finishOidcAuthentication(attempt, false, "access_denied") }()
+	ctx, cancel := this.oidcCompletionContext(ctx, attempt)
+	defer cancel()
 	if auth == nil || !auth.IsAuthorized() || auth.FindSession() == nil {
 		webError(w, http.StatusUnauthorized, "authentication denied")
 		return
@@ -429,6 +449,7 @@ func (this *webService) accessResponse(access *webAccess, token string) any {
 		ExpiresAt         time.Time    `json:"expiresAt"`
 		Scope             webScope     `json:"scope"`
 		Principal         string       `json:"principal"`
+		RequestingUser    string       `json:"requestingUser,omitempty"`
 		Environment       string       `json:"environment"`
 		TerminalAvailable bool         `json:"terminalAvailable"`
 		KeepAlive         webKeepAlive `json:"keepAlive"`
@@ -437,18 +458,17 @@ func (this *webService) accessResponse(access *webAccess, token string) any {
 			Name  string `json:"name"`
 			Title string `json:"title"`
 		} `json:"flow"`
-	}{"authorized", token, access.expires, access.scope, access.identity.Principal, kind, kind != "management", access.keepAlive, this.service.rememberMePolicy(access.auth.Flow()).String(), struct {
+	}{"authorized", token, access.expires, access.scope, access.identity.Principal, access.user, kind, kind != "management", access.keepAlive, this.service.rememberMePolicy(access.auth.Flow()).String(), struct {
 		Name  string `json:"name"`
 		Title string `json:"title"`
 	}{name, title}}
 }
 
-var webDiscoveryTemplate = htmltemplate.Must(htmltemplate.New("discovery").Parse(`<!doctype html><html lang="en-US"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifröst</title><h1>Bifröst</h1><p>Published access links. Each link still requires authorization.</p><ul>{{range .}}<li><a href="/{{.}}">{{.}}</a></li>{{else}}<li>No access links published on this host.</li>{{end}}</ul><p>This build does not include the browser application. Use SSH or a build with bundled browser resources.</p></html>`))
-
-func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		webError(w, http.StatusMethodNotAllowed, "GET required")
+// Workload links live exclusively in browser fragments. Never serve a slug or
+// management target as a document path, nor redirect such paths to a fragment.
+func (this *webService) describeDocument(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" || r.URL.RawQuery != "" || r.URL.ForceQuery {
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	release, admitted := this.admitAsset(w, r)
@@ -456,21 +476,73 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	scope, err := requestWebScope(r, "")
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	host := scope.selection().Host
+	for _, flow := range this.service.Configuration.Flows {
+		if flow.Http.IsEnabled() && flow.Requirement.Http.MatchesHost(host) {
+			if !this.serveDocument(w, r) {
+				webError(w, http.StatusServiceUnavailable, "browser application unavailable")
+			}
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		webError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	peer, err := webPeer(r)
+	if err != nil {
+		webError(w, http.StatusBadRequest, "invalid direct peer")
+		return
+	}
+	release, admitted := this.admit(peer, false)
+	if !admitted {
+		w.Header().Set("Retry-After", "60")
+		webError(w, http.StatusTooManyRequests, "web request limit reached")
+		return
+	}
+	defer release()
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(20 * time.Second))
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(20 * time.Second))
 	if this.service.authorizerDiscovery == nil {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 		return
 	}
-	slug, err := this.describeSlug(r)
+	fields, err := webJSON(w, r, "slug")
 	if err != nil {
-		webError(w, http.StatusBadRequest, "invalid flow path")
+		webError(w, http.StatusBadRequest, "invalid discovery request")
 		return
 	}
+	slug := fields["slug"]
 	scope, err := requestWebScope(r, slug)
 	if err != nil {
-		webError(w, http.StatusBadRequest, "invalid flow path")
+		webError(w, http.StatusBadRequest, "invalid discovery request")
 		return
 	}
 	host := scope.selection().Host
+	if slug == "" {
+		possible := false
+		for _, flow := range this.service.Configuration.Flows {
+			possible = possible || flow.Http.IsEnabled() && flow.Requirement.Http.MatchesHost(host)
+		}
+		if !possible {
+			http.NotFound(w, r)
+			return
+		}
+	}
 	links, err := this.service.Configuration.Flows.HttpDiscovery(host)
 	if err != nil {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
@@ -480,50 +552,22 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 		return
 	}
-	description, err := this.service.authorizerDiscovery.DescribeHttpLogin(host, slug)
+	description, err := this.service.authorizerDiscovery.DescribeHttpLogin(r.Host, slug)
 	if err != nil {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 		return
 	}
-	// Root may be a public link directory without being an authentication target.
-	// Published links never create a root login option or bypass requirements.
-	// Hash navigation is invisible to HTTP. The host-validated root may serve
-	// the static shell even when root is not an eligible login scope. Public
-	// JSON discovery and every login still enforce the actual requested slug.
-	if slug == "" && r.URL.Path == "/" && strings.Contains(r.Header.Get("Accept"), "text/html") && !strings.Contains(r.Header.Get("Accept"), "application/json") {
-		for _, flow := range this.service.Configuration.Flows {
-			if flow.Http.IsEnabled() && flow.Requirement.Http.MatchesHost(host) && this.serveDocument(w, r) {
-				return
-			}
-		}
-	}
-	if !description.Available && (slug != "" || len(links) == 0) {
+	if !description.Available && slug != "" {
 		http.NotFound(w, r)
 		return
 	}
-	accept := r.Header.Get("Accept")
-	if !strings.Contains(accept, "application/json") && (strings.Contains(accept, "text/html") || slug == "") {
-		if this.serveDocument(w, r) {
-			return
-		}
-		if slug == "" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if r.Method != http.MethodHead {
-				_ = webDiscoveryTemplate.Execute(w, links)
-			}
-			return
-		}
-	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if r.Method == http.MethodHead {
-		return
-	}
 	if description.Options == nil {
 		description.Options = []authorization.LoginOption{}
 	}
 	root := description
 	if slug != "" {
-		root, err = this.service.authorizerDiscovery.DescribeHttpLogin(host, "")
+		root, err = this.service.authorizerDiscovery.DescribeHttpLogin(r.Host, "")
 		if err != nil {
 			webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 			return
@@ -541,6 +585,10 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 // The current protocol has a flat string-only payload. Reject duplicate keys,
 // nulls, unknown fields, trailing JSON and private-key/password extras explicitly.
 func webJSON(w http.ResponseWriter, r *http.Request, fields ...string) (map[string]string, error) {
+	return webJSONObject(w, r, true, fields...)
+}
+
+func webJSONObject(w http.ResponseWriter, r *http.Request, requireSlug bool, fields ...string) (map[string]string, error) {
 	contentType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || contentType != "application/json" || len(params) > 1 || params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8") {
 		return nil, fmt.Errorf("JSON required")
@@ -573,7 +621,7 @@ func webJSON(w http.ResponseWriter, r *http.Request, fields ...string) (map[stri
 		if _, exists := result[name]; exists {
 			return nil, fmt.Errorf("duplicate field")
 		}
-		allowed := name == "slug"
+		allowed := requireSlug && name == "slug"
 		for _, field := range fields {
 			allowed = allowed || name == field
 		}
@@ -599,7 +647,7 @@ func webJSON(w http.ResponseWriter, r *http.Request, fields ...string) (map[stri
 	if _, err := decoder.Token(); err != io.EOF {
 		return nil, fmt.Errorf("trailing JSON")
 	}
-	if _, exists := result["slug"]; !exists {
+	if _, exists := result["slug"]; requireSlug && !exists {
 		return nil, fmt.Errorf("missing slug")
 	}
 	return result, nil
@@ -609,7 +657,7 @@ func webRequestFields(path string) []string {
 	switch path {
 	case webAPI + "login/password":
 		return []string{"user", "password"}
-	case webAPI + "login/interactive":
+	case webAPI + "login/interactive", webAPI + "login/oidc":
 		return []string{"user"}
 	case webAPI + "login/public-key":
 		return []string{"user", "publicKey"}

@@ -114,7 +114,7 @@ try {
             })
             .waitFor();
     };
-    assert.equal(required(await page.goto(`${origin}/Work`)).status(), 200);
+    assert.equal(required(await page.goto(`${origin}/#Work`)).status(), 200);
     await login('alice');
     const firstSourcesReply = capture('auditlogs');
     await workspace(page, 'Audit logs');
@@ -546,7 +546,7 @@ try {
     if (mode === 'catalog-startup-failure') {
         let blocked = 0;
         await context.route(
-            '**/_bifroest/files/browser-transfer-worker.js',
+            '**/assets/browser-transfer-worker.js',
             (route) => {
                 blocked++;
                 return route.abort('connectionfailed');

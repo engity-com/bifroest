@@ -260,7 +260,9 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 							cookies.Add(1)
 						}
 					}
-					if r.URL.RawQuery != "" {
+					// Only public discovery accepts the validated management
+					// selectors of a cold deep entry. Authenticated APIs do not.
+					if r.URL.RawQuery != "" && !strings.HasPrefix(r.URL.Path, webAPI+"discovery/") {
 						queries.Add(1)
 					}
 				}
@@ -270,7 +272,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 					}
 					peer, peerErr := webPeer(r)
 					resource := "api"
-					if strings.HasPrefix(r.URL.Path, "/_bifroest/files/") && (strings.HasSuffix(r.URL.Path, ".js") || strings.HasSuffix(r.URL.Path, ".wasm") || strings.HasSuffix(r.URL.Path, ".wasm.gz")) {
+					if strings.HasPrefix(r.URL.Path, "/assets/") && (strings.HasSuffix(r.URL.Path, ".js") || strings.HasSuffix(r.URL.Path, ".wasm") || strings.HasSuffix(r.URL.Path, ".wasm.gz")) {
 						resource = r.URL.Path
 					} else if r.URL.Path == webAPI+"logout" {
 						resource = "logout"
