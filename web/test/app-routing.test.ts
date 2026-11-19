@@ -153,11 +153,13 @@ async function mountApp(
     } = {},
 ) {
     if (management) {
-        // Join the real lazy presentation modules before asserting request order.
-        // Cold Vite transforms are not part of the routing/authorization deadline.
+        // Both panels share one Suspense boundary, even when artifacts are hidden.
+        // Join all real lazy modules before asserting routing/request order;
+        // cold Vite transforms are not part of that assertion's deadline.
         await Promise.all([
             import('../src/ui/ManagementWorkspace'),
             import('../src/management/ManagementPanel'),
+            import('../src/artifacts/ArtifactPanel'),
         ]);
     }
     const requests: {
