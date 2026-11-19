@@ -387,7 +387,7 @@ func TestOidcCodeSSHNeedsExplicitApprovalWithoutHTTPWorkloadAccess(t *testing.T)
 func oidcCodeSSHDecision(t *testing.T, decision string) {
 	svc, handler, p, recorder := oidcCodeFixture(t, func(conf *configuration.Configuration, _ *oidcCodeProvider) {
 		if decision == "custom-message" {
-			conf.Flows[0].Authorization.V.(*configuration.AuthorizationOidcAuthorizationCode).Ssh.LoginMessage = template.MustNewString(`[Custom] code {{printf "%q" .code}}: {{.url}}`)
+			conf.Flows[0].Authorization.V.(*configuration.AuthorizationOidcAuthorizationCode).Ssh.LoginMessage = template.MustNewString(`[Custom] {{.remote.user}}/{{.connection.transport}} code {{printf "%q" .code}}: {{.url}}`)
 		}
 		for i := range conf.Flows {
 			conf.Flows[i].Http.Enabled = commonBool(false)
@@ -447,7 +447,7 @@ func oidcCodeSSHDecision(t *testing.T, decision string) {
 	link := regexp.MustCompile(`https://\S+`).FindString(message)
 	require.NotContains(t, message, "\n", "the default SSH instruction is one concise line")
 	if decision == "custom-message" {
-		require.True(t, strings.HasPrefix(message, "[Custom] code "))
+		require.True(t, strings.HasPrefix(message, "[Custom] alice/ssh code "))
 	}
 	if decision == "external-link" {
 		parsed, err := url.Parse(link)

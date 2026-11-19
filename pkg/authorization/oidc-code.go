@@ -103,6 +103,17 @@ type oidcCodeRequest struct {
 
 func (this *oidcCodeRequest) Context() context.Context        { return this.ctx }
 func (this *oidcCodeRequest) Selection() connection.Selection { return this.selection }
+
+// Preserve the adapter's optional template context for custom SSH instructions.
+// The wrapper's bounded authentication context remains authoritative for I/O.
+func (this *oidcCodeRequest) GetField(name string) (any, bool, error) {
+	if parent, ok := this.InteractiveRequest.(interface {
+		GetField(string) (any, bool, error)
+	}); ok {
+		return parent.GetField(name)
+	}
+	return nil, false, fmt.Errorf("unknown field %q", name)
+}
 func (this *oidcCodeRequest) SetAuthorizationContext(auth Authorization) {
 	setAuthorizationContext(this.InteractiveRequest, auth)
 }
