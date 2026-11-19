@@ -221,20 +221,20 @@ export function App({
         }
         const previous = previousUserRoute.current;
         const fromRoute = previous?.key !== slugRoute.key || previous.user !== slugRoute.user;
-        const user = fromRoute
-            ? (slugRoute.user ??
-              (previous?.key === slugRoute.key
-                  ? ''
-                  : selectedLoginOption?.requestUser
-                    ? preferredUsername(loginMetadata.scope)
-                    : ''))
-            : loginUser;
-        if (fromRoute) {
-            setLoginUser(user);
-            previousUserRoute.current = { key: slugRoute.key, user: slugRoute.user };
+        if (!fromRoute) {
+            return;
         }
-        // Prefilled values and method changes must be shareable too, not only
-        // native input events. User-only replacements never rediscover a link.
+        const user =
+            slugRoute.user ??
+            (previous?.key === slugRoute.key
+                ? ''
+                : selectedLoginOption?.requestUser
+                  ? preferredUsername(loginMetadata.scope)
+                  : '');
+        setLoginUser(user);
+        previousUserRoute.current = { key: slugRoute.key, user: slugRoute.user };
+        // Publish a newly prefilled hint once. Never echo an older local render
+        // back into the route after a newer input event has already updated it.
         if (selectedLoginOption?.requestUser && user !== (slugRoute.user ?? '')) {
             void slugRoute.changeUser(user);
         }
@@ -250,7 +250,6 @@ export function App({
         slugRoute.changeUser,
         selectedLoginOption?.requestUser,
         loginMetadata.scope,
-        loginUser,
     ]);
 
     const readSaved = useCallback(async (current = generation.current) => {
@@ -496,7 +495,9 @@ export function App({
             return;
         }
         if (option?.requestUser && !selectedLoginOption?.requestUser) {
-            setLoginUser(slugRoute.user ?? preferredUsername(link.current.scope));
+            const user = slugRoute.user ?? preferredUsername(link.current.scope);
+            setLoginUser(user);
+            void slugRoute.changeUser(user, true);
         }
         setLoginChoice(choice);
         setOptIn(null);
@@ -1160,7 +1161,9 @@ export function App({
                     chooseMethod: selectLoginOption,
                     changeUser: (user) => {
                         setLoginUser(user);
-                        void slugRoute.changeUser(user);
+                        // Commit the hint with the discrete input update, not a
+                        // later router transition that can replay an older actor.
+                        void slugRoute.changeUser(user, true);
                     },
                     changeOptIn: setOptIn,
                     submit: (form) => {

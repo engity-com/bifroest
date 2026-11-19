@@ -34,7 +34,8 @@ export interface SlugRoute {
     readonly management: ManagementLocation | null;
     readonly canonicalizing: boolean;
     navigate(slug: string, replace?: boolean): Promise<void>;
-    changeUser(user: string): Promise<void>;
+    // Synchronous replacement is for discrete input actions, not route effects.
+    changeUser(user: string, flushSync?: boolean): Promise<void>;
     activate(
         slug: string,
         view: number,
@@ -335,7 +336,7 @@ export function useSlugRoute(
         [origin, pathname, search, hash, current.state, routerNavigate],
     );
     const changeUser = useCallback(
-        async (user: string): Promise<void> => {
+        async (user: string, flushSync = false): Promise<void> => {
             if (!scope || blocked) {
                 return;
             }
@@ -346,7 +347,7 @@ export function useSlugRoute(
                 user,
             );
             if (pathname + search + hash !== path) {
-                await routerNavigate(path, { replace: true, state: current.state });
+                await routerNavigate(path, { replace: true, state: current.state, flushSync });
             }
         },
         [fragment, scope, blocked, pathname, search, hash, current.state, routerNavigate],

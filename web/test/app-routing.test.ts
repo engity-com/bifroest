@@ -405,6 +405,25 @@ it('pins each authenticated tab URL to its own original requesting username, not
     expect(app.router.state.location.hash).toMatch(/^#first-hint@Work\//u);
 });
 
+it('commits a typed username and its fragment replacement together without rediscovery', async () => {
+    const app = await mountApp('/#alice@Work', false, false, { requestUser: true });
+    const navigate = vi.spyOn(app.router, 'navigate');
+    const input = dialog().querySelector<HTMLInputElement>('input[name="user"]');
+    if (!input) {
+        throw new Error('Missing requesting username');
+    }
+    await act(async () => {
+        await userEvent.fill(input, 'bob');
+    });
+    expect(input.value).toBe('bob');
+    expect(app.router.state.location.hash).toBe('#bob@Work');
+    expect(navigate).toHaveBeenCalledWith(
+        '/#bob@Work',
+        expect.objectContaining({ replace: true, flushSync: true }),
+    );
+    expect(app.requests).toEqual([]);
+});
+
 it('does not overwrite an edit made as a new login form opens with the preceding actor hint', async () => {
     preserveUsernamePreference('Work');
     const app = await mountApp('/#alice@Work', false, false, { requestUser: true });

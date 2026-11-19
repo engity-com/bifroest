@@ -105,6 +105,12 @@ try {
             await context.addInitScript(installDrawerDiagnostics);
         }
         const page = await context.newPage();
+        if (mode === 'workspace') {
+            // Keep the real production username/route race reproducible on fast
+            // hosts too, rather than relying on an occasionally loaded CI runner.
+            const cpu = await context.newCDPSession(page);
+            await cpu.send('Emulation.setCPUThrottlingRate', { rate: 3 });
+        }
         if (process.argv[3] === 'profile-reset') {
             diagnosticPages.push(page);
         }
