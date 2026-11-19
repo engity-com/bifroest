@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -28,22 +27,11 @@ func requestWebScope(r *http.Request, slug string) (webScope, error) {
 	if err := bnet.ValidateHttpSlug(slug); err != nil {
 		return webScope{}, err
 	}
-	host, err := bnet.CanonicalHttpHost(r.Host)
+	origin, err := bnet.CanonicalHttpsOrigin(r.Host)
 	if err != nil {
 		return webScope{}, err
 	}
-	parsed, err := url.Parse("https://" + r.Host)
-	if err != nil {
-		return webScope{}, err
-	}
-	authority := host
-	if port := parsed.Port(); port != "" {
-		number, _ := strconv.ParseUint(port, 10, 16) // CanonicalHttpHost validated it.
-		if number != 443 {
-			authority += ":" + strconv.FormatUint(number, 10)
-		}
-	}
-	return webScope{Origin: "https://" + authority, Slug: slug}, nil
+	return webScope{Origin: origin, Slug: slug}, nil
 }
 
 func (this webScope) selection() bconn.Selection {

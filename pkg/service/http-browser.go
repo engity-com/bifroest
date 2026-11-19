@@ -552,7 +552,7 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 		return
 	}
-	description, err := this.service.authorizerDiscovery.DescribeHttpLogin(host, slug)
+	description, err := this.service.authorizerDiscovery.DescribeHttpLogin(r.Host, slug)
 	if err != nil {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 		return
@@ -567,7 +567,7 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 	}
 	root := description
 	if slug != "" {
-		root, err = this.service.authorizerDiscovery.DescribeHttpLogin(host, "")
+		root, err = this.service.authorizerDiscovery.DescribeHttpLogin(r.Host, "")
 		if err != nil {
 			webError(w, http.StatusServiceUnavailable, "discovery unavailable")
 			return

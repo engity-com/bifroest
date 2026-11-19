@@ -252,6 +252,11 @@ func (this *webInteractiveRequest) HttpLoginMethod() authorization.LoginMethod {
 	return this.attempt.loginMethod
 }
 
+// Only the trusted HTTP adapter supplies this origin, never login JSON.
+func (this *webInteractiveRequest) HttpLoginOrigin() string {
+	return this.attempt.conn.scope.Origin
+}
+
 func (this *webInteractiveRequest) SendOidcInfo(ctx context.Context, message string) error {
 	_, err := this.attempt.exchangeContext(ctx, webLoginStep{Kind: "info", Message: message})
 	return err

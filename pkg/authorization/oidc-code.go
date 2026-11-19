@@ -3,7 +3,6 @@ package authorization
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"time"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
@@ -12,7 +11,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
-	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -91,16 +89,8 @@ func (this *OidcDeviceAuthAuthorizer) ExchangeCode(ctx context.Context, code, ve
 	return &OidcCodeResult{Token: token, Identity: authentication.Identity{Principal: id.Subject, Issuer: id.Issuer, Subject: id.Subject}}, nil
 }
 
-func (this *OidcDeviceAuthAuthorizer) matchesCodeHost(host string) bool {
-	if this.code == nil {
-		return false
-	}
-	u, err := url.Parse(this.code.Origin())
-	if err != nil {
-		return false
-	}
-	canonical, err := bnet.CanonicalHttpHost(u.Host)
-	return err == nil && canonical == host
+func (this *OidcDeviceAuthAuthorizer) matchesCodeOrigin(origin string) bool {
+	return this.code != nil && origin != "" && origin == this.code.Origin()
 }
 
 // Carry the absolute login deadline through verification and session creation,

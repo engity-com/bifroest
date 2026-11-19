@@ -4,6 +4,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 // LoginMethod is a discovery/UI choice, separate from authentication audit values.
@@ -31,18 +32,19 @@ type HttpLoginDescription struct {
 }
 
 type HttpLoginDescriber interface {
-	DescribeHttpLogin(host, slug string) (HttpLoginDescription, error)
+	// authority includes the port, if any; flow requirements use only its host.
+	DescribeHttpLogin(authority, slug string) (HttpLoginDescription, error)
 }
 
 var _ HttpLoginDescriber = (*AuthorizerFacade)(nil)
 
 // Discovery and the HTTP adapter must agree before invoking an OIDC candidate.
-// A foreign code domain is ineligible, not a failed login that stops fallback.
+// A foreign code origin is ineligible, not a failed login that stops fallback.
 // Other methods (including remembered-key access) retain their own capabilities.
-func (this *facaded) httpLoginCapabilities(host string, named bool) AuthenticationCapabilities {
+func (this *facaded) httpLoginCapabilities(origin string, named bool) AuthenticationCapabilities {
 	capabilities := this.capabilityProvider.AuthenticationCapabilities(DiscoveryInput{Transport: connection.TransportHttp, RequestingName: named})
 	if oidc, ok := this.CloseableAuthorizer.(*OidcDeviceAuthAuthorizer); ok && oidc.code != nil {
-		capabilities.OidcAuthorizationCode = capabilities.OidcAuthorizationCode && oidc.matchesCodeHost(host)
+		capabilities.OidcAuthorizationCode = capabilities.OidcAuthorizationCode && oidc.matchesCodeOrigin(origin)
 	}
 	return capabilities
 }
@@ -52,8 +54,12 @@ func (this *facaded) httpLoginCapabilities(host string, named bool) Authenticati
 // must not eliminate named flows; nameless flows still check the concrete empty
 // name. Capabilities are unioned by input mode, not across incompatible username
 // prompts. Availability depends on requirements, not on credentials or methods.
-func (this *AuthorizerFacade) DescribeHttpLogin(host, slug string) (HttpLoginDescription, error) {
-	selection, err := (connection.Selection{Transport: connection.TransportHttp, Host: host, Slug: slug}).Canonical()
+func (this *AuthorizerFacade) DescribeHttpLogin(authority, slug string) (HttpLoginDescription, error) {
+	origin, err := net.CanonicalHttpsOrigin(authority)
+	if err != nil {
+		return HttpLoginDescription{}, err
+	}
+	selection, err := (connection.Selection{Transport: connection.TransportHttp, Host: authority, Slug: slug}).Canonical()
 	if err != nil {
 		return HttpLoginDescription{}, err
 	}
@@ -79,7 +85,7 @@ func (this *AuthorizerFacade) DescribeHttpLogin(host, slug string) (HttpLoginDes
 		if candidate.capabilityProvider == nil {
 			return HttpLoginDescription{}, errors.System.Newf("authorization flow %q does not provide authentication capabilities", candidate.flow)
 		}
-		capabilities := candidate.httpLoginCapabilities(selection.Host, named)
+		capabilities := candidate.httpLoginCapabilities(origin, named)
 		add := func(method LoginMethod, possible bool) {
 			if !possible {
 				return

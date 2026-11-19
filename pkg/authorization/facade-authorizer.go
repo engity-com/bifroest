@@ -167,7 +167,13 @@ func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Auth
 		// The HTTP adapter supplies this capability, not unverified credentials.
 		// Keep the explicit OIDC option separate from device/PAM interaction.
 		if selected, ok := req.(interface{ HttpLoginMethod() LoginMethod }); ok && selection.Transport == connection.TransportHttp {
-			caps := candidate.httpLoginCapabilities(selection.Host, req.Connection().Remote().User() != "")
+			// The adapter carries the canonical origin separately: Selection.Host
+			// intentionally omits ports for hostname-based flow requirements.
+			var origin string
+			if provider, ok := req.(interface{ HttpLoginOrigin() string }); ok {
+				origin = provider.HttpLoginOrigin()
+			}
+			caps := candidate.httpLoginCapabilities(origin, req.Connection().Remote().User() != "")
 			if selected.HttpLoginMethod() == LoginMethodOidc && !caps.OidcAuthorizationCode || selected.HttpLoginMethod() != LoginMethodOidc && !caps.KeyboardInteractive {
 				continue
 			}

@@ -76,6 +76,26 @@ func CanonicalHttpHost(authority string) (string, error) {
 	return ascii, nil
 }
 
+// CanonicalHttpsOrigin preserves an HTTP authority's effective HTTPS port.
+// Like CanonicalHttpHost, it normalizes syntax without granting access.
+func CanonicalHttpsOrigin(authority string) (string, error) {
+	host, err := CanonicalHttpHost(authority)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse("https://" + authority)
+	if err != nil {
+		return "", err
+	}
+	if port := parsed.Port(); port != "" {
+		number, _ := strconv.ParseUint(port, 10, 16) // CanonicalHttpHost validated it.
+		if number != 443 {
+			host += ":" + strconv.FormatUint(number, 10)
+		}
+	}
+	return "https://" + host, nil
+}
+
 // ValidateHttpSlug accepts the root slug or one/two case-sensitive ASCII
 // alphanumeric/hyphen segments, each at most MaxHttpSlugSegmentBytes bytes long.
 // Internal routes use a different namespace, not a more permissive slug grammar.
