@@ -63,7 +63,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
       - name: Execute
         id: refs
@@ -82,7 +82,7 @@ jobs:
           persist-credentials: false
 
       - name: Install MISE
-        uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
           install_args: biome
 
@@ -107,7 +107,7 @@ jobs:
           persist-credentials: false
 
       - name: Install MISE
-        uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
       - name: Git configure
         run: git config --global --add safe.directory $(pwd)
@@ -171,7 +171,7 @@ jobs:
           key: ${{ hashFiles('docs/requirements.txt') }}
 
       - name: Install MISE
-        uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
       - name: Install dependencies
         run: mise run install:docs
