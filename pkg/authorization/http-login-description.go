@@ -36,6 +36,17 @@ type HttpLoginDescriber interface {
 
 var _ HttpLoginDescriber = (*AuthorizerFacade)(nil)
 
+// Discovery and the HTTP adapter must agree before invoking an OIDC candidate.
+// A foreign code domain is ineligible, not a failed login that stops fallback.
+// Other methods (including remembered-key access) retain their own capabilities.
+func (this *facaded) httpLoginCapabilities(host string, named bool) AuthenticationCapabilities {
+	capabilities := this.capabilityProvider.AuthenticationCapabilities(DiscoveryInput{Transport: connection.TransportHttp, RequestingName: named})
+	if oidc, ok := this.CloseableAuthorizer.(*OidcDeviceAuthAuthorizer); ok && oidc.code != nil {
+		capabilities.OidcAuthorizationCode = capabilities.OidcAuthorizationCode && oidc.matchesCodeHost(host)
+	}
+	return capabilities
+}
+
 // DescribeHttpLogin shares the authoritative facade's canonical selection and
 // published-slug pinning, but never attempts authentication. Unknown remote names
 // must not eliminate named flows; nameless flows still check the concrete empty
@@ -68,7 +79,7 @@ func (this *AuthorizerFacade) DescribeHttpLogin(host, slug string) (HttpLoginDes
 		if candidate.capabilityProvider == nil {
 			return HttpLoginDescription{}, errors.System.Newf("authorization flow %q does not provide authentication capabilities", candidate.flow)
 		}
-		capabilities := candidate.capabilityProvider.AuthenticationCapabilities(DiscoveryInput{Transport: connection.TransportHttp, RequestingName: named})
+		capabilities := candidate.httpLoginCapabilities(selection.Host, named)
 		add := func(method LoginMethod, possible bool) {
 			if !possible {
 				return
@@ -92,11 +103,7 @@ func (this *AuthorizerFacade) DescribeHttpLogin(host, slug string) (HttpLoginDes
 		}
 		add(LoginMethodPassword, capabilities.Password)
 		add(LoginMethodKeyboardInteractive, capabilities.KeyboardInteractive)
-		codeHost := true
-		if oidc, ok := candidate.CloseableAuthorizer.(*OidcDeviceAuthAuthorizer); ok && oidc.code != nil {
-			codeHost = oidc.matchesCodeHost(selection.Host)
-		}
-		add(LoginMethodOidc, capabilities.OidcAuthorizationCode && codeHost)
+		add(LoginMethodOidc, capabilities.OidcAuthorizationCode)
 		add(LoginMethodPublicKey, capabilities.PublicKey)
 		add(LoginMethodNone, capabilities.Secretless)
 	}
