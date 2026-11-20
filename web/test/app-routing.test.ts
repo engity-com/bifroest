@@ -899,6 +899,11 @@ describe('owned workspace view routing with the real router and workspace', () =
     it('retains management results across login and view navigation without changing the owning access', async () => {
         const app = await mountApp('/bla-bla', false, true);
         await signIn();
+        // React.lazy still resolves its first import after the modules were
+        // prefetched. Join that Suspense commit inside act before measuring reads.
+        await act(async () => {
+            await vi.dynamicImportSettled();
+        });
         await vi.waitFor(async () => {
             await act(async () => {});
             expect(
