@@ -568,62 +568,69 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 
 func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateKeys []crypto.PrivateKey) (err error) {
 	sshConfig := &svc.Configuration.Ssh
+	this.configureServer(svc, &svc.server, hostPrivateKeys)
+	if sshConfig.ProxyProtocol {
+		svc.server.ProxyProtocol = new(essh.ProxyProtocolConfig)
+	}
+	// Construct separately, never copy an ssh.Server (including its runtime locks).
+	this.configureServer(svc, &svc.tunnelServer, hostPrivateKeys)
+	return nil
+}
 
-	svc.server.Logger = svc.Service.logger()
-	svc.server.RequireHostSigners = true
-	svc.server.RequireClientAuth = true
-	svc.server.HandshakeTimeout = new(sshConfig.HandshakeTimeout.Native())
-	svc.server.IdleTimeout = new(time.Duration(0)) // handled by service's connection
-	svc.server.MaxTimeout = new(time.Duration(0))  // handled by service's connection
-	svc.server.SessionRequestTimeout = new(sshConfig.SessionRequestTimeout.Native())
-	svc.server.MaxStartups = &essh.MaxStartupsConfig{
+func (this *Service) configureServer(svc *service, server *essh.Server, hostPrivateKeys []crypto.PrivateKey) {
+	sshConfig := &svc.Configuration.Ssh
+
+	server.Logger = svc.Service.logger()
+	server.RequireHostSigners = true
+	server.RequireClientAuth = true
+	server.HandshakeTimeout = new(sshConfig.HandshakeTimeout.Native())
+	server.IdleTimeout = new(time.Duration(0)) // handled by service's connection
+	server.MaxTimeout = new(time.Duration(0))  // handled by service's connection
+	server.SessionRequestTimeout = new(sshConfig.SessionRequestTimeout.Native())
+	server.MaxStartups = &essh.MaxStartupsConfig{
 		Start: int(sshConfig.MaxStartupsStart),
 		Rate:  int(sshConfig.MaxStartupsRate),
 		Full:  int(sshConfig.MaxStartupsFull),
 	}
-	svc.server.MaxSessionsPerConnection = new(int(sshConfig.MaxSessionsPerConnection))
-	svc.server.MaxChannelsPerConnection = new(int(sshConfig.MaxChannelsPerConnection))
-	svc.server.MaxReverseForwardsPerConnection = new(int(sshConfig.MaxReverseForwardsPerConnection))
-	svc.server.MaxConnections = new(0)
-	svc.server.MaxChannels = new(int(sshConfig.MaxChannels))
-	svc.server.MaxReverseForwards = new(int(sshConfig.MaxReverseForwards))
-	svc.server.GracefulShutdownHandler = essh.NewGracefulShutdownTimeoutHandler(sshConfig.GracefulShutdownTimeout.Native())
-	if sshConfig.ProxyProtocol {
-		svc.server.ProxyProtocol = new(essh.ProxyProtocolConfig)
-	}
-	svc.server.ServerConfigCallback = svc.createNewServerConfig
-	svc.server.ErrorHandler = svc.handleSshError
-	svc.server.ConnCallback = svc.onNewConnConnection
-	svc.server.ConnectionFailedCallback = svc.onConnectionFailed
-	svc.server.DisconnectCallback = svc.onDisconnected
-	svc.server.Handler = svc.handleSshShellSession
-	svc.server.PtyCallback = svc.onPtyRequest
-	svc.server.SessionRequestCallback = svc.onSessionRequest
-	svc.server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
+	server.MaxSessionsPerConnection = new(int(sshConfig.MaxSessionsPerConnection))
+	server.MaxChannelsPerConnection = new(int(sshConfig.MaxChannelsPerConnection))
+	server.MaxReverseForwardsPerConnection = new(int(sshConfig.MaxReverseForwardsPerConnection))
+	server.MaxConnections = new(0)
+	server.MaxChannels = new(int(sshConfig.MaxChannels))
+	server.MaxReverseForwards = new(int(sshConfig.MaxReverseForwards))
+	server.GracefulShutdownHandler = essh.NewGracefulShutdownTimeoutHandler(sshConfig.GracefulShutdownTimeout.Native())
+	server.ServerConfigCallback = svc.createNewServerConfig
+	server.ErrorHandler = svc.handleSshError
+	server.ConnCallback = svc.onNewConnConnection
+	server.ConnectionFailedCallback = svc.onConnectionFailed
+	server.DisconnectCallback = svc.onDisconnected
+	server.Handler = svc.handleSshShellSession
+	server.PtyCallback = svc.onPtyRequest
+	server.SessionRequestCallback = svc.onSessionRequest
+	server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
 	svc.forwardHandler.ListenCallback = svc.listenReverseTCP
-	svc.server.PublicKeyHandler = svc.handlePublicKey
-	svc.server.PasswordHandler = svc.handlePassword
-	svc.server.KeyboardInteractiveHandler = svc.handleKeyboardInteractiveChallenge
-	svc.server.BannerHandler = svc.handleBanner
-	svc.server.AgentForwardingCallback = svc.onAgentForwardingRequested
-	svc.server.RequestHandlers = map[string]essh.RequestHandler{
-		"tcpip-forward":        svc.forwardHandler.HandleSSHRequest,
-		"cancel-tcpip-forward": svc.forwardHandler.HandleSSHRequest,
+	server.PublicKeyHandler = svc.handlePublicKey
+	server.PasswordHandler = svc.handlePassword
+	server.KeyboardInteractiveHandler = svc.handleKeyboardInteractiveChallenge
+	server.BannerHandler = svc.handleBanner
+	server.AgentForwardingCallback = svc.onAgentForwardingRequested
+	server.RequestHandlers = map[string]essh.RequestHandler{
+		"keepalive@openssh.com": func(response essh.RequestResponseWriter, _ *essh.Request) error { return response.Accept(nil) },
+		"tcpip-forward":         svc.forwardHandler.HandleSSHRequest,
+		"cancel-tcpip-forward":  svc.forwardHandler.HandleSSHRequest,
 	}
-	svc.server.ChannelHandlers = map[string]essh.ChannelHandler{
+	server.ChannelHandlers = map[string]essh.ChannelHandler{
 		"session":      svc.handleNewSshSession,
 		"direct-tcpip": svc.handleNewDirectTcpIp,
 	}
-	svc.server.DeferredSubsystemHandlers = map[string]essh.DeferredSubsystemHandler{
+	server.DeferredSubsystemHandlers = map[string]essh.DeferredSubsystemHandler{
 		"sftp":    svc.handleSshSubsystemSession,
 		"default": svc.handleSshSubsystemSession,
 	}
-	svc.server.HostSigners = make([]essh.Signer, len(hostPrivateKeys))
+	server.HostSigners = make([]essh.Signer, len(hostPrivateKeys))
 	for i, v := range hostPrivateKeys {
-		svc.server.HostSigners[i] = v.ToSsh()
+		server.HostSigners[i] = v.ToSsh()
 	}
-
-	return nil
 }
 
 func (this *service) handleSshError(
@@ -857,6 +864,8 @@ type service struct {
 	alternatives             alternatives.Provider
 	imp                      imp.Imp
 	server                   essh.Server
+	tunnelServer             essh.Server
+	sshTunnel                *sshTunnel
 	https                    *https.Endpoint
 	httpsForbiddenKeys       []crypto.PublicKey
 	forwardHandler           essh.ForwardedTCPHandler
@@ -929,6 +938,9 @@ func (this *service) Close() (rErr error) {
 
 // Failed preparation owns the same resources but must not start remote flushing.
 func (this *service) close(flush bool) (rErr error) {
+	if this.sshTunnel != nil {
+		_ = this.sshTunnel.Close()
+	}
 	if this.web != nil {
 		rErr = goerrors.Join(rErr, this.web.Close())
 	}

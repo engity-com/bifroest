@@ -63,4 +63,10 @@ ssh -i ~/.ssh/YOUR_CLIENT_PRIVATE_KEY \
 
 The expected output is `target-user`. Check Bifröst's own host key with the gateway administrator on first connection; it is **not** the target's host key. No Bifröst account named `gateway` is needed: `simple` matches the incoming SSH name and its public key. If the target connection fails, first check the target account's `authorized_keys` and the verified `knownHostsFile`.
 
-The example disables port forwarding. SFTP is allowed by default only if the target accepts it; the gateway does not forward arbitrary SSH session requests. For user certificates or Bifröst-to-Bifröst delegation, see the [SSH environment reference](../reference/environment/ssh.md).
+The example disables port forwarding. SFTP is allowed by default only if the target accepts it; the gateway does not forward arbitrary SSH session requests.
+
+## Next steps
+
+* [SSH over HTTPS with OpenSSH and curl](ssh-over-https.md) reaches the gateway without a direct SSH port.
+* [Record, find and replay a session](recording.md) adds audit logging and session output recording.
+* [SSH environment reference](../reference/environment/ssh.md) covers user certificates, Bifröst-to-Bifröst delegation, subsystems and forwarding policies.

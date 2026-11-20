@@ -63,13 +63,13 @@ func NewEndpoint(conf *configuration.Http, options EndpointOptions) (*Endpoint, 
 	if handler == nil {
 		handler = http.HandlerFunc(unimplementedBrowserHandler)
 	}
-	boundary, err := Boundary(conf.Domains, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	boundary, err := boundary(conf.Domains, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !manager.Ready() {
 			http.Error(w, "HTTPS is not ready", http.StatusServiceUnavailable)
 			return
 		}
 		handler.ServeHTTP(w, r)
-	}))
+	}), conf.SshTunnel.IsEnabled())
 	if err != nil {
 		_ = manager.Close()
 		return nil, err

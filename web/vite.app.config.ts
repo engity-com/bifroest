@@ -23,6 +23,7 @@ export default defineConfig({
         target: 'es2022',
         outDir: '../pkg/webui/assets',
         assetsDir: '',
+        manifest: 'browser-assets.json',
         emptyOutDir: true,
         // Speculative shared-chunk fetches must not crowd out ordered operator
         // scripts under the server's existing per-peer admission budget.

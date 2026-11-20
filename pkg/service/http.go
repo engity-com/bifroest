@@ -3,6 +3,7 @@ package service
 import (
 	stdcrypto "crypto"
 	"fmt"
+	"net/http"
 
 	gossh "golang.org/x/crypto/ssh"
 
@@ -33,13 +34,20 @@ func (this *service) prepareHTTPS() error {
 			return fmt.Errorf("cannot inspect audit recipient identities for HTTPS")
 		}
 	}
-	this.web = newWebService(this)
-	assets, err := webui.New(this.Configuration.Http)
-	if err != nil {
-		return fmt.Errorf("cannot prepare public browser assets: %w", err)
+	conf := this.Configuration.Http
+	if conf.WebUi.IsEnabled() || conf.LoginFlow.IsEnabled() {
+		this.web = newWebService(this)
+		assets, err := webui.New(conf)
+		if err != nil {
+			return fmt.Errorf("cannot prepare public browser assets: %w", err)
+		}
+		this.web.assets = assets
 	}
-	this.web.assets = assets
-	endpoint, err := https.NewEndpoint(this.Configuration.Http, https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: this.web})
+	if conf.SshTunnel.IsEnabled() {
+		this.sshTunnel = newSshTunnel()
+		this.sshTunnel.logger = this.logger()
+	}
+	endpoint, err := https.NewEndpoint(conf, https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: http.HandlerFunc(this.serveHTTPS)})
 	if err != nil {
 		return fmt.Errorf("cannot prepare HTTPS endpoint: %w", err)
 	}
@@ -49,6 +57,22 @@ func (this *service) prepareHTTPS() error {
 			Warn("http.tls.dummy=true: created an ephemeral self-signed HTTPS dummy certificate for testing only; browsers do not trust it, certificate expires in 24 hours")
 	}
 	return nil
+}
+
+func (this *service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == https.SshTunnelPath {
+		if this.sshTunnel != nil {
+			this.sshTunnel.ServeHTTP(w, r)
+		} else {
+			http.NotFound(w, r)
+		}
+		return
+	}
+	if this.web != nil {
+		this.web.ServeHTTP(w, r)
+		return
+	}
+	http.NotFound(w, r)
 }
 
 func (this *service) validateHTTPSKey(key stdcrypto.PublicKey) error {

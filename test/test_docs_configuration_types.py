@@ -1,5 +1,6 @@
 import ast
 import re
+import shlex
 import textwrap
 from pathlib import Path
 from unittest import TestCase
@@ -19,6 +20,34 @@ def properties(relative):
 
 
 class DocsConfigurationTypesTest(TestCase):
+    def test_ssh_tunnel_reference_links_directly_to_its_connection_guide(self):
+        reference = (DOCS / 'reference/connection/http/index.md').read_text(encoding='utf-8')
+        section = reference.split('## SSH tunnel\n\n', 1)[1].split('## Login flow', 1)[0]
+        self.assertIn('](../../../guides/ssh-over-https.md)', section.split('\n\n', 1)[0])
+        self.assertNotIn('ProxyCommand', section)
+        self.assertIn('id_prefix="ssh-tunnel-"', section)
+        self.assertIn('(ssh-over-https.md)', (DOCS / 'guides/index.md').read_text(encoding='utf-8'))
+        self.assertIn('SSH over HTTPS: guides/ssh-over-https.md', (DOCS.parent / 'mkdocs.yml').read_text(encoding='utf-8'))
+
+    def test_ssh_tunnel_guide_uses_short_curl_flags_and_the_openssh_hostname(self):
+        guide = (DOCS / 'guides/ssh-over-https.md').read_text(encoding='utf-8')
+        commands = re.findall(r'^\s*ProxyCommand (.+)$', guide, re.MULTILINE)
+        self.assertEqual(2, len(commands))
+        for command, method, scheme in zip(commands, ['POST', 'GET'], ['https', 'wss']):
+            with self.subTest(method=method):
+                args = shlex.split(command)
+                self.assertEqual(['curl', '-q', '-fsSN'], args[:3])
+                self.assertIn('--no-progress-meter', args)
+                self.assertIn('--http1.1', args)
+                self.assertEqual('.', args[args.index('-T') + 1])
+                self.assertEqual(method, args[args.index('-X') + 1])
+                self.assertIn('Expect:', args)
+                self.assertEqual(f'{scheme}://%h/api/v1/ssh', args[-1])
+                self.assertFalse({'--disable', '--silent', '--show-error', '--fail', '--no-buffer', '--upload-file', '--request', '--header', '--url'} & set(args))
+                self.assertNotIn('-k', args)
+        self.assertEqual(1, guide.count('bifroest.example.org'))
+        self.assertIn('Windows curl 8.22.0/Schannel fails', guide)
+
     def test_remember_me_examples_only_configure_supported_authorizations(self):
         def check(node, page, path=()):
             if isinstance(node, dict):

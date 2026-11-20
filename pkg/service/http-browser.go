@@ -182,6 +182,20 @@ func (this *webService) Close() error {
 func (this *webService) stop() { this.operations.stop(); this.loginWorkers.stop(); this.cancel() }
 
 func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	conf := this.service.Configuration.Http
+	loginRoute := r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, oidcBrowserPrefix) || strings.HasPrefix(r.URL.Path, webAPI+"oidc/")
+	if conf != nil && loginRoute && !conf.LoginFlow.IsEnabled() {
+		http.NotFound(w, r)
+		return
+	}
+	if conf != nil && !conf.WebUi.IsEnabled() && !loginRoute {
+		if conf.LoginFlow.IsEnabled() && this.assets != nil && this.assets.LoginResourceAllowed(r.URL.Path) && r.URL.RawQuery == "" && !r.URL.ForceQuery {
+			this.serveAsset(w, r)
+		} else {
+			http.NotFound(w, r)
+		}
+		return
+	}
 	if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, oidcBrowserPrefix) {
 		this.serveOidc(w, r)
 		return

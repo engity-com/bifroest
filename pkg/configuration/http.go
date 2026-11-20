@@ -27,6 +27,9 @@ const DefaultHttpMaxHeaderBytes = uint32(1 << 20)
 // starts a listener, reads certificates or initiates ACME requests.
 type Http struct {
 	Enabled                 bool             `yaml:"enabled,omitempty"`
+	WebUi                   HttpComponent    `yaml:"webUi,omitempty"`
+	SshTunnel               HttpComponent    `yaml:"sshTunnel,omitempty"`
+	LoginFlow               HttpComponent    `yaml:"loginFlow,omitempty"`
 	Addresses               net.NetAddresses `yaml:"addresses"`
 	Domains                 HttpDomains      `yaml:"domains,omitempty"`
 	Tls                     HttpTls          `yaml:"tls"`
@@ -135,6 +138,7 @@ func (this *Http) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Http, node *yaml.Node) error {
 		type raw Http
 		return decodeHttpFields(node, (*raw)(target), map[string]string{
+			"webUi": "!!map", "sshTunnel": "!!map", "loginFlow": "!!map",
 			"enabled": "!!bool", "addresses": "!!seq/!!str", "domains": "!!seq/!!str", "tls": "!!map",
 			"startupTimeout": "!!str", "readHeaderTimeout": "!!str", "idleTimeout": "!!str", "gracefulShutdownTimeout": "!!str", "maxHeaderBytes": "!!int",
 			"rememberMe": "!!map", "assetsDirectory": "!!str", "customCss": "!!seq/!!str", "customJs": "!!seq/!!str", "customHtmlHead": "!!str", "customHtmlBody": "!!str",
@@ -156,7 +160,8 @@ func (this *Http) IsEqualTo(other any) bool {
 	}
 }
 func (this *Http) isEqualTo(other *Http) bool {
-	return this.Enabled == other.Enabled && this.Addresses.IsEqualTo(other.Addresses) && this.Domains.IsEqualTo(other.Domains) && this.Tls.IsEqualTo(other.Tls) &&
+	return this.Enabled == other.Enabled && this.WebUi.IsEqualTo(other.WebUi) && this.SshTunnel.IsEqualTo(other.SshTunnel) && this.LoginFlow.IsEqualTo(other.LoginFlow) &&
+		this.Addresses.IsEqualTo(other.Addresses) && this.Domains.IsEqualTo(other.Domains) && this.Tls.IsEqualTo(other.Tls) &&
 		this.StartupTimeout.IsEqualTo(other.StartupTimeout) && this.ReadHeaderTimeout.IsEqualTo(other.ReadHeaderTimeout) && this.IdleTimeout.IsEqualTo(other.IdleTimeout) &&
 		this.GracefulShutdownTimeout.IsEqualTo(other.GracefulShutdownTimeout) && this.MaxHeaderBytes == other.MaxHeaderBytes && this.RememberMe == other.RememberMe &&
 		this.AssetsDirectory == other.AssetsDirectory && slices.Equal(this.CustomCss, other.CustomCss) && slices.Equal(this.CustomJs, other.CustomJs) &&

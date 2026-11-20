@@ -31,9 +31,15 @@ const BrowserWasmWorkerPolicy = "default-src 'none'; base-uri 'none'; script-src
 
 const BrowserKeyWorkerPolicy = BrowserWasmWorkerPolicy
 
+const SshTunnelPath = "/api/v1/ssh"
+
 // Boundary enforces the directly terminated HTTPS authority and browser origin.
 // Forwarded/X-Forwarded-* headers never substitute for TLS, SNI, Host or Origin.
 func Boundary(domains configuration.HttpDomains, next http.Handler) (http.Handler, error) {
+	return boundary(domains, next, false)
+}
+
+func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnabled bool) (http.Handler, error) {
 	canonical, err := domains.Canonical()
 	if err != nil || len(canonical) == 0 {
 		return nil, fmt.Errorf("HTTPS boundary needs configured domains")
@@ -85,9 +91,13 @@ func Boundary(domains configuration.HttpDomains, next http.Handler) (http.Handle
 			}
 		}
 		origins := r.Header.Values("Origin")
+		// Native SSH clients have no browser Origin. Only this dedicated stream
+		// endpoint is exempt; supplied origins and browser fetch metadata still
+		// undergo the normal checks. Authentication remains the SSH handshake.
+		tunnel := tunnelEnabled && r.URL.Path == SshTunnelPath
 		upgrade := r.Header.Get("Upgrade") != ""
 		safe := r.Method == http.MethodGet || r.Method == http.MethodHead
-		if len(origins) > 1 || ((!safe || upgrade) && len(origins) == 0) {
+		if len(origins) > 1 || ((!safe || upgrade) && len(origins) == 0 && !tunnel) {
 			http.Error(w, "same-origin proof required", http.StatusForbidden)
 			return
 		}
@@ -108,7 +118,9 @@ func Boundary(domains configuration.HttpDomains, next http.Handler) (http.Handle
 			return
 		}
 		// Individual future protocol handlers must impose their tighter limits.
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if !tunnel {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		}
 		next.ServeHTTP(w, r)
 	}), nil
 }

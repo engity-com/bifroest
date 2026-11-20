@@ -91,6 +91,15 @@ run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHDockerEnviro
 depends = ["build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHSSHEnvironment(SessionRecording|Subsystem|ReverseForwarding)$' ./test/e2e"
 
+[tasks."test:e2e:curl"]
+description = "Probe installed curl HTTP and WebSocket binary streaming capabilities."
+run = "go test -v -count=1 -tags=e2e -timeout=2m ./test/curl"
+
+[tasks."test:e2e:tunnel"]
+description = "Test the built SSH-over-HTTPS/WSS server with native OpenSSH, curl and SFTP."
+depends = ["build:web", "build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=10m -run '^TestOpenSSHTunnel$' ./test/e2e"
+
 [tasks."test:e2e:kubernetes"]
 depends = ["build:var"]
 run = "go test -v -count=1 -failfast -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesEnvironment(SessionRecording)?$' ./test/e2e"
@@ -127,6 +136,8 @@ run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^Test(OpenSSHLocalNative
 
 [tasks."test:e2e"]
 run = [
+    { task = "test:e2e:curl" },
+    { task = "test:e2e:tunnel" },
     { task = "test:e2e:authorization" },
     { task = "test:e2e:local" },
     { task = "test:e2e:docker" },

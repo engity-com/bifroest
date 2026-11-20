@@ -77,6 +77,8 @@ var (
 
 // Ssh defines how the ssh part of the service should be defined.
 type Ssh struct {
+	// Enabled controls only direct TCP listeners, not SSH over HTTPS.
+	Enabled *bool `yaml:"enabled,omitempty"`
 	// Addresses which the service will bind to. This can be more than one but at least one.
 	// Defaults to DefaultSshAddresses.
 	Addresses net.NetAddresses `yaml:"addresses"`
@@ -163,8 +165,11 @@ type Ssh struct {
 	PreparationMessages PreparationMessages `yaml:"preparationMessages,omitempty"`
 }
 
+func (this Ssh) IsEnabled() bool { return this.Enabled == nil || *this.Enabled }
+
 func (this *Ssh) SetDefaults() error {
 	return setDefaults(this,
+		fixedDefault("enabled", func(v *Ssh) **bool { return &v.Enabled }, (*bool)(nil)),
 		fixedDefault("addresses", func(v *Ssh) *net.NetAddresses { return &v.Addresses }, DefaultSshAddresses),
 		func(v *Ssh) (string, defaulter) { return "keys", &v.Keys },
 		func(v *Ssh) (string, defaulter) { return "messages", &v.Messages },
@@ -278,6 +283,13 @@ func nonNegativeDurationValidator(value *common.Duration) validator {
 
 func (this *Ssh) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Ssh, node *yaml.Node) error {
+		fields, err := effectiveHttpFields(node)
+		if err != nil {
+			return err
+		}
+		if enabled, ok := fields["enabled"]; ok && enabled.Tag != "!!bool" {
+			return reportYamlRelatedErrf(&enabled, "enabled must be a boolean")
+		}
 		type raw Ssh
 		return node.Decode((*raw)(target))
 	})
@@ -298,7 +310,7 @@ func (this Ssh) IsEqualTo(other any) bool {
 }
 
 func (this Ssh) isEqualTo(other *Ssh) bool {
-	return isEqual(&this.Addresses, &other.Addresses) &&
+	return this.IsEnabled() == other.IsEnabled() && isEqual(&this.Addresses, &other.Addresses) &&
 		isEqual(&this.Keys, &other.Keys) &&
 		isEqual(&this.Messages, &other.Messages) &&
 		isEqual(&this.IdleTimeout, &other.IdleTimeout) &&

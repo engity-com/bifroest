@@ -9,6 +9,7 @@ export default defineConfig({
             '@emotion/cache',
             '@emotion/react',
             '@mui/material',
+            '@mui/material/styles',
             '@mui/x-data-grid',
             '@xterm/addon-fit',
             '@xterm/xterm',

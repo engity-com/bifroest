@@ -47,7 +47,13 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 	groups := []struct {
 		addresses bnet.NetAddresses
 		transport string
-	}{{this.Configuration.Ssh.Addresses, "SSH"}}
+	}{}
+	if this.Configuration.Ssh.IsEnabled() {
+		groups = append(groups, struct {
+			addresses bnet.NetAddresses
+			transport string
+		}{this.Configuration.Ssh.Addresses, "SSH"})
+	}
 	if this.https != nil {
 		groups = append(groups, struct {
 			addresses bnet.NetAddresses
@@ -65,6 +71,9 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 			}
 			inputs = append(inputs, boundInput{listener, address, group.transport})
 		}
+	}
+	if this.sshTunnel != nil {
+		inputs = append(inputs, boundInput{listener: this.sshTunnel, transport: "SSH tunnel"})
 	}
 	if len(inputs) == 0 {
 		return shutdown, fmt.Errorf("no incoming listeners configured")
@@ -123,8 +132,12 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 	}
 	if !failed && ctx.Err() == nil {
 		for _, input := range inputs {
-			if input.transport == "SSH" {
+			switch input.transport {
+			case "SSH":
 				start(input, "listener", func() error { return this.server.Serve(ctx, input.listener) })
+			case "SSH tunnel":
+				start(input, "listener", func() error { return this.tunnelServer.Serve(ctx, input.listener) })
+				this.sshTunnel.ready.Store(true)
 			}
 		}
 		if this.https != nil {
@@ -168,12 +181,9 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 	}
 	cancel(shutdown.cause)
 	rErr = errors.Join(rErr, this.sessionConnections.closeTerminals())
-	// Stop all accepting immediately; HTTP grace and SSH grace run concurrently.
-	// Close only raw listeners here; the servers own active connections.
+	// Stop all accepting immediately. Close only raw listeners here; the servers
+	// own active connections, and tunnel responses must survive SSH grace.
 	closeInputs()
-	if this.https != nil {
-		rErr = errors.Join(rErr, this.https.Close())
-	}
 	for running > 0 {
 		result := <-results
 		running--
@@ -181,6 +191,14 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 		if this.isProblematicError(result.err) && !errors.Is(result.err, http.ErrServerClosed) && !errors.Is(result.err, https.ErrClosed) {
 			rErr = errors.Join(rErr, inputFailure(result))
 		}
+	}
+	// SSH owns tunnel lifetime and grace. Only close HTTP connections after SSH
+	// has drained; a shorter HTTP grace must not truncate successful SSH exits.
+	if this.sshTunnel != nil {
+		this.sshTunnel.operations.waitUntilDrained()
+	}
+	if this.https != nil {
+		rErr = errors.Join(rErr, this.https.Close())
 	}
 	if rErr == nil && this.isProblematicError(shutdown.cause) {
 		rErr = shutdown.cause

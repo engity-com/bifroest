@@ -105,7 +105,7 @@ func (this *Configuration) Validate() error {
 	if err := this.validateAuditlogReferences(); err != nil {
 		return err
 	}
-	if this.Http.IsEnabled() {
+	if this.Http.IsEnabled() && this.Http.WebUi.IsEnabled() {
 		if err := this.Flows.ValidateHttpDiscovery(this.Http.Domains); err != nil {
 			return errors.Config.Newf("[http][domains] invalid flow discovery: %w", err)
 		}

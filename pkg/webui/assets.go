@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -40,11 +41,12 @@ var ErrAsset = errors.New("public browser asset unavailable or unsafe")
 var bundled embed.FS
 
 type Assets struct {
-	embedded   fs.FS
-	overlay    *os.Root
-	custom     []*os.Root
-	css, js    []string
-	head, body string
+	embedded       fs.FS
+	overlay        *os.Root
+	custom         []*os.Root
+	css, js        []string
+	head, body     string
+	loginResources map[string]bool
 }
 
 func New(conf *configuration.Http) (*Assets, error) {
@@ -87,14 +89,79 @@ func New(conf *configuration.Http) (*Assets, error) {
 	}
 	// A missing unbuilt index is allowed for API-only source development, but an
 	// existing malformed/unsafe overlay must never silently fall through to embed.
-	if raw, err := result.Read("index.html"); err == nil {
-		if _, _, err := result.render(raw); err != nil {
+	for _, document := range []struct {
+		name    string
+		enabled bool
+	}{{"index.html", conf.WebUi.IsEnabled()}, {"login.html", conf.LoginFlow.IsEnabled()}} {
+		if !document.enabled {
+			continue
+		}
+		if raw, err := result.Read(document.name); err == nil {
+			if _, _, err := result.render(raw); err != nil {
+				return fail()
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
 			return fail()
 		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fail()
+	}
+	if !conf.WebUi.IsEnabled() && conf.LoginFlow.IsEnabled() {
+		if err := result.prepareLoginResources(); err != nil {
+			return fail()
+		}
 	}
 	return result, nil
+}
+
+// The build manifest keeps login-only installations from publishing workspace
+// entry points, terminal/management workers or unrelated bundles.
+func (this *Assets) prepareLoginResources() error {
+	this.loginResources = make(map[string]bool)
+	raw, err := this.Read("browser-assets.json")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var entries map[string]struct {
+		File           string   `json:"file"`
+		Imports        []string `json:"imports"`
+		DynamicImports []string `json:"dynamicImports"`
+		Css            []string `json:"css"`
+		Assets         []string `json:"assets"`
+	}
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return err
+	}
+	visited := make(map[string]bool)
+	var visit func(string) error
+	visit = func(key string) error {
+		if visited[key] {
+			return nil
+		}
+		visited[key] = true
+		entry, ok := entries[key]
+		if !ok {
+			return ErrAsset
+		}
+		for _, name := range append(append([]string{entry.File}, entry.Css...), entry.Assets...) {
+			if !safeResource(name) {
+				return ErrAsset
+			}
+			this.loginResources[Prefix+name] = true
+		}
+		for _, dependency := range append(entry.Imports, entry.DynamicImports...) {
+			if err := visit(dependency); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return visit("login.html")
+}
+
+func (this *Assets) LoginResourceAllowed(urlPath string) bool {
+	return this.loginResources[urlPath] || strings.HasPrefix(urlPath, CustomPrefix)
 }
 
 func (this *Assets) Close() error {
@@ -231,7 +298,7 @@ func (this *Assets) Resource(urlPath string) ([]byte, string, error) {
 	var extension string
 	if strings.HasPrefix(urlPath, Prefix) && !strings.HasPrefix(urlPath, CustomPrefix) {
 		name := strings.TrimPrefix(urlPath, Prefix)
-		if name == "index.html" || name == "login.html" {
+		if name == "index.html" || name == "login.html" || name == "browser-assets.json" {
 			return nil, "", fs.ErrNotExist
 		}
 		data, err = this.Read(name)

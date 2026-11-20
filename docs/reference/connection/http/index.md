@@ -1,11 +1,11 @@
 ---
-description: Configure HTTPS access to browser terminals and management.
+description: Configure HTTPS access to browser terminals, management and SSH tunnels.
 toc_depth: 5
 ---
 
 # HTTP connection
 
-Provides browser terminals and management over HTTP/TLS and a login page if [OIDC Authorization Code](../../authorization/oidc/authorization-code.md) is used.
+Provides browser terminals, management and SSH tunnels over HTTP/TLS, plus a login page for [OIDC Authorization Code](../../authorization/oidc/authorization-code.md).
 
 This connection type is optional and disabled by default; see [Browser access](../../../guides/browser-access.md) for a setup example.
 
@@ -17,6 +17,15 @@ These properties belong to the root `http` block. `domains` and `tls` are requir
 
 <<property("enabled", "bool", default=False)>>
 Enables HTTPS. There is no unencrypted HTTP fallback.
+
+<<property("webUi", "WebUI", "#webui")>>
+Controls the browser workspace and its API independently of SSH tunnels and the login page.
+
+<<property("sshTunnel", "SSH tunnel", "#ssh-tunnel")>>
+Controls SSH over HTTPS and WSS, without requiring a WebUI login or a direct SSH listener.
+
+<<property("loginFlow", "Login flow", "#login-flow")>>
+Controls the OIDC login page and its required endpoints independently of the workspace.
 
 <<property("addresses", array_ref("Net Address", "../../data-type.md#net-address"), default=[":443"])>>
 Addresses to listen on; at least one is required when enabled.
@@ -37,7 +46,7 @@ Timeout for reading request headers and initial request bodies. Must be greater 
 Idle HTTP keep-alive timeout, not the session lifetime or terminal [keepalive interval](../../flow.md#http-property-keepAlive). Must be greater than zero.
 
 <<property("gracefulShutdownTimeout", "Duration", "../../data-type.md#duration", default="30s")>>
-How long to wait for HTTP requests during shutdown. `0s` closes them immediately.
+How long to wait for HTTP requests during shutdown. `0s` closes them immediately. SSH tunnels use the [SSH shutdown grace](../ssh.md#property-gracefulShutdownTimeout).
 
 <<property("maxHeaderBytes", "uint32", default=1048576)>>
 Maximum request-header size in bytes, from `1` to `16777216` (16 MiB).
@@ -75,6 +84,31 @@ customHtmlHead: '<meta name="application-name" content="Operations">'
 
 <<property("customHtmlBody", "string", default="")>>
 Trusted HTML appended to the document body, not a file path.
+
+## WebUI
+
+These properties belong to `http.webUi`.
+
+<<property("enabled", "bool", default=True, id_prefix="webui-", heading=3)>>
+Enable the browser workspace and its API. Disabling it does not disable SSH tunnels or the OIDC login page.
+
+## SSH tunnel
+
+See [SSH over HTTPS with OpenSSH and curl](../../../guides/ssh-over-https.md) for client setup and connection examples.
+
+These properties belong to `http.sshTunnel`.
+
+<<property("enabled", "bool", default=True, id_prefix="ssh-tunnel-", heading=3)>>
+Enable the SSH tunnel for native clients. Existing SSH authentication, host-key verification, [SSH flow requirements](../../flow.md), limits, auditing, SFTP and forwarding policies apply. Browser-only flows do not grant SSH access.
+
+Transport admission additionally allows at most 1024 simultaneous tunnels, with at most 64 per direct peer IP. Lower SSH limits still apply; forwarded headers do not replace the peer address.
+
+## Login flow
+
+These properties belong to `http.loginFlow`.
+
+<<property("enabled", "bool", default=True, id_prefix="login-flow-", heading=3)>>
+Enable the login page, its resources and required OIDC endpoints, including when `http.webUi.enabled` is `false`. [OIDC Authorization Code](../../authorization/oidc/authorization-code.md) requires this component; configurations that disable it are rejected.
 
 ## TLS
 
@@ -159,14 +193,25 @@ http:
       email: operator@example.org
 ```
 
+To expose only SSH over HTTPS/WSS, keep the HTTPS configuration above and set `ssh.enabled`, `http.webUi.enabled` and `http.loginFlow.enabled` to `false`. Leave `http.sshTunnel.enabled` at its default of `true`.
+
 ## Compatibility
 
 | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
 | - | - | - |
 | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |
 
-Requires JavaScript, WebAssembly and WebCrypto; saved access also requires IndexedDB. Private-key import supports PEM/OpenSSH keys up to 64 KiB, not PPK, encrypted PKCS#8 or hardware keys.
+Browser access requires JavaScript, WebAssembly and WebCrypto; saved access also requires IndexedDB. Private-key import supports PEM/OpenSSH keys up to 64 KiB, not PPK, encrypted PKCS#8 or hardware keys. Native SSH tunnels do not require a browser.
 
 SSH-key browser login also enforces the configured [SSH key restrictions](../ssh.md#keys), including the subject and CA keys of user certificates.
 
 Browser artifact downloads are limited to 64 MiB per artifact; use the [CLI](../../cli/verification.md) for larger files. Browser terminals provide shells; use SSH for SFTP and port forwarding.
+
+### curl transport capabilities
+
+Use a current, security-maintained curl build with HTTPS support; WebSocket streaming also requires WSS support. Hover over or activate each asterisk for the expected version's test coverage.
+
+| Transport | Minimum version |
+| - | - |
+| HTTPS streaming (HTTP/1.1) | <<minimum_version("8.15.0", "curl 8.18.0 on Linux (OpenSSL) and curl 8.22.0 on Windows (Schannel, via WSL interop). macOS has not been tested natively.")>> |
+| WebSocket streaming (WSS) | <<minimum_version("8.16.0", "curl 8.18.0 on Linux (OpenSSL), including real SSH and simultaneous binary transfers. curl 8.22.0 on Windows (Schannel) failed concurrent duplex and is unsuitable for SSH over WSS. macOS has not been tested natively.")>> |
