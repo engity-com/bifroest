@@ -29,6 +29,7 @@ func TestBrowserOidcCodeRedirectWithRealCookies(t *testing.T) {
 	t.Run("WebUI-named", func(t *testing.T) { browserOidcCode(t, false, "named") })
 	t.Run("WebUI-forwarded-ticket", func(t *testing.T) { browserOidcCode(t, false, "forwarded") })
 	t.Run("SSH", func(t *testing.T) { browserOidcCode(t, true, "") })
+	t.Run("SSH-login-only", func(t *testing.T) { browserOidcCode(t, true, "login-only") })
 }
 
 func browserOidcCode(t *testing.T, isSSH bool, mode string) {
@@ -45,6 +46,9 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 		conf.Http.Addresses = bnet.NetAddresses{bnet.MustNewAddress(listener.Addr().String())}
 		conf.Http.CustomJs, conf.Http.CustomCss = []string{customJS}, []string{customCSS}
 		conf.Http.CustomHtmlBody = `<span hidden id="custom-login-body">Operator content</span>`
+		if mode == "login-only" {
+			conf.Http.WebUi.Enabled = new(false)
+		}
 		if mode == "named" {
 			conf.Flows[0].Http.RequestUser = commonBool(true)
 			conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
@@ -82,7 +86,7 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 	defer cancel()
 	code := svc.Configuration.Flows[0].Authorization.V.(*configuration.AuthorizationOidcAuthorizationCode)
 	arguments := []string{filepath.Join(root, "web", "test", "https-oidc.ts"), code.Origin()}
-	if mode != "" {
+	if mode != "" && mode != "login-only" {
 		arguments = append(arguments, mode)
 	}
 	if isSSH {

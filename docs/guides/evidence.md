@@ -179,4 +179,8 @@ The decryption key stays in this management tab and is discarded when it closes.
 
 If the verification workstation is disconnected from the server, copy a complete audit journal or a sealed Recording and use local file selectors with the same independent producer ID and recipient key. Follow [the encrypted audit-copy example](../reference/auditlog/index.md#encrypted-audit-events) or the file syntax on [`recording verify`](../reference/cli/recording/verify.md).
 
-See [Trust and verification](../reference/cli/verification.md) for key-file permissions, evidence completeness, verification scopes and protected destinations.
+## Next steps
+
+* [Trust and verification](../reference/cli/verification.md) covers key-file permissions, evidence completeness, verification scopes and protected destinations.
+* [Remote targets reference](../reference/auditlog/remote-targets/index.md) explains off-host delivery of sealed originals.
+* The [`audit`](../reference/cli/audit/index.md) and [`recording`](../reference/cli/recording/index.md) command references describe all inspection, verification and export options.

@@ -791,6 +791,28 @@ def define_env(env: MacrosPlugin):
             return (f"[{compatibility(generic, "generic", os)}]({dst.as_posix()}#{os.name}-generic)/"
                     f"[{compatibility(extended, "extended", os)}]({dst.as_posix()}#{os.name}-extended)")
 
+    minimum_version_sequence = 0
+
+    @env.macro
+    def minimum_version(version: str, tested_with: str) -> str:
+        nonlocal minimum_version_sequence
+        minimum_version_sequence += 1
+        identifier = f"minimum-version-note-{minimum_version_sequence}"
+        note = (
+            f"Expected minimum version {version}, not a verified lower bound. "
+            f"Tested with {tested_with}"
+        )
+        escaped_note = html.escape(note, quote=True)
+        label = html.escape(f"Expected minimum version {version}: show test coverage", quote=True)
+        return (
+            f'<code>{html.escape(version)}</code> '
+            f'<button type="button" class="minimum-version-note" data-hint-type="minimum-version" '
+            f'title="{escaped_note}" aria-label="{label}" aria-describedby="{identifier}" '
+            f'popovertarget="{identifier}">:material-asterisk:</button>'
+            f'<span id="{identifier}" class="minimum-version-popover" role="note" '
+            f'popover="auto">{escaped_note}</span>'
+        )
+
     def cli_reference(destination: str) -> str:
         filename, separator, fragment = destination.partition('#')
         relative = PurePath(path.relpath(filename, path.dirname(env.page.file.src_path))).as_posix()

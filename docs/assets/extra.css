@@ -64,6 +64,39 @@ p.bifroest-logo .switchable rect {
     margin-right: -0.3em;
 }
 
+.md-typeset .minimum-version-note {
+    background: none;
+    border: none;
+    color: var(--md-typeset-a-color);
+    cursor: help;
+    font-size: .65em;
+    min-height: 1.2rem;
+    min-width: 1.2rem;
+    padding: .15em;
+    vertical-align: middle;
+}
+
+.md-typeset .minimum-version-note:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+}
+
+.md-typeset .minimum-version-popover {
+    background: var(--md-default-bg-color);
+    border: 1px solid var(--md-default-fg-color--lightest);
+    border-radius: .2rem;
+    box-shadow: var(--md-shadow-z2);
+    color: var(--md-default-fg-color);
+    display: none;
+    font-size: .7rem;
+    max-width: min(24rem, calc(100vw - 2rem));
+    padding: .75rem 1rem;
+}
+
+.md-typeset .minimum-version-popover:popover-open {
+    display: block;
+}
+
 [data-supported=true] {
     color: #309c30;
 }

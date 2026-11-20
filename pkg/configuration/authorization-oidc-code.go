@@ -137,6 +137,9 @@ func (this *Configuration) validateOidcDomains() error {
 		if !this.Http.IsEnabled() {
 			return fmt.Errorf("[flows][%s] OIDC Authorization Code requires enabled HTTPS", flow.Name)
 		}
+		if !this.Http.LoginFlow.IsEnabled() {
+			return fmt.Errorf("[flows][%s] OIDC Authorization Code requires http.loginFlow.enabled", flow.Name)
+		}
 		domains, err := this.Http.Domains.Canonical()
 		if err != nil || len(domains) == 0 {
 			return fmt.Errorf("[flows][%s] OIDC Authorization Code requires configured HTTP domains", flow.Name)

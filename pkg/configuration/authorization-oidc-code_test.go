@@ -78,6 +78,8 @@ func TestOidcCodeRequiresConfiguredHTTPS(t *testing.T) {
 	withHTTP := "http:\n  enabled: true\n  domains: [app.example.org]\n  tls: {dummy: true}\n" + base
 	require.NoError(t, conf.LoadFromYaml(strings.NewReader(withHTTP), ""))
 	require.Equal(t, "https://app.example.org/login/callback", conf.Flows[0].Authorization.V.(*AuthorizationOidcAuthorizationCode).RedirectURL())
+	require.NoError(t, conf.LoadFromYaml(strings.NewReader(strings.Replace(withHTTP, "http:\n", "http:\n  webUi: {enabled: false}\n", 1)), ""))
+	require.ErrorContains(t, conf.LoadFromYaml(strings.NewReader(strings.Replace(withHTTP, "http:\n", "http:\n  loginFlow: {enabled: false}\n", 1)), ""), "http.loginFlow.enabled")
 	require.Error(t, conf.LoadFromYaml(strings.NewReader(strings.ReplaceAll(withHTTP, "domains: [app.example.org]", "domains: [other.example.org]")), ""))
 }
 

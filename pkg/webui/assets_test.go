@@ -14,6 +14,31 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
+func TestLoginOnlyResourcesFollowBuildDependenciesNotWorkspaceAssets(t *testing.T) {
+	assets := &Assets{embedded: fstest.MapFS{"browser-assets.json": &fstest.MapFile{Data: []byte(`{
+		"login.html": {"file":"login.js", "imports":["shared"], "assets":["favicon.svg"]},
+		"shared": {"file":"shared.js", "css":["shared.css"], "imports":["login.html"]},
+		"index.html": {"file":"workspace.js"}
+	}`)}}}
+	require.NoError(t, assets.prepareLoginResources())
+	for _, name := range []string{"login.js", "shared.js", "shared.css", "favicon.svg"} {
+		require.True(t, assets.LoginResourceAllowed(Prefix+name))
+	}
+	for _, name := range []string{"workspace.js", "index.html", "login.html", "browser-assets.json", "browser-key-worker.js", "browser-transfer.wasm"} {
+		require.False(t, assets.LoginResourceAllowed(Prefix+name))
+	}
+}
+
+func TestLoginOnlyAssetsDoNotInspectDisabledWorkspaceDocument(t *testing.T) {
+	directory := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(directory, "index.html"), 0700))
+	assets, err := New(&configuration.Http{WebUi: configuration.HttpComponent{Enabled: new(false)}, AssetsDirectory: directory})
+	require.NoError(t, err)
+	require.NoError(t, assets.Close())
+	_, err = New(&configuration.Http{AssetsDirectory: directory})
+	require.Error(t, err, "an unsafe enabled workspace document must still be rejected")
+}
+
 func assetFixture(t *testing.T) (*Assets, string) {
 	t.Helper()
 	directory := t.TempDir()

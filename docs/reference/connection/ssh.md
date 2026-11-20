@@ -7,6 +7,9 @@ Defines the behavior of the SSH protocol for a user who is connecting to Bifrös
 
 ## Configuration
 
+<<property("enabled", "bool", default=True)>>
+Enable direct TCP listeners. Set to `false` to use only [SSH over HTTPS/WSS](http/index.md#ssh-tunnel). SSH authentication and session settings below still apply to tunnels.
+
 <<property("addresses", array_ref("Net Address", "../data-type.md#net-address"), default=[":22"])>>
 To which address the service will bind and listen to.
 
@@ -64,7 +67,7 @@ The maximum number of active reverse-forward listeners across all connections ha
 <<property("unauthenticatedAudit", "Unauthenticated audit", "#unauthenticated-audit")>>
 Controls how detailed audit records produced before a client has proven authentication are rate-limited. See [below](#unauthenticated-audit).
 
-Listener-scoped limits are tracked independently for every entry in [`addresses`](#property-addresses). For example, two configured listen addresses can each serve up to `maxChannels` active channels and `maxReverseForwards` reverse-forward listeners. `maxConnections` is different: Bifröst enforces it across the complete service and all configured addresses.
+Listener-scoped limits are tracked independently for every entry in [`addresses`](#property-addresses). All HTTPS/WSS tunnels share one additional limit scope. For example, two configured listen addresses can each serve up to `maxChannels` active channels and `maxReverseForwards` reverse-forward listeners. `maxConnections` is different: Bifröst enforces it across the complete service, including tunnels.
 
 With `ssh -R [bind_address:]port:destination_host:destination_port`, the reverse listener binds in the selected environment: on the Bifröst host for [Local](../environment/local.md), in the container network namespace for [Docker](../environment/docker.md), in the Pod network namespace for [Kubernetes](../environment/kubernetes.md), or on the target `sshd` for the [SSH environment](../environment/ssh.md). The forwarded destination is reached from the SSH client, not from the listener environment. Omitting the destination (`ssh -R [bind_address:]port`) lets a supporting SSH client serve SOCKS5 on that reverse listener. For Local, Docker and Kubernetes, an empty bind host uses loopback in that environment; an explicit `*` requests a wildcard bind, whose network reachability depends on the authorized-key and environment policies and the network configuration. For the SSH environment, the target server's `GatewayPorts` setting governs the actual bind address. A permitted request does not guarantee a successful bind or network access to the listener.
 
@@ -74,6 +77,8 @@ With `ssh -R [bind_address:]port:destination_host:destination_port`, the reverse
 <<property("proxyProtocol", "bool", None, default=false)>>
 If enabled, Bifröst supports incoming connections using [PROXY protocol versions 1 and 2](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address).
 Only enable this when the SSH listener is exclusively reachable through trusted proxies. The current boolean configuration trusts the source addresses supplied by every peer that can reach the listener.
+
+This setting does not apply to HTTPS/WSS tunnels; their peer address is the direct HTTPS connection's address.
 
 OpenSSH Unix-socket forwarding (`direct-streamlocal@openssh.com` and `streamlocal-forward@openssh.com`) is not enabled. Bifröst currently has no cross-environment policy for socket paths, ownership, permissions, and cleanup.
 

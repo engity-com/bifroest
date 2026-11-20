@@ -1,19 +1,21 @@
 ---
 toc_depth: 2
-description: "Use Bifröst for time-bound SSH off-boarding, OIDC login, SSH gateways, isolated sessions and browser access."
+description: "Use Bifröst for time-bound off-boarding, OIDC login, remembered access, SSH over HTTPS, private targets, isolated sessions and browser access."
 ---
 # Use cases
 
-Bifröst can combine authorization with different session environments over SSH or optional HTTPS browser access. The following examples illustrate configurations for specific access problems; their security properties depend on the identity provider, session settings, target permissions and deployment.
+Bifröst can combine authorization with different session environments through direct SSH, SSH over HTTPS/WSS or browser access. Optional RememberMe reduces repeated login prompts. The following examples address specific access problems; their security properties depend on the identity provider, session settings, target permissions and deployment.
 
 1. [Meet a defined off-boarding deadline](#offboard)
 2. [On-board users with an identity provider](#onboard)
-3. [Bastion Host / Jump Host](#bastion)
-4. [Access Kubernetes clusters without publicly exposing their APIs](#kubernetes-firewall)
-5. [Isolated Demo/Training environments](#demos)
-6. [Different rules for different user groups per host](#multi-environment)
-7. [Migrating from sshd](#drop-in-replacement)
-8. [Open a shell without installing an SSH client](#browser-access)
+3. [Reconnect without repeating the full login](#remembered-access)
+4. [Bastion Host / Jump Host](#bastion)
+5. [Access Kubernetes clusters without publicly exposing their APIs](#kubernetes-firewall)
+6. [Isolated Demo/Training environments](#demos)
+7. [Different rules for different user groups per host](#multi-environment)
+8. [Migrating from sshd](#drop-in-replacement)
+9. [Open a shell without installing an SSH client](#browser-access)
+10. [Use SSH where only HTTPS is reachable](#ssh-over-https)
 
 !!! tip
 
@@ -69,6 +71,20 @@ Check the permissions of the selected environment and any downstream services se
 
 Resource creation depends on the [environment](reference/environment/index.md) and its configuration; it is not a universal default.
 
+## Reconnect without repeating the full login {: #remembered-access}
+
+### Problem
+
+Users open several SSH connections or return to a browser workspace during the workday. Repeating password/MFA or IdP authentication for every new connection interrupts routine work.
+
+### Solution
+
+Enable [RememberMe](reference/data-type.md#rememberme) on a supported authorization. After a successful first login, users can remember their SSH key or choose **Remember this browser**. Later connections can use that saved access without repeating the original authentication.
+
+Current access checks, revocation and [session limits](reference/session/fs.md) still apply. A compatible session and its workspace may be reused, but a new connection does not restore the previous shell. Keep the [off-boarding controls](#offboard) appropriate to your deployment.
+
+RememberMe skips repeated password/MFA authentication. Leave it disabled when your policy requires those checks on every connection.
+
 ## Bastion Host / Jump Host {: #bastion}
 
 ### Problem
@@ -90,6 +106,8 @@ The following cases are usually used:
 2. Configure an appropriate [authorization](reference/authorization/index.md), for example [OpenID Connect](reference/authorization/oidc/index.md), and review session reuse and revocation behavior.
 3. For an existing private OpenSSH server, follow the [SSH gateway guide](guides/ssh-gateway.md). For a separate workspace, choose the [Docker environment](reference/environment/docker.md); its isolation depends on privileges, mounts and runtime access.
 
+The incoming client connection can also use [SSH over HTTPS](#ssh-over-https); Bifröst still authenticates separately to a private SSH target.
+
 ## Access Kubernetes clusters without publicly exposing their APIs {: #kubernetes-firewall}
 
 ### Problem
@@ -102,7 +120,7 @@ Usually, you either make the Kubernetes cluster's API directly accessible over t
 
 ### Solution
 
-1. Have a Bifröst instance inside your protected network, which port 22 is exposed to the internet.
+1. Place Bifröst inside the protected network and expose its client endpoint through [direct SSH](reference/connection/ssh.md) or [SSH over HTTPS](#ssh-over-https), keeping the Kubernetes API private.
 2. Protect the access with every mechanism you like [OpenID Connect](reference/authorization/oidc/index.md).
 3. Pick an OCI/Docker image which holds [kubectl](https://kubernetes.io/docs/reference/kubectl/).
 4. Configure the [kubernetes environment](reference/environment/kubernetes.md) with a [kubeconfig](reference/environment/kubernetes.md#property-config) which is able to access the Kubernetes cluster inside your network.
@@ -145,7 +163,7 @@ Use Bifröst with multiple configured [flows](reference/flow.md). Each flow can 
 
 ## Migrating from sshd {: #drop-in-replacement}
 
-For local-account SSH access, use the << asset_link("contrib/configurations/on-host.yaml", "host configuration") >> and [installation guide](setup/on-host.md). Bifröst uses port 22, so stop the previous SSH server before starting it.
+For local-account SSH access, use the << asset_link("contrib/configurations/on-host.yaml", "host configuration") >> and [installation guide](setup/on-host.md). Bifröst uses port 22 by default; stop the previous SSH server only if Bifröst will bind the same address and port. To keep that server running, choose a different listen address or port, or use [SSH over HTTPS without a direct SSH listener](#ssh-over-https).
 
 Test your particular `sshd` configuration: Bifröst does not implement every OpenSSH extension or [`authorized_keys` option](reference/data-type.md#authorized-keys), such as `no-touch-required`.
 
@@ -159,7 +177,19 @@ You need shell access from a machine with a browser but no SSH client.
 
 Follow the [browser access guide](guides/browser-access.md) to enable HTTPS, publish a terminal flow and sign in with an existing local account. Browser access uses the configured authorization and session environment; it does not require an SSH tunnel.
 
-Authenticated SSH and browser connections can reuse a compatible session and its workspace, but they do not share a running terminal. Reloading requires a new sign-in or an explicit saved-access action and opens a new shell. Browser logout does not dispose of the session or its workspace.
+Authenticated SSH and browser connections can reuse a compatible session and its workspace, but they do not share a running terminal. Reloading requires a new sign-in or an explicit [saved-access action](#remembered-access) and opens a new shell. Browser logout does not dispose of the session or its workspace.
+
+## Use SSH where only HTTPS is reachable {: #ssh-over-https}
+
+### Problem
+
+You need SSH commands, SFTP or port forwarding from a workstation with an SSH client, but direct SSH is not reachable. The network permits access to Bifröst over HTTPS.
+
+### Solution
+
+Follow [SSH over HTTPS with OpenSSH and curl](guides/ssh-over-https.md) to configure the tunnel and your SSH client. Connect with the same SSH credentials and verify Bifröst's SSH host key as usual. SFTP and forwarding remain subject to the selected flow's policies.
+
+No Bifröst-specific tunnel client, direct SSH listener or WebUI login is required. HTTPS/1.1 and WSS are alternatives; choose a suitable curl build and test the transport your network permits.
 
 ## More topics
 * [Configuration](reference/configuration.md)

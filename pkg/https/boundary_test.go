@@ -3,14 +3,53 @@ package https
 import (
 	"crypto/tls"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
+
+func TestSshTunnelBoundaryExceptionIsNarrow(t *testing.T) {
+	for _, test := range []struct {
+		name, path, origin, fetch, host string
+		enabled                         bool
+		status                          int
+	}{
+		{"native tunnel", SshTunnelPath, "", "", "app.example.org", true, 204},
+		{"same origin", SshTunnelPath, "https://app.example.org", "same-origin", "app.example.org", true, 204},
+		{"cross origin", SshTunnelPath, "https://evil.example.org", "", "app.example.org", true, 403},
+		{"cross site", SshTunnelPath, "", "cross-site", "app.example.org", true, 403},
+		{"wrong authority", SshTunnelPath, "", "", "evil.example.org", true, 421},
+		{"disabled tunnel", SshTunnelPath, "", "", "app.example.org", false, 403},
+		{"other API", "/api/v1/login/password", "", "", "app.example.org", true, 403},
+		{"trailing slash", SshTunnelPath + "/", "", "", "app.example.org", true, 403},
+		{"encoded alias", "/api/v1/%73sh", "", "", "app.example.org", true, 400},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler, err := boundary(configuration.HttpDomains{"app.example.org"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, err := io.Copy(io.Discard, r.Body)
+				require.NoError(t, err)
+				w.WriteHeader(204)
+			}), test.enabled)
+			require.NoError(t, err)
+			r := httptest.NewRequest("POST", test.path, strings.NewReader(strings.Repeat("x", 2<<20)))
+			r.Host = test.host
+			r.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, ServerName: "app.example.org"}
+			if test.origin != "" {
+				r.Header.Set("Origin", test.origin)
+			}
+			r.Header.Set("Sec-Fetch-Site", test.fetch)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			require.Equal(t, test.status, w.Code)
+		})
+	}
+}
 
 func TestBrowserKeyWorkerCspDoesNotEnableDocumentEval(t *testing.T) {
 	policy, err := DocumentPolicy(base64.StdEncoding.EncodeToString(make([]byte, 32)))

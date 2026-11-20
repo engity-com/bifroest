@@ -21,6 +21,12 @@ The authorization suite does not require a container runtime. For suites that
 do, select an owned working runtime explicitly, for example
 `BIFROEST_E2E_RUNTIME=podman`; do not use an unrelated cluster or daemon.
 
+For installed curl transport probes, run `mise run test:e2e:curl`. See [tested and probably working curl versions](../curl/README.md) for the recorded results, expected baselines and required-profile settings.
+
+Run `mise run test:e2e:tunnel` for the built server with real OpenSSH, curl and SFTP against an isolated container backend. It requires an owned Docker/Podman runtime and tests HTTPS/1.1, HTTP/2 and WSS without a direct SSH listener or WebUI. Under WSL it also requires and tests native Windows OpenSSH, curl and SFTP over HTTPS/1.1. TLS and SSH host-key checks remain enabled. macOS must run this suite natively before claiming native macOS coverage.
+
+Windows curl 8.22.0/Schannel fails concurrent WSS duplex even in the independent curl probe, causing SSH MAC failures. The Windows-WSS profile is explicitly skipped by default, not claimed as passing. With another/fixed Windows curl build, set `BIFROEST_TEST_TUNNEL_WINDOWS_WSS=1` to make it mandatory. The standalone probe's `BIFROEST_TEST_CURL_REQUIRE=wss-empty-close` likewise requires concurrent WSS, not merely alternating transfers.
+
 ## Owned workload shell and cursor-report regression
 
 The pinned Alpine workload contains BusyBox 1.37.0. Its original `read_key()`
