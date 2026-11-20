@@ -28,12 +28,13 @@ import (
 )
 
 type sshTunnelFixture struct {
-	svc       *service
-	transport *http.Transport
-	address   string
-	cancel    context.CancelFunc
-	await     func() error
-	shutdown  *listenerShutdown
+	svc           *service
+	transport     *http.Transport
+	address       string
+	directAddress string
+	cancel        context.CancelFunc
+	await         func() error
+	shutdown      *listenerShutdown
 }
 
 func newSshTunnelFixture(t *testing.T, direct, web, tunnel, login bool, configure func(*configuration.Configuration), environments ...*authorizedKeysTestEnvironment) *sshTunnelFixture {
@@ -71,7 +72,9 @@ func newSshTunnelFixture(t *testing.T, direct, web, tunnel, login bool, configur
 	await := awaitHTTPListenerTestRun(t, done)
 	t.Cleanup(func() { cancel(); _ = await() })
 	listener := <-bound
+	var directAddress string
 	if direct {
+		directAddress = listener.Addr().String()
 		listener = <-bound
 	}
 	pool := x509.NewCertPool()
@@ -84,7 +87,7 @@ func newSshTunnelFixture(t *testing.T, direct, web, tunnel, login bool, configur
 	if tunnel {
 		require.Eventually(t, svc.sshTunnel.ready.Load, time.Second, time.Millisecond)
 	}
-	return &sshTunnelFixture{svc, transport, listener.Addr().String(), cancel, await, &shutdown}
+	return &sshTunnelFixture{svc: svc, transport: transport, address: listener.Addr().String(), directAddress: directAddress, cancel: cancel, await: await, shutdown: &shutdown}
 }
 
 func (f *sshTunnelFixture) request(t *testing.T, method, path string, body io.Reader) *http.Response {
@@ -152,8 +155,15 @@ func (f *sshTunnelFixture) transportConn(t *testing.T, mode string) net.Conn {
 	t.Helper()
 	var conn net.Conn
 	switch mode {
+	case "direct":
+		var err error
+		conn, err = net.DialTimeout("tcp", f.directAddress, time.Second)
+		require.NoError(t, err)
+		require.NoError(t, conn.SetDeadline(time.Now().Add(10*time.Second)))
 	case "wss":
-		dialer := websocket.Dialer{TLSClientConfig: f.transport.TLSClientConfig, NetDialContext: f.transport.DialContext}
+		tlsConfig := f.transport.TLSClientConfig.Clone()
+		tlsConfig.NextProtos = []string{"http/1.1"}
+		dialer := websocket.Dialer{TLSClientConfig: tlsConfig, NetDialContext: f.transport.DialContext}
 		ws, _, err := dialer.DialContext(t.Context(), "wss://app.example.org"+https.SshTunnelPath, nil)
 		require.NoError(t, err)
 		reader, writer := io.Pipe()
@@ -175,6 +185,7 @@ func (f *sshTunnelFixture) transportConn(t *testing.T, mode string) net.Conn {
 		require.NoError(t, err)
 		tlsConfig := f.transport.TLSClientConfig.Clone()
 		tlsConfig.ServerName = "app.example.org"
+		tlsConfig.NextProtos = []string{"http/1.1"}
 		secure := tls.Client(raw, tlsConfig)
 		require.NoError(t, secure.SetDeadline(time.Now().Add(10*time.Second)))
 		require.NoError(t, secure.Handshake())
@@ -254,6 +265,45 @@ func TestSshTunnelStartupsAreSharedAcrossTransports(t *testing.T) {
 	require.Error(t, err, "WSS must share the HTTP streaming handshake budget")
 	_ = first.Close()
 	_ = second.Close()
+}
+
+func TestSshTunnelGlobalConnectionsAreSharedWithDirectSsh(t *testing.T) {
+	for _, mode := range []string{"https1", "https2", "wss"} {
+		for _, directFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/direct-first=%t", mode, directFirst), func(t *testing.T) {
+				f := newSshTunnelFixture(t, true, false, true, false, func(conf *configuration.Configuration) {
+					conf.Ssh.MaxConnections = 1
+				})
+				firstMode, secondMode := mode, "direct"
+				if directFirst {
+					firstMode, secondMode = secondMode, firstMode
+				}
+				first := f.dial(t, firstMode)
+				conn := f.transportConn(t, secondMode)
+				_, _, _, err := gossh.NewClientConn(conn, "app.example.org", f.clientConfig())
+				require.Error(t, err, "direct SSH and HTTPS must not provide separate global connection budgets")
+				_ = conn.Close()
+				require.NoError(t, first.Close())
+				require.Eventually(t, func() bool { return f.svc.activeConnections.Load() == 0 }, time.Second, time.Millisecond)
+				require.NoError(t, f.dial(t, secondMode).Close(), "closing the first connection must release its shared slot")
+			})
+		}
+	}
+}
+
+func TestSshTunnelCannotAuthenticateThroughBrowserOnlyFlow(t *testing.T) {
+	f := newSshTunnelFixture(t, false, true, true, false, func(conf *configuration.Configuration) {
+		conf.Flows[0].Requirement.Ssh.ExcludedRequestingName = common.MustNewRegexp(".*")
+	})
+	require.Equal(t, http.StatusOK, f.request(t, "POST", "/api/v1/discovery", strings.NewReader(`{"slug":"work"}`)).StatusCode)
+	for _, mode := range []string{"https1", "https2", "wss"} {
+		t.Run(mode, func(t *testing.T) {
+			conn := f.transportConn(t, mode)
+			_, _, _, err := gossh.NewClientConn(conn, "app.example.org", f.clientConfig())
+			require.Error(t, err, "a published browser flow must not authorize SSH through the tunnel")
+			_ = conn.Close()
+		})
+	}
 }
 
 func TestSshTunnelShutdownPreservesFinalOutputAndExitStatus(t *testing.T) {

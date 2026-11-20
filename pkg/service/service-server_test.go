@@ -85,6 +85,9 @@ func TestPrepareServerUsesIntegratedProxyProtocol(t *testing.T) {
 
 	require.NoError(t, svc.Service.prepareServer(context.Background(), svc, nil))
 	require.NotNil(t, svc.server.ProxyProtocol)
+	require.Nil(t, svc.tunnelServer.ProxyProtocol, "HTTPS tunnels must never accept client-supplied PROXY peer addresses")
+	require.True(t, svc.tunnelServer.RequireClientAuth)
+	require.True(t, svc.tunnelServer.RequireHostSigners)
 }
 
 func TestSshMaxAuthTriesMapsDisabledLimit(t *testing.T) {

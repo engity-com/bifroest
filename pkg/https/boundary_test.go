@@ -51,6 +51,81 @@ func TestSshTunnelBoundaryExceptionIsNarrow(t *testing.T) {
 	}
 }
 
+func TestSshTunnelBoundaryRetainsTlsAndOriginChecks(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodGet} {
+		for _, test := range []struct {
+			name   string
+			change func(*http.Request)
+			status int
+		}{
+			{"forwarded TLS", func(r *http.Request) {
+				r.TLS = nil
+				r.Header.Set("Forwarded", `proto=https;host=app.example.org;for=127.0.0.1`)
+				r.Header.Set("X-Forwarded-Proto", "https")
+			}, http.StatusBadRequest},
+			{"forwarded host", func(r *http.Request) {
+				r.Host = "evil.example.org"
+				r.Header.Set("X-Forwarded-Host", "app.example.org")
+			}, http.StatusMisdirectedRequest},
+			{"wrong SNI", func(r *http.Request) { r.TLS.ServerName = "evil.example.org" }, http.StatusMisdirectedRequest},
+			{"null origin", func(r *http.Request) { r.Header.Set("Origin", "null") }, http.StatusForbidden},
+			{"multiple origins", func(r *http.Request) {
+				r.Header.Add("Origin", "https://app.example.org")
+				r.Header.Add("Origin", "https://app.example.org")
+			}, http.StatusForbidden},
+			{"cross-site with matching origin", func(r *http.Request) {
+				r.Header.Set("Origin", "https://app.example.org")
+				r.Header.Set("Sec-Fetch-Site", "cross-site")
+			}, http.StatusForbidden},
+		} {
+			t.Run(method+"/"+test.name, func(t *testing.T) {
+				handler, err := boundary(configuration.HttpDomains{"app.example.org"}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+					t.Error("rejected request reached the SSH tunnel")
+				}), true)
+				require.NoError(t, err)
+				r := httptest.NewRequest(method, SshTunnelPath, nil)
+				r.Host = "app.example.org"
+				r.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, ServerName: r.Host}
+				if method == http.MethodGet {
+					r.Header.Set("Connection", "Upgrade")
+					r.Header.Set("Upgrade", "websocket")
+				}
+				test.change(r)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				require.Equal(t, test.status, w.Code)
+			})
+		}
+	}
+}
+
+func TestSshTunnelBoundaryRetainsOtherApiBodyLimits(t *testing.T) {
+	for _, path := range []string{SshTunnelPath, SshTunnelPath + "/", "/api/v1/login/password"} {
+		t.Run(path, func(t *testing.T) {
+			handler, err := boundary(configuration.HttpDomains{"app.example.org"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				n, err := io.Copy(io.Discard, r.Body)
+				if path == SshTunnelPath {
+					require.NoError(t, err)
+					require.EqualValues(t, 2<<20, n)
+				} else {
+					var limit *http.MaxBytesError
+					require.ErrorAs(t, err, &limit)
+					require.EqualValues(t, 1<<20, n)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}), true)
+			require.NoError(t, err)
+			r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(strings.Repeat("x", 2<<20)))
+			r.Host = "app.example.org"
+			r.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, ServerName: r.Host}
+			r.Header.Set("Origin", "https://app.example.org")
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			require.Equal(t, http.StatusNoContent, w.Code)
+		})
+	}
+}
+
 func TestBrowserKeyWorkerCspDoesNotEnableDocumentEval(t *testing.T) {
 	policy, err := DocumentPolicy(base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	require.NoError(t, err)
