@@ -21,7 +21,7 @@ require (
 	github.com/docker/go-connections v0.8.2
 	github.com/docker/go-units v0.5.0
 	github.com/ebitengine/purego v0.11.3
-	github.com/echocat/cli4g v0.3.0
+	github.com/echocat/cli4g v0.3.1
 	github.com/echocat/slf4g v1.9.0
 	github.com/echocat/slf4g/native v1.9.0
 	github.com/engity-com/ssh-server-go v0.4.1
@@ -150,7 +150,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/arch v0.31.0 // indirect
 	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
