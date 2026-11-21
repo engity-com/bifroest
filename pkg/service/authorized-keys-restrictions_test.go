@@ -735,7 +735,7 @@ flows:
 	}
 
 	definition := &Service{Configuration: conf, Version: serviceTestVersion{}}
-	svc, err := definition.prepare()
+	svc, err := prepareMonitoringTestService(t, definition)
 	require.NoError(t, err)
 	if testEnvironment != nil {
 		require.NoError(t, svc.environments.Close())

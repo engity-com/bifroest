@@ -81,7 +81,7 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
 	// Every task has exactly one buffered result, including aborted preparation.
-	results := make(chan inputResult, len(inputs)+2)
+	results := make(chan inputResult, len(inputs)+3)
 	running := 0
 	start := func(input boundInput, operation string, serve func() error) {
 		running++
@@ -105,6 +105,9 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 		if input.transport == "HTTPS" {
 			start(input, "listener", func() error { return this.https.Serve(input.listener) })
 		}
+	}
+	if this.monitoring != nil {
+		start(boundInput{}, "journal space observation", func() error { return this.monitoring.runJournalObserver(ctx, this) })
 	}
 	prepared := this.https == nil
 	if !prepared {
@@ -143,11 +146,17 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 		if this.https != nil {
 			start(boundInput{}, "HTTPS renewal", func() error {
 				return this.https.RunRenewal(ctx, func(err error) {
+					if this.monitoring != nil {
+						this.monitoring.http.renewalErrors.Inc()
+					}
 					this.logger().WithError(err).Warn("HTTPS certificate renewal failed; existing valid material retained")
 				})
 			})
 		}
 		this.logger().WithAll(sys.VersionToMap(this.Version)).Info("started")
+		if this.monitoring != nil {
+			this.monitoring.setReady(true)
+		}
 		select {
 		case <-ctx.Done():
 			shutdown.cause = context.Cause(ctx)
@@ -166,6 +175,9 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 		shutdown.cause = context.Cause(ctx)
 	}
 	shutdown.startedAt = time.Now()
+	if this.monitoring != nil {
+		this.monitoring.setReady(false)
+	}
 	this.connectionLifecycle.stop()
 	if this.web != nil {
 		this.web.stop()

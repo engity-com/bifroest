@@ -15,6 +15,9 @@ import (
 )
 
 func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key essh.PublicKey) (bool, error) {
+	if conn := this.connection(ctx); conn != nil {
+		conn.authenticationAttempted.Store(true)
+	}
 	return this.authorizePublicKey(ctx, key, false)
 }
 
@@ -249,6 +252,7 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 }
 
 func (this *service) observeFlowAuthorization(ctx context.Context, observation authorization.FlowAuthorizationObservation) error {
+	this.monitoring.observeFlow(observation)
 	outcome := audit.EventOutcomeFailure
 	if observation.Outcome == authorization.FlowAuthorizationOutcomeAccepted {
 		outcome = audit.EventOutcomeSuccess
@@ -289,7 +293,13 @@ func (this *service) recordAuthenticationCompleted(ctx essh.Context, auth author
 func (this *service) recordAuthenticationCompletedFor(ctx context.Context, conn bconn.Connection, auth authorization.Authorization, method audit.AuthenticationMethod, outcome audit.EventOutcome, reason audit.EventReason) error {
 	event := authorizationAuditEventFor(conn, auth, audit.EventNameAuthenticationCompleted, audit.EventDomainAuthentication)
 	event.Outcome, event.AuthenticationMethod, event.Reason = outcome, method, reason
-	return this.recordFlowAudit(ctx, auth.Flow(), event)
+	err := this.recordFlowAudit(ctx, auth.Flow(), event)
+	transport := bconn.TransportSsh
+	if provider, ok := conn.(bconn.SelectionProvider); ok {
+		transport = provider.Selection().Transport
+	}
+	this.monitoring.observeCompletion(auth.Flow(), method, outcome, err, transport)
+	return err
 }
 
 func (this *service) resolveAuthorizationAndSession(ctx essh.Context) (authorization.Authorization, session.Session, session.State, error) {

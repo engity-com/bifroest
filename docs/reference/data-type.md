@@ -121,6 +121,12 @@ The identifier of a local group: a `uint32` on Linux, or a textual local SAM gro
 ## Host
 Represents a host(-name), which can be either an [IPv4](https://en.wikipedia.org/wiki/IPv4), [IPv6](https://en.wikipedia.org/wiki/IPv6) or [DNS name](https://en.wikipedia.org/wiki/Domain_Name_System).
 
+## IP Address or Network {: #ip-address-or-network }
+
+A numeric IPv4 or IPv6 address, or a network in [CIDR notation](https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing). DNS names, ports, wildcards and IPv6 zone identifiers are not supported.
+
+Examples: `127.0.0.1`, `::1`, `192.0.2.0/24`, `2001:db8::/32`. IPv6 addresses are written without brackets.
+
 ## Kubeconfig
 Configuration file in YAML format that defines how to access a Kubernetes cluster. See [official Kubernetes documentation](https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/) for more details.
 

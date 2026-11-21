@@ -74,12 +74,13 @@ func webPeer(r *http.Request) (netip.Addr, error) {
 // No essh.Context, network socket or persistent authentication state is hidden
 // in this logical login request. Forwarded headers cannot supply peer metadata.
 type webLoginConnection struct {
-	id     bconn.Id
-	ctx    context.Context
-	cancel context.CancelFunc
-	scope  webScope
-	remote webRemote
-	closed atomic.Bool
+	monitoringAttempt *monitoringLoginAttempt
+	id                bconn.Id
+	ctx               context.Context
+	cancel            context.CancelFunc
+	scope             webScope
+	remote            webRemote
+	closed            atomic.Bool
 }
 
 func (this *webLoginConnection) Id() bconn.Id               { return this.id }

@@ -80,7 +80,7 @@ func httpListenerTestCertificate(t *testing.T, conf *configuration.Configuration
 
 func prepareHTTPListenerTestService(t *testing.T, conf configuration.Configuration) *service {
 	t.Helper()
-	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	svc, err := prepareMonitoringTestService(t, &Service{Configuration: conf, Version: serviceTestVersion{}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	return svc

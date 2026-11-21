@@ -228,6 +228,7 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 		Recording:  managementRecordingOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
 		Recordings: managementRecordingBrowser{service: this},
 		Keys:       managementKeyOperations{service: this},
+		Metrics:    this.monitoring,
 		ProducerID: func(name configuration.AuditlogName) (audit.ProducerId, error) {
 			identity := this.auditIdentities[name]
 			if identity == nil {

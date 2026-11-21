@@ -61,6 +61,7 @@ func (this *service) execute(request *executionRequest) (exitCode int, rErr erro
 		}
 		defer release()
 	}
+	defer this.monitoring.taskStarted(auth.Flow())()
 	ctx := context.WithValue(request.base.Context(), auditConnectionContextKey{}, request.connection)
 	base := request.base
 	base.executionContext = ctx

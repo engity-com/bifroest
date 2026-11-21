@@ -27,6 +27,11 @@ type ManagementAccess struct {
 	Audit                 ManagementAuditOperations
 	Recording             ManagementRecordingOperations
 	Keys                  ManagementKeyOperations
+	Metrics               ManagementMetrics
+}
+
+type ManagementMetrics interface {
+	Snapshot(context.Context, []string) (model.MetricsSnapshot, error)
 }
 
 type ManagementSessionControl interface {
@@ -59,6 +64,15 @@ type ManagementRecordingBrowser interface {
 func FormatForInvocation(ctx context.Context, selected format.Format) format.Format {
 	if access, ok := ManagementAccessFromContext(ctx); ok && access.WireFormat {
 		return format.WireCbor
+	}
+	return selected
+}
+
+// MetricsFormatForInvocation selects the internal SSH envelope without making
+// CBOR a public metrics output format.
+func MetricsFormatForInvocation(ctx context.Context, selected format.MetricsFormat) format.MetricsFormat {
+	if access, ok := ManagementAccessFromContext(ctx); ok && access.WireFormat {
+		return format.MetricsWireCbor
 	}
 	return selected
 }

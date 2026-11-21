@@ -70,6 +70,7 @@ type RemoteDelivery struct {
 }
 
 type remoteDeliveryWorker struct {
+	monitoring             deliveryMonitoring
 	scope                  RemoteTargetScope
 	target                 RemoteTarget
 	producerDirectory      string
@@ -509,6 +510,7 @@ func (this *remoteDeliveryWorker) commitPendingCursor(pending remoteDeliveryCurs
 	}
 	this.cursor = cursor
 	this.confirmed.Store(cursor.Sequence)
+	this.monitoring.resolved()
 	notifyRemoteDelivery(this.progress)
 	return nil
 }
@@ -534,6 +536,7 @@ func (this *remoteDeliveryWorker) publishNext(ctx context.Context) (*remoteDeliv
 		}
 		return nil, nil
 	}
+	this.monitoring.pending()
 
 	stopClosingFile := closeRemoteDeliveryFileOnCancellation(attemptContext, result.file)
 	publishErr := this.target.Publish(attemptContext, result.segment)
@@ -557,6 +560,7 @@ func (this *remoteDeliveryWorker) publishNext(ctx context.Context) (*remoteDeliv
 }
 
 func (this *remoteDeliveryWorker) waitAfterFailure(ctx context.Context, failures uint, sequence uint64, err error) bool {
+	this.monitoring.failed()
 	delay := remoteDeliveryBackoff(failures, this.options)
 	this.logger.WithError(err).
 		With("sequence", sequence).

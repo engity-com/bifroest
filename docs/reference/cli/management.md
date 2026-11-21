@@ -16,6 +16,7 @@ The integrated client accepts `@[USER@]HOST[:PORT]` as the **first argument**:
 bifroest @bifroest-admin session ls
 bifroest @management@bifroest.example.org flow ls --format=json
 bifroest @[::1]:2222 audit ls
+bifroest @bifroest-admin metrics show bifroest_connections_active
 ```
 
 `@target` selects remote execution for the entire command. Unsupported commands and flags fail instead of falling back to local execution. A target in a later position is rejected. Management commands do not support `@file` argument expansion.
@@ -94,6 +95,7 @@ Direct SSH cannot use decryption keys stored on a separate workstation. It can v
 | Operation | Requires `allowArtifactTransfer: true` |
 | --- | --- |
 | Session, flow, auditlog and Recording metadata | No |
+| [`metrics show`](metrics/show.md) | No |
 | [`session disconnect`](session/disconnect.md) and [`session dispose`](session/dispose.md) | No |
 | Public `audit events` | No |
 | Client-side `audit verify/export/merge` or sensitive `audit events` | Yes |

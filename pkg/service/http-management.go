@@ -104,10 +104,12 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 	}
 	_, policyErr := managementReadCeiling(access.auth, request)
 	if !this.service.isManagementFlow(access.auth.Flow()) || policyErr != nil {
+		this.service.monitoring.deny(access.auth.Flow(), "management", "policy")
 		webError(w, http.StatusForbidden, "structured management is not available for this authorization")
 		return
 	}
 	if request.Operation == protocol.ListAuditEvents && !this.service.managementArtifactAllowed(access.auth) {
+		this.service.monitoring.deny(access.auth.Flow(), "management", "policy")
 		webError(w, http.StatusForbidden, "audit event overview is not permitted")
 		return
 	}

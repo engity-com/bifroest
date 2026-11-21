@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -81,7 +82,10 @@ type FlowAuthorizationObservation struct {
 	Phase             FlowAuthorizationPhase
 	Outcome           FlowAuthorizationOutcome
 	AuthorizationKind string
+	Transport         connection.Transport
 	Err               error
+	// Duration measures this provider evaluation, excluding observer/audit work.
+	Duration time.Duration
 }
 
 type FlowAuthorizationObserver func(context.Context, FlowAuthorizationObservation) error
@@ -109,6 +113,7 @@ func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 			if !candidate.rememberMe.Allowed() {
 				primary = primaryPublicKeyRequest{req}
 			}
+			started := time.Now()
 			resp, err := candidate.AuthorizePublicKey(primary)
 			_, configuredDenial := resp.(configuredPublicKeyDenial)
 			if err == nil && resp != nil && !resp.IsAuthorized() && candidate.rememberMe.Allowed() && !isCertificate && !configuredDenial {
@@ -117,7 +122,7 @@ func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 				}
 			}
 			resp, err = validateFlowAuthorizationResponse(candidate.flow, resp, err)
-			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodPublicKey, phase, resp, err); observerErr != nil {
+			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodPublicKey, phase, resp, err, selection.Transport, time.Since(started)); observerErr != nil {
 				return nil, fmt.Errorf("[%v] %w", candidate.flow, observerErr)
 			}
 			if err != nil {
@@ -141,9 +146,10 @@ func (this *AuthorizerFacade) AuthorizePassword(req PasswordRequest) (Authorizat
 		if ok, err := candidate.canHandle(req, selection); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {
+			started := time.Now()
 			resp, err := candidate.AuthorizePassword(req)
 			resp, err = validateFlowAuthorizationResponse(candidate.flow, resp, err)
-			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodPassword, "", resp, err); observerErr != nil {
+			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodPassword, "", resp, err, selection.Transport, time.Since(started)); observerErr != nil {
 				return nil, fmt.Errorf("[%v] %w", candidate.flow, observerErr)
 			}
 			if err != nil {
@@ -181,9 +187,10 @@ func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Auth
 		if ok, err := candidate.canHandle(req, selection); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {
+			started := time.Now()
 			resp, err := candidate.AuthorizeInteractive(req)
 			resp, err = validateFlowAuthorizationResponse(candidate.flow, resp, err)
-			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodKeyboardInteractive, "", resp, err); observerErr != nil {
+			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodKeyboardInteractive, "", resp, err, selection.Transport, time.Since(started)); observerErr != nil {
 				return nil, fmt.Errorf("[%v] %w", candidate.flow, observerErr)
 			}
 			if err != nil {
@@ -256,7 +263,7 @@ func validateFlowAuthorizationResponse(flow configuration.FlowName, auth Authori
 	return auth, nil
 }
 
-func (this *AuthorizerFacade) observe(req Request, flow configuration.FlowName, method FlowAuthorizationMethod, phase FlowAuthorizationPhase, auth Authorization, authErr error) error {
+func (this *AuthorizerFacade) observe(req Request, flow configuration.FlowName, method FlowAuthorizationMethod, phase FlowAuthorizationPhase, auth Authorization, authErr error, transport connection.Transport, duration time.Duration) error {
 	if this.observer == nil {
 		return nil
 	}
@@ -266,6 +273,8 @@ func (this *AuthorizerFacade) observe(req Request, flow configuration.FlowName, 
 		Method:       method,
 		Phase:        phase,
 		Err:          authErr,
+		Duration:     duration,
+		Transport:    transport,
 	}
 	switch {
 	case authErr != nil:

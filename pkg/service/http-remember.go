@@ -223,6 +223,12 @@ func (this *webService) proveRemember(w http.ResponseWriter, r *http.Request, sc
 	}
 	attempt.claiming = true
 	this.mutex.Unlock()
+	result := "denied"
+	if attempt.purpose == "resume" {
+		defer func() {
+			this.service.monitoring.authenticationAttempt(attempt.sess.Flow(), "http", "browser-remember-me", result)
+		}()
+	}
 	defer func() { this.mutex.Lock(); delete(this.remember, key); this.mutex.Unlock() }()
 	signature, err := base64.StdEncoding.Strict().DecodeString(values["signature"])
 	if err != nil || len(signature) != 64 || base64.StdEncoding.EncodeToString(signature) != values["signature"] {
@@ -235,6 +241,7 @@ func (this *webService) proveRemember(w http.ResponseWriter, r *http.Request, sc
 		return
 	}
 	if r.Context().Err() != nil {
+		result = "abandoned"
 		webError(w, 503, "browser proof unavailable")
 		return
 	}
@@ -282,10 +289,17 @@ func (this *webService) proveRemember(w http.ResponseWriter, r *http.Request, sc
 	defer conn.Close()
 	auth, err := this.resumeBrowserAuthorization(conn, attempt.sess, attempt.spec)
 	if err != nil {
+		result = monitoringBrowserAuthenticationResult(err)
 		webError(w, 401, "browser authentication denied")
 		return
 	}
 	status, response, message := this.commitRemember(r.Context(), conn, attempt, auth)
+	if status >= 500 {
+		result = "error"
+	} else if status >= 200 && status < 300 {
+		result = "success"
+	}
+	monitoringHTTPFlow(r.Context(), auth.Flow())
 	if message != "" {
 		webError(w, status, message)
 		return

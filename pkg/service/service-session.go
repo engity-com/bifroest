@@ -66,9 +66,15 @@ func (this *service) onSessionRequest(sshSession essh.Session, requestType strin
 	if requestType == "subsystem" {
 		name := sshSession.Subsystem()
 		if name == "" || len(name) > audit.MaxSessionSubsystemBytes || !utf8.ValidString(name) || strings.IndexByte(name, 0) >= 0 {
+			if auth, _ := sshSession.Context().Value(authorizationCtxKey).(authorization.Authorization); auth != nil {
+				this.monitoring.deny(auth.Flow(), "subsystem", "invalid-request")
+			}
 			return false, nil
 		}
 		if _, _, hasPty := sshSession.Pty(); hasPty {
+			if auth, _ := sshSession.Context().Value(authorizationCtxKey).(authorization.Authorization); auth != nil {
+				this.monitoring.deny(auth.Flow(), "subsystem", "invalid-request")
+			}
 			return false, nil
 		}
 	}

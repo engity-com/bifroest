@@ -23,7 +23,8 @@ type Configuration struct {
 
 	Ssh Ssh `yaml:"ssh"`
 
-	Http *Http `yaml:"http,omitempty"`
+	Http       *Http       `yaml:"http,omitempty"`
+	Monitoring *Monitoring `yaml:"monitoring,omitempty"`
 
 	// Session defines how new and existing sessions (a connection relates to) should be treated by the service.
 	// These session should not be mixed up with [ssh sessions].
@@ -49,6 +50,7 @@ func (this *Configuration) SetDefaults() error {
 		func(v *Configuration) (string, defaulter) { return "auditlogs", &v.Auditlogs },
 		func(v *Configuration) (string, defaulter) { return "ssh", &v.Ssh },
 		fixedDefault("http", func(v *Configuration) **Http { return &v.Http }, (*Http)(nil)),
+		fixedDefault("monitoring", func(v *Configuration) **Monitoring { return &v.Monitoring }, (*Monitoring)(nil)),
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 		func(v *Configuration) (string, defaulter) { return "houseKeeping", &v.HouseKeeping },
@@ -71,6 +73,7 @@ func (this *Configuration) Trim() error {
 		func(v *Configuration) (string, trimmer) { return "auditlogs", &v.Auditlogs },
 		func(v *Configuration) (string, trimmer) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, trimmer) { return "http", v.Http },
+		func(v *Configuration) (string, trimmer) { return "monitoring", v.Monitoring },
 		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
 		func(v *Configuration) (string, trimmer) { return "houseKeeping", &v.HouseKeeping },
@@ -93,6 +96,7 @@ func (this *Configuration) Validate() error {
 		func(v *Configuration) (string, validator) { return "auditlogs", &v.Auditlogs },
 		func(v *Configuration) (string, validator) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, validator) { return "http", v.Http },
+		func(v *Configuration) (string, validator) { return "monitoring", v.Monitoring },
 		func(v *Configuration) (string, validator) { return "session", &v.Session },
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
 		notZeroValidate("flows", func(v *Configuration) *Flows { return &v.Flows }),
@@ -157,8 +161,10 @@ func (this *Configuration) UnmarshalYAML(node *yaml.Node) error {
 		if err != nil {
 			return err
 		}
-		if value, exists := fields["http"]; exists && value.Kind != yaml.MappingNode {
-			return reportYamlRelatedErrf(&value, "[http] must be a mapping")
+		for _, name := range []string{"http", "monitoring"} {
+			if value, exists := fields[name]; exists && value.Kind != yaml.MappingNode {
+				return reportYamlRelatedErrf(&value, "[%s] must be a mapping", name)
+			}
 		}
 		for _, name := range []string{"environments", "authorizations", "auditlogs"} {
 			if value, exists := fields[name]; exists && value.Kind != yaml.MappingNode {
@@ -230,6 +236,7 @@ func (this Configuration) isEqualTo(other *Configuration) bool {
 		isEqual(&this.Auditlogs, &other.Auditlogs) &&
 		isEqual(&this.Ssh, &other.Ssh) &&
 		this.Http.IsEqualTo(other.Http) &&
+		this.Monitoring.IsEqualTo(other.Monitoring) &&
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&

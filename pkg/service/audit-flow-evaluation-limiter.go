@@ -21,14 +21,15 @@ import (
 const maxUnauthenticatedAuditSources = 4096
 
 type unauthenticatedAuditLimiter struct {
-	globalMutex sync.Mutex
-	interval    time.Duration
-	perSource   float64
-	global      auditTokenBucket
-	now         func() time.Time
-	sources     map[string]*unauthenticatedAuditSource
-	sourceOrder list.List
-	auditlogs   map[configuration.AuditlogName]*unauthenticatedAuditLog
+	onSuppressed func(configuration.AuditlogName, string)
+	globalMutex  sync.Mutex
+	interval     time.Duration
+	perSource    float64
+	global       auditTokenBucket
+	now          func() time.Time
+	sources      map[string]*unauthenticatedAuditSource
+	sourceOrder  list.List
+	auditlogs    map[configuration.AuditlogName]*unauthenticatedAuditLog
 }
 
 type auditTokenBucket struct {
@@ -134,6 +135,9 @@ func (this *unauthenticatedAuditLimiter) Record(ctx context.Context, auditlog co
 	if state.reserve.active() {
 		handled, err := this.handleReserved(ctx, state, now)
 		if err != nil || handled {
+			if handled && this.onSuppressed != nil {
+				this.onSuppressed(auditlog, "journal_reserve")
+			}
 			return err
 		}
 	}
@@ -193,6 +197,9 @@ func (this *unauthenticatedAuditLimiter) allow(source string, now time.Time) boo
 }
 
 func (this *unauthenticatedAuditLimiter) suppressRate(ctx context.Context, auditlog *unauthenticatedAuditLog, outcome audit.EventOutcome, now time.Time) error {
+	if this.onSuppressed != nil {
+		this.onSuppressed(auditlog.name, "rate_limit")
+	}
 	state := auditlog.rate[outcome]
 	if state == nil {
 		state = &unauthenticatedAuditAggregate{}
@@ -299,6 +306,9 @@ func (this *unauthenticatedAuditLimiter) handleReserved(ctx context.Context, sta
 }
 
 func (this *unauthenticatedAuditLimiter) enterReserve(ctx context.Context, state *unauthenticatedAuditLog, count uint64, at time.Time) error {
+	if this.onSuppressed != nil {
+		this.onSuppressed(state.name, "journal_reserve")
+	}
 	if state.reserve.active() {
 		addUnauthenticatedAuditCount(&state.reserve.pending, &state.reserve.first, &state.reserve.last, count, at)
 		return nil

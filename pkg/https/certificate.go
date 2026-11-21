@@ -48,6 +48,17 @@ type materialError struct {
 func (this *materialError) Error() string { return this.operation + " (details redacted)" }
 func (this *materialError) Unwrap() error { return this.cause }
 
+// LoadCertificate loads an explicit PEM pair with the same protected-key-file,
+// bounded-chain and server-authentication checks used by the HTTPS endpoint.
+// It performs no certificate issuance, renewal or ACME operations.
+func LoadCertificate(configured configuration.HttpCertificate, now time.Time) (*tls.Certificate, error) {
+	prepared, err := loadCertificate(configured, now)
+	if err != nil {
+		return nil, err
+	}
+	return prepared.value, nil
+}
+
 func loadCertificate(configured configuration.HttpCertificate, now time.Time) (*preparedCertificate, error) {
 	keyPath, err := sys.CanonicalPath(configured.PrivateKeyFile)
 	if err != nil {

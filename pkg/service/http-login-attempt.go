@@ -144,6 +144,7 @@ func (this *webService) startAttempt(w http.ResponseWriter, r *http.Request, sco
 	release, accepting := this.loginWorkers.register()
 	_, collision := this.attempts[index]
 	if !accepting || this.ctx.Err() != nil || len(this.attempts) >= webMaximumAttempts || count >= webMaximumAttemptsPerPeer || collision {
+		this.monitoring().httpRejected(r, "login_capacity")
 		this.mutex.Unlock()
 		if accepting {
 			release()
@@ -152,6 +153,10 @@ func (this *webService) startAttempt(w http.ResponseWriter, r *http.Request, sco
 		return "", nil, fmt.Errorf("login attempt capacity unavailable")
 	}
 	this.attempts[index] = attempt
+	conn.monitoringAttempt = this.service.monitoring.loginAttempt(method)
+	if conn.monitoringAttempt != nil {
+		context.AfterFunc(ctx, func() { conn.monitoringAttempt.finish("", "abandoned") })
+	}
 	this.mutex.Unlock()
 	if loginMethod == authorization.LoginMethodOidc {
 		setOidcCookie(w, oidcAttempt.initiator.name, initiatorCookie, expires)
@@ -166,6 +171,14 @@ func (this *webService) startAttempt(w http.ResponseWriter, r *http.Request, sco
 			auth, err = this.authorizeWebKey(attempt, key)
 		}
 		if err != nil || auth == nil || !auth.IsAuthorized() {
+			result := "denied"
+			if err != nil {
+				result = monitoringBrowserAuthenticationResult(err)
+			}
+			if conn.Lifetime().Err() != nil {
+				result = "abandoned"
+			}
+			conn.monitoringAttempt.finish("", result)
 			this.finishOidcAuthentication(oidcAttempt, false, "access_denied")
 		}
 		attempt.mutex.Lock()
@@ -179,6 +192,7 @@ func (this *webService) startAttempt(w http.ResponseWriter, r *http.Request, sco
 }
 
 func (this *webLoginAttempt) stop() {
+	this.conn.monitoringAttempt.finish("", "abandoned")
 	this.idle.Stop()
 	this.stopShutdown()
 	this.stopContext()

@@ -21,6 +21,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/webui"
 )
 
@@ -72,6 +73,13 @@ func newWebService(svc *service) *webService {
 	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt), socketPeers: make(map[netip.Addr]int), terminalTimings: defaultWebTerminalTimings(), remember: make(map[[32]byte]*webRememberAttempt), confirmations: make(map[[32]byte]*webManagementConfirmation)}
 }
 
+func (this *webService) monitoring() *serviceMonitoring {
+	if this.service == nil {
+		return nil
+	}
+	return this.service.monitoring
+}
+
 // Lazy, bounded cleanup requires no per-token goroutines. Expired permissions
 // with running children remain addressable for logout, never for new access.
 func (this *webService) pruneLocked(now time.Time) {
@@ -116,9 +124,15 @@ func (this *webService) pruneLocked(now time.Time) {
 	}
 }
 
-func (this *webService) admit(peer netip.Addr, login bool) (func(), bool) {
+func (this *webService) admit(peer netip.Addr, login bool, requests ...*http.Request) (func(), bool) {
+	rejected := func(reason string) {
+		if len(requests) > 0 {
+			this.monitoring().httpRejected(requests[0], reason)
+		}
+	}
 	release, ok := this.operations.register()
 	if !ok {
+		rejected("stopping")
 		return nil, false
 	}
 	this.mutex.Lock()
@@ -135,6 +149,22 @@ func (this *webService) admit(peer netip.Addr, login bool) (func(), bool) {
 		budget.logins = 0
 	}
 	if budget == nil || this.active >= webMaximumWorkers || budget.active >= webMaximumWorkersPerPeer || budget.requests >= webMaximumRequestsPerMinute || login && (budget.logins >= webMaximumLoginsPerMinute || len(this.access)+len(this.attempts)+len(this.remember)+this.active >= webMaximumAccess) || this.ctx.Err() != nil {
+		reason := "stopping"
+		switch {
+		case budget == nil:
+			reason = "peers"
+		case this.active >= webMaximumWorkers:
+			reason = "workers"
+		case budget.active >= webMaximumWorkersPerPeer:
+			reason = "peer_workers"
+		case budget.requests >= webMaximumRequestsPerMinute:
+			reason = "request_rate"
+		case login && budget.logins >= webMaximumLoginsPerMinute:
+			reason = "login_rate"
+		case login:
+			reason = "login_capacity"
+		}
+		rejected(reason)
 		this.mutex.Unlock()
 		release()
 		return nil, false
@@ -263,7 +293,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Recording metadata inspection can traverse large signed artifacts. Share
 	// the existing bounded heavy-operation admission budget, not only read RPS.
 	isLogin = isLogin || r.URL.Path == webAPI+"management/recordings/list" || r.URL.Path == webAPI+"management/recordings/verify" || r.URL.Path == webAPI+"management/audit-events/list"
-	release, ok := this.admit(peer, isLogin)
+	release, ok := this.admit(peer, isLogin, r)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
 		webError(w, http.StatusTooManyRequests, "web request limit reached")
@@ -349,6 +379,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		webError(w, http.StatusUnauthorized, "web access denied")
 		return
 	}
+	monitoringHTTPFlow(r.Context(), access.auth.Flow())
 	conn, err := newWebLoginConnection(ctx, r, scope, access.user)
 	if err != nil {
 		webError(w, http.StatusBadRequest, "invalid request")
@@ -381,9 +412,11 @@ func (this *webService) password(w http.ResponseWriter, r *http.Request, scope w
 		return
 	}
 	defer conn.Close()
+	conn.monitoringAttempt = this.service.monitoring.loginAttempt(audit.AuthenticationMethodPassword)
 	request := &passwordAuthorizeRequest{authorizeRequest: authorizeRequest{service: this.service, connection: conn}, password: values["password"]}
 	auth, err := this.service.authorizer.AuthorizePassword(request)
 	if err != nil {
+		conn.monitoringAttempt.finish("", monitoringBrowserAuthenticationResult(err))
 		webError(w, http.StatusServiceUnavailable, "authentication unavailable")
 		return
 	}
@@ -397,11 +430,20 @@ func validWebLoginUser(user string) bool {
 // Every verified adapter converges here. An attempt token, certificate CA
 // signature or a public-key eligibility decision cannot substitute for proof.
 func (this *webService) completeAuthentication(w http.ResponseWriter, ctx context.Context, conn *webLoginConnection, auth authorization.Authorization, method audit.AuthenticationMethod, primaryKey ...ssh.PublicKey) {
+	result := "error"
+	defer func() {
+		var flow configuration.FlowName
+		if auth != nil {
+			flow = auth.Flow()
+		}
+		conn.monitoringAttempt.finish(flow, result)
+	}()
 	attempt, _ := conn.Lifetime().Value(oidcAuthenticationKey{}).(*oidcAuthentication)
 	defer func() { this.finishOidcAuthentication(attempt, false, "access_denied") }()
 	ctx, cancel := this.oidcCompletionContext(ctx, attempt)
 	defer cancel()
 	if auth == nil || !auth.IsAuthorized() || auth.FindSession() == nil {
+		result = "denied"
 		webError(w, http.StatusUnauthorized, "authentication denied")
 		return
 	}
@@ -410,6 +452,7 @@ func (this *webService) completeAuthentication(w http.ResponseWriter, ctx contex
 		return
 	}
 	ctx = context.WithValue(ctx, auditConnectionContextKey{}, conn)
+	monitoringHTTPFlow(ctx, auth.Flow())
 	base := &environmentContext{service: this.service, connection: conn, authorization: auth, executionContext: ctx}
 	if err := this.service.validateTerminalAuthorization(base); err != nil || this.service.sessionConnections.isRevoked(auth.FindSession()) {
 		if auditErr := this.service.recordAuthenticationCompletedFor(ctx, conn, auth, method, audit.EventOutcomeDenied, audit.EventReasonSessionIncompatible); auditErr != nil {
@@ -417,6 +460,7 @@ func (this *webService) completeAuthentication(w http.ResponseWriter, ctx contex
 			return
 		}
 		webError(w, http.StatusForbidden, "authentication denied")
+		result = "denied"
 		return
 	}
 	// Mint only after the completed-success audit is durable under its policy.
@@ -441,6 +485,7 @@ func (this *webService) completeAuthentication(w http.ResponseWriter, ctx contex
 		return
 	}
 	this.service.oidcRefresh.register(auth.FindSession())
+	result = "success"
 	webJSONResponse(w, http.StatusOK, this.accessResponse(access, token))
 }
 
@@ -522,7 +567,7 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		webError(w, http.StatusBadRequest, "invalid direct peer")
 		return
 	}
-	release, admitted := this.admit(peer, false)
+	release, admitted := this.admit(peer, false, r)
 	if !admitted {
 		w.Header().Set("Retry-After", "60")
 		webError(w, http.StatusTooManyRequests, "web request limit reached")
@@ -602,7 +647,15 @@ func webJSON(w http.ResponseWriter, r *http.Request, fields ...string) (map[stri
 	return webJSONObject(w, r, true, fields...)
 }
 
-func webJSONObject(w http.ResponseWriter, r *http.Request, requireSlug bool, fields ...string) (map[string]string, error) {
+func webJSONObject(w http.ResponseWriter, r *http.Request, requireSlug bool, fields ...string) (result map[string]string, rErr error) {
+	defer func() {
+		var limit *http.MaxBytesError
+		if rErr != nil && (goerrors.As(rErr, &limit) || r.ContentLength > webLoginBodyLimit) {
+			if observation, _ := r.Context().Value(monitoringRequestKey{}).(*monitoringRequest); observation != nil {
+				observation.monitor.httpRejected(r, "body_limit")
+			}
+		}
+	}()
 	contentType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || contentType != "application/json" || len(params) > 1 || params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8") {
 		return nil, fmt.Errorf("JSON required")
@@ -622,7 +675,7 @@ func webJSONObject(w http.ResponseWriter, r *http.Request, requireSlug bool, fie
 	if err != nil || start != json.Delim('{') {
 		return nil, fmt.Errorf("object required")
 	}
-	result := make(map[string]string)
+	result = make(map[string]string)
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {

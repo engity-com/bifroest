@@ -52,6 +52,8 @@ type webTerminalStream struct {
 	signals                                     chan terminal.Signal
 	workers                                     sync.WaitGroup
 	closed                                      atomic.Bool
+	monitoringEnd                               atomic.Uint32
+	onBudget                                    func()
 	writeMutex                                  sync.Mutex
 	outputClosed                                bool
 	finished                                    bool
@@ -179,10 +181,12 @@ func (this *webTerminalStream) writeOutput(channel byte, data []byte) (int, erro
 		}
 		n := copy(message[1:], data)
 		if err := this.socket.SetWriteDeadline(time.Now().Add(this.timings.write)); err != nil {
+			this.monitoringFailure(err)
 			_ = this.Close()
 			return written, err
 		}
 		if err := this.socket.WriteMessage(websocket.BinaryMessage, message[:n+1]); err != nil {
+			this.monitoringFailure(err)
 			_ = this.Close()
 			return written, err
 		}
@@ -201,11 +205,26 @@ func (this *webTerminalStream) status(value any) error {
 		return err
 	}
 	if err := this.socket.SetWriteDeadline(time.Now().Add(this.timings.write)); err != nil {
+		this.monitoringFailure(err)
 		return err
 	}
-	return this.socket.WriteJSON(value)
+	err := this.socket.WriteJSON(value)
+	if err != nil {
+		this.monitoringFailure(err)
+	}
+	return err
 }
 func (this *webTerminalStream) fail(code string) {
+	reason := uint32(4)
+	switch code {
+	case "authentication-denied":
+		reason = 5
+	case "connection-denied", "terminal-unavailable":
+		reason = 6
+	case "execution-failed":
+		reason = 7
+	}
+	this.monitoringEnd.CompareAndSwap(0, reason)
 	_ = this.status(struct {
 		Type string `json:"type"`
 		Code string `json:"code"`
@@ -225,6 +244,7 @@ func (this *webTerminalStream) finish(status uint32) {
 		Type   string `json:"type"`
 		Status uint32 `json:"status"`
 	}{"exit", status}); err == nil {
+		this.monitoringEnd.CompareAndSwap(0, 9)
 		_ = this.socket.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "execution completed"), time.Now().Add(this.timings.write))
 	}
 }
@@ -284,6 +304,11 @@ func (this *webTerminalStream) accountInbound(size int, control bool) error {
 		this.budgetControls++
 	}
 	if this.budgetMessages > webTerminalMessagesPerSecond || this.budgetControls > webTerminalControlsPerSecond || this.budgetBytes > webTerminalBytesPerSecond {
+		if this.onBudget != nil {
+			this.onBudget()
+			this.onBudget = nil
+		}
+		this.monitoringEnd.CompareAndSwap(0, 4)
 		return fmt.Errorf("terminal inbound budget exceeded")
 	}
 	return nil
@@ -295,9 +320,15 @@ func (this *webTerminalStream) readLoop() {
 	defer close(this.windows)
 	eof := false
 	defer this.input.end()
+	defer func() {
+		if this.ctx.Err() == nil {
+			this.monitoringEnd.CompareAndSwap(0, 4)
+		}
+	}()
 	for {
 		kind, data, err := this.socket.ReadMessage()
 		if err != nil {
+			this.monitoringFailure(err)
 			return
 		}
 		if err := this.accountInbound(len(data), kind == websocket.TextMessage); err != nil {
@@ -420,6 +451,7 @@ func (this *webTerminalStream) heartbeatLoop() {
 		case <-timer.C:
 			timer.Reset(interval())
 			if err := this.sendHeartbeat(); err != nil {
+				this.monitoringFailure(err)
 				return
 			}
 		}

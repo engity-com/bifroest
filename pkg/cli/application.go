@@ -16,6 +16,7 @@ import (
 	cid "github.com/engity-com/bifroest/pkg/cli/id"
 	cimp "github.com/engity-com/bifroest/pkg/cli/imp"
 	ckey "github.com/engity-com/bifroest/pkg/cli/key"
+	cmetrics "github.com/engity-com/bifroest/pkg/cli/metrics"
 	crecording "github.com/engity-com/bifroest/pkg/cli/recording"
 	cserve "github.com/engity-com/bifroest/pkg/cli/serve"
 	cservice "github.com/engity-com/bifroest/pkg/cli/service"
@@ -48,6 +49,7 @@ func NewApplication[O any](version sys.Version, description string, run common.S
 		WithCommand(cforever.CreateCommands()...).
 		WithCommand(cimp.CreateCommands(version)...).
 		WithCommand(ckey.CreateCommands()...).
+		WithCommand(cmetrics.CreateCommands()...).
 		WithCommand(cid.CreateCommands()...).
 		WithCommand(cserve.CreateCommands(version, run)...).
 		WithCommand(cservice.CreateCommands(version)...).

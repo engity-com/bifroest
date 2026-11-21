@@ -50,6 +50,7 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if !this.service.isManagementFlow(access.auth.Flow()) {
+		this.monitoring().deny(access.auth.Flow(), "management", "policy")
 		webError(w, 403, "management action denied")
 		return
 	}
@@ -65,11 +66,13 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if managementActionPolicy(access.auth, request) != nil {
+			this.monitoring().deny(access.auth.Flow(), "management", "policy")
 			webError(w, 403, "management action denied")
 			return
 		}
 		caller := access.auth.FindSession()
 		if caller == nil || caller.Flow().String() == request.Flow && uuidtext.Equal(caller.Id().String(), request.ID) {
+			this.monitoring().deny(access.auth.Flow(), "management", "policy")
 			webError(w, 403, "management target is unavailable or self-protected")
 			return
 		}

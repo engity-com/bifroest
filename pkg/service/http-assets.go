@@ -29,7 +29,7 @@ func (this *webService) admitAsset(w http.ResponseWriter, r *http.Request) (func
 		webError(w, 400, "invalid direct peer")
 		return nil, false
 	}
-	release, ok := this.admit(peer, false)
+	release, ok := this.admit(peer, false, r)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
 		webError(w, 429, "web request limit reached")

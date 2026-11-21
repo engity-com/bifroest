@@ -106,6 +106,7 @@ type RemoteArtifactDelivery struct {
 }
 
 type remoteArtifactDeliveryWorker struct {
+	monitoring    deliveryMonitoring
 	entry         remoteArtifactTargetEntry
 	source        RemoteArtifactSource
 	receipts      *remoteArtifactReceiptStore
@@ -505,6 +506,7 @@ func (this *remoteArtifactDeliveryWorker) run(ctx context.Context) {
 			this.logger.Info("remote artifact delivery recovered")
 		}
 		failures = 0
+		this.monitoring.resolved()
 		_, ok := waitRemoteDeliveryIdle(ctx, this.wake, this.discoveryWake, this.options.idleDelay)
 		if !ok {
 			return
@@ -542,6 +544,7 @@ func (this *remoteArtifactDeliveryWorker) deliver(ctx context.Context, name stri
 	if status != remoteArtifactReceiptTargetPending {
 		return nil
 	}
+	this.monitoring.pending()
 	handle, err := this.source.OpenSealedArtifact(ctx, name)
 	if err != nil {
 		return this.failDelivery(ctx, name, errors.System.Newf("cannot open sealed remote artifact %q: %w", name, err))
@@ -700,6 +703,7 @@ func remoteArtifactDeliveryErrorCategory(err error) ErrorCategory {
 }
 
 func (this *remoteArtifactDeliveryWorker) waitAfterFailure(ctx context.Context, failures uint, name string, err error) bool {
+	this.monitoring.failed()
 	delay := remoteDeliveryBackoff(failures, remoteDeliveryOptions{
 		initialBackoff: this.options.initialBackoff,
 		maximumBackoff: this.options.maximumBackoff,

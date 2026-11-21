@@ -8,7 +8,7 @@ Command results are written to **stdout**. Logs and error messages are written t
 
 ## Result formats
 
-Commands that accept `--format` support these values:
+Unless a command page states otherwise, commands that accept `--format` support these values:
 
 | Value | Result |
 | --- | --- |
@@ -18,6 +18,8 @@ Commands that accept `--format` support these values:
 | `cbor` | A CBOR result object or array. |
 
 The command page documents the result's content. Lists use tables, details use key/value output, verification prints its scope, and `audit producer-id` prints the ID in the default format.
+
+[`metrics show`](metrics/show.md) accepts only `table` (default), `json` and `openmetrics`.
 
 Some commands have a fixed output:
 

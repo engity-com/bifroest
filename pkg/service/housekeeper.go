@@ -22,11 +22,12 @@ import (
 )
 
 type houseKeeper struct {
-	service       *service
-	closed        atomic.Bool
-	contextCancel context.CancelFunc
-	done          chan struct{}
-	orphanedFlows map[configuration.FlowName]struct{}
+	service            *service
+	closed             atomic.Bool
+	contextCancel      context.CancelFunc
+	done               chan struct{}
+	orphanedFlows      map[configuration.FlowName]struct{}
+	monitoringProblems map[configuration.FlowName]int
 }
 
 func (this *houseKeeper) init(service *service) error {
@@ -74,8 +75,14 @@ func (this *houseKeeper) loop(ctx context.Context, firstIn time.Duration) {
 func (this *houseKeeper) checkedRun(ctx context.Context) (nextRunIn time.Duration, rErr error) {
 	l := this.logger()
 	started := time.Now()
+	if this.service.monitoring != nil {
+		this.monitoringProblems = make(map[configuration.FlowName]int)
+	}
 	defer func() {
 		nextRunIn = this.service.Configuration.HouseKeeping.Every.Native()
+		this.service.monitoring.cleanup("", "housekeeping", rErr)
+		this.service.monitoring.cleanupSnapshot(this.monitoringProblems)
+		this.monitoringProblems = nil
 		ld := l.
 			With("duration", time.Since(started).Truncate(time.Microsecond)).
 			With("nextRunIn", nextRunIn)
@@ -175,6 +182,11 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 }
 
 func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog configuration.AuditlogName, candidate sessionRecordingRetentionCandidate, perform func() (bool, sessionRecordingRetentionCandidate, error), complete func(sessionRecordingRetentionCandidate) error) (changed bool, actionErr, auditErr error) {
+	defer func() {
+		if this.service.monitoring != nil {
+			this.service.monitoring.cleanupLabels([]string{"", "", auditlog.String(), ""}, "recording_retention", goerrors.Join(actionErr, auditErr))
+		}
+	}()
 	recorder := this.service.auditRecorders[auditlog]
 	if recorder == nil {
 		return false, nil, errors.System.Newf("no audit recorder configured for auditlog %q", auditlog)
@@ -253,6 +265,7 @@ func (this *houseKeeper) inspectSessions(logger log.Logger, ctx context.Context)
 		},
 		Logger: logger,
 		DiagnosticConsumer: func(_ context.Context, diagnostic session.FindDiagnostic) error {
+			this.monitoringProblem(diagnostic.Flow)
 			if _, known := this.service.knownFlows[diagnostic.Flow]; !known {
 				this.rememberOrphanedFlow(diagnostic.Flow)
 			}
@@ -272,6 +285,8 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	started := time.Now()
 
 	reportAndContinue := func(err error) (bool, error) {
+		this.monitoringProblem(sess.Flow())
+		this.service.monitoring.cleanup(sess.Flow(), "session_inspection", err)
 		logger.WithError(err).
 			With("duration", time.Since(started).Truncate(time.Microsecond)).
 			Warn("cannot inspect session; skipping...")
@@ -280,6 +295,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 
 	logger.Debug("inspecting session...")
 	if _, flowExists := this.service.knownFlows[sess.Flow()]; !flowExists {
+		this.monitoringProblem(sess.Flow())
 		this.rememberOrphanedFlow(sess.Flow())
 		event := audit.Event{
 			Name:      audit.EventNameHousekeepingOrphanedSessionCleanupSkipped,
@@ -305,6 +321,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 			return reportAndContinue(err)
 		}
 		if !matches {
+			this.monitoringProblem(sess.Flow())
 			logger.Warn("session environment token does not match the configured environment; preserving session for operator inspection")
 			return true, nil
 		}
@@ -325,6 +342,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 			return reportAndContinue(err)
 		}
 		if len(pending) != 0 {
+			this.monitoringProblem(sess.Flow())
 			logger.Debug("preserving session with pending environment cleanup")
 			return true, nil
 		}
@@ -388,6 +406,11 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 }
 
 func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Session, startedEventName, completedEventName audit.EventName, reason audit.EventReason, perform func() (bool, error)) (changed bool, actionErr, auditErr error) {
+	defer func() {
+		if completedEventName == audit.EventNameHousekeepingSessionDeleteCompleted {
+			this.service.monitoring.cleanup(sess.Flow(), "session_delete", goerrors.Join(actionErr, auditErr))
+		}
+	}()
 	record := func(event audit.Event) error {
 		return this.service.recordFlowAudit(ctx, sess.Flow(), event)
 	}
@@ -462,7 +485,8 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 	return this.disposeWith(ctx, logger, sess, retentionElapsed, expected, nil)
 }
 
-func (this *houseKeeper) disposeWith(ctx context.Context, logger log.Logger, sess session.Session, _ bool, expected *environment.ResourceIdentity, onSessionDisposed func()) (bool, error) {
+func (this *houseKeeper) disposeWith(ctx context.Context, logger log.Logger, sess session.Session, _ bool, expected *environment.ResourceIdentity, onSessionDisposed func()) (_ bool, rErr error) {
+	defer func() { this.service.monitoring.cleanup(sess.Flow(), "session_dispose", rErr) }()
 	fail := func(err error) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose session %v: %w", sess, err)
 	}
@@ -572,11 +596,23 @@ func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Lo
 }
 
 func (this *houseKeeper) cleanup(logger log.Logger, ctx context.Context) error {
-	return this.service.environments.Cleanup(ctx, &environment.CleanupOpts{
+	err := this.service.environments.Cleanup(ctx, &environment.CleanupOpts{
 		FlowOfNamePredicate: this.doesFlowExists,
 		SessionExists:       this.doesSessionExist(logger),
 		Logger:              logger,
 	})
+	this.service.monitoring.cleanup("", "orphan_cleanup", err)
+	return err
+}
+
+func (this *houseKeeper) monitoringProblem(flow configuration.FlowName) {
+	if this.monitoringProblems == nil {
+		return
+	}
+	if _, known := this.service.knownFlows[flow]; !known {
+		flow = ""
+	}
+	this.monitoringProblems[flow]++
 }
 
 func (this *houseKeeper) doesFlowExists(name configuration.FlowName) (bool, error) {

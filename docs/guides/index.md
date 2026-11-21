@@ -14,6 +14,7 @@ Choose the task you want to accomplish:
 * [Export server public keys remotely](keys.md): retrieve configured public SSH identities, certificate authorities and active host keys through management access.
 * [Record, find and replay a session](recording.md): capture terminal output, find the sealed original and verify, play or export it.
 * [Verify encrypted evidence on a workstation](evidence.md): configure encrypted audit and Recording data, pin producer trust and keep decryption local.
+* [Monitor a Bifröst instance](monitoring.md): scrape Prometheus metrics and configure Kubernetes startup, readiness and liveness probes.
 
 Install Bifröst first using the [host installation guide](../setup/on-host.md), and use the guide from the **same release** as your binary. Each example requires you to provide your own identities and permissions; none replaces the [configuration reference](../reference/configuration.md).
 
