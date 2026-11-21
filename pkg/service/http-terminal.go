@@ -26,10 +26,12 @@ const (
 func (this *webService) reserveTerminalSocket(peer netip.Addr) (func(), bool) {
 	release, ok := this.operations.register()
 	if !ok {
+		this.monitoring().reject("terminal", "stopping")
 		return nil, false
 	}
 	this.mutex.Lock()
 	if this.ctx.Err() != nil || this.sockets >= webTerminalMaximumSockets || this.socketPeers[peer] >= webTerminalMaximumSocketsPerPeer {
+		this.monitoring().reject("terminal", "sockets")
 		this.mutex.Unlock()
 		release()
 		return nil, false
@@ -68,7 +70,7 @@ func (this *webService) serveWebSocketTerminal(w http.ResponseWriter, r *http.Re
 		webError(w, http.StatusBadRequest, "invalid direct peer")
 		return
 	}
-	releaseHandshake, ok := this.admit(peer, false)
+	releaseHandshake, ok := this.admit(peer, false, r)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
 		webError(w, http.StatusTooManyRequests, "web request limit reached")
@@ -78,6 +80,7 @@ func (this *webService) serveWebSocketTerminal(w http.ResponseWriter, r *http.Re
 	defer releaseHandshake()
 	releaseSocket, ok := this.reserveTerminalSocket(peer)
 	if !ok {
+		this.monitoring().httpRejected(r, "socket_budget")
 		w.Header().Set("Retry-After", "1")
 		webError(w, http.StatusTooManyRequests, "terminal connection limit reached")
 		return
@@ -99,16 +102,20 @@ func (this *webService) serveWebSocketTerminal(w http.ResponseWriter, r *http.Re
 		// origin including effective port; absence still fails closed here.
 		CheckOrigin: func(r *http.Request) bool { return len(r.Header.Values("Origin")) == 1 && r.Header.Get("Origin") != "" },
 	}
-	socket, err := upgrader.Upgrade(webTerminalUpgradeWriter{ResponseWriter: w}, r, w.Header().Clone())
+	socket, err := upgrader.Upgrade(webTerminalUpgradeWriter{ResponseWriter: w, onBudget: func() { this.monitoring().httpRejected(r, "wire_budget") }}, r, w.Header().Clone())
 	if err != nil {
 		return
 	}
 	stream := newWebTerminalStream(r.Context(), socket, id, host, timings)
+	stream.onBudget = func() { this.monitoring().httpRejected(r, "message_budget") }
+	finishChannel := this.service.monitoring.channelOpened(r, "terminal")
+	defer func() { finishChannel(stream.monitoringReason()) }()
 	defer stream.stop()
-	stopShutdown := context.AfterFunc(this.ctx, func() { _ = stream.Close() })
+	stopShutdown := context.AfterFunc(this.ctx, func() { stream.monitoringEnd.CompareAndSwap(0, 8); _ = stream.Close() })
 	defer stopShutdown()
 	open, err := stream.readOpen()
 	if err != nil {
+		stream.monitoringFailure(err)
 		stream.fail("invalid-open")
 		return
 	}
@@ -122,6 +129,7 @@ func (this *webService) serveWebSocketTerminal(w http.ResponseWriter, r *http.Re
 		stream.fail("authentication-denied")
 		return
 	}
+	monitoringHTTPFlow(r.Context(), access.auth.Flow())
 	if this.service.isManagementFlow(access.auth.Flow()) {
 		stream.fail("terminal-unavailable")
 		return
@@ -177,8 +185,9 @@ func (this *webService) serveWebSocketTerminal(w http.ResponseWriter, r *http.Re
 // This bounds floods made of tiny/empty fragments before ReadMessage completes.
 type webTerminalWireConn struct {
 	net.Conn
-	since time.Time
-	bytes int
+	since    time.Time
+	bytes    int
+	onBudget func()
 }
 
 func (this *webTerminalWireConn) Close() error {
@@ -200,12 +209,19 @@ func (this *webTerminalWireConn) Read(data []byte) (int, error) {
 	}
 	this.bytes += n
 	if this.bytes > webTerminalWireBytesPerSecond {
+		if this.onBudget != nil {
+			this.onBudget()
+			this.onBudget = nil
+		}
 		return 0, fmt.Errorf("terminal wire budget exceeded")
 	}
 	return n, err
 }
 
-type webTerminalUpgradeWriter struct{ http.ResponseWriter }
+type webTerminalUpgradeWriter struct {
+	http.ResponseWriter
+	onBudget func()
+}
 
 func (this webTerminalUpgradeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	hijacker, ok := this.ResponseWriter.(http.Hijacker)
@@ -216,7 +232,7 @@ func (this webTerminalUpgradeWriter) Hijack() (net.Conn, *bufio.ReadWriter, erro
 	if err != nil {
 		return nil, nil, err
 	}
-	wrapped := &webTerminalWireConn{Conn: conn}
+	wrapped := &webTerminalWireConn{Conn: conn, onBudget: this.onBudget}
 	// Gorilla rejects pre-handshake buffered data. Preserve that check instead
 	// of discarding bytes or allowing an unmetered reader into an active socket.
 	if rw.Reader.Buffered() > 0 {

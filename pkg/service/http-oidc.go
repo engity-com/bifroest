@@ -464,7 +464,7 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 		webError(w, 400, "invalid peer")
 		return
 	}
-	release, admitted := this.admit(peer, action == "start")
+	release, admitted := this.admit(peer, action == "start", r)
 	if !admitted {
 		webError(w, 429, "login capacity unavailable")
 		return
@@ -509,6 +509,7 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 	// Check BEFORE consuming the ticket or sending an IdP URL. A valid ticket is
 	// not permission to attach somebody else's browser identity to this attempt.
 	if !tx.ssh && !tx.initiator.matches(r) {
+		this.monitoring().httpRejected(r, "csrf")
 		webError(w, 401, "login unavailable")
 		return
 	}
@@ -540,6 +541,7 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !oidcBound(r, tx) {
+		this.monitoring().httpRejected(r, "csrf")
 		webError(w, 401, "login unavailable")
 		return
 	}
@@ -552,6 +554,9 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tx.phase != "approval" || tx.result == nil || !oidcEqual(values["csrf"], tx.csrf) {
+		if tx.phase == "approval" && tx.result != nil {
+			this.monitoring().httpRejected(r, "csrf")
+		}
 		webError(w, 409, "login decision unavailable")
 		return
 	}

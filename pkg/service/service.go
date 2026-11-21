@@ -100,7 +100,22 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		}
 	}
 
-	svc, err := this.prepareContext(ctx)
+	if err := this.Configuration.Validate(); err != nil {
+		return err
+	}
+	monitor, err := newServiceMonitoring(this.Configuration)
+	if err != nil {
+		return errors.Config.Newf("cannot prepare monitoring: %w", err)
+	}
+	if monitor != nil && monitor.endpoint != nil {
+		if !this.Configuration.Monitoring.Tls.Enabled {
+			if err := monitor.endpoint.Start(func(err error) { this.logger().WithError(err).Error("monitoring listener failed") }); err != nil {
+				return err
+			}
+		}
+		defer common.KeepCloseError(&rErr, monitor.endpoint)
+	}
+	svc, err := this.prepareContextWithMonitoring(ctx, monitor)
 	if err != nil {
 		return err
 	}
@@ -160,6 +175,10 @@ func (this *Service) prepare() (svc *service, err error) {
 }
 
 func (this *Service) prepareContext(ctx context.Context) (svc *service, err error) {
+	return this.prepareContextWithMonitoring(ctx, nil)
+}
+
+func (this *Service) prepareContextWithMonitoring(ctx context.Context, monitor *serviceMonitoring) (svc *service, err error) {
 	fail := func(err error) (*service, error) {
 		return nil, fmt.Errorf("cannot prepare service: %w", err)
 	}
@@ -175,6 +194,7 @@ func (this *Service) prepareContext(ctx context.Context) (svc *service, err erro
 
 	svc = &service{
 		Service:             this,
+		monitoring:          monitor,
 		connectionLifecycle: newConnectionLifecycle(),
 		executions:          newConnectionLifecycle(),
 		terminalAdmissions:  newConnectionLifecycle(),
@@ -231,6 +251,11 @@ func (this *Service) prepareContext(ctx context.Context) (svc *service, err erro
 	}
 	if err := svc.prepareHTTPS(); err != nil {
 		return fail(err)
+	}
+	if monitor != nil && monitor.endpoint != nil && this.Configuration.Monitoring.Tls.Enabled {
+		if err := monitor.endpoint.Start(func(err error) { this.logger().WithError(err).Error("monitoring listener failed") }); err != nil {
+			return fail(err)
+		}
 	}
 	if err := this.logCertificateAuthorities(hostSigners); err != nil {
 		return fail(err)
@@ -290,6 +315,10 @@ func (this *Service) prepareContext(ctx context.Context) (svc *service, err erro
 		return fail(err)
 	}
 
+	if monitor != nil {
+		monitor.service.Store(svc)
+		svc.sessionConnections.observeAges = true
+	}
 	resourcesOwnedByService = true
 	return svc, nil
 }
@@ -313,7 +342,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 
 	serverPrivateKeys := hostSigners
-	if this.Configuration.Http.IsEnabled() || len(this.Configuration.Auditlogs) > 0 {
+	if this.Configuration.Http.IsEnabled() || len(this.Configuration.Auditlogs) > 0 || this.Configuration.Monitoring.IsEnabled() && this.Configuration.Monitoring.Tls.Enabled {
 		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
 		if err != nil {
 			return err
@@ -527,10 +556,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 			svc.auditRecorders[auditlog.Name] = audit.NewNoopRecorder()
 			continue
 		}
-		policyRecorder := audit.Recorder(recorder)
-		if auditlog.FailurePolicy == configuration.AuditlogFailurePolicyBestEffort {
-			policyRecorder = &failurePolicyAuditRecorder{service: svc, auditlog: auditlog.Name, delegate: recorder}
-		}
+		policyRecorder := audit.Recorder(&failurePolicyAuditRecorder{service: svc, auditlog: auditlog.Name, delegate: recorder})
 		if len(auditlog.Targets) > 0 {
 			delivery, deliveryErr := audit.NewRemoteDelivery(ctx, auditlog, identity)
 			if deliveryErr != nil {
@@ -563,6 +589,9 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		svc.flowAuditlogs[flow.Name] = flow.Auditlog
 	}
 	svc.unauthenticatedAudit = newUnauthenticatedAuditLimiter(this.Configuration.Ssh.UnauthenticatedAudit)
+	if svc.monitoring != nil {
+		svc.unauthenticatedAudit.onSuppressed = svc.monitoring.suppress
+	}
 	return nil
 }
 
@@ -598,6 +627,16 @@ func (this *Service) configureServer(svc *service, server *essh.Server, hostPriv
 	server.MaxConnections = new(0)
 	server.MaxChannels = new(int(sshConfig.MaxChannels))
 	server.MaxReverseForwards = new(int(sshConfig.MaxReverseForwards))
+	if svc.monitoring != nil {
+		transport := "ssh"
+		if server == &svc.tunnelServer {
+			transport = "ssh_tunnel"
+		}
+		server.LimitRejectedCallback = func(reason essh.LimitRejectionReason) error {
+			svc.monitoring.sshLimitRejected(transport, reason)
+			return nil
+		}
+	}
 	server.GracefulShutdownHandler = essh.NewGracefulShutdownTimeoutHandler(sshConfig.GracefulShutdownTimeout.Native())
 	server.ServerConfigCallback = svc.createNewServerConfig
 	server.ErrorHandler = svc.handleSshError
@@ -830,6 +869,7 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 
 type service struct {
 	*Service
+	monitoring            *serviceMonitoring
 	web                   *webService
 	managementApplication *clibase.Application[clibase.NoOptions]
 
@@ -922,6 +962,29 @@ func (this *service) createNewServerConfig(ctx essh.Context, _ gonet.Conn, targe
 		MACs:         this.resolvedSshMessagesAuthentications,
 	}
 	target.VerifiedPublicKeyCallback = this.verifiedPublicKeyAuditCallback(ctx)
+	if this.monitoring != nil {
+		target.AuthLogCallback = func(_ gossh.ConnMetadata, method string, err error) {
+			if method == "none" {
+				return
+			}
+			conn := this.connection(ctx)
+			if conn == nil {
+				return
+			}
+			conn.authenticationAttempted.Store(true)
+			if err == nil {
+				conn.authenticated.Store(true)
+			}
+			var flow configuration.FlowName
+			if auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization); auth != nil {
+				flow = auth.Flow()
+			}
+			if method == "publickey" {
+				method = "public-key"
+			}
+			this.monitoring.authenticationAttempt(flow, "ssh", method, monitoringAuthenticationResult(err))
+		}
+	}
 	return nil
 }
 

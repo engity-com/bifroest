@@ -70,6 +70,7 @@ func (this *service) newConnection(orig gonet.Conn, ctx essh.Context, logger log
 	for {
 		current := this.activeConnections.Load()
 		if current >= int64(this.Configuration.Ssh.MaxConnections) {
+			this.monitoring.reject("ssh", "connections")
 			logger.
 				With("max", this.Configuration.Ssh.MaxConnections).
 				With("current", current).
@@ -99,12 +100,14 @@ func (this *service) newConnection(orig gonet.Conn, ctx essh.Context, logger log
 		createdAt: createdAt,
 	}
 	result.lastActivity.Store(now)
+	this.monitoring.connectionOpened(result)
 	return result, nil
 }
 
 func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 	defer finishConnectionLifecycle(ctx)
 	if conn := this.connection(ctx); conn != nil {
+		this.monitoring.connectionFinished(conn)
 		this.sessionConnections.untrack(conn)
 		conn.logger.
 			With("read", conn.read.Load()).
@@ -129,8 +132,14 @@ func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 	return nil
 }
 
-func (this *service) onConnectionFailed(ctx essh.Context, _ gonet.Conn, _ error) error {
+func (this *service) onConnectionFailed(ctx essh.Context, _ gonet.Conn, err error) error {
 	if conn := this.connection(ctx); conn != nil {
+		reason := monitoringEndReason(err)
+		if reason == 4 && isExpectedSshHandshakeEnd(err) {
+			reason = 2
+		}
+		conn.monitoringEnd.CompareAndSwap(0, reason)
+		this.monitoring.connectionFinished(conn)
 		this.sessionConnections.untrack(conn)
 	}
 	finishConnectionLifecycle(ctx)
@@ -158,6 +167,10 @@ type connection struct {
 	lastActivity            atomic.Int64
 	readConnectionTimeType  atomic.Uint32
 	writeConnectionTimeType atomic.Uint32
+	authenticationAttempted atomic.Bool
+	authenticated           atomic.Bool
+	monitoringEnd           atomic.Uint32
+	monitoringFinished      atomic.Bool
 	deadlineMutex           sync.Mutex
 	readDeadline            time.Time
 	writeDeadline           time.Time
@@ -204,6 +217,7 @@ func (this *connection) doWithInterceptor(consumer func(session.ConnectionInterc
 	v, err := sess.ConnectionInterceptor(this.context)
 	if err != nil {
 		if errors.Is(err, session.ErrMaxConnectionsPerSessionReached) && !this.closed.Load() {
+			this.service.monitoring.reject("ssh", "session_connections")
 			this.logger.Info("max connections per session reached; closing forcibly")
 		}
 		_ = this.Close()
@@ -313,6 +327,7 @@ func (this *connection) inspectIoError(err error) {
 	if err == nil {
 		return
 	}
+	this.monitoringEnd.CompareAndSwap(0, monitoringEndReason(err))
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		t := connectionTimeType(this.readConnectionTimeType.Load())
 		var opErr *gonet.OpError
@@ -363,6 +378,7 @@ func (this *connection) CloseStalledSubsystemInput() error {
 }
 
 func (this *connection) closeOwned() (rErr error) {
+	this.service.monitoring.connectionClosed(this)
 	this.service.sessionConnections.untrack(this)
 	defer func(target *error) {
 		if err := this.doWithInterceptor(session.ConnectionInterceptor.Close); err != nil && *target == nil {

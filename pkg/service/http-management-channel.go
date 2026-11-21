@@ -49,7 +49,11 @@ type webManagementJob struct {
 func (this *webService) managementAccess(r *http.Request, scope webScope) (*webAccess, error) {
 	channel, ok := r.Context().Value(webManagementContextKey{}).(*webManagementChannel)
 	if !ok {
-		return this.lookup(scope, webBearer(r), false)
+		access, err := this.lookup(scope, webBearer(r), false)
+		if err == nil {
+			monitoringHTTPFlow(r.Context(), access.auth.Flow())
+		}
+		return access, err
 	}
 	if channel.scope != scope || channel.conn.IsClosed() || channel.conn.check(false) != nil {
 		return nil, errWebAccessDenied
@@ -83,7 +87,7 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 		webError(w, 400, "invalid direct peer")
 		return
 	}
-	release, ok := this.admit(peer, false)
+	release, ok := this.admit(peer, false, r)
 	if !ok {
 		webError(w, 429, "web request limit reached")
 		return
@@ -92,6 +96,7 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 	defer release()
 	releaseSocket, ok := this.reserveTerminalSocket(peer)
 	if !ok {
+		this.monitoring().httpRejected(r, "socket_budget")
 		webError(w, 429, "connection limit reached")
 		return
 	}
@@ -108,19 +113,23 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 	}
 	timings := this.terminalTimings
 	upgrader := websocket.Upgrader{HandshakeTimeout: timings.open, ReadBufferSize: 4096, WriteBufferSize: 4096, EnableCompression: false, Subprotocols: []string{webManagementProtocol}, CheckOrigin: func(r *http.Request) bool { return len(r.Header.Values("Origin")) == 1 && r.Header.Get("Origin") != "" }}
-	socket, err := upgrader.Upgrade(webTerminalUpgradeWriter{ResponseWriter: w}, r, w.Header().Clone())
+	socket, err := upgrader.Upgrade(webTerminalUpgradeWriter{ResponseWriter: w, onBudget: func() { this.monitoring().httpRejected(r, "wire_budget") }}, r, w.Header().Clone())
 	if err != nil {
 		return
 	}
 	stream := newWebTerminalStream(r.Context(), socket, id, host, timings)
+	stream.onBudget = func() { this.monitoring().httpRejected(r, "message_budget") }
+	finishChannel := this.service.monitoring.channelOpened(r, "management")
+	defer func() { finishChannel(stream.monitoringReason()) }()
 	defer stream.stop()
-	stop := context.AfterFunc(this.ctx, func() { _ = stream.Close() })
+	stop := context.AfterFunc(this.ctx, func() { stream.monitoringEnd.CompareAndSwap(0, 8); _ = stream.Close() })
 	defer stop()
 	if socket.SetReadDeadline(time.Now().Add(timings.open)) != nil {
 		return
 	}
 	kind, data, err := socket.ReadMessage()
 	if err != nil || kind != websocket.TextMessage {
+		stream.monitoringFailure(err)
 		return
 	}
 	values, err := webTerminalObject(data, "type", "accessToken", "slug", "keepAlive", "progress")
@@ -157,6 +166,7 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 		stream.fail("authentication-denied")
 		return
 	}
+	monitoringHTTPFlow(r.Context(), access.auth.Flow())
 	conn, err := this.connect(scope, token, stream)
 	token = ""
 	clear(values)

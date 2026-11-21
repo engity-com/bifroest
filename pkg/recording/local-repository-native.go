@@ -23,6 +23,18 @@ type LocalNativeRecordingRepository struct {
 	metadata   *metadatacache.Cache
 }
 
+// SpoolUsage returns accounted bytes, including reservations, without disk I/O.
+// A poisoned quota is explicitly unknown rather than a misleading zero.
+func (r *LocalNativeRecordingRepository) SpoolUsage() (uint64, bool) {
+	if r == nil || r.repository == nil || r.repository.quota == nil {
+		return 0, false
+	}
+	quota := r.repository.quota
+	quota.mutex.Lock()
+	defer quota.mutex.Unlock()
+	return quota.usage, quota.poisoned == nil
+}
+
 type RecoveredNativeRecording struct {
 	Summary       NativeRecordingSummary
 	Truncated     bool

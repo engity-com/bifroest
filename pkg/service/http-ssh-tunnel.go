@@ -32,6 +32,7 @@ type sshTunnel struct {
 	peers      map[string]int
 	active     int
 	logger     log.Logger
+	monitoring *serviceMonitoring
 }
 
 func (this *sshTunnel) transportError(operation string, err error) {
@@ -87,6 +88,7 @@ func (this *sshTunnel) admit(peer string) (func(), bool) {
 	// Separate bounded transport slots, never occupy WebUI API workers. The
 	// SSH server additionally enforces MaxStartups and global MaxConnections.
 	if this.active >= sshTunnelMaximumConnections || this.peers[peer] >= sshTunnelMaximumConnectionsPerPeer {
+		this.monitoring.reject("ssh_tunnel", "connections")
 		this.mutex.Unlock()
 		release()
 		return nil, false
@@ -163,7 +165,7 @@ func (this *sshTunnel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	this.serveStream(w, r, bridge)
 }
 
-func (*sshTunnel) serveStream(w http.ResponseWriter, r *http.Request, bridge net.Conn) {
+func (this *sshTunnel) serveStream(w http.ResponseWriter, r *http.Request, bridge net.Conn) {
 	controller := http.NewResponseController(w)
 	if r.ProtoMajor == 1 {
 		if err := controller.EnableFullDuplex(); err != nil {
@@ -182,6 +184,9 @@ func (*sshTunnel) serveStream(w http.ResponseWriter, r *http.Request, bridge net
 	if controller.Flush() != nil {
 		return
 	}
+	finish := this.monitoring.channelOpened(r, "ssh_tunnel")
+	var end atomic.Uint32
+	defer func() { finish(monitoringCloseReason(end.Load())) }()
 	stopped := make(chan struct{})
 	stop := context.AfterFunc(r.Context(), func() {
 		defer close(stopped)
@@ -209,13 +214,16 @@ func (*sshTunnel) serveStream(w http.ResponseWriter, r *http.Request, bridge net
 		_ = r.Body.Close()
 		<-inputDone
 	}()
-	_ = copyTunnelOutput(bridge, func(data []byte) error {
+	copyErr := copyTunnelOutput(bridge, func(data []byte) error {
 		_ = controller.SetWriteDeadline(time.Now().Add(sshTunnelWriteTimeout))
 		if _, err := w.Write(data); err != nil {
 			return err
 		}
 		return controller.Flush()
 	})
+	if !errors.Is(copyErr, io.EOF) {
+		end.Store(monitoringEndReason(copyErr))
+	}
 }
 
 func (this *sshTunnel) serveWebSocket(w http.ResponseWriter, r *http.Request, bridge net.Conn) {
@@ -226,6 +234,9 @@ func (this *sshTunnel) serveWebSocket(w http.ResponseWriter, r *http.Request, br
 		return
 	}
 	defer ws.Close()
+	finish := this.monitoring.channelOpened(r, "ssh_tunnel")
+	var end atomic.Uint32
+	defer func() { finish(monitoringCloseReason(end.Load())) }()
 	_ = ws.UnderlyingConn().SetDeadline(time.Time{})
 	// Message boundaries have no SSH meaning. NextReader streams through fixed
 	// buffers with net.Pipe backpressure; never allocate/read a whole message.
@@ -242,10 +253,17 @@ func (this *sshTunnel) serveWebSocket(w http.ResponseWriter, r *http.Request, br
 		for {
 			kind, reader, err := ws.NextReader()
 			if err != nil {
+				reason := monitoringEndReason(err)
+				var closeErr *websocket.CloseError
+				if errors.As(err, &closeErr) && (closeErr.Code == websocket.CloseNormalClosure || closeErr.Code == websocket.CloseGoingAway) {
+					reason = 2
+				}
+				end.CompareAndSwap(0, reason)
 				this.transportError("read", err)
 				return
 			}
 			if kind != websocket.BinaryMessage {
+				end.CompareAndSwap(0, 4)
 				if this.logger != nil {
 					this.logger.With("messageType", kind).Debug("non-binary SSH tunnel message rejected")
 				}
@@ -258,10 +276,14 @@ func (this *sshTunnel) serveWebSocket(w http.ResponseWriter, r *http.Request, br
 		}
 	}()
 	defer func() { _ = bridge.Close(); _ = ws.Close(); <-inputDone }()
-	this.transportError("write", copyTunnelOutput(bridge, func(data []byte) error {
+	copyErr := copyTunnelOutput(bridge, func(data []byte) error {
 		_ = ws.SetWriteDeadline(time.Now().Add(sshTunnelWriteTimeout))
 		return ws.WriteMessage(websocket.BinaryMessage, data)
-	}))
+	})
+	if !errors.Is(copyErr, io.EOF) {
+		end.CompareAndSwap(0, monitoringEndReason(copyErr))
+	}
+	this.transportError("write", copyErr)
 	_ = ws.WriteControl(websocket.CloseMessage, nil, time.Now().Add(sshTunnelWriteTimeout))
 }
 

@@ -46,6 +46,8 @@ The local CLI needs filesystem permission to read the selected configuration, st
 
 [`session disconnect`](session/disconnect.md) and [`session dispose`](session/dispose.md) are management-only operations that change server state. They are not available against local filesystem storage.
 
+[`metrics show`](metrics/show.md) also requires management access: it queries the running instance, not local storage or a Prometheus server.
+
 `--configuration` cannot be combined with `@target`. Direct SSH commands use the running service's configuration and do not accept a replacement configuration file.
 
 ## Repositories and copied evidence

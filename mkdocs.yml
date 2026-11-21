@@ -136,6 +136,7 @@ nav:
           - Remote administration: guides/management.md
           - Remote public-key export: guides/keys.md
           - Encrypted evidence: guides/evidence.md
+          - Monitoring: guides/monitoring.md
   - Getting started:
       - setup/index.md
       - Installation:
@@ -184,6 +185,7 @@ nav:
               - S3: reference/auditlog/remote-targets/s3.md
               - SFTP: reference/auditlog/remote-targets/sftp.md
               - WebDAV: reference/auditlog/remote-targets/webdav.md
+      - reference/monitoring.md
       - Command line interface:
           - reference/cli/index.md
           - Basics:
@@ -203,6 +205,9 @@ nav:
               - show: reference/cli/session/show.md
               - disconnect: reference/cli/session/disconnect.md
               - dispose: reference/cli/session/dispose.md
+          - metrics:
+              - reference/cli/metrics/index.md
+              - show: reference/cli/metrics/show.md
           - audit:
               - reference/cli/audit/index.md
               - ls: reference/cli/audit/ls.md

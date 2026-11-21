@@ -39,7 +39,7 @@ func Boundary(domains configuration.HttpDomains, next http.Handler) (http.Handle
 	return boundary(domains, next, false)
 }
 
-func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnabled bool) (http.Handler, error) {
+func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnabled bool, observers ...func(*http.Request, string)) (http.Handler, error) {
 	canonical, err := domains.Canonical()
 	if err != nil || len(canonical) == 0 {
 		return nil, fmt.Errorf("HTTPS boundary needs configured domains")
@@ -49,6 +49,13 @@ func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnable
 		allowed[domain] = true
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reject := func(reason string) {
+			for _, observer := range observers {
+				if observer != nil {
+					observer(r, reason)
+				}
+			}
+		}
 		h := w.Header()
 		h.Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'")
 		h.Set("X-Frame-Options", "DENY")
@@ -60,11 +67,13 @@ func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnable
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		if r.TLS == nil || r.TLS.Version < tls.VersionTLS12 || r.URL == nil || r.URL.IsAbs() || r.URL.Opaque != "" || r.URL.User != nil || r.Method == http.MethodConnect {
+			reject("transport")
 			http.Error(w, "direct HTTPS request required", http.StatusBadRequest)
 			return
 		}
 		host, err := bnet.CanonicalHttpHost(r.Host)
 		if err != nil || !allowed[host] {
+			reject("authority")
 			http.Error(w, "request authority is not configured", http.StatusMisdirectedRequest)
 			return
 		}
@@ -76,16 +85,19 @@ func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnable
 		}
 		sni, err := bnet.CanonicalHttpHost(name)
 		if err != nil || sni != host {
+			reject("authority")
 			http.Error(w, "request authority differs from TLS", http.StatusMisdirectedRequest)
 			return
 		}
 		// Reject path aliases before a router can clean or discard RawPath.
 		if strings.Contains(r.URL.EscapedPath(), "%") || (r.URL.RawPath != "" && r.URL.RawPath != r.URL.Path) || strings.Contains(r.URL.Path, "\\") {
+			reject("path")
 			http.Error(w, "invalid request path", http.StatusBadRequest)
 			return
 		}
 		for _, part := range strings.Split(r.URL.Path, "/") {
 			if part == "." || part == ".." {
+				reject("path")
 				http.Error(w, "invalid request path", http.StatusBadRequest)
 				return
 			}
@@ -98,6 +110,7 @@ func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnable
 		upgrade := r.Header.Get("Upgrade") != ""
 		safe := r.Method == http.MethodGet || r.Method == http.MethodHead
 		if len(origins) > 1 || ((!safe || upgrade) && len(origins) == 0 && !tunnel) {
+			reject("origin")
 			http.Error(w, "same-origin proof required", http.StatusForbidden)
 			return
 		}
@@ -109,11 +122,13 @@ func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnable
 		if len(origins) == 1 && !oidcNavigation {
 			origin, err := url.Parse(origins[0])
 			if err != nil || origin.Scheme != "https" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.ForceQuery || strings.Contains(origins[0], "#") || origin.Opaque != "" || !sameHTTPSAuthority(origin.Host, r.Host) {
+				reject("origin")
 				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				return
 			}
 		}
 		if !oidcNavigation && r.Header.Get("Sec-Fetch-Site") == "cross-site" && (!safe || upgrade || r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/assets" || strings.HasPrefix(r.URL.Path, "/assets/") || r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/login/")) {
+			reject("csrf")
 			http.Error(w, "cross-site request rejected", http.StatusForbidden)
 			return
 		}

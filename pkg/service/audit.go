@@ -15,6 +15,7 @@ import (
 )
 
 func (this *service) recordFlowAudit(ctx context.Context, flow configuration.FlowName, event audit.Event) error {
+	this.monitoring.accessDecision(flow, event)
 	fail := func(err error) error {
 		this.closeAuditConnection(ctx)
 		return err
@@ -74,6 +75,9 @@ func (this *service) handleAuditlogFailure(name configuration.AuditlogName, comp
 	if err == nil {
 		return nil
 	}
+	if this.monitoring != nil {
+		this.monitoring.auditErrors.WithLabelValues(name.String(), string(auditErrorCategory(err))).Inc()
+	}
 	state := this.auditlogStates[name]
 	if state == nil || state.policy == configuration.AuditlogFailurePolicyStrict {
 		return err
@@ -90,6 +94,9 @@ func (this *service) handleAuditlogFailure(name configuration.AuditlogName, comp
 }
 
 func (this *service) handleRecordingFailure(name configuration.AuditlogName, component string, err error) error {
+	if err != nil && this.monitoring != nil {
+		this.monitoring.recordingErrors.WithLabelValues(name.String(), string(auditErrorCategory(err))).Inc()
+	}
 	result := this.handleAuditlogFailure(name, component, err)
 	if err != nil && result == nil {
 		if state := this.auditlogStates[name]; state != nil {

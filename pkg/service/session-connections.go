@@ -1,10 +1,12 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"io"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
@@ -19,6 +21,7 @@ type sessionConnectionKey struct {
 type sessionConnectionEntry struct {
 	connections map[managedConnection]struct{}
 	revoked     bool
+	created     time.Time
 }
 
 // Internal registrations use pointer implementations so connection identity is
@@ -34,6 +37,50 @@ type sessionConnectionRegistry struct {
 	sessions        map[sessionConnectionKey]*sessionConnectionEntry
 	connections     map[managedConnection]sessionConnectionKey
 	terminalsClosed bool
+	observeAges     bool
+	created         map[managedConnection]time.Time
+}
+
+func (this *sessionConnectionRegistry) monitoringAges(now time.Time) map[configuration.FlowName][2]monitoringAges {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	result := make(map[configuration.FlowName][2]monitoringAges)
+	seen := make(map[sessionConnectionKey]bool)
+	for conn, key := range this.connections {
+		if conn.IsClosed() {
+			continue
+		}
+		ages := result[key.flow]
+		ages[1].add(this.created[conn], now)
+		if !seen[key] {
+			ages[0].add(this.sessions[key].created, now)
+			seen[key] = true
+		}
+		result[key.flow] = ages
+	}
+	return result
+}
+
+// monitoringCounts inspects only the bounded in-memory registry, never sessions
+// on disk or targets. Revocation tombstones and closed connections are excluded.
+func (this *sessionConnectionRegistry) monitoringCounts() map[configuration.FlowName][2]int {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	result := make(map[configuration.FlowName][2]int)
+	seen := make(map[sessionConnectionKey]struct{})
+	for conn, key := range this.connections {
+		if conn.IsClosed() {
+			continue
+		}
+		counts := result[key.flow]
+		counts[1]++
+		if _, exists := seen[key]; !exists {
+			counts[0]++
+			seen[key] = struct{}{}
+		}
+		result[key.flow] = counts
+	}
+	return result
 }
 
 func (this *sessionConnectionRegistry) isRevoked(sess session.Session) bool {
@@ -52,6 +99,15 @@ func (this *sessionConnectionRegistry) track(conn managedConnection, sess sessio
 		return
 	}
 	key := sessionConnectionKey{sess.Flow(), sess.Id()}
+	var created time.Time
+	if this.observeAges {
+		// Repository access happens on registration, never while collecting.
+		if info, err := sess.Info(context.Background()); err == nil && info != nil {
+			if value, err := info.Created(context.Background()); err == nil && value != nil {
+				created = value.At()
+			}
+		}
+	}
 	this.mutex.Lock()
 	if _, terminal := conn.(*terminalConnection); terminal && this.terminalsClosed {
 		this.mutex.Unlock()
@@ -78,6 +134,21 @@ func (this *sessionConnectionRegistry) track(conn managedConnection, sess sessio
 		_ = conn.Close()
 		return
 	}
+	if entry.created.IsZero() {
+		entry.created = created
+	}
+	if this.observeAges {
+		if this.created == nil {
+			this.created = make(map[managedConnection]time.Time)
+		}
+		if _, exists := this.created[conn]; !exists {
+			at := time.Now()
+			if ssh, ok := conn.(*connection); ok {
+				at = ssh.createdAt
+			}
+			this.created[conn] = at
+		}
+	}
 	entry.connections[conn] = struct{}{}
 	if this.connections == nil {
 		this.connections = make(map[managedConnection]sessionConnectionKey)
@@ -100,6 +171,7 @@ func (this *sessionConnectionRegistry) untrack(conn managedConnection) {
 // remove must be called with mutex held. Revoked entries remain until final deletion.
 func (this *sessionConnectionRegistry) remove(conn managedConnection, key sessionConnectionKey) {
 	delete(this.connections, conn)
+	delete(this.created, conn)
 	entry := this.sessions[key]
 	delete(entry.connections, conn)
 	if !entry.revoked && len(entry.connections) == 0 {
@@ -135,6 +207,7 @@ func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id se
 	for conn := range entry.connections {
 		connections = append(connections, conn)
 		delete(this.connections, conn)
+		delete(this.created, conn)
 	}
 	entry.connections = nil
 	this.mutex.Unlock()

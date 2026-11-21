@@ -45,6 +45,7 @@ func (this *webService) serveManagementArtifact(w http.ResponseWriter, r *http.R
 		return false
 	}
 	if !this.service.managementArtifactAllowed(access.auth) {
+		this.monitoring().deny(access.auth.Flow(), "management", "policy")
 		webError(w, 403, "artifact transfer denied")
 		return false
 	}
@@ -54,6 +55,9 @@ func (this *webService) serveManagementArtifact(w http.ResponseWriter, r *http.R
 		return false
 	}
 	defer func() { transport.writing.Store(false); _ = conn.Close(); <-conn.done }()
+	if observation, _ := r.Context().Value(monitoringRequestKey{}).(*monitoringRequest); observation != nil {
+		observation.transfer.Store(true)
+	}
 	_ = transport.controller.SetWriteDeadline(time.Time{})
 	bindManagementProgress(conn, w)
 	output := &managementArtifactHTTPWriter{writer: w, conn: conn, transport: transport}

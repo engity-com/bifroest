@@ -101,6 +101,9 @@ func (this *service) registerTerminalConnection(transport terminalTransport, aut
 	}
 	lease, err := auth.FindSession().ConnectionInterceptor(ctx)
 	if err != nil {
+		if goerrors.Is(err, session.ErrMaxConnectionsPerSessionReached) {
+			this.monitoring.reject("http", "session_connections")
+		}
 		return nil, err
 	}
 	activity, ok := lease.(session.ActivityInterceptor)

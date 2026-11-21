@@ -20,6 +20,24 @@ def properties(relative):
 
 
 class DocsConfigurationTypesTest(TestCase):
+    def test_monitoring_peer_filter_uses_a_shared_data_type(self):
+        data_types = (DOCS / 'reference/data-type.md').read_text(encoding='utf-8')
+        self.assertIn('## IP Address or Network {: #ip-address-or-network }', data_types)
+        prop = next(call for call in properties('reference/monitoring.md') if ast.literal_eval(call.args[0]) == 'allowedRemoteHosts')
+        reference = prop.args[1]
+        self.assertIsInstance(reference, ast.Call)
+        self.assertEqual('array_ref', reference.func.id)
+        self.assertEqual('IP Address or Network', ast.literal_eval(reference.args[0]))
+        self.assertEqual('data-type.md#ip-address-or-network', ast.literal_eval(reference.args[1]))
+
+    def test_monitoring_reference_ends_with_a_minimal_configuration_example(self):
+        text = (DOCS / 'reference/monitoring.md').read_text(encoding='utf-8')
+        examples = text.split('## Examples\n', 1)[1]
+        self.assertNotRegex(examples, r'(?m)^## ')
+        block = re.search(r'```yaml\n(.*?)\n```', examples, re.DOTALL)
+        self.assertIsNotNone(block)
+        self.assertEqual({'monitoring': {'enabled': True}}, yaml.safe_load(block.group(1)))
+
     def test_ssh_tunnel_reference_links_directly_to_its_connection_guide(self):
         reference = (DOCS / 'reference/connection/http/index.md').read_text(encoding='utf-8')
         section = reference.split('## SSH tunnel\n\n', 1)[1].split('## Login flow', 1)[0]

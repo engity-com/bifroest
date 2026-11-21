@@ -3,6 +3,7 @@ package authorization
 import (
 	"encoding/base64"
 	"errors"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -66,6 +67,7 @@ func (this *AuthorizerFacade) ResumeSession(req SessionResumeRequest) (Authoriza
 		if !ok {
 			return nil, ErrSessionResumeUnavailable
 		}
+		started := time.Now()
 		auth, err := resumer.ResumeSession(req)
 		if err == nil && auth != nil && auth.IsAuthorized() {
 			if auth.Flow() != candidate.flow || auth.FindSession() == nil || auth.FindSession().Id() != req.SessionToResume().Id() || KindOf(auth) != req.ResumeCredential().Kind {
@@ -76,7 +78,7 @@ func (this *AuthorizerFacade) ResumeSession(req SessionResumeRequest) (Authoriza
 		} else if err == nil {
 			err = ErrSessionResumeDenied
 		}
-		if auditErr := this.observe(req, candidate.flow, FlowAuthorizationMethodBrowserRememberMe, FlowAuthorizationPhaseVerified, auth, err); auditErr != nil {
+		if auditErr := this.observe(req, candidate.flow, FlowAuthorizationMethodBrowserRememberMe, FlowAuthorizationPhaseVerified, auth, err, selection.Transport, time.Since(started)); auditErr != nil {
 			return nil, auditErr
 		}
 		if err != nil {

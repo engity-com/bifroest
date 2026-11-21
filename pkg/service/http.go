@@ -14,7 +14,8 @@ import (
 )
 
 func (this *service) prepareHTTPS() error {
-	if !this.Configuration.Http.IsEnabled() {
+	monitoringTLS := this.monitoring != nil && this.Configuration.Monitoring.IsEnabled() && this.Configuration.Monitoring.Tls.Enabled
+	if !this.Configuration.Http.IsEnabled() && !monitoringTLS {
 		return nil
 	}
 	// Audit best-effort policy must not waive transport key safety.
@@ -34,6 +35,14 @@ func (this *service) prepareHTTPS() error {
 			return fmt.Errorf("cannot inspect audit recipient identities for HTTPS")
 		}
 	}
+	if monitoringTLS {
+		if err := this.monitoring.endpoint.ValidateKeys(this.validateHTTPSKey); err != nil {
+			return fmt.Errorf("cannot validate monitoring TLS key separation: %w", err)
+		}
+	}
+	if !this.Configuration.Http.IsEnabled() {
+		return nil
+	}
 	conf := this.Configuration.Http
 	if conf.WebUi.IsEnabled() || conf.LoginFlow.IsEnabled() {
 		this.web = newWebService(this)
@@ -46,8 +55,15 @@ func (this *service) prepareHTTPS() error {
 	if conf.SshTunnel.IsEnabled() {
 		this.sshTunnel = newSshTunnel()
 		this.sshTunnel.logger = this.logger()
+		this.sshTunnel.monitoring = this.monitoring
 	}
-	endpoint, err := https.NewEndpoint(conf, https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: http.HandlerFunc(this.serveHTTPS)})
+	options := https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: http.HandlerFunc(this.serveHTTPS)}
+	if this.monitoring != nil {
+		options.ObserveRequest = this.monitoring.observeHTTPRequest
+		options.ObserveConnection = this.monitoring.httpConnectionOpened
+		options.ObserveRejection = this.monitoring.httpRejected
+	}
+	endpoint, err := https.NewEndpoint(conf, options)
 	if err != nil {
 		return fmt.Errorf("cannot prepare HTTPS endpoint: %w", err)
 	}

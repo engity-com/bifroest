@@ -55,6 +55,9 @@ an omitted, `null` or empty `auditlog` uses `auditlogs.default` if defined,
 otherwise it has no audit logging or recording. No default logger is created
 implicitly. Unknown explicit references are configuration errors.
 
+<<property("monitoring", "Monitoring", "monitoring.md")>>
+Configures a separate, optional listener for Prometheus metrics and startup, readiness and liveness probes. Disabled by default.
+
 <<property("housekeeping", "Housekeeping", "housekeeping.md")>>
 Defines how Bifröst will clean up its sessions and connections.
 
@@ -71,12 +74,22 @@ If defined this message will be displayed in the log files of Bifröst on startu
     ssh:
       addresses: [ ":22" ]
       # ...
+    http:
+      # ...
     session:
       type: fs
       # ...
     flows:
       - name: local
-        # ...
+      # ...
+    environments:
+      # ...
+    authorizations:
+      # ...
+    auditlogs:
+      # ...
+    monitoring:
+      # ...
     housekeeping:
       # ...
     alternatives:

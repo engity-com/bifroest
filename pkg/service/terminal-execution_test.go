@@ -105,7 +105,7 @@ func executionTestFixture(t *testing.T, run func(environment.TerminalTask) (int,
 	for _, fn := range configure {
 		fn(&conf)
 	}
-	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	svc, err := prepareMonitoringTestService(t, &Service{Configuration: conf, Version: serviceTestVersion{}})
 	require.NoError(t, err)
 	repo := &executionTestRepository{CloseableRepository: svc.environments, run: run}
 	svc.environments = repo

@@ -22,20 +22,24 @@ import (
 type KeyValidator func(crypto.PublicKey) error
 
 type EndpointOptions struct {
-	Handler     http.Handler
-	Source      CertificateSource
-	ValidateKey KeyValidator
+	Handler           http.Handler
+	Source            CertificateSource
+	ValidateKey       KeyValidator
+	ObserveRequest    func(http.Handler) http.Handler
+	ObserveConnection func() ConnectionObservation
+	ObserveRejection  func(*http.Request, string)
 }
 
 // Endpoint serves already-bound listeners. The caller must bind every SSH and
 // HTTPS input before serving challenges, call Prepare, and own the renewal loop.
 type Endpoint struct {
-	tls       *TLS
-	source    *lazyACME
-	server    *http.Server
-	grace     time.Duration
-	closeOnce sync.Once
-	closeErr  error
+	tls               *TLS
+	source            *lazyACME
+	server            *http.Server
+	grace             time.Duration
+	closeOnce         sync.Once
+	closeErr          error
+	observeConnection func() ConnectionObservation
 }
 
 func NewEndpoint(conf *configuration.Http, options EndpointOptions) (*Endpoint, error) {
@@ -69,17 +73,21 @@ func NewEndpoint(conf *configuration.Http, options EndpointOptions) (*Endpoint, 
 			return
 		}
 		handler.ServeHTTP(w, r)
-	}), conf.SshTunnel.IsEnabled())
+	}), conf.SshTunnel.IsEnabled(), options.ObserveRejection)
 	if err != nil {
 		_ = manager.Close()
 		return nil, err
 	}
-	endpoint := &Endpoint{tls: manager, source: lazy, grace: conf.GracefulShutdownTimeout.Native()}
+	if options.ObserveRequest != nil {
+		boundary = options.ObserveRequest(boundary)
+	}
+	endpoint := &Endpoint{tls: manager, source: lazy, grace: conf.GracefulShutdownTimeout.Native(), observeConnection: options.ObserveConnection}
 	endpoint.server = &http.Server{
 		TLSConfig: manager.Config(), Handler: boundary,
 		ReadHeaderTimeout: conf.ReadHeaderTimeout.Native(), ReadTimeout: conf.ReadHeaderTimeout.Native(), IdleTimeout: conf.IdleTimeout.Native(), MaxHeaderBytes: int(conf.MaxHeaderBytes),
 		// Never log attacker-controlled handshake diagnostics or private causes.
-		ErrorLog: log.New(discardHTTPDiagnostics{}, "", 0),
+		ErrorLog:  log.New(discardHTTPDiagnostics{}, "", 0),
+		ConnState: observeConnectionState,
 	}
 	return endpoint, nil
 }
@@ -87,7 +95,21 @@ func NewEndpoint(conf *configuration.Http, options EndpointOptions) (*Endpoint, 
 func (this *Endpoint) Prepare(ctx context.Context) error { return this.tls.Prepare(ctx) }
 func (this *Endpoint) Ready() bool                       { return this.tls.Ready() }
 func (this *Endpoint) Serve(listener net.Listener) error {
+	if this.observeConnection != nil {
+		listener = observedListener{Listener: listener, observe: this.observeConnection}
+	}
 	return this.server.ServeTLS(listener, "", "")
+}
+
+// CertificateExpirations snapshots only published, configured certificates.
+func (this *Endpoint) CertificateExpirations() map[string]time.Time {
+	this.tls.mutex.RLock()
+	defer this.tls.mutex.RUnlock()
+	result := make(map[string]time.Time, len(this.tls.certificates))
+	for domain, certificate := range this.tls.certificates {
+		result[domain] = certificate.notAfter
+	}
+	return result
 }
 func (this *Endpoint) RunRenewal(ctx context.Context, onFailure func(error)) error {
 	return this.tls.RunRenewal(ctx, onFailure)
