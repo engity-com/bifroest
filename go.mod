@@ -22,7 +22,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/ebitengine/purego v0.11.3
 	github.com/echocat/cli4g v0.3.0
-	github.com/echocat/slf4g v1.9.0
+	github.com/echocat/slf4g v1.9.1
 	github.com/echocat/slf4g/native v1.9.0
 	github.com/engity-com/ssh-server-go v0.5.0
 	github.com/felixge/httpsnoop v1.1.0
