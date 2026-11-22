@@ -59,6 +59,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Prepare and check browser network isolation
+        if: matrix.suite == 'docker'
+        shell: bash
+        run: &prepare-browser-network |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes passt
+          if pasta --quiet --config-net --ipv4-only --splice-only --tcp-ports none --udp-ports none --tcp-ns none --udp-ns none -- /usr/bin/env -- /bin/true; then
+            exit 0
+          fi
+          sudo cat /etc/apparmor.d/usr.bin.pasta /etc/apparmor.d/abstractions/pasta || true
+          sudo journalctl -k --since '-5 min' --no-pager | grep -E 'apparmor|pasta' || true
+          exit 1
+
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -94,8 +108,6 @@ jobs:
       - name: Prepare actual Docker browser E2E
         if: matrix.suite == 'docker'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes passt
           mise -C web install
           mise -C web run install:web
           mise -C web run build:web
@@ -267,6 +279,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Prepare and check browser network isolation
+        shell: bash
+        run: *prepare-browser-network
+
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -285,8 +301,6 @@ jobs:
 
       - name: Prepare actual Kubernetes browser E2E
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes passt
           mise -C web install
           mise -C web run install:web
           mise -C web run build:web
