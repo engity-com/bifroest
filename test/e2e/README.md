@@ -31,6 +31,16 @@ Run `mise run test:e2e:tunnel` for the built server with real OpenSSH, curl and 
 
 Windows curl 8.22.0/Schannel fails concurrent WSS duplex even in the independent curl probe, causing SSH MAC failures. The Windows-WSS profile is explicitly skipped by default, not claimed as passing. With another/fixed Windows curl build, set `BIFROEST_TEST_TUNNEL_WINDOWS_WSS=1` to make it mandatory. The standalone probe's `BIFROEST_TEST_CURL_REQUIRE=wss-empty-close` likewise requires concurrent WSS, not merely alternating transfers.
 
+## Browser tests on Linux
+
+Shared Docker/Kubernetes browser tests require `pasta` from the `passt` package with `--splice-only` support (January 2026 or newer). CI installs the package. On Linux, Chromium runs in a private network namespace so Docker's host-interface changes cannot abort unrelated requests with `ERR_NETWORK_CHANGED`. Only the fixture's loopback TCP port is forwarded; real HTTPS, cold WASM loading, WebSockets and authentication remain unchanged, without request replay.
+
+Check namespace isolation and authenticated TLS forwarding without starting a container runtime:
+
+```sh
+go test -tags=e2e -run '^TestSharedBrowserNetwork' ./test/e2e
+```
+
 ## Owned workload shell and cursor-report regression
 
 The pinned Alpine workload contains BusyBox 1.37.0. Its original `read_key()`
