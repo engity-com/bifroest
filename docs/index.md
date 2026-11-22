@@ -49,4 +49,5 @@ Set maximum [SSH connection](reference/connection/ssh.md#property-maxTimeout) an
 * [Use-Cases](usecases.md)
 * [Choosing Bifröst](choosing-bifroest.md)
 * [Security and trust](security.md)
+* [Operating model and availability](setup/operations.md)
 * [Configuration](reference/configuration.md)

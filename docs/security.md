@@ -20,6 +20,8 @@ Protect the [HTTPS endpoint](reference/connection/http/index.md) and any custom 
 
 Local-account sessions require privileges to run processes as the selected user: normally root on Linux and macOS, or LocalSystem for a Windows service. Protect the configuration, private keys, session directory and backups. Access to a Docker daemon or its socket grants extensive control over the host; container isolation depends on the runtime permissions and mounts you configure.
 
+Management requires an explicitly authorized flow and [operation rights](reference/environment/management.md#property-access). Those rights apply across target flows on the connected instance; flow names are not tenant boundaries. Repository locks are not cross-host fencing. Review the [operating model and availability limits](setup/operations.md) before sharing backend resources, restoring session backups or planning a standby.
+
 Audit logging and recording are **off by default**. When enabled, Bifröst can produce [signed audit journals](reference/auditlog/index.md) and [verifiable terminal recordings](guides/recording.md). Signatures protect integrity, not confidentiality: configure a separate encryption recipient when needed. Recordings capture shell/command output, not raw keystrokes or SFTP and forwarding payloads. Treat exports as sensitive; protect the signing key and independently retain the [producer ID](reference/cli/audit/producer-id.md) needed to verify copied evidence.
 
 ## Verification and disclosure

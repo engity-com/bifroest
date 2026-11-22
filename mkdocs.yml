@@ -143,6 +143,7 @@ nav:
           - On Host: setup/on-host.md
           - In Docker: setup/in-docker.md
       - setup/distribution.md
+      - Operating model and availability: setup/operations.md
       - Upgrade notes: setup/upgrade.md
       - Security and trust: security.md
       - License: legal/license.md
