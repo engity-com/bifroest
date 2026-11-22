@@ -43,25 +43,32 @@ vi.mock('../src/artifacts/ArtifactCatalog', () => ({
         onSelect,
         disabled,
         active,
+        openByID,
     }: {
         onSelect(value: ArtifactRequest): void;
         disabled: boolean;
         active: boolean;
+        openByID?: ReactNode;
     }) =>
         createElement(
-            'button',
-            {
-                type: 'button',
-                disabled,
-                'data-catalog-active': active,
-                onClick: () =>
-                    onSelect({
-                        kind: 'recording',
-                        auditlog: 'default',
-                        id: '34e34ab8-7457-4d88-a5e4-c57791775c3a',
-                    }),
-            },
-            'Open fixture recording',
+            'div',
+            null,
+            createElement(
+                'button',
+                {
+                    type: 'button',
+                    disabled,
+                    'data-catalog-active': active,
+                    onClick: () =>
+                        onSelect({
+                            kind: 'recording',
+                            auditlog: 'default',
+                            id: '34e34ab8-7457-4d88-a5e4-c57791775c3a',
+                        }),
+                },
+                'Open fixture recording',
+            ),
+            openByID,
         ),
 }));
 vi.mock('../src/artifacts/AuditCatalog', () => ({
@@ -351,6 +358,33 @@ async function mount(selected = access()) {
     await render();
     return { container, render, commits };
 }
+
+it.each([false, true])(
+    'enables recording-open inputs only with explicit download permission (download=%s)',
+    async (download) => {
+        vi.mocked(WebAccess.prototype.managementCapabilities).mockReturnValue(
+            managementPermissions.filter((permission) =>
+                permission === 'recordings.download' ? download : !permission.endsWith('.download'),
+            ),
+        );
+        const panel = await mount();
+        const form = panel.container.querySelector('form[data-kind="recordings"]');
+        expect(form).not.toBeNull();
+        const inputs = [...(form?.querySelectorAll<HTMLInputElement>('input') ?? [])];
+        expect(inputs).toHaveLength(2);
+        for (const input of inputs) {
+            expect(input.disabled).toBe(!download);
+        }
+        expect(form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(
+            !download,
+        );
+        expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
+        if (!download) {
+            await click(button('Open fixture recording', panel.container));
+            expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
+        }
+    },
+);
 
 it('does not render a former actor document even for the commit before passive boundary cleanup', async () => {
     const panel = await mount(access('alice'));
