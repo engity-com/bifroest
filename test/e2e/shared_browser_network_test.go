@@ -56,7 +56,10 @@ func sharedBrowserNetworkArguments(origin, executable string, args ...string) ([
 		"--quiet", "--config-net", "--ipv4-only", "--splice-only",
 		"--tcp-ports", "none", "--udp-ports", "none",
 		"--tcp-ns", strconv.Itoa(port), "--udp-ns", "none",
-		"--", executable,
+		// Ubuntu's pasta profile permits unconfined execution through /usr/bin,
+		// not directly from the pinned toolchain or Go's temporary build path.
+		// Use its allowed system launcher, without a shell or policy changes.
+		"--", "/usr/bin/env", "--", executable,
 	}
 	return append(result, args...), nil
 }
@@ -76,7 +79,7 @@ func TestSharedBrowserNetworkArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "--quiet --config-net --ipv4-only --splice-only --tcp-ports none --udp-ports none --tcp-ns 18443 --udp-ns none -- node browser.ts unchanged-argument"
+	want := "--quiet --config-net --ipv4-only --splice-only --tcp-ports none --udp-ports none --tcp-ns 18443 --udp-ns none -- /usr/bin/env -- node browser.ts unchanged-argument"
 	if strings.Join(args, " ") != want {
 		t.Fatalf("isolation must relay only the fixture port and retain the command: %q", args)
 	}
