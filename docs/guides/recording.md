@@ -82,7 +82,7 @@ This Linux example adds audit logging and session recording to a local-account h
 
 ## Browser alternative
 
-The same settings capture output from [browser shells](browser-access.md). With a management flow and `allowArtifactTransfer: true`:
+The same settings capture output from [browser shells](browser-access.md). With a management flow granting `access.recordings.read` and `access.recordings.download`:
 
 1. Choose **Audit logs**, select `default`, then open **Recordings**.
 2. Choose **Open recording**. For encrypted content, select your local recipient key and enter its passphrase to unlock it. Opening a Recording does not itself verify its signatures.

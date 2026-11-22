@@ -110,6 +110,6 @@ All sources must verify before output is published. The merged JSONL result is l
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Client-side remote merge downloads the selected journals and requires `allowArtifactTransfer: true`.
+Client-side remote merge downloads the selected journals and requires `auditlogs.download`. Direct-SSH merge requires `auditlogs.events`, plus `auditlogs.download` for sensitive output.
 
 Direct SSH accepts auditlog names and `--with-sensitive`, writes stdout and uses configured server trust. Sensitive output requires artifact-transfer permission. Use the integrated client for decrypting encrypted fields with workstation keys.

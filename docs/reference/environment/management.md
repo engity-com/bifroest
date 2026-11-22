@@ -11,38 +11,47 @@ Use a dedicated, explicitly authorized [flow](../flow.md), with management and w
 
 To keep management SSH-only when an HTTPS endpoint is enabled, set `http.enabled: false` on its flow.
 
-!!! warning "Management access includes session control"
-    Unless limited by a forced command, users authorized by a management flow can [disconnect](../cli/session/disconnect.md) or [dispose](../cli/session/dispose.md) sessions in any flow. Disposal revokes the session and runs its configured environment and authorization cleanup, which can remove containers, Pods or managed accounts and home directories. The permissions below do not restrict these commands.
+!!! warning "Default management access includes session control"
+    The default permissions allow [disconnecting](../cli/session/disconnect.md) and [disposing](../cli/session/dispose.md) sessions in any flow. Disposal can remove containers, Pods or managed accounts and home directories. Use an explicit `access` object for read-only or restricted access.
 
 See [Remote access](../cli/management.md) for SSH commands and client settings, or [Browser access](../../guides/browser-access.md) for the browser view. Forced-command credentials do not grant unrestricted management access.
 
 ## Configuration {: #configuration}
 
-The two permissions below are independent and disabled by default. The common `environment.variables` option is not supported by this environment.
+The common `environment.variables` option is not supported by this environment.
 
 <<property("type", "Environment Type", default="management", required=True)>>
 Must be `management`.
 
-<<property("includingCredentials", "bool", default=False)>>
-Controls whether `flow show` displays unredacted configuration strings **in this management flow's output**.
+<<property("access", "bool, template or object", template_context="../context/authorization.md")>>
+Controls management operations across SSH, the integrated client and the browser. Every level accepts a Boolean, a template or an object containing the known children below. A scalar applies to all descendants.
 
-Browser metadata does not expose credentials, even with this option enabled.
+If `access` is omitted, the default object grants the rights shown in the table. An **explicit object inherits no defaults**: every omitted child is recursively `false`. Thus `access: {}` denies all operations, while `access: true` grants every right, including credentials and original evidence.
 
-By default, credentials and other arbitrary strings, including commands, URLs, image references and environment variables, are replaced with `***redacted***`. Even a valid image name can contain private information. Structural names, booleans, numeric settings and fixed Docker/Kubernetes image-pull policies remain visible. Audit-log target settings are redacted independently.
+| Right | Default | Allows |
+| --- | --- | --- |
+| `version.read` | `true` | Version and build information |
+| `metrics.read` | `true` | Management metrics |
+| `flows.read` | `true` | Flow listings and redacted settings |
+| `flows.credentials` | `false` | Unredacted `flow show` output, additionally requiring `flows.read` |
+| `sessions.read` | `true` | Session listings and details |
+| `sessions.disconnect` | `true` | Disconnecting current session connections |
+| `sessions.dispose` | `true` | Revoking sessions and running cleanup |
+| `auditlogs.read` | `true` | Auditlog metadata and redacted settings |
+| `auditlogs.events` | `true` | Public audit events and server-side redacted export/merge |
+| `auditlogs.verify` | `true` | Server-side audit verification |
+| `auditlogs.download` | `false` | Original audit downloads and sensitive audit output |
+| `recordings.read` | `true` | Recording metadata |
+| `recordings.verify` | `true` | Server-side Recording verification |
+| `recordings.download` | `false` | Original Recording downloads, export and playback |
+| `keys.read` | `true` | Public SSH key exports |
 
-!!! warning "Do not enable includingCredentials in production"
-    `includingCredentials: true` can reveal secrets configured in other flows to every administrator authorized by this management flow. Bifröst logs a startup warning for each flow with this option enabled. Use it only temporarily for debugging or migration, restrict access to the flow and turn it off afterwards.
+Templates use the verified administrator's [authorization context](../context/authorization.md), not the selected target flow or session. They must render exactly `true` or `false`, ignoring surrounding whitespace. Invalid results and evaluation errors deny the operation. Unknown properties, duplicate keys, `null` and lists are configuration errors.
 
-<<property("allowArtifactTransfer", "bool", default=False)>>
-Permits downloading original signed audit journals and sealed Recordings for **client-side** verification, export and playback. Private decryption keys stay on the client; the server does not need an SSH agent or a decryption key for management queries.
+Rights are independent: session control does not grant session details, and download rights do not grant metadata listings. A browser-wide Recording download also requires `recordings.read` because it inventories the source. Sensitive audit event queries additionally require `auditlogs.events`. Forced commands further restrict permitted operations; they never expand `access`. Rights apply to operations across all target flows, not just the administrator's own sessions.
 
-With the default `false`:
-
-* Metadata inspection remains available. Direct SSH can also inspect public audit events and verify allowed evidence.
-* Binary artifact downloads and direct-SSH access to sensitive audit events or Recording content are denied.
-
-!!! warning "Original artifacts can contain sensitive data"
-    Enable this only for flows whose administrators may access original evidence, including unencrypted private content. The client flag `--with-sensitive` controls what the CLI displays; it does not grant or restrict server-side permissions.
+!!! warning "Credentials and originals can disclose secrets"
+    `flows.credentials` can expose configured secrets; browser metadata and auditlog settings remain redacted. Original audit journals and Recordings can contain private content, even without encryption. Grant these rights only to trusted administrators. `--with-sensitive` is an explicit disclosure choice, not a permission. Client-side decryption keys remain on the client.
 
 ## Examples {: #examples}
 
@@ -50,10 +59,19 @@ With the default `false`:
     ```yaml
     type: management
     ```
-2. Allow client-side evidence verification, export and playback while keeping configuration credentials redacted:
+2. Metrics-only access:
     ```yaml
     type: management
-    allowArtifactTransfer: true
+    access:
+      metrics: true
+    ```
+3. Read sessions and conditionally disconnect them, without disposal or other operations:
+    ```yaml
+    type: management
+    access:
+      sessions:
+        read: true
+        disconnect: '{{ eq .authorization.entry.name "operator" }}'
     ```
 
 For a complete configuration with separate workload and management flows, authentication and audit logging, follow [Manage a Bifröst host remotely](../../guides/management.md). The [encrypted-evidence guide](../../guides/evidence.md) covers artifact downloads and local decryption.

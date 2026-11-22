@@ -133,7 +133,7 @@ func TestForcedManagementSingleReadRequiresExactIDAndPreservesGlobalAmbiguity(t 
 	svc.sessions = &ambiguousForcedReadRepository{CloseableRepository: original, target: target}
 	defer func() { svc.sessions = original }()
 	code, _, body = managementWebRead(t, handler, token, "sessions/show", map[string]string{"flow": target.Flow().String(), "id": target.Id().String()})
-	require.Equal(t, 503, code)
+	require.Equal(t, 403, code)
 	require.NotContains(t, body, `"session"`)
 }
 

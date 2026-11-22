@@ -83,6 +83,6 @@ Verification checks the trusted producer and, for remote selection, the requeste
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Local invocation supports configured repositories and copied files. Remote-client verification downloads the original and requires `allowArtifactTransfer: true`, including outer-only verification.
+Local invocation supports configured repositories and copied files. Remote-client verification downloads the original and requires `recordings.download`, including outer-only verification. Direct-SSH verification requires `recordings.verify`.
 
 Direct SSH accepts an auditlog name, Recording UUID, `--require-full` and `--format`. It verifies server-side evidence without artifact-transfer permission or access to a workstation's private decryption key.

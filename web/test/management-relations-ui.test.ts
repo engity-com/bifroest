@@ -9,6 +9,7 @@ import { openRecording } from '../src/artifacts/open-recording';
 import { inspectProtection } from '../src/artifacts/protection';
 import type { ReceivedArtifact } from '../src/artifacts/protocol';
 import { verifyArtifact } from '../src/artifacts/verify';
+import { managementPermissions } from '../src/management/permissions';
 import type { RecordingSummary, SessionItem } from '../src/management/protocol';
 import type { WebAccess } from '../src/remember';
 import { uuidText } from '../src/shared/uuid';
@@ -151,6 +152,7 @@ function fixture() {
         }),
         status: () => 'active',
         managementStatus: () => 'active',
+        managementCapabilities: () => managementPermissions,
         subscribeStatus: () => () => {},
         openManagement: vi.fn(() => ({ disconnect: vi.fn() })),
         managementSessions: vi.fn<WebAccess['managementSessions']>(async () => ({

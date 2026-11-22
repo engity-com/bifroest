@@ -10,6 +10,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -33,6 +34,10 @@ type managementControlTestAuthorization struct {
 }
 
 func (this managementControlTestAuthorization) FindSession() session.Session { return this.caller }
+func (this managementControlTestAuthorization) IsAuthorized() bool           { return this.caller != nil }
+func (this managementControlTestAuthorization) Flow() configuration.FlowName {
+	return this.caller.Flow()
+}
 
 type managementControlTestConnection struct{ bconn.Connection }
 
@@ -51,6 +56,7 @@ func newManagementSessionControlTest(t *testing.T) (managementSessionControl, *h
 	}
 	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 	hk.service.houseKeeper.service = hk.service
+	hk.service.Configuration.Flows = append(hk.service.Configuration.Flows, configuration.Flow{Name: "administration", Environment: configuration.Environment{V: &configuration.EnvironmentManagement{}}})
 	recorder := &recordingAuditRecorder{}
 	hk.service.flowAuditRecorders["current"] = recorder
 	hk.service.flowAuditRecorders["administration"] = &recordingAuditRecorder{}

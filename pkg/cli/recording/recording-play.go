@@ -9,6 +9,7 @@ import (
 	cli "github.com/echocat/cli4g"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type playCommandOptions struct {
@@ -38,6 +39,9 @@ func createPlayCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementPlay(ctx context.Context, opts managementPlayOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.RecordingsDownload); err != nil {
+		return err
+	}
 	if !opts.WithSensitive {
 		return fmt.Errorf("recording play requires --with-sensitive")
 	}

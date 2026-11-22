@@ -44,8 +44,6 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
               authorizedKeysFile: /etc/engity/bifroest/management_authorized_keys
         environment:
           type: management
-          includingCredentials: false
-          allowArtifactTransfer: false
 
       - name: local
         auditlog: workload
@@ -85,7 +83,7 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
     bifroest @bifroest-admin audit events administration --limit=20
     ```
 
-    Settings are redacted. Metadata and public event queries work with `allowArtifactTransfer: false`. This does not make the flow read-only: an unrestricted management login can also disconnect and dispose of sessions.
+    Settings are redacted and original downloads are disabled. The default management permissions also allow session control; use an explicit [`access` object](../reference/environment/management.md#property-access) to restrict operations.
 
 ### Find a workload session and its Recording
 
@@ -146,7 +144,7 @@ Find the workload session with `session ls`, then choose **one** action:
     bifroest @bifroest-admin session dispose SESSION_UUID
     ```
 
-Disposal can remove containers, Pods or managed accounts and home directories, depending on the environment. For this unrestricted management login, neither command requires an additional permission. A command cannot target its own executing management session. See [`disconnect`](../reference/cli/session/disconnect.md) and [`dispose`](../reference/cli/session/dispose.md) for details and failure behavior.
+Disposal can remove containers, Pods or managed accounts and home directories, depending on the environment. This example grants `sessions.disconnect` and `sessions.dispose` through the default access object. A command cannot target its own executing management session. See [`disconnect`](../reference/cli/session/disconnect.md) and [`dispose`](../reference/cli/session/dispose.md) for details and failure behavior.
 
 ## Browser alternative
 
@@ -156,7 +154,7 @@ Enable HTTPS as in [Browser access](browser-access.md). Publish the administrati
 2. Choose **Sessions**, filter for the workload flow and open the desired session.
 3. Choose **Disconnect connections** or **End session** and confirm the exact target. These perform the same operations as the CLI commands above.
 
-This example keeps `allowArtifactTransfer: false`. Browser event/Recording views and original downloads require enabling it separately; follow [encrypted evidence](evidence.md).
+This example permits public browser event queries and Recording metadata, but not original downloads or playback. For controlled downloads and local decryption, follow [encrypted evidence](evidence.md).
 
 ## Next steps
 

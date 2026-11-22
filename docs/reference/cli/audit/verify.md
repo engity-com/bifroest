@@ -79,6 +79,6 @@ The command can run while the service keeps writing; later events may be absent 
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Local invocation supports configured and copied journals. Client-side remote verification downloads the journal and requires `allowArtifactTransfer: true`, including outer-only verification.
+Local invocation supports configured and copied journals. Client-side remote verification downloads the journal and requires `auditlogs.download`, including outer-only verification. Direct-SSH verification requires `auditlogs.verify`.
 
 Direct SSH accepts an explicit auditlog name, `--require-full` and `--format`. It verifies server-side evidence without downloading it or accepting a workstation decryption key. No artifact-transfer permission is needed for that verification.

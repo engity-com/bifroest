@@ -9,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type flowOptions struct {
@@ -59,6 +60,9 @@ func CreateCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementList(ctx context.Context, opts listOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.FlowsRead); err != nil {
+		return err
+	}
 	conf, err := common.ResolveConfiguration(ctx, opts.Parent)
 	if err != nil {
 		return err
@@ -89,6 +93,9 @@ func remoteHandleList(ctx context.Context, opts listOptions) error {
 }
 
 func handleManagementShow(ctx context.Context, opts showOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.FlowsRead); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok {
 		return fmt.Errorf("management configuration is unavailable")
@@ -97,7 +104,7 @@ func handleManagementShow(ctx context.Context, opts showOptions) error {
 	if err != nil {
 		return err
 	}
-	return ShowFlow(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Parent.Format), conf, opts.Name, access.IncludingCredentials)
+	return ShowFlow(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Parent.Format), conf, opts.Name, access.Require(ctx, managementaccess.FlowsCredentials) == nil)
 }
 
 func handleShow(ctx context.Context, opts showOptions) error {

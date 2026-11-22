@@ -1,6 +1,7 @@
 import { act, createElement, type ReactNode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
+import { managementPermissions } from '../src/management/permissions';
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
 import { useAdminDetail } from '../src/ui/admin-navigation';
@@ -18,6 +19,9 @@ vi.mock('../src/management/channel', () => ({
             return true;
         }
         disconnect() {}
+        capabilities() {
+            return managementPermissions;
+        }
     },
 }));
 

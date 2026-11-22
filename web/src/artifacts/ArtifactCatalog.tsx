@@ -9,6 +9,7 @@ import type {
     RecordingOptions,
     RecordingSummary,
 } from '../management/protocol';
+import { useManagementPermissions } from '../management/use-permissions';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { CursorPages } from '../shared/cursor-pages';
@@ -17,7 +18,7 @@ import { useDetailedView } from '../ui/detail-preference';
 import { reportUiError } from '../ui/error-report';
 import { ManagementJump, relationID, sessionRelation } from '../ui/ManagementJump';
 import { useManagementNavigation } from '../ui/management-navigation';
-import { Alert, Button } from '../ui/material';
+import { Alert, Button, TextInput } from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import { useOwnerKey } from '../ui/use-owner-key';
@@ -75,6 +76,8 @@ function OwnedArtifactCatalog({
     onSource,
     onVerificationIndex,
 }: ArtifactCatalogProps) {
+    const can = useManagementPermissions(access);
+    const mayRead = can('recordings.read');
     const navigation = useManagementNavigation();
     const sourceHints = useContext(AuditSourceContext);
     const route = navigation?.location.page === 'recordings' ? navigation.location : null;
@@ -160,8 +163,8 @@ function OwnedArtifactCatalog({
     const generation = useRef(0);
     const attempted = useRef(false);
     const cursors = useRef(new CursorPages());
-    const available = useRef(active && !disabled);
-    available.current = active && !disabled;
+    const available = useRef(active && !disabled && mayRead);
+    available.current = active && !disabled && mayRead;
     // Actor replacement is a new component lifetime, not a passive reset of
     // already-rendered metadata belonging to a previous owner.
     useEffect(() => {
@@ -177,7 +180,7 @@ function OwnedArtifactCatalog({
         }
     }, [disabled, active]);
     async function run(action: (signal: AbortSignal, current: number) => Promise<void>) {
-        if (!active || disabled || request.current !== null) {
+        if (!active || disabled || !mayRead || request.current !== null) {
             return;
         }
         const controller = new AbortController();
@@ -302,6 +305,13 @@ function OwnedArtifactCatalog({
         });
     }
     async function loadSources(after = '') {
+        if (!can('auditlogs.read')) {
+            setSourceAccess('denied');
+            if (route?.auditlogHint) {
+                await load(route.auditlogHint);
+            }
+            return;
+        }
         await run(async (signal, current) => {
             const report = (value: Progress) => {
                 if (
@@ -565,8 +575,36 @@ function OwnedArtifactCatalog({
             void load(source, 0, '', sort, null);
         }
     }
+    if (!mayRead) {
+        return (
+            <section className="stack">
+                {openByID}
+                <Alert>{t('recordingReadDenied')}</Alert>
+            </section>
+        );
+    }
     return (
         <section className="stack" aria-label={t('artifactCatalog')}>
+            {!can('auditlogs.read') && !route?.auditlogHint && (
+                <form
+                    className="actions"
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        void load(source);
+                    }}
+                >
+                    <TextInput
+                        label={t('artifactAuditlog')}
+                        value={source}
+                        required
+                        disabled={locked}
+                        onChange={(event) => setSource(event.currentTarget.value)}
+                    />
+                    <Button type="submit" disabled={locked || !active}>
+                        Go
+                    </Button>
+                </form>
+            )}
             <RecordingVerificationDialogs {...verification.dialogs} />
             {visibleFailure && (
                 <Alert role="status" color="red">
@@ -595,7 +633,7 @@ function OwnedArtifactCatalog({
                                   }}
                                   label="workspaceEvents"
                                   compact
-                                  disabled={locked}
+                                  disabled={locked || !can('auditlogs.events')}
                               />
                           )
                         : undefined
@@ -682,6 +720,7 @@ function OwnedArtifactCatalog({
                 onOpen={(row) =>
                     onSelect({ kind: 'recording', auditlog: row.auditlog, id: row.id }, row)
                 }
+                canOpen={() => can('recordings.download')}
                 openLabel={(row) => `${t('recordingOpen')} ${row.id}`}
                 rowActions={(row) =>
                     navigation &&

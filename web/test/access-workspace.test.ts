@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionActionConfirmation } from '../src/management/action';
 import type { ManagementConnection } from '../src/management/channel';
 import { m } from '../src/management/messages';
+import { managementPermissions } from '../src/management/permissions';
 import { BrowserBinding, BrowserClient } from '../src/remember';
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
@@ -94,6 +95,7 @@ vi.mock('../src/artifacts/ArtifactPanel', async () => {
 await import('../src/management/ManagementPanel');
 const cleanups: (() => void)[] = [];
 beforeEach(() => {
+    vi.spyOn(WebAccess.prototype, 'managementCapabilities').mockReturnValue(managementPermissions);
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal(
         'fetch',

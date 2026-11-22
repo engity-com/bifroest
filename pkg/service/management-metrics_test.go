@@ -30,6 +30,7 @@ import (
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/management/access"
 )
 
 func TestMonitoringCollectionActivationMatrix(t *testing.T) {
@@ -263,7 +264,7 @@ func TestManagementMetricsIntegratedSSHAndOutputSafety(t *testing.T) {
 	login, err := bfcrypto.EnsureKeyFile(identity, &bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEd25519}, nil)
 	require.NoError(t, err)
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
+		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{Access: access.Constant(false).WithConstant(access.MetricsRead, true)}
 		auth := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 		auth.Entries[0].AuthorizedKeys = bfcrypto.AuthorizedKeys(bfcrypto.MarshalPublicKey(login.PublicKey()))
 	})
@@ -275,6 +276,13 @@ func TestManagementMetricsIntegratedSSHAndOutputSafety(t *testing.T) {
 	require.NoError(t, os.WriteFile(config, []byte(fmt.Sprintf("Host metrics\n HostName %s\n Port %s\n User %s\n IdentityAgent none\n IdentityFile %q\n UserKnownHostsFile %q\n", host, port, server.username, filepath.ToSlash(identity), filepath.ToSlash(hosts))), 0600))
 	target := management.Target{Host: "metrics", SSHConfigFile: config}
 	app := server.service.managementApplication
+	for _, args := range [][]string{{"flow", "ls"}, {"session", "ls"}, {"version"}, {"audit", "ls"}} {
+		var output bytes.Buffer
+		ctx := common.ContextWithRemoteTarget(t.Context(), target)
+		ctx = cli.ContextWithStdio(ctx, nil, &output, io.Discard)
+		require.Error(t, app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileRemote}}, args...))
+		require.Empty(t, output.Bytes())
+	}
 	for _, selected := range []string{"table", "json", "openmetrics"} {
 		var output, stderr bytes.Buffer
 		ctx := common.ContextWithRemoteTarget(t.Context(), target)

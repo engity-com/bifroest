@@ -11,14 +11,20 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	bfssh "github.com/engity-com/bifroest/pkg/ssh"
 )
 
 type managementKeyOperations struct {
 	service *service
+	task environment.TaskContext
 }
 
 func (this managementKeyOperations) Export(ctx context.Context, request model.KeyExportRequest) ([]byte, error) {
+	if err := this.service.requireManagement(ctx, this.task, access.KeysRead); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

@@ -1,5 +1,6 @@
 import type { Scope } from '../remember';
 import { ManagementJump, relationFlow, relationID } from '../ui/ManagementJump';
+import type { ManagementPermission } from './permissions';
 import type { SessionItem } from './protocol';
 
 export function SessionArtifactLinks({
@@ -8,12 +9,14 @@ export function SessionArtifactLinks({
     managementFlow,
     compact,
     disabled,
+    can,
 }: {
     item: SessionItem;
     scope: Scope;
     managementFlow: string | undefined;
     compact: boolean;
     disabled: boolean;
+    can: (permission: ManagementPermission) => boolean;
 }) {
     if (
         !managementFlow ||
@@ -29,7 +32,7 @@ export function SessionArtifactLinks({
             <ManagementJump
                 scope={scope}
                 compact={compact}
-                disabled={disabled}
+                disabled={disabled || !can('recordings.read')}
                 label="showRecordings"
                 target={{
                     managementFlow,
@@ -42,7 +45,7 @@ export function SessionArtifactLinks({
             <ManagementJump
                 scope={scope}
                 compact={compact}
-                disabled={disabled}
+                disabled={disabled || !can('auditlogs.events')}
                 label="showAuditlogs"
                 target={{
                     managementFlow,

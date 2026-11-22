@@ -77,4 +77,4 @@ A later verification, connection or output error aborts with nonzero status and 
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Remote metadata queries need no artifact-transfer permission or decryption key.
+Remote metadata queries require `access.recordings.read`, but no download permission or decryption key.

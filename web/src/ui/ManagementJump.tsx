@@ -3,7 +3,9 @@ import PeopleOutlineIcon from '@mui/icons-material/PeopleOutlineOutlined';
 import ScreenshotMonitorIcon from '@mui/icons-material/ScreenshotMonitor';
 import { Button, IconButton, Link, Tooltip } from '@mui/material';
 import type { MouseEvent, ReactNode } from 'react';
+import { useContext } from 'react';
 import type { ManagementLocation } from '../application/management-location';
+import { ManagementPermissionContext } from '../management/use-permissions';
 import type { Scope } from '../remember/protocol';
 import { resourceID } from '../shared/uuid';
 import { bookmarkPath } from './hash-route';
@@ -52,8 +54,25 @@ export function ManagementJump({
     children?: ReactNode;
 }) {
     const navigation = useManagementNavigation();
+    const can = useContext(ManagementPermissionContext);
     if (!target) {
         return children ?? null;
+    }
+    if (can) {
+        disabled ||=
+            target.page === 'sessions'
+                ? !can('sessions.read')
+                : target.page === 'recordings'
+                  ? !(target.id || target.recordingHint
+                        ? can('recordings.download')
+                        : can('recordings.read'))
+                  : target.page === 'auditlogs'
+                    ? !(target.auditlog
+                          ? can('auditlogs.events') || can('auditlogs.download')
+                          : can('auditlogs.read'))
+                    : target.page === 'version'
+                      ? !can('version.read')
+                      : !can('flows.read');
     }
     const href = bookmarkPath(scope, target);
     const click = (event: MouseEvent) => {

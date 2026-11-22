@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
 import type { LoginDialogActions } from '../src/login/LoginDialog';
 import type { ManagementConnection } from '../src/management/channel';
+import { managementPermissions } from '../src/management/permissions';
 import { BrowserBinding, BrowserClient } from '../src/remember';
 import { WebAccess } from '../src/remember/client';
 import type { RememberMePolicy } from '../src/remember/policy';
@@ -79,6 +80,7 @@ vi.mock('../src/terminal/TerminalPanel', async () => {
 
 const cleanups: (() => void)[] = [];
 beforeEach(() => {
+    vi.spyOn(WebAccess.prototype, 'managementCapabilities').mockReturnValue(managementPermissions);
     loginCommits.editOnOpen = null;
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.mocked(validateScope).mockImplementation((scope) => {

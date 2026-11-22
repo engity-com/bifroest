@@ -11,6 +11,10 @@ import {
 } from 'react';
 import type { ManagementLocation } from '../application/management-location';
 import type { RecordingSummary } from '../management/protocol';
+import {
+    ManagementPermissionContext,
+    useManagementPermissions,
+} from '../management/use-permissions';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import type { OperationLease } from '../shared/operation';
@@ -73,10 +77,13 @@ function failure(error: unknown): Message {
 }
 
 export function ArtifactEvidencePanel(props: ArtifactEvidencePanelProps) {
+    const can = useManagementPermissions(props.access);
     return (
-        <ArtifactSecretsBoundary access={props.access}>
-            <OwnedArtifactEvidencePanel {...props} />
-        </ArtifactSecretsBoundary>
+        <ManagementPermissionContext.Provider value={can}>
+            <ArtifactSecretsBoundary access={props.access}>
+                <OwnedArtifactEvidencePanel {...props} />
+            </ArtifactSecretsBoundary>
+        </ManagementPermissionContext.Provider>
     );
 }
 function OwnedArtifactEvidencePanel({
@@ -95,6 +102,8 @@ function OwnedArtifactEvidencePanel({
     onEvidenceState,
     onResultReady,
 }: ArtifactEvidencePanelProps) {
+    const can = useManagementPermissions(access);
+    const mayDownload = can(view === 'recordings' ? 'recordings.download' : 'auditlogs.download');
     const auditView = useAuditView();
     const sourceHints = useContext(AuditSourceContext);
     const managed = mode === 'audit-verification';
@@ -432,7 +441,7 @@ function OwnedArtifactEvidencePanel({
         }
     }
     async function open(request: ArtifactRequest, summary?: RecordingSummary) {
-        if (remoteDisabled || disabled || job.busy) {
+        if (remoteDisabled || disabled || !mayDownload || job.busy) {
             return;
         }
         if (request.kind !== (view === 'recordings' ? 'recording' : 'audit')) {
@@ -887,7 +896,7 @@ function OwnedArtifactEvidencePanel({
             auditlog={view === 'recordings' ? (route?.auditlogHint ?? auditlog) : auditlog}
             fixedSource={view === 'recordings' && !!route?.auditlogHint}
             id={id}
-            disabled={disabled || remoteDisabled}
+            disabled={disabled || remoteDisabled || !mayDownload}
             onAuditlog={setAuditlog}
             onID={setID}
             onGo={() => {
@@ -1032,7 +1041,7 @@ function OwnedArtifactEvidencePanel({
             )}
             {opened && !auditEvent && !managed && <div ref={heading} tabIndex={-1} />}
             <div hidden={opened !== null}>
-                {view === 'recordings' && route && !route.auditlogHint ? (
+                {view === 'recordings' && route && !route.auditlogHint && can('auditlogs.read') ? (
                     <AuditCatalog
                         access={access}
                         disabled={disabled || remoteDisabled}

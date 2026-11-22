@@ -89,6 +89,6 @@ Also accepted as `audit decrypt`.
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Local invocation supports configured and copied journals. Client-side remote export requires `allowArtifactTransfer: true`, including for redacted exports, because it downloads original signed evidence.
+Local invocation supports configured and copied journals. Client-side remote export requires `auditlogs.download`, including for redacted exports, because it downloads original signed evidence. Direct-SSH export requires `auditlogs.events`, plus `auditlogs.download` for sensitive output.
 
 Direct SSH accepts an explicit auditlog name and `--with-sensitive`, writes JSONL to stdout and uses the service's configured trust. Sensitive output requires artifact-transfer permission; encrypted private fields require a workstation's client-side decryption instead.

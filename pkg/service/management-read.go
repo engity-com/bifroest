@@ -14,6 +14,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	managementpolicy "github.com/engity-com/bifroest/pkg/management/policy"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	managementview "github.com/engity-com/bifroest/pkg/management/view"
@@ -59,7 +60,7 @@ func managementActionPolicy(auth authorization.Authorization, request protocol.S
 
 // This is the shared environment capability, not a CLI command adapter. These
 // operations intentionally expose no credentials or artifact content transfers.
-func (this *service) RunManagementRead(task environment.TaskContext, request protocol.ReadRequest, output io.Writer, _ bool, allowArtifactTransfer bool) (int, error) {
+func (this *service) RunManagementRead(task environment.TaskContext, request protocol.ReadRequest, output io.Writer) (int, error) {
 	if task == nil || task.Authorization() == nil || !task.Authorization().IsAuthorized() || task.Authorization().FindSession() == nil || task.Authorization().FindSession().Flow() != task.Authorization().Flow() || !this.isManagementFlow(task.Authorization().Flow()) {
 		return -1, errManagementPolicy
 	}
@@ -70,8 +71,13 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 	if err != nil {
 		return -1, err
 	}
-	if request.Operation == protocol.ListAuditEvents && (!allowArtifactTransfer || !this.managementArtifactAllowed(task.Authorization())) {
-		return -1, errManagementPolicy
+	if err := this.requireManagement(task.Context(), task, managementReadPermission(request)); err != nil {
+		return -1, err
+	}
+	if request.Operation == protocol.ListAuditEvents && request.Sensitive {
+		if err := this.requireManagement(task.Context(), task, access.AuditlogsDownload); err != nil {
+			return -1, err
+		}
 	}
 	ceiling, err := managementReadCeiling(task.Authorization(), request)
 	if err != nil {
@@ -121,7 +127,7 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 		}
 		// Verification hints do not expand a forced metadata projection, even
 		// when its enclosing management flow enables artifact transfer.
-		if allowArtifactTransfer && ceiling == nil {
+		if this.requireManagement(ctx, task, access.AuditlogsDownload) == nil && ceiling == nil {
 			for index := range page.Items {
 				if identity := this.auditIdentities[configuration.AuditlogName(page.Items[index].Name)]; identity != nil {
 					page.Items[index].ProducerID = identity.ProducerId().String()

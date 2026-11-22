@@ -34,7 +34,7 @@ func TestRecordingSessionScopeSelectsTheWholeDatasetAndDoesNotBecomeAQueryHint(t
 
 func TestAuditSessionRelationsRespectPrivateProjectionAndExactScope(t *testing.T) {
 	svc, handler, _, token := managementWebFixture(t, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement).AllowArtifactTransfer = true
+		setManagementTestDownloads(conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement), true)
 	})
 	flow := svc.Configuration.Flows[0].Name
 	svc.flowAuditRecorders[flow] = svc.auditRecorders[svc.Configuration.Flows[0].Auditlog]

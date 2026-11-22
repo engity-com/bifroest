@@ -18,6 +18,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -73,6 +74,14 @@ func createAuditExportCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementExport(ctx context.Context, opts managementExportOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsEvents); err != nil {
+		return err
+	}
+	if opts.WithSensitive {
+		if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsDownload); err != nil {
+			return err
+		}
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Audit == nil {
 		return fmt.Errorf("management audit repository is unavailable")

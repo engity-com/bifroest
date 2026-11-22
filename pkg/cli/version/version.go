@@ -7,6 +7,7 @@ import (
 	cli "github.com/echocat/cli4g"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -28,6 +29,11 @@ func CreateCommands(version sys.Version) []cli.CommandRequirementLike {
 }
 
 func handle(ctx context.Context, o opts, version sys.Version) error {
+	if _, management := common.ManagementAccessFromContext(ctx); management {
+		if err := common.RequireManagementPermission(ctx, managementaccess.VersionRead); err != nil {
+			return err
+		}
+	}
 	f := sys.VersionFormatShort
 	if o.Long {
 		f = sys.VersionFormatLong

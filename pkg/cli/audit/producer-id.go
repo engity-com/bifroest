@@ -9,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type producerOptions struct {
@@ -32,6 +33,9 @@ func createProducerIDCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementProducerID(ctx context.Context, o producerOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsRead); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.ProducerID == nil {
 		return fmt.Errorf("management audit identity is unavailable")

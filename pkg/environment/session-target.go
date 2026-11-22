@@ -94,8 +94,7 @@ func (this *DummyRepository) ResolveSessionTarget(ctx Context) (session.Target, 
 }
 func (this *ManagementRepository) ResolveSessionTarget(ctx Context) (session.Target, error) {
 	fields := newTargetFields(ctx)
-	fields.values["includingCredentials"] = strconv.FormatBool(this.includingCredentials)
-	fields.values["allowArtifactTransfer"] = strconv.FormatBool(this.allowArtifactTransfer)
+	fields.values["access"] = this.access.String()
 	return fields.target("management")
 }
 

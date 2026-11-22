@@ -36,7 +36,7 @@ Result format: `table`, `json`, `yaml` or `cbor`.
 
 Key/value settings by default, or a structured settings object. Arbitrary strings are redacted, including image references, Kubernetes name templates, commands, environment variables and SSH certificate extension values. Structural flow/auditlog names, authorization/environment types, non-string settings and fixed image-pull policies remain visible.
 
-Local inspection always uses this redacted view. A management flow can explicitly enable [`includingCredentials`](../../environment/management.md#property-includingCredentials) for its own `flow show` output. That server setting is not a client flag and does not affect audit-log detail redaction. A missing flow produces an error.
+Local inspection always uses this redacted view. Remote inspection requires `flows.read`; [`access.flows.credentials`](../../environment/management.md#property-access) additionally permits unredacted `flow show` output. It is not a client flag and does not affect audit-log detail redaction. A missing flow produces an error.
 
 ## Examples
 

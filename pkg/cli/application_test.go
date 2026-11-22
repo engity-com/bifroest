@@ -11,6 +11,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
@@ -286,7 +287,10 @@ func TestManagementApplicationDoesNotShareCredentialDisclosure(t *testing.T) {
 		for _, disclose := range []bool{false, true, false} {
 			var output bytes.Buffer
 			ctx := common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{
-				Configuration: conf, IncludingCredentials: disclose,
+				Configuration: conf,
+				Check: func(_ context.Context, permission managementaccess.Permission) error {
+					return (managementaccess.Policy{}).WithConstant(managementaccess.FlowsCredentials, disclose).Require(permission, nil)
+				},
 			})
 			ctx = clibase.ContextWithStdio(ctx, nil, &output, nil)
 			require.NoError(t, app.ParseAndExecute(ctx, &clibase.ParseOpts{Profiles: []string{common.ProfileManagement}}, "flow", "show", "production", "--format=json"))

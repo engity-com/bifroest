@@ -9,6 +9,7 @@ import { useManagementNavigation } from '../ui/management-navigation';
 import { Alert } from '../ui/material';
 import { t } from '../ui/messages';
 import { m } from './messages';
+import type { ManagementPermission } from './permissions';
 import type { ColumnFilter, FlowSummary, Page } from './protocol';
 
 export function FlowOverview({
@@ -20,8 +21,10 @@ export function FlowOverview({
     disabled,
     pagination,
     actions,
+    can,
 }: {
     scope: Scope;
+    can: (permission: ManagementPermission) => boolean;
     rows: Page<FlowSummary> | null;
     active: boolean;
     busy: boolean;
@@ -76,7 +79,7 @@ export function FlowOverview({
                         minWidth: 170,
                         flex: 1,
                         renderCell: (params) =>
-                            params.row.auditlog && navigation ? (
+                            params.row.auditlog && navigation && can('auditlogs.events') ? (
                                 <Link
                                     href={
                                         locked
@@ -124,7 +127,7 @@ export function FlowOverview({
                         <Tooltip title={t('workspaceSessions')}>
                             <IconButton
                                 size="small"
-                                disabled={locked || !navigation}
+                                disabled={locked || !navigation || !can('sessions.read')}
                                 aria-label={`${t('workspaceSessions')} ${row.name}`}
                                 onClick={(event) => {
                                     event.stopPropagation();
@@ -141,7 +144,12 @@ export function FlowOverview({
                         <Tooltip title={t('workspaceRecordings')}>
                             <IconButton
                                 size="small"
-                                disabled={locked || !navigation || !row.auditlog}
+                                disabled={
+                                    locked ||
+                                    !navigation ||
+                                    !row.auditlog ||
+                                    !can('recordings.read')
+                                }
                                 aria-label={`${t('workspaceRecordings')} ${row.name}`}
                                 onClick={(event) => {
                                     event.stopPropagation();
@@ -159,7 +167,12 @@ export function FlowOverview({
                         <Tooltip title={t('workspaceAuditlogs')}>
                             <IconButton
                                 size="small"
-                                disabled={locked || !navigation || !row.auditlog}
+                                disabled={
+                                    locked ||
+                                    !navigation ||
+                                    !row.auditlog ||
+                                    !can('auditlogs.events')
+                                }
                                 aria-label={`${t('workspaceAuditlogs')} ${row.name}`}
                                 onClick={(event) => {
                                     event.stopPropagation();

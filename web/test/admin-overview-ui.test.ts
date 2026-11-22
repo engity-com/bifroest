@@ -9,6 +9,7 @@ import type { ArtifactRequest, ReceivedArtifact } from '../src/artifacts/protoco
 import { RecordingIndexBuilder } from '../src/artifacts/recording-index';
 import { type RecordingVerificationBatch, verifyArtifact } from '../src/artifacts/verify';
 import type { AuditOverviewPage } from '../src/management/audit-overview';
+import { managementPermissions } from '../src/management/permissions';
 import type { RecordingSummary } from '../src/management/protocol';
 import type { RecordingSourceImages } from '../src/management/source-transfer';
 import { WebAccess } from '../src/remember/client';
@@ -99,6 +100,7 @@ function recordingImage(request: ArtifactRequest): ReceivedArtifact {
 const cleanups: (() => void)[] = [];
 let restoreViewport: [number, number] | null = null;
 beforeEach(() => {
+    vi.spyOn(WebAccess.prototype, 'managementCapabilities').mockReturnValue(managementPermissions);
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.spyOn(WebAccess.prototype, 'managementAuditlogs').mockResolvedValue({
         items: [source],

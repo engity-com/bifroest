@@ -12,6 +12,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type verifyOptions struct {
@@ -46,6 +47,9 @@ func createVerifyCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsVerify); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Audit == nil {
 		return fmt.Errorf("management audit repository is unavailable")

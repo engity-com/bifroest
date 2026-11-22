@@ -35,7 +35,7 @@ bifroest @bifroest-admin session dispose SESSION_UUID
 ssh management@bifroest.example.org 'session dispose SESSION_UUID --format=json'
 ```
 
-All authorized management users can dispose of sessions in any flow. No additional environment permission is required. The action is audited in the management flow and target flow according to their audit configuration.
+Requires `access.sessions.dispose` in the management flow. It permits disposal across flows without granting `sessions.read`. The action is audited in the management flow and target flow according to their audit configuration.
 
 Cleanup failure returns an error, not a success result. Connections are already closed and new connections to this session are rejected by the running service. Resource cleanup starts only after the disposed state has been persisted. Retry the command to finish incomplete cleanup; if persisting the session state itself failed, retry before restarting the service. Repeating disposal of a retained, already disposed session is safe.
 

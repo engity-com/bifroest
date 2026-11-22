@@ -51,4 +51,4 @@ One row per auditlog name, ordered by name, indicating whether the audit journal
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Artifact-transfer permission is not required.
+Remote queries require `access.auditlogs.read`, but no download permission.

@@ -11,6 +11,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type listOptions struct {
@@ -74,6 +75,9 @@ func createBrowseCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementList(ctx context.Context, options listOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsRead); err != nil {
+		return err
+	}
 	conf, err := common.ResolveConfiguration(ctx, options)
 	if err != nil {
 		return err
@@ -104,6 +108,9 @@ func remoteHandleList(ctx context.Context, options listOptions) error {
 }
 
 func handleManagementShow(ctx context.Context, options showOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsRead); err != nil {
+		return err
+	}
 	conf, err := common.ResolveConfiguration(ctx, options)
 	if err != nil {
 		return err
@@ -134,6 +141,9 @@ func remoteHandleShow(ctx context.Context, options showOptions) error {
 }
 
 func handleManagementEvents(ctx context.Context, options eventsOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsEvents); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.ProducerID == nil {
 		return fmt.Errorf("management audit identity is unavailable")
@@ -142,8 +152,10 @@ func handleManagementEvents(ctx context.Context, options eventsOptions) error {
 	if err != nil {
 		return err
 	}
-	if options.WithSensitive && !access.AllowArtifactTransfer {
-		return fmt.Errorf("sensitive audit events require allowArtifactTransfer in the management environment")
+	if options.WithSensitive {
+		if err := access.Require(ctx, managementaccess.AuditlogsDownload); err != nil {
+			return err
+		}
 	}
 	expected, err := access.ProducerID(options.Name)
 	if err != nil {

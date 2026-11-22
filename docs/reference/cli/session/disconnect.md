@@ -30,7 +30,7 @@ bifroest @bifroest-admin session disconnect SESSION_UUID
 ssh management@bifroest.example.org 'session disconnect SESSION_UUID --format=json'
 ```
 
-All authorized management users can disconnect sessions in any flow. No additional environment permission is required. The action is audited in the management flow and target flow according to their audit configuration. Disconnecting a session with no current connections succeeds without changing its lifecycle state.
+Requires `access.sessions.disconnect` in the management flow. It permits disconnection across flows without granting `sessions.read`. The action is audited in the management flow and target flow according to their audit configuration. Disconnecting a session with no current connections succeeds without changing its lifecycle state.
 
 To revoke a session and run its configured cleanup instead, use [`session dispose`](dispose.md).
 

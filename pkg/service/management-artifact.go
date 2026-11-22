@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,11 +10,12 @@ import (
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
-func (this *service) managementArtifactAllowed(auth authorization.Authorization) bool {
+func (this *service) managementArtifactAllowed(ctx context.Context, auth authorization.Authorization, actor environment.Context, permission access.Permission) bool {
 	if auth == nil || !auth.IsAuthorized() {
 		return false
 	}
@@ -22,18 +24,15 @@ func (this *service) managementArtifactAllowed(auth authorization.Authorization)
 	if key := authorization.AuthorizedKeyPolicyOf(auth); key != nil && key.ForcedCommand != nil {
 		return false
 	}
-	for _, flow := range this.Configuration.Flows {
-		if flow.Name == auth.Flow() {
-			management, ok := flow.Environment.V.(*configuration.EnvironmentManagement)
-			return ok && management.AllowArtifactTransfer
-		}
-	}
-	return false
+	return this.requireManagement(ctx, actor, permission) == nil
 }
 
-func (this *service) RunManagementArtifact(task environment.TaskContext, request protocol.ArtifactRequest, output io.Writer, _ bool, allowArtifactTransfer bool) (int, error) {
-	if task == nil || task.Authorization() == nil || task.Authorization().FindSession() == nil || task.Authorization().FindSession().Flow() != task.Authorization().Flow() || !allowArtifactTransfer || !this.managementArtifactAllowed(task.Authorization()) || request.Validate() != nil {
+func (this *service) RunManagementArtifact(task environment.TaskContext, request protocol.ArtifactRequest, output io.Writer) (int, error) {
+	if task == nil || task.Authorization() == nil || task.Authorization().FindSession() == nil || task.Authorization().FindSession().Flow() != task.Authorization().Flow() || request.Validate() != nil {
 		return -1, errManagementPolicy
+	}
+	if !this.managementArtifactAllowed(task.Context(), task.Authorization(), task, managementArtifactPermission(request.Operation)) {
+		return -1, access.Denied(managementArtifactPermission(request.Operation))
 	}
 	name := configuration.AuditlogName(request.Auditlog)
 	if err := name.Validate(); err != nil {
@@ -59,8 +58,12 @@ func (this *service) RunManagementArtifact(task environment.TaskContext, request
 }
 
 func (this *service) executeManagementArtifact(conn *terminalConnection, request protocol.ArtifactRequest, output io.Writer, endData func() error) (int, error) {
-	if conn == nil || output == nil || endData == nil || !this.managementArtifactAllowed(conn.authorization) || request.Validate() != nil {
+	if conn == nil || output == nil || endData == nil || request.Validate() != nil {
 		return -1, errManagementPolicy
+	}
+	actor := &environmentContext{service: this, connection: conn, authorization: conn.authorization, executionContext: conn.Lifetime()}
+	if !this.managementArtifactAllowed(conn.Lifetime(), conn.authorization, actor, managementArtifactPermission(request.Operation)) {
+		return -1, access.Denied(managementArtifactPermission(request.Operation))
 	}
 	input, err := json.Marshal(request)
 	if err != nil {

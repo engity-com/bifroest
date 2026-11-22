@@ -15,6 +15,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -80,6 +81,9 @@ func createBrowseCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementList(ctx context.Context, opts listOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.RecordingsRead); err != nil {
+		return err
+	}
 	page := recording.SealedPageOptions{After: opts.After, Limit: opts.Limit}
 	if err := page.Validate(); err != nil {
 		return err
@@ -170,6 +174,9 @@ func writeRecordingPage(ctx context.Context, opts listOptions, selected format.F
 }
 
 func handleManagementShow(ctx context.Context, opts showOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.RecordingsRead); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Recordings == nil {
 		return fmt.Errorf("management recording repository is unavailable")

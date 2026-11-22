@@ -47,4 +47,4 @@ Version text on stdout. Long output includes the build, revision, edition, platf
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Remote queries report the server's version; they do not require artifact-transfer permission.
+Remote queries report the server's version and require `access.version.read`.

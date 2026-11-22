@@ -9,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/cli/transport"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type keyOutputOpts struct {
@@ -32,6 +33,9 @@ func exportRemote(ctx context.Context, opts keyOutputOpts, args ...string) error
 }
 
 func exportManagement(ctx context.Context, request model.KeyExportRequest) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.KeysRead); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Keys == nil {
 		return fmt.Errorf("management key operations are unavailable")

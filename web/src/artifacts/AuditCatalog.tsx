@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { AuditlogSummary, ColumnFilter, Page } from '../management/protocol';
+import { useManagementPermissions } from '../management/use-permissions';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { AdminDataGrid } from '../ui/AdminDataGrid';
@@ -32,6 +33,9 @@ export function AuditCatalog({
     openByID?: ReactNode;
     onRecordings?: (source: AuditlogSummary) => void;
 }) {
+    const can = useManagementPermissions(access);
+    const mayRead = can('auditlogs.read');
+    const mayOpen = can('auditlogs.events') || can('auditlogs.download');
     const [rows, setRows] = useState<Page<AuditlogSummary> | null>(null);
     const [page, setPage] = useState(0);
     const [query, setQuery] = useState('');
@@ -44,8 +48,8 @@ export function AuditCatalog({
     const generation = useRef(0);
     const attempted = useRef(false);
     const cursors = useRef(['']);
-    const available = useRef(active && !disabled);
-    available.current = active && !disabled;
+    const available = useRef(active && !disabled && mayRead);
+    available.current = active && !disabled && mayRead;
     // biome-ignore lint/correctness/useExhaustiveDependencies: Reset at the actor boundary, never retain another access's metadata.
     useEffect(() => {
         generation.current++;
@@ -70,7 +74,7 @@ export function AuditCatalog({
         }
     }, [disabled, active]);
     async function load(index = page, search = query, direction = sort, predicate = filter) {
-        if (!active || disabled || request.current !== null) {
+        if (!active || disabled || !can('auditlogs.read') || request.current !== null) {
             return;
         }
         const controller = new AbortController();
@@ -150,6 +154,14 @@ export function AuditCatalog({
         }
     });
     const detailed = useDetailedView();
+    if (!mayRead) {
+        return (
+            <section className="stack">
+                {mayOpen && openByID}
+                <Alert>{t('recordingReadDenied')}</Alert>
+            </section>
+        );
+    }
     return (
         <section className="stack" aria-label={t('artifactAuditlogCaption')}>
             {failed && (
@@ -169,11 +181,13 @@ export function AuditCatalog({
                     void load();
                 }}
                 refreshLabel={t('auditRefresh')}
-                openByID={openByID}
+                openByID={mayOpen ? openByID : undefined}
                 detailsAvailable
                 detailed={detailed}
                 detailFields={['recordingEnabled']}
-                canOpen={(row) => row.enabled}
+                canOpen={(row) =>
+                    row.enabled && (can('auditlogs.events') || can('auditlogs.download'))
+                }
                 onOpen={(row) => onSelect({ kind: 'audit', auditlog: row.name }, row)}
                 openLabel={(row) => `${t('recordingOpenAudit')} ${row.name}`}
                 openIcon={<FactCheckIcon fontSize="small" />}
@@ -190,6 +204,7 @@ export function AuditCatalog({
                                               disabled ||
                                               busy ||
                                               !active ||
+                                              !can('recordings.read') ||
                                               !row.enabled ||
                                               !row.recordingEnabled
                                           }

@@ -16,6 +16,7 @@ import {
     keepAlivePolicy,
 } from '../terminal/keepalive';
 import type { Socket, SocketFactory, TerminalState } from '../terminal/socket';
+import { managementCapabilities, noManagementPermissions } from './permissions';
 import { type ProgressListener, remoteReadProgress, streamingManagementAction } from './progress';
 import { ManagementResponseBuffer } from './response-buffer';
 import { ManagementSourceTransfer, type RecordingSourceImages } from './source-transfer';
@@ -54,6 +55,10 @@ interface Pending {
 // One pre-expiry admission, owned by one management tab. No reconnect, bearer
 // renewal, persistence, shell execution or fallback to a different actor.
 export class ManagementConnection {
+    #capabilities = noManagementPermissions;
+    capabilities() {
+        return this.#capabilities;
+    }
     readonly #socket: Socket;
     readonly #pending = new Map<string, Pending>();
     readonly #sources = new Map<string, ManagementSourceTransfer>();
@@ -375,7 +380,7 @@ export class ManagementConnection {
         }
         const decoded = JSON.parse(data) as Record<string, unknown>;
         if (decoded?.type === 'ready') {
-            const value = object(decoded, ['type', 'connectionId', 'keepAlive']);
+            const value = object(decoded, ['type', 'connectionId', 'keepAlive', 'capabilities']);
             if (
                 this.#state.phase !== 'connecting' ||
                 typeof value.connectionId !== 'string' ||
@@ -384,6 +389,7 @@ export class ManagementConnection {
                 throw new Error();
             }
             this.#policy = keepAlivePolicy(value.keepAlive) ?? defaultKeepAlive;
+            this.#capabilities = managementCapabilities(value.capabilities);
             clearTimeout(this.#openTimer);
             this.#state = { phase: 'connected' };
             this.#resolveReady();

@@ -27,6 +27,7 @@ import (
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/https"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/webui"
 )
@@ -137,7 +138,11 @@ func TestBrowserConnectionWorkspaceUiKeepsFlowActorAndManagementContexts(t *test
 		manager := conf.Flows[0]
 		manager.Name, manager.DiscoverAsSlug = "manage", "Manage"
 		manager.Requirement.Http.IncludedSlug = common.MustNewRegexp("^Manage$")
-		manager.Environment.V = &configuration.EnvironmentManagement{}
+		// This scenario retains an editable recording-open workflow across tabs.
+		// Download permission is explicit; the production default remains denied.
+		manager.Environment.V = &configuration.EnvironmentManagement{
+			Access: access.Policy{}.WithConstant(access.RecordingsDownload, true),
+		}
 		conf.Flows = append(conf.Flows, other, manager)
 	})
 }
@@ -232,7 +237,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 				conf.Flows = append(conf.Flows, worker)
 			}
 			if forcedReadMode {
-				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: mode == "management-forced-audit" || mode == "management-forced-version"}
+				conf.Flows[0].Environment.V = managementTestEnvironment(false, mode == "management-forced-audit" || mode == "management-forced-version")
 				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
 				var keys strings.Builder
