@@ -35,7 +35,7 @@ Windows curl 8.22.0/Schannel fails concurrent WSS duplex even in the independent
 
 Shared Docker/Kubernetes browser tests require `pasta` from the `passt` package with `--splice-only` support (January 2026 or newer). CI installs the package. On Linux, Chromium runs in a private network namespace so Docker's host-interface changes cannot abort unrelated requests with `ERR_NETWORK_CHANGED`. Only the fixture's loopback TCP port is forwarded; real HTTPS, cold WASM loading, WebSockets and authentication remain unchanged, without request replay.
 
-The system `/usr/bin/env` launcher lets `pasta` start the pinned Node and temporary Go test binaries using the execution transition already allowed by Ubuntu's AppArmor profile. The profile remains enabled and unchanged.
+The system `/bin/sh` launcher uses a fixed `exec "$@"` script to start the pinned Node and temporary Go test binaries through Ubuntu's existing AppArmor execution transition. Executable paths and arguments remain positional, without shell evaluation. The profile remains enabled and unchanged.
 
 Check namespace isolation and authenticated TLS forwarding without starting a container runtime:
 

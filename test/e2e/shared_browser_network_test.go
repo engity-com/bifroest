@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -56,10 +57,10 @@ func sharedBrowserNetworkArguments(origin, executable string, args ...string) ([
 		"--quiet", "--config-net", "--ipv4-only", "--splice-only",
 		"--tcp-ports", "none", "--udp-ports", "none",
 		"--tcp-ns", strconv.Itoa(port), "--udp-ns", "none",
-		// Ubuntu's pasta profile permits unconfined execution through /usr/bin,
-		// not directly from the pinned toolchain or Go's temporary build path.
-		// Use its allowed system launcher, without a shell or policy changes.
-		"--", "/usr/bin/env", "--", executable,
+		// Use the system shell's allowed AppArmor execution transition. Ubuntu's
+		// env can resolve outside /usr/bin to /usr/lib/cargo/bin/coreutils/env.
+		// Only this fixed script is evaluated; executable and args stay positional.
+		"--", "/bin/sh", "-c", `exec "$@"`, "bifroest-browser", executable,
 	}
 	return append(result, args...), nil
 }
@@ -79,8 +80,12 @@ func TestSharedBrowserNetworkArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "--quiet --config-net --ipv4-only --splice-only --tcp-ports none --udp-ports none --tcp-ns 18443 --udp-ns none -- /usr/bin/env -- node browser.ts unchanged-argument"
-	if strings.Join(args, " ") != want {
+	want := []string{
+		"--quiet", "--config-net", "--ipv4-only", "--splice-only",
+		"--tcp-ports", "none", "--udp-ports", "none", "--tcp-ns", "18443", "--udp-ns", "none",
+		"--", "/bin/sh", "-c", `exec "$@"`, "bifroest-browser", "node", "browser.ts", "unchanged-argument",
+	}
+	if !slices.Equal(args, want) {
 		t.Fatalf("isolation must relay only the fixture port and retain the command: %q", args)
 	}
 }
@@ -145,6 +150,15 @@ func TestSharedBrowserNetworkIsolation(t *testing.T) {
 	}
 	if probe.Namespace == namespace || probe.Namespace == "" || probe.Body != "real-https-through-isolated-loopback" {
 		t.Fatalf("HTTPS must reach the real host listener from a separate network namespace: %+v, host=%s", probe, namespace)
+	}
+	arguments := []string{"space separated", "; exit 99", "$(exit 98)", "'quoted'", ""}
+	command, args, err = sharedBrowserCommand("https://app.example.org:"+u.Port(), "/bin/sh", append([]string{"-c", `printf '%s\n' "$@"`, "argument-probe"}, arguments...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forwarded := runCommand(ctx, "", nil, command, args...)
+	if forwarded.err != nil || forwarded.stdout != strings.Join(arguments, "\n")+"\n" {
+		t.Fatalf("network isolation must preserve arguments without shell evaluation: %v\nstdout=%q\nstderr=%s", forwarded.err, forwarded.stdout, forwarded.stderr)
 	}
 	command, args, err = sharedBrowserCommand("https://app.example.org:"+u.Port(), "/bin/sh", "-c", "exit 23")
 	if err != nil {

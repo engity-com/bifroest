@@ -66,7 +66,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes passt
-          if pasta --quiet --config-net --ipv4-only --splice-only --tcp-ports none --udp-ports none --tcp-ns none --udp-ns none -- /usr/bin/env -- /bin/true; then
+          if pasta --quiet --config-net --ipv4-only --splice-only --tcp-ports none --udp-ports none --tcp-ns none --udp-ns none -- /bin/sh -c 'exec "$@"' bifroest-browser /bin/true; then
             exit 0
           fi
           sudo cat /etc/apparmor.d/usr.bin.pasta /etc/apparmor.d/abstractions/pasta || true
