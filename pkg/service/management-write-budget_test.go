@@ -35,7 +35,7 @@ func (w *managementWriteBudgetResponse) Write(data []byte) (int, error) {
 
 func TestLongManagementReadsRestoreBoundedNetworkWritesOnFailure(t *testing.T) {
 	_, handler, _, token := managementWebFixture(t, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement).AllowArtifactTransfer = true
+		setManagementTestDownloads(conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement), true)
 	})
 	for _, route := range []string{"recordings/verify", "audit-events/list", "artifacts/audit"} {
 		t.Run(route, func(t *testing.T) {

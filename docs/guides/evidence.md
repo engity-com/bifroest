@@ -52,7 +52,13 @@ The management login uses a separate SSH identity and trusted host key as in [th
               authorizedKeysFile: /etc/engity/bifroest/management_authorized_keys
         environment:
           type: management
-          allowArtifactTransfer: true
+          access:
+            auditlogs:
+              read: true
+              events: true
+              verify: true
+              download: true
+            recordings: true
 
       - name: local
         auditlog: evidence
@@ -66,7 +72,7 @@ The management login uses a separate SSH identity and trusted host key as in [th
           portForwardingAllowed: false
     ```
 
-    `allowArtifactTransfer` grants this authorized administration flow access to original signed evidence, including any unencrypted originals. The normal CLI still requires `--with-sensitive` before displaying or exporting private content.
+    This `access` object grants audit and Recording operations, including original signed evidence, but no session control or configuration credentials. The CLI still requires `--with-sensitive` before displaying or exporting private content.
 
 4. Restart Bifröst using the host's service manager. The new evidence journal stores `.beaudit`; sealed Recordings use `.becast`. The separate administration journal in this example remains unencrypted.
 
@@ -167,7 +173,7 @@ The management login uses a separate SSH identity and trusted host key as in [th
 
 ## Browser alternative
 
-Enable HTTPS as in [Browser access](browser-access.md), then publish the administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`. Keep its requesting-name requirement and `allowArtifactTransfer: true`.
+Enable HTTPS as in [Browser access](browser-access.md), then publish the administration flow with `discoverAsSlug: Admin` and `requirement.http.includedSlug: '^Admin$'`. Keep its requesting-name requirement and the `access` object above.
 
 1. Open `https://bifroest.example.org/#Admin` and sign in through **SSH key** as `management`.
 2. Choose **Audit logs**, select `evidence`, then open **Events** or **Recordings**.

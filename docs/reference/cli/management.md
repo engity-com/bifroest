@@ -92,21 +92,22 @@ Direct SSH cannot use decryption keys stored on a separate workstation. It can v
 
 ## Permissions and downloads
 
-| Operation | Requires `allowArtifactTransfer: true` |
+| Operation | Management right |
 | --- | --- |
-| Session, flow, auditlog and Recording metadata | No |
-| [`metrics show`](metrics/show.md) | No |
-| [`session disconnect`](session/disconnect.md) and [`session dispose`](session/dispose.md) | No |
-| Public `audit events` | No |
-| Client-side `audit verify/export/merge` or sensitive `audit events` | Yes |
-| Client-side `recording verify/export/play` | Yes |
-| Direct-SSH verification without content export | No |
-| Direct-SSH sensitive audit output or Recording export/play | Yes |
-| Public `key export public/ca/host` | No |
+| Session, flow, auditlog and Recording metadata | Corresponding `sessions.read`, `flows.read`, `auditlogs.read` or `recordings.read` |
+| [`metrics show`](metrics/show.md) | `metrics.read` |
+| [`session disconnect`](session/disconnect.md) / [`session dispose`](session/dispose.md) | `sessions.disconnect` / `sessions.dispose` |
+| Public `audit events` and direct-SSH redacted export/merge | `auditlogs.events` |
+| Client-side `audit verify/export/merge` or sensitive `audit events` | `auditlogs.download` for the original journal |
+| Client-side `recording verify/export/play` | `recordings.download` for the original Recording |
+| Direct-SSH verification without content export | `auditlogs.verify` / `recordings.verify` |
+| Direct-SSH sensitive audit output | `auditlogs.events` and `auditlogs.download` |
+| Direct-SSH Recording export/play | `recordings.download` |
+| Public `key export public/ca/host` | `keys.read` |
 
-These are properties of the authorized management flow, not client-granted privileges. `--with-sensitive` controls disclosure by a command; it does not grant server permissions. `includingCredentials` separately controls the management flow's `flow show` output. See [management environment properties](../environment/management.md#configuration).
+These are rights in the authorized flow's [`access` tree](../environment/management.md#property-access), not client-granted privileges. `--with-sensitive` controls disclosure; it does not grant server permissions. `flows.credentials` additionally permits unredacted `flow show` output. Verification and export performed locally after an authorized original download do not grant additional server operations.
 
-Every authorized management user can disconnect or dispose of sessions in any flow, even with both environment permissions disabled. Disposal also runs configured cleanup and can remove workload resources; management access is not read-only.
+The default access object includes session control but excludes credentials and downloads. An explicit object grants only its listed rights. Session actions apply across flows and do not imply session-read access. Disposal runs configured cleanup and can remove workload resources.
 
 Public key exports select configured server identities and write their output on the CLI machine. See [Export server public keys remotely](../../guides/keys.md) for a complete configuration. `key generate` and `key import` remain local-only; server trust files are maintained through normal configuration management.
 

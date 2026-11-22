@@ -528,6 +528,12 @@ export async function sessionTarget(
     page: Page,
     owner = page.locator('[data-connection-active="true"]'),
 ) {
+    const direct = owner
+        .locator('form:visible')
+        .filter({ has: page.getByLabel('Target session ID', { exact: false }) });
+    if (await direct.isVisible()) {
+        return direct;
+    }
     await owner.getByRole('button', { name: 'Open by ID', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Open by ID', exact: true });
     await dialog.waitFor();

@@ -9,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	bfSession "github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -91,6 +92,13 @@ func handleManagementDispose(ctx context.Context, opts showOptions) error {
 }
 
 func handleManagementAction(ctx context.Context, opts showOptions, dispose bool) error {
+	permission := managementaccess.SessionsDisconnect
+	if dispose {
+		permission = managementaccess.SessionsDispose
+	}
+	if err := common.RequireManagementPermission(ctx, permission); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.SessionControl == nil {
 		return fmt.Errorf("management session control is unavailable")
@@ -142,6 +150,9 @@ func handleManagementShow(ctx context.Context, opts showOptions) error {
 }
 
 func managementSessionSource(ctx context.Context) (SessionSource, error) {
+	if err := common.RequireManagementPermission(ctx, managementaccess.SessionsRead); err != nil {
+		return nil, err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Sessions == nil {
 		return nil, fmt.Errorf("management session repository is unavailable")

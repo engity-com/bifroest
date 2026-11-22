@@ -1,5 +1,6 @@
 import { type ComponentType, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ManagementLocation } from '../application/management-location';
+import { useManagementPermissions } from '../management/use-permissions';
 import type { WebAccess } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { GridActionsContext, type GridWork, GridWorkContext } from '../ui/GridWork';
@@ -34,6 +35,7 @@ export function AuditWorkspace({
     active?: boolean;
     Evidence: ComponentType<ArtifactEvidencePanelProps>;
 }) {
+    const can = useManagementPermissions(access);
     const external = useManagementNavigation();
     const sourceHints = useContext(AuditSourceContext);
     const owner = useRef({ access, epoch: 0, route: null as ManagementLocation | null });
@@ -134,7 +136,11 @@ export function AuditWorkspace({
                 : local || (resultVisible && state.result)
                   ? 'server'
                   : 'verify',
-        disabled: disabled || !active || (!local && remoteDisabled && !state.received),
+        disabled:
+            disabled ||
+            !active ||
+            !can('auditlogs.download') ||
+            (!local && remoteDisabled && !state.received),
         progress: state.progress,
         status: state.status,
         result: resultVisible && state.phase === null ? state.result : undefined,
@@ -173,12 +179,23 @@ export function AuditWorkspace({
                     producerId,
                     sensitive,
                     toggleSensitive: () => {
-                        if (active && !disabled && state.phase === null) {
+                        if (
+                            active &&
+                            !disabled &&
+                            can('auditlogs.download') &&
+                            state.phase === null
+                        ) {
                             setDetails({ access, source, value: !sensitive });
                         }
                     },
                     requestPrivate: () => {
-                        if (active && !disabled && state.phase === null && source) {
+                        if (
+                            active &&
+                            !disabled &&
+                            can('auditlogs.download') &&
+                            state.phase === null &&
+                            source
+                        ) {
                             setDetails({ access, source, value: true });
                             setResultVisible(true);
                             evidence.current?.openOptions(true);

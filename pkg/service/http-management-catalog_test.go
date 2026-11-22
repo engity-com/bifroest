@@ -192,7 +192,7 @@ func TestWebCatalogStrictInputsForcedPolicyAndFinalAuditBoundaries(t *testing.T)
 func TestWebCatalogUsesTheSharedQuotaAndDoesNotExpandCredentialProjection(t *testing.T) {
 	svc, handler, _, token := managementWebFixture(t, func(conf *configuration.Configuration) {
 		conf.Session.V.(*configuration.SessionFs).MaxConnections = 1
-		conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement).IncludingCredentials = true
+		setManagementTestCredentials(conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement), true)
 	})
 	lease, err := webTestAccess(t, svc, token, "Work").auth.FindSession().ConnectionInterceptor(t.Context())
 	require.NoError(t, err)

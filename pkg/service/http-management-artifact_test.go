@@ -29,7 +29,7 @@ import (
 func newArtifactHTTPSFixture(t *testing.T, configure ...func(*configuration.Configuration)) *webSocketFixture {
 	t.Helper()
 	setup := func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
+		conf.Flows[0].Environment.V = managementTestEnvironment(false, true)
 		conf.Flows[0].DiscoverAsSlug = "Work"
 		for _, fn := range configure {
 			fn(conf)
@@ -252,8 +252,8 @@ func TestWebArtifactRoutesDenyPolicyBypassAndUntrustedFields(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			svc, handler, recorder, token := managementWebFixture(t, func(conf *configuration.Configuration) {
 				management := conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement)
-				management.AllowArtifactTransfer = mode != "disabled"
-				management.IncludingCredentials = true
+				setManagementTestDownloads(management, mode != "disabled")
+				setManagementTestCredentials(management, true)
 			})
 			if mode != "disabled" {
 				command := "session ls"
@@ -276,7 +276,7 @@ func TestWebArtifactRoutesDenyPolicyBypassAndUntrustedFields(t *testing.T) {
 		})
 	}
 	_, handler, _, token := managementWebFixture(t, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement).AllowArtifactTransfer = true
+		setManagementTestDownloads(conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement), true)
 	})
 	for _, fields := range []map[string]string{{"auditlog": "../private"}, {"auditlog": "default", "args": "audit export"}, {"auditlog": "default", "includingCredentials": "true"}, {"auditlog": "default", "allowArtifactTransfer": "true"}, {"auditlog": "default", "privateKey": "never upload"}, {"auditlog": "default", "id": "other"}} {
 		require.Equal(t, 400, artifactWebRequest(handler, token, "audit", fields).Code)
@@ -287,7 +287,7 @@ func TestWebArtifactRoutesDenyPolicyBypassAndUntrustedFields(t *testing.T) {
 
 func TestWebArtifactScopeRequiresOriginalOriginSlugAndBearer(t *testing.T) {
 	_, handler, _, token := managementWebFixture(t, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement).AllowArtifactTransfer = true
+		setManagementTestDownloads(conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement), true)
 	})
 	for _, test := range []struct{ host, body string }{{"other.example.org", `{"slug":"Work","auditlog":"default"}`}, {"app.example.org", `{"slug":"Other","auditlog":"default"}`}} {
 		response := webTestRequest(handler, "POST", test.host, webAPI+"management/artifacts/audit", test.body, token)
@@ -340,7 +340,7 @@ func TestWebArtifactTransferSharesQuotaAndCancellationOwnership(t *testing.T) {
 	for _, mode := range []string{"logout", "revoke", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			svc, handler, _, token := managementWebFixture(t, func(conf *configuration.Configuration) {
-				conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement).AllowArtifactTransfer = true
+				setManagementTestDownloads(conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement), true)
 			})
 			sibling := webTestToken(t, webTestPassword(handler, "alice", "correct", "Work"))
 			original := svc.environments
@@ -380,7 +380,7 @@ func TestWebArtifactTransferSharesQuotaAndCancellationOwnership(t *testing.T) {
 		})
 	}
 	svc, handler, _, token := managementWebFixture(t, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement).AllowArtifactTransfer = true
+		setManagementTestDownloads(conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement), true)
 		conf.Session.V.(*configuration.SessionFs).MaxConnections = 1
 	})
 	access := webTestAccess(t, svc, token, "Work")

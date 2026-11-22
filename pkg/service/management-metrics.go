@@ -9,9 +9,23 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/engity-com/bifroest/pkg/cli/model"
+	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management/access"
 )
 
 var monitoringProcessStartedAt = time.Now().UTC()
+
+type managementMetrics struct {
+	service *service
+	task environment.TaskContext
+}
+
+func (m managementMetrics) Snapshot(ctx context.Context, names []string) (model.MetricsSnapshot, error) {
+	if err := m.service.requireManagement(ctx, m.task, access.MetricsRead); err != nil {
+		return model.MetricsSnapshot{}, err
+	}
+	return m.service.monitoring.Snapshot(ctx, names)
+}
 
 // Remember sparse vector families at construction, without creating synthetic
 // label sets just to make them appear in Gather. This catalog is immutable once

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { recordingSourceMediaType, transferMediaType } from '../src/artifacts/protocol';
 import type { ManagementConnection } from '../src/management/channel';
+import { managementPermissions } from '../src/management/permissions';
 import { ManagementResponseBuffer } from '../src/management/response-buffer';
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
@@ -35,6 +36,7 @@ class FakeSocket implements Socket {
         this.onopen?.(new Event('open'));
         this.json({
             type: 'ready',
+            capabilities: managementPermissions,
             connectionId: id,
             keepAlive: { interval: '15s', locked: false },
         });
@@ -91,6 +93,38 @@ function fixture() {
     return { scope, access, socket, connection, transport, factory, token };
 }
 describe('admitted actor-owned management connection', () => {
+    it('starts with no capabilities and publishes only the verified ready snapshot', () => {
+        const { access, socket } = fixture();
+        expect(access.managementCapabilities()).toEqual([]);
+        socket.onopen?.(new Event('open'));
+        socket.json({
+            type: 'ready',
+            connectionId: id,
+            keepAlive: { interval: '15s', locked: false },
+            capabilities: ['metrics.read'],
+        });
+        expect(access.managementCapabilities()).toEqual(['metrics.read']);
+        expect(Object.isFrozen(access.managementCapabilities())).toBe(true);
+    });
+    it.each([
+        undefined,
+        null,
+        true,
+        ['sessions.write'],
+        ['metrics.read', 'metrics.read'],
+        { metrics: true },
+    ])('rejects malformed capability snapshots: %j', (capabilities) => {
+        const { socket, connection } = fixture();
+        socket.onopen?.(new Event('open'));
+        socket.json({
+            type: 'ready',
+            connectionId: id,
+            keepAlive: { interval: '15s', locked: false },
+            capabilities,
+        });
+        expect(connection.connected()).toBe(false);
+        expect(connection.capabilities()).toEqual([]);
+    });
     it('preserves an actual 429 as rate-limited without closing, retrying, or using an HTTP fallback', async () => {
         const { access, socket, connection, transport, factory } = fixture();
         socket.ready();

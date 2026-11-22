@@ -8,15 +8,20 @@ import (
 
 	clirecording "github.com/engity-com/bifroest/pkg/cli/recording"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 type managementRecordingOperations struct {
-	service               *service
-	allowArtifactTransfer bool
+	service *service
+	task    environment.TaskContext
 }
 
 func (this managementRecordingOperations) Verify(ctx context.Context, name configuration.AuditlogName, id recording.Id, requireFull bool) (scope string, resultErr error) {
+	if err := this.service.requireManagement(ctx, this.task, access.RecordingsVerify); err != nil {
+		return "", err
+	}
 	artifact, err := this.service.openManagementRecording(ctx, name.String(), id.String())
 	if err != nil {
 		return "", err
@@ -33,8 +38,8 @@ func (this managementRecordingOperations) Verify(ctx context.Context, name confi
 }
 
 func (this managementRecordingOperations) Export(ctx context.Context, name configuration.AuditlogName, id recording.Id, output io.Writer) (resultErr error) {
-	if !this.allowArtifactTransfer {
-		return fmt.Errorf("recording content requires allowArtifactTransfer in the management environment")
+	if err := this.service.requireManagement(ctx, this.task, access.RecordingsDownload); err != nil {
+		return err
 	}
 	artifact, err := this.service.openManagementRecording(ctx, name.String(), id.String())
 	if err != nil {
@@ -51,8 +56,8 @@ func (this managementRecordingOperations) Export(ctx context.Context, name confi
 }
 
 func (this managementRecordingOperations) Play(ctx context.Context, name configuration.AuditlogName, id recording.Id, speed float64, output io.Writer) error {
-	if !this.allowArtifactTransfer {
-		return fmt.Errorf("recording content requires allowArtifactTransfer in the management environment")
+	if err := this.service.requireManagement(ctx, this.task, access.RecordingsDownload); err != nil {
+		return err
 	}
 	reader, writer := io.Pipe()
 	finished := make(chan error, 1)

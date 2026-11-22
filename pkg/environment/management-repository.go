@@ -10,6 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/imp"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -20,25 +21,25 @@ var _ = RegisterRepository(NewManagementRepository)
 // ManagementCommandRunner binds the management environment to the already
 // running service instead of opening its exclusively locked repositories again.
 type ManagementCommandRunner interface {
-	RunManagementCommand(Task, bool, bool) (int, error)
+	RunManagementCommand(Task) (int, error)
 }
 
 // Optional structured capability. It receives verified task context and typed
 // data, never a client command string or a fabricated SSH session.
 type ManagementReadRunner interface {
-	RunManagementRead(TaskContext, protocol.ReadRequest, io.Writer, bool, bool) (int, error)
+	RunManagementRead(TaskContext, protocol.ReadRequest, io.Writer) (int, error)
 }
 type ManagementReader interface {
 	ReadManagement(TaskContext, protocol.ReadRequest, io.Writer) (int, error)
 }
 type ManagementActionRunner interface {
-	RunManagementAction(TaskContext, protocol.SessionAction, io.Writer, bool, bool) (int, error)
+	RunManagementAction(TaskContext, protocol.SessionAction, io.Writer) (int, error)
 }
 type ManagementActor interface {
 	ActManagement(TaskContext, protocol.SessionAction, io.Writer) (int, error)
 }
 type ManagementArtifactRunner interface {
-	RunManagementArtifact(TaskContext, protocol.ArtifactRequest, io.Writer, bool, bool) (int, error)
+	RunManagementArtifact(TaskContext, protocol.ArtifactRequest, io.Writer) (int, error)
 }
 type ManagementArtifactReader interface {
 	ReadManagementArtifact(TaskContext, protocol.ArtifactRequest, io.Writer) (int, error)
@@ -52,14 +53,13 @@ func NewManagementRepository(ctx context.Context, flow configuration.FlowName, c
 	if runner == nil {
 		return nil, fmt.Errorf("management environment requires a service command runner")
 	}
-	return &ManagementRepository{flow: flow, includingCredentials: conf.IncludingCredentials, allowArtifactTransfer: conf.AllowArtifactTransfer, runner: runner}, nil
+	return &ManagementRepository{flow: flow, access: conf.Access, runner: runner}, nil
 }
 
 type ManagementRepository struct {
-	flow                  configuration.FlowName
-	includingCredentials  bool
-	allowArtifactTransfer bool
-	runner                ManagementCommandRunner
+	flow   configuration.FlowName
+	access access.Policy
+	runner ManagementCommandRunner
 }
 
 func (this *ManagementRepository) WillBeAccepted(Context) (bool, error) { return true, nil }
@@ -94,7 +94,7 @@ func (this *managementEnvironment) ReadManagement(task TaskContext, request prot
 	if task.TaskType() != TaskTypeShell || task.Authorization() == nil || task.Authorization().Flow() != this.repository.flow {
 		return -1, fmt.Errorf("invalid structured management task")
 	}
-	return runner.RunManagementRead(task, request, output, this.repository.includingCredentials, this.repository.allowArtifactTransfer)
+	return runner.RunManagementRead(task, request, output)
 }
 
 func (this *managementEnvironment) ActManagement(task TaskContext, request protocol.SessionAction, output io.Writer) (int, error) {
@@ -105,7 +105,7 @@ func (this *managementEnvironment) ActManagement(task TaskContext, request proto
 	if task.TaskType() != TaskTypeShell || task.Authorization() == nil || task.Authorization().Flow() != this.repository.flow {
 		return -1, fmt.Errorf("invalid structured management task")
 	}
-	return runner.RunManagementAction(task, request, output, this.repository.includingCredentials, this.repository.allowArtifactTransfer)
+	return runner.RunManagementAction(task, request, output)
 }
 
 func (this *managementEnvironment) Banner(Request) (io.ReadCloser, error) { return nil, nil }
@@ -118,14 +118,14 @@ func (this *managementEnvironment) ReadManagementArtifact(task TaskContext, requ
 	if task.TaskType() != TaskTypeShell || task.Authorization() == nil || task.Authorization().Flow() != this.repository.flow {
 		return -1, fmt.Errorf("invalid management artifact task")
 	}
-	return runner.RunManagementArtifact(task, request, output, this.repository.includingCredentials, this.repository.allowArtifactTransfer)
+	return runner.RunManagementArtifact(task, request, output)
 }
 
 func (this *managementEnvironment) Run(task Task) (int, error) {
 	if task.TaskType() != TaskTypeShell || task.SshSession().Subsystem() != "" || task.SshSession().RawCommand() == "" {
 		return -1, fmt.Errorf("management environment requires an SSH exec command")
 	}
-	return this.repository.runner.RunManagementCommand(task, this.repository.includingCredentials, this.repository.allowArtifactTransfer)
+	return this.repository.runner.RunManagementCommand(task)
 }
 
 func (this *managementEnvironment) RunSubsystem(Task, func(bool) error) (int, error) {

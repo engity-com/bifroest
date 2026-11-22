@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionActionConfirmation } from '../src/management/action';
 import { ManagementPanel } from '../src/management/ManagementPanel';
+import { type ManagementPermission, managementPermissions } from '../src/management/permissions';
 import type { Page, SessionItem, SessionOptions } from '../src/management/protocol';
 import { RememberMeError, type WebAccess } from '../src/remember';
 import { closeNativeFilter, nativeColumnFilter } from './native-grid-filter-ui';
@@ -31,7 +32,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-function fixture() {
+function fixture(permissions: readonly ManagementPermission[] = managementPermissions) {
     const confirm = vi.fn(async () => ({
         action: 'dispose' as const,
         flow: item.flow,
@@ -44,6 +45,8 @@ function fixture() {
         expiresAt: '2026-12-01T00:00:00Z',
     };
     const api = {
+        managementCapabilities: () => permissions,
+        subscribeStatus: () => () => {},
         snapshot: () => ({
             scope: { origin: 'https://app.example.org', slug: 'Manage' },
             principal: 'manager',
@@ -193,6 +196,29 @@ async function fill(label: string, value: string, parent: ParentNode = document)
 }
 
 describe('management view read intent and retained ownership', () => {
+    it('does not issue any read for metrics-only access, including direct page changes', async () => {
+        const { api, access } = fixture(['metrics.read']);
+        const app = await mount(access);
+        await app.render({ view: 'server' });
+        await app.render({ view: 'version' });
+        expect(api.managementSessions).not.toHaveBeenCalled();
+        expect(api.managementSession).not.toHaveBeenCalled();
+        expect(api.managementFlows).not.toHaveBeenCalled();
+        expect(api.managementVersion).not.toHaveBeenCalled();
+        expect(api.prepareSessionAction).not.toHaveBeenCalled();
+    });
+    it('offers only the permitted session action without reading session details', async () => {
+        const { api, access } = fixture(['sessions.disconnect']);
+        const app = await mount(access);
+        expect(api.managementSessions).not.toHaveBeenCalled();
+        const visible = [...app.container.querySelectorAll('form')].find(
+            (form) => !form.closest('[hidden]'),
+        );
+        expect(visible).toBeDefined();
+        expect(visible?.textContent).toContain('Disconnect');
+        expect(visible?.textContent).not.toContain('End session');
+        expect(api.managementSession).not.toHaveBeenCalled();
+    });
     it('renders a missing entity as a management page, while an empty grid selection stays an unadorned empty grid', async () => {
         const { api, access } = fixture();
         api.managementSession.mockRejectedValue(new RememberMeError('not-found'));

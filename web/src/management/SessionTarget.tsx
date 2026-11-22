@@ -2,6 +2,7 @@ import { uuidInputPattern } from '../shared/uuid';
 import { Button, Select, TextInput } from '../ui/material';
 import { t } from '../ui/messages';
 import { m } from './messages';
+import type { ManagementPermission } from './permissions';
 export interface SessionTargetValue {
     readonly flow: string;
     readonly id: string;
@@ -14,24 +15,37 @@ export function SessionTarget({
     onPrepare,
     value,
     onChange,
+    can,
 }: {
     disabled: boolean;
+    can: (permission: ManagementPermission) => boolean;
     onOpen: (flow: string, id: string) => void;
     onPrepare: (action: 'disconnect' | 'dispose', flow: string, id: string) => void;
     value: SessionTargetValue;
     onChange: (value: SessionTargetValue) => void;
 }) {
     const { flow, id, action } = value;
+    const choices = [
+        ...(can('sessions.read') ? [{ value: 'details', label: t('adminGridOpen') }] : []),
+        ...(can('sessions.disconnect') ? [{ value: 'disconnect', label: m('disconnect') }] : []),
+        ...(can('sessions.dispose') ? [{ value: 'dispose', label: m('end') }] : []),
+    ];
+    const selected = choices.find((choice) => choice.value === action)?.value ?? choices[0]?.value;
     return (
         <form
             className="stack"
             method="dialog"
             onSubmit={(event) => {
                 event.preventDefault();
-                if (action === 'details') {
+                if (disabled || !selected) {
+                    return;
+                }
+                if (selected === 'details') {
                     onOpen(flow, id);
                 } else {
-                    onPrepare(action, flow, id);
+                    if (selected === 'disconnect' || selected === 'dispose') {
+                        onPrepare(selected, flow, id);
+                    }
                 }
             }}
         >
@@ -57,12 +71,8 @@ export function SessionTarget({
             <div className="actions">
                 <Select
                     label={t('managementActionKind')}
-                    value={action}
-                    data={[
-                        { value: 'details', label: t('adminGridOpen') },
-                        { value: 'disconnect', label: m('disconnect') },
-                        { value: 'dispose', label: m('end') },
-                    ]}
+                    value={selected ?? ''}
+                    data={choices}
                     onChange={(value) =>
                         onChange({
                             flow,
@@ -73,7 +83,7 @@ export function SessionTarget({
                     }
                     disabled={disabled}
                 />
-                <Button type="submit" disabled={disabled}>
+                <Button type="submit" disabled={disabled || !selected}>
                     Go
                 </Button>
             </div>

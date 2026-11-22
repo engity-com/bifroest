@@ -13,6 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -32,6 +33,9 @@ func (this managementSessionControl) Dispose(ctx context.Context, id session.Id)
 
 func (this managementSessionControl) perform(ctx context.Context, id session.Id, dispose bool) (result model.SessionActionResult, resultErr error) {
 	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if err := this.checkAccess(ctx, dispose); err != nil {
 		return result, err
 	}
 	var target session.Session
@@ -57,6 +61,9 @@ func (this managementSessionControl) perform(ctx context.Context, id session.Id,
 // supplies an additional generation check after the started audit, before any
 // disconnect/revocation/disposal. SSH keeps its existing ID ambiguity behavior.
 func (this managementSessionControl) performTarget(ctx context.Context, target session.Session, dispose bool, check func(context.Context) error) (result model.SessionActionResult, resultErr error) {
+	if err := this.checkAccess(ctx, dispose); err != nil {
+		return result, err
+	}
 	id := target.Id()
 	caller := this.task.Authorization().FindSession()
 	if caller == nil {
@@ -113,6 +120,9 @@ func (this managementSessionControl) performTarget(ctx context.Context, target s
 			return result, err
 		}
 	}
+	if err := this.checkAccess(ctx, dispose); err != nil {
+		return result, err
+	}
 	if !dispose {
 		return result, this.service.sessionConnections.disconnect(target.Flow(), target.Id())
 	}
@@ -124,4 +134,12 @@ func (this managementSessionControl) performTarget(ctx context.Context, target s
 		disconnectErr = errors.Join(disconnectErr, this.service.sessionConnections.revoke(target.Flow(), target.Id()))
 	})
 	return result, errors.Join(disconnectErr, err)
+}
+
+func (this managementSessionControl) checkAccess(ctx context.Context, dispose bool) error {
+	permission := access.SessionsDisconnect
+	if dispose {
+		permission = access.SessionsDispose
+	}
+	return this.service.requireManagement(ctx, this.task, permission)
 }

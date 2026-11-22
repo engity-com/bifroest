@@ -18,24 +18,12 @@ export async function exerciseManagementForcedAction(page: Page, file: string, l
             calls.push(path);
         }
     });
-    const initialRead = wire.waitForResponse((response) =>
-        response.url().endsWith('/management/flows/list'),
-    );
     await forcedKeyLogin(page, file);
-    assert.equal((await initialRead).status(), 403);
-    const initialSessions = wire.waitForResponse((response) =>
-        response.url().endsWith('/management/sessions/list'),
-    );
     await workspace(page, 'Sessions');
-    assert.equal(
-        (await initialSessions).status(),
-        403,
-        'the active Sessions view does not gain list permission',
-    );
     assert.deepEqual(
         calls.map((path) => path.split('/management/')[1]),
-        ['flows/list', 'sessions/list'],
-        'only the entry-view reads and intentional Sessions read, never automatic preparation',
+        [],
+        'an action-only sign-in performs no metadata reads or automatic preparation',
     );
     async function connect() {
         await page.evaluate(async () => {
@@ -84,24 +72,22 @@ export async function exerciseManagementForcedAction(page: Page, file: string, l
     await direct.waitFor();
     await direct.getByLabel('Target flow', { exact: false }).fill(flow);
     await direct.getByLabel('Target session ID', { exact: false }).fill(id);
-    async function choose(value: string) {
-        await direct.getByRole('combobox', { name: 'Session action', exact: true }).click();
+    await direct.getByRole('combobox', { name: 'Session action', exact: true }).click();
+    assert.equal(
         await page
             .getByRole('option', {
-                name: value === 'dispose' ? 'End session' : 'Disconnect connections',
+                name: action === 'dispose' ? 'Disconnect connections' : 'End session',
                 exact: true,
             })
-            .click();
-    }
-    await choose(action === 'dispose' ? 'disconnect' : 'dispose');
-    const denied = wire.waitForResponse(
-        (response) => response.url().endsWith('/sessions/prepare') && response.status() === 403,
+            .count(),
+        0,
     );
-    await direct.getByRole('button', { name: 'Go', exact: true }).click();
-    await denied;
-    assert.equal(await page.getByRole('dialog').count(), 0);
-    direct = await sessionTarget(page);
-    await choose(action);
+    await page
+        .getByRole('option', {
+            name: action === 'dispose' ? 'End session' : 'Disconnect connections',
+            exact: true,
+        })
+        .click();
     const preparationReply = wire.waitForResponse(
         (response) => response.url().endsWith('/sessions/prepare') && response.status() === 202,
     );
@@ -124,6 +110,7 @@ export async function exerciseManagementForcedAction(page: Page, file: string, l
         0,
     );
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
     assert.equal(calls.filter((path) => path.endsWith('/confirm')).length, 0);
     assert.equal(
         await page.evaluate(() =>
@@ -176,8 +163,8 @@ export async function exerciseManagementForcedAction(page: Page, file: string, l
         calls
             .filter((path) => path.endsWith('/show') || path.endsWith('/list'))
             .map((path) => path.split('/management/')[1]),
-        ['flows/list', 'sessions/list'],
-        'the initial denied view read is not a prerequisite for acting; no target inspection or additional list read',
+        [],
+        'acting requires neither target inspection nor any list read',
     );
     if (action === 'disconnect') {
         await connect();
@@ -199,7 +186,7 @@ export async function exerciseManagementForcedAction(page: Page, file: string, l
             false,
         );
         assert.equal(
-            await page.getByRole('button', { name: 'Open by ID', exact: true }).isEnabled(),
+            await direct.getByRole('button', { name: 'Go', exact: true }).isEnabled(),
             false,
         );
         await page
@@ -215,7 +202,11 @@ export async function exerciseManagementForcedAction(page: Page, file: string, l
         'no replay or cancel-as-undo',
     );
     await logout(page);
-    assert.equal(await direct.getByLabel('Target session ID', { exact: false }).count(), 0);
+    // The new sign-in dialog must not expose the preceding actor's target form.
+    assert.equal(
+        await page.getByRole('textbox', { name: 'Target session ID', exact: false }).count(),
+        0,
+    );
     assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
     await assertUiPreferences(page);
 }

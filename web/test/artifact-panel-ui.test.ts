@@ -15,6 +15,7 @@ import { inspectProtection } from '../src/artifacts/protection';
 import type { ArtifactRequest, ReceivedArtifact } from '../src/artifacts/protocol';
 import { ArtifactSecretsContext, useTabArtifactSecrets } from '../src/artifacts/session-secrets';
 import { createRecordingRuntime, verifyArtifact } from '../src/artifacts/verify';
+import { managementPermissions } from '../src/management/permissions';
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
 import * as errorReporting from '../src/ui/error-report';
@@ -218,6 +219,7 @@ function result(selected: ReceivedArtifact, options: EvidenceOptions): VerifiedA
 }
 const cleanups: (() => void)[] = [];
 beforeEach(() => {
+    vi.spyOn(WebAccess.prototype, 'managementCapabilities').mockReturnValue(managementPermissions);
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     encrypted = false;
     players.mounted = 0;

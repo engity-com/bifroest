@@ -59,4 +59,4 @@ Every format includes the snapshot time and process start time; OpenMetrics carr
 
 <<cli_availability(local=False, remote=True, direct_ssh=True)>>
 
-Requires management access. Neither `includingCredentials` nor `allowArtifactTransfer` is required. Authorized-key and forced-command restrictions still apply.
+Requires `access.metrics.read` in the management flow. A metrics-only policy is `access: {metrics: true}`. Authorized-key and forced-command restrictions still apply.

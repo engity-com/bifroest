@@ -14,6 +14,7 @@ import type { ReceivedArtifact } from '../src/artifacts/protocol';
 import { verifyArtifact } from '../src/artifacts/verify';
 import { SessionActionConfirmation } from '../src/management/action';
 import { ManagementPanel } from '../src/management/ManagementPanel';
+import { managementPermissions } from '../src/management/permissions';
 import type { RecordingSummary } from '../src/management/protocol';
 import type { WebAccess } from '../src/remember';
 import { RememberMeError } from '../src/remember';
@@ -69,6 +70,7 @@ function fixture() {
         }),
         status: () => 'active',
         managementStatus: () => 'active',
+        managementCapabilities: () => managementPermissions,
         subscribeStatus: () => () => {},
         openManagement: vi.fn(() => ({ disconnect: vi.fn() })),
         managementSessions: vi.fn(async (_options: unknown, _signal?: AbortSignal) => ({

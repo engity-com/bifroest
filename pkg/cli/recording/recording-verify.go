@@ -12,6 +12,7 @@ import (
 	audit2 "github.com/engity-com/bifroest/pkg/cli/audit"
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -52,6 +53,9 @@ func createVerifyCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.RecordingsVerify); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Recording == nil {
 		return fmt.Errorf("management recording repository is unavailable")

@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	bconn "github.com/engity-com/bifroest/pkg/connection"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 )
 
@@ -210,10 +211,11 @@ func (this *webService) serveWebSocketManagement(w http.ResponseWriter, r *http.
 		return
 	}
 	if stream.status(struct {
-		Type         string       `json:"type"`
-		ConnectionID string       `json:"connectionId"`
-		KeepAlive    webKeepAlive `json:"keepAlive"`
-	}{"ready", id.String(), policy}) != nil {
+		Type         string                        `json:"type"`
+		ConnectionID string                        `json:"connectionId"`
+		KeepAlive    webKeepAlive                  `json:"keepAlive"`
+		Capabilities []managementaccess.Permission `json:"capabilities"`
+	}{"ready", id.String(), policy, this.service.managementCapabilities(base.Context(), base)}) != nil {
 		return
 	}
 	close(stream.settingsReady)

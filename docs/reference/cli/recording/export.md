@@ -110,4 +110,4 @@ For playback directly in Bifröst, use the separate [`recording play`](play.md) 
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Local invocation supports configured repositories and copied files. Direct SSH can export clear Recordings to stdout with `--with-sensitive` and the management flow's artifact-transfer permission. For encrypted content, use the client with a local private key.
+Local invocation supports configured repositories and copied files. Remote export requires `access.recordings.download`. Direct SSH exports clear Recordings to stdout with `--with-sensitive`; encrypted content requires the client with a local private key.

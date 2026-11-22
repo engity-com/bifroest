@@ -150,7 +150,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 				key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 				require.NoError(t, err)
 				httpListenerTestCertificate(t, conf, key)
-				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
+				conf.Flows[0].Environment.V = managementTestEnvironment(false, true)
 				conf.Flows[0].DiscoverAsSlug = "Work"
 				if strings.HasPrefix(mode, "ui-") || strings.HasPrefix(mode, "catalog-") {
 					settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)

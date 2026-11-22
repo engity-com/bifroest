@@ -46,7 +46,7 @@ func overviewKey(at time.Time, sequence, index uint64, descending bool) string {
 
 func (this *service) managementAuditEventPage(ctx context.Context, request protocol.ReadRequest, actor authorization.Authorization) (page protocol.Page[protocol.AuditEventSummary], source protocol.AuditEventSource, resultErr error) {
 	page.Items = make([]protocol.AuditEventSummary, 0)
-	if actor == nil || !actor.IsAuthorized() || actor.FindSession() == nil || !this.managementArtifactAllowed(actor) {
+	if actor == nil || !actor.IsAuthorized() || actor.FindSession() == nil {
 		return page, source, errManagementPolicy
 	}
 	name := configuration.AuditlogName(request.Auditlog)

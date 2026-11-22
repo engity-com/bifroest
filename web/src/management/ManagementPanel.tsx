@@ -30,6 +30,7 @@ import { SessionDetails } from './SessionDetails';
 import { SessionTarget, type SessionTargetValue } from './SessionTarget';
 import { sessionField as field, sessionTime as when } from './session-display';
 import { useManagementReads } from './use-management-reads';
+import { useManagementPermissions } from './use-permissions';
 import { useSessionAction } from './use-session-action';
 import { VersionPage } from './VersionPage';
 
@@ -51,6 +52,7 @@ function OwnedManagementPanel({
     onActionLock,
     view,
 }: ManagementPanelProps) {
+    const can = useManagementPermissions(access);
     const [target, setTarget] = useState<SessionTargetValue>({
         flow: '',
         id: '',
@@ -167,16 +169,16 @@ function OwnedManagementPanel({
         if (!active || disabled || busy || reads.busy || notice?.kind === 'unknown') {
             return;
         }
-        if (view === 'sessions' && !route && !attempted.current.sessions) {
+        if (view === 'sessions' && can('sessions.read') && !route && !attempted.current.sessions) {
             attempted.current.sessions = true;
             void loadSessions(false, { state: 'all' });
-        } else if (view === 'version' && !attempted.current.version) {
+        } else if (view === 'version' && can('version.read') && !attempted.current.version) {
             attempted.current.version = true;
             void loadVersion();
-        } else if (view === 'version' && !attempted.current.build) {
+        } else if (view === 'version' && can('version.read') && !attempted.current.build) {
             attempted.current.build = true;
             void loadVersion(true);
-        } else if (view === 'server' && !attempted.current.flows) {
+        } else if (view === 'server' && can('flows.read') && !attempted.current.flows) {
             attempted.current.flows = true;
             void loadFlows();
         }
@@ -193,9 +195,10 @@ function OwnedManagementPanel({
                 }
             });
         }
-    }, [access, active, disabled, busy, view, readCompletion, reads]);
+    }, [access, active, disabled, busy, view, readCompletion, reads, can]);
     const readRoute = useEffectEvent(() => {
         if (
+            !can('sessions.read') ||
             !active ||
             disabled ||
             busy ||
@@ -279,7 +282,7 @@ function OwnedManagementPanel({
         if (active && !disabled && !busy && routeKey !== consumedRoute.current) {
             readRoute();
         }
-    }, [routeKey, active, disabled, busy, readCompletion]);
+    }, [routeKey, active, disabled, busy, readCompletion, can]);
     useEffect(() => {
         if (active && !disabled && !busy && notice?.kind !== 'unknown') {
             finishMutationRoute();
@@ -327,6 +330,9 @@ function OwnedManagementPanel({
         direction = flowSort,
         filter = flowFilter,
     ) {
+        if (!can('flows.read')) {
+            return;
+        }
         attempted.current.flows = true;
         await reads.flows(
             { after, query, filter, ...(direction === 'desc' ? { sort: 'name-desc' } : {}) },
@@ -334,6 +340,9 @@ function OwnedManagementPanel({
         );
     }
     async function loadVersion(long = false) {
+        if (!can('version.read')) {
+            return;
+        }
         if (!long) {
             attempted.current.version = true;
         }
@@ -349,6 +358,9 @@ function OwnedManagementPanel({
         });
     }
     async function loadSessions(next = false, initial?: SessionOptions, index?: number) {
+        if (!can('sessions.read')) {
+            return;
+        }
         attempted.current.sessions = true;
         const filters: SessionOptions =
             initial ??
@@ -365,6 +377,9 @@ function OwnedManagementPanel({
         await reads.sessions(filters, pageIndex);
     }
     async function show(item: Pick<SessionItem, 'flow' | 'id'>) {
+        if (!can('sessions.read')) {
+            return;
+        }
         await reads.detail(item);
     }
     function openSession(item: Pick<SessionItem, 'flow' | 'id'>) {
@@ -384,6 +399,9 @@ function OwnedManagementPanel({
         action: SessionAction,
         item: { readonly flow: string; readonly id: string },
     ) {
+        if (!can(action === 'dispose' ? 'sessions.dispose' : 'sessions.disconnect')) {
+            return;
+        }
         setTyped('');
         await mutation.owner.prepare(action, item);
     }
@@ -399,6 +417,7 @@ function OwnedManagementPanel({
         const managementFlow = navigation?.location.managementFlow ?? access.snapshot().flow?.name;
         return (
             <SessionArtifactLinks
+                can={can}
                 item={item}
                 scope={access.snapshot().scope}
                 managementFlow={managementFlow}
@@ -504,7 +523,7 @@ function OwnedManagementPanel({
                 />
             )}
             <VersionPage
-                visible={view === 'version'}
+                visible={view === 'version' && can('version.read')}
                 version={version}
                 buildVersion={buildVersion}
                 loading={loading === 'version'}
@@ -545,8 +564,9 @@ function OwnedManagementPanel({
                     {error !== 'denied' && <p>{m('readNext')}</p>}
                 </Alert>
             )}
-            <div hidden={view !== 'server'} className="stack">
+            <div hidden={view !== 'server' || !can('flows.read')} className="stack">
                 <FlowOverview
+                    can={can}
                     scope={access.snapshot().scope}
                     active={active && view === 'server'}
                     rows={flows}
@@ -587,8 +607,21 @@ function OwnedManagementPanel({
                 </Button>
             )}
             <section hidden={view !== 'sessions'} className="stack">
+                {!can('sessions.read') &&
+                    (can('sessions.disconnect') || can('sessions.dispose')) && (
+                        <SessionTarget
+                            disabled={locked || notice?.kind === 'unknown'}
+                            value={target}
+                            onChange={setTarget}
+                            can={can}
+                            onOpen={() => {}}
+                            onPrepare={(action, flow, id) => {
+                                void prepare(action, { flow, id });
+                            }}
+                        />
+                    )}
                 <div
-                    hidden={(!route && selected !== null) || !!route?.id}
+                    hidden={!can('sessions.read') || (!route && selected !== null) || !!route?.id}
                     className="stack"
                     ref={listElement}
                 >
@@ -616,6 +649,7 @@ function OwnedManagementPanel({
                         onOpen={openSession}
                         openByID={
                             <SessionTarget
+                                can={can}
                                 disabled={locked}
                                 value={target}
                                 onChange={setTarget}
@@ -735,6 +769,7 @@ function OwnedManagementPanel({
                     (!route ||
                         (uuidEqual(selected.id, route.id) && selected.flow === route.flow)) && (
                         <SessionDetails
+                            can={can}
                             item={selected}
                             detailed={detailed}
                             id={detailID}

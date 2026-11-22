@@ -44,17 +44,18 @@ func (this *webService) serveManagementArtifact(w http.ResponseWriter, r *http.R
 		webError(w, 401, "web access denied")
 		return false
 	}
-	if !this.service.managementArtifactAllowed(access.auth) {
-		this.monitoring().deny(access.auth.Flow(), "management", "policy")
-		webError(w, 403, "artifact transfer denied")
-		return false
-	}
 	conn, transport, err := this.managementConnection(w, r, scope, access)
 	if err != nil {
 		webError(w, 403, "management connection denied")
 		return false
 	}
 	defer func() { transport.writing.Store(false); _ = conn.Close(); <-conn.done }()
+	actor := &environmentContext{service: this.service, connection: conn, authorization: conn.authorization, executionContext: r.Context()}
+	if !this.service.managementArtifactAllowed(r.Context(), access.auth, actor, managementArtifactPermission(request.Operation)) {
+		this.monitoring().deny(access.auth.Flow(), "management", "policy")
+		webError(w, 403, "artifact transfer denied")
+		return false
+	}
 	if observation, _ := r.Context().Value(monitoringRequestKey{}).(*monitoringRequest); observation != nil {
 		observation.transfer.Store(true)
 	}
@@ -84,6 +85,10 @@ func (this *webService) serveManagementArtifact(w http.ResponseWriter, r *http.R
 	// An already-started binary response fails by missing its final completion,
 	// never by an appended private error, optimistic success or automatic retry.
 	if !output.started.Load() {
+		if managementAccessDenied(err) {
+			webError(w, 403, "artifact transfer denied")
+			return false
+		}
 		if request.Operation == protocol.DownloadRecording && managementOnlyNotFound(err) {
 			webError(w, 404, "management entity not found")
 			return false

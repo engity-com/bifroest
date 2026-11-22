@@ -2,6 +2,7 @@ import type { ReactNode, Ref } from 'react';
 import { Button } from '../ui/material';
 import { t } from '../ui/messages';
 import { m, sessionStateLabel } from './messages';
+import type { ManagementPermission } from './permissions';
 import type { SessionItem } from './protocol';
 import { sessionField, sessionOwnerLabel, sessionTime } from './session-display';
 
@@ -15,6 +16,7 @@ export function SessionDetails({
     actions,
     mutationDisabled,
     onPrepare,
+    can,
 }: {
     item: SessionItem;
     detailed: boolean;
@@ -22,6 +24,7 @@ export function SessionDetails({
     element: Ref<HTMLElement>;
     actions: ReactNode;
     mutationDisabled: boolean;
+    can: (permission: ManagementPermission) => boolean;
     onPrepare(action: 'disconnect' | 'dispose', item: SessionItem): void;
 }) {
     return (
@@ -82,20 +85,24 @@ export function SessionDetails({
                 <dt>{t('adminGridActions')}</dt>
                 <dd className="actions">
                     {actions}
-                    <Button
-                        disabled={mutationDisabled}
-                        color="orange"
-                        onClick={() => onPrepare('disconnect', item)}
-                    >
-                        {m('disconnect')}
-                    </Button>
-                    <Button
-                        disabled={mutationDisabled}
-                        color="red"
-                        onClick={() => onPrepare('dispose', item)}
-                    >
-                        {m('end')}
-                    </Button>
+                    {can('sessions.disconnect') && (
+                        <Button
+                            disabled={mutationDisabled}
+                            color="orange"
+                            onClick={() => onPrepare('disconnect', item)}
+                        >
+                            {m('disconnect')}
+                        </Button>
+                    )}
+                    {can('sessions.dispose') && (
+                        <Button
+                            disabled={mutationDisabled}
+                            color="red"
+                            onClick={() => onPrepare('dispose', item)}
+                        >
+                            {m('end')}
+                        </Button>
+                    )}
                 </dd>
             </dl>
         </section>

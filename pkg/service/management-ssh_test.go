@@ -124,7 +124,7 @@ func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 		content, err := transfer.Output(command)
 		require.Error(t, err)
 		require.Empty(t, content)
-		require.Contains(t, stderr.String(), "allowArtifactTransfer")
+		require.Contains(t, stderr.String(), "download")
 	}
 	for _, command := range []string{"audit events --with-sensitive default", "audit export --with-sensitive default", "audit merge --with-sensitive default"} {
 		query, err := client.NewSession()
@@ -134,13 +134,13 @@ func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 		content, err := query.Output(command)
 		require.Error(t, err)
 		require.Empty(t, content)
-		require.Contains(t, stderr.String(), "allowArtifactTransfer")
+		require.Contains(t, stderr.String(), "download")
 	}
 }
 
 func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
+		conf.Flows[0].Environment.V = managementTestEnvironment(false, true)
 		parent := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
 		configureDefaultTestAuditlog(conf)
 		conf.Auditlogs[0].IdentityFile = filepath.Join(parent, "management-audit-signing-key")
@@ -189,7 +189,7 @@ func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {
 
 func TestManagementSSHStreamsSignedRecordingWithoutPrivateKeys(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
+		conf.Flows[0].Environment.V = managementTestEnvironment(false, true)
 		parent := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
 		configureDefaultTestAuditlog(conf)
 		conf.Auditlogs[0].Directory = filepath.Join(parent, "management-audit")
@@ -282,5 +282,5 @@ func TestManagementRecordingShowIgnoresUnrelatedCorruptArtifact(t *testing.T) {
 	denied, err := content.Output("recording export --with-sensitive default " + ids[0].String())
 	require.Error(t, err)
 	require.Empty(t, denied)
-	require.Contains(t, stderr.String(), "allowArtifactTransfer")
+	require.Contains(t, stderr.String(), "download")
 }

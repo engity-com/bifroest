@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
@@ -108,17 +109,17 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 		webError(w, http.StatusForbidden, "structured management is not available for this authorization")
 		return
 	}
-	if request.Operation == protocol.ListAuditEvents && !this.service.managementArtifactAllowed(access.auth) {
-		this.service.monitoring.deny(access.auth.Flow(), "management", "policy")
-		webError(w, http.StatusForbidden, "audit event overview is not permitted")
-		return
-	}
 	conn, transport, err := this.managementConnection(w, r, scope, access)
 	if err != nil {
 		webError(w, http.StatusForbidden, "management connection denied")
 		return
 	}
 	defer func() { _ = conn.Close(); <-conn.done }()
+	if this.service.requireManagementConnection(r.Context(), conn, managementReadPermission(request)) != nil || request.Sensitive && this.service.requireManagementConnection(r.Context(), conn, managementaccess.AuditlogsDownload) != nil {
+		this.service.monitoring.deny(access.auth.Flow(), "management", "policy")
+		webError(w, http.StatusForbidden, "management read denied")
+		return
+	}
 	if managementLongRead(r.URL.Path) {
 		_ = transport.controller.SetWriteDeadline(time.Time{})
 	}
@@ -128,6 +129,10 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 	// write budget, including generic errors after a failed/canceled read.
 	_ = transport.controller.SetWriteDeadline(time.Now().Add(20 * time.Second))
 	if err != nil {
+		if managementAccessDenied(err) {
+			webError(w, http.StatusForbidden, "management read denied")
+			return
+		}
 		if recording.IsNativeCatalogWarmup(err) {
 			webJSONResponse(w, http.StatusServiceUnavailable, struct {
 				Error string `json:"error"`

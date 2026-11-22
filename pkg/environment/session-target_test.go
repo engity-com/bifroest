@@ -13,6 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	bkp "github.com/engity-com/bifroest/pkg/kubernetes"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
 )
@@ -151,13 +152,13 @@ func TestSshSessionTargetDoesNotLoadKeysAndUsesExecutionAddressRules(t *testing.
 
 func TestSessionTargetResolverLookupCancellationAndManagementRights(t *testing.T) {
 	ctx := targetTestContext{ctx: t.Context()}
-	first := &ManagementRepository{includingCredentials: false}
+	first := &ManagementRepository{}
 	target, err := first.ResolveSessionTarget(ctx)
 	require.NoError(t, err)
-	other, err := (&ManagementRepository{includingCredentials: true}).ResolveSessionTarget(ctx)
+	other, err := (&ManagementRepository{access: access.Policy{}.WithConstant(access.FlowsCredentials, true)}).ResolveSessionTarget(ctx)
 	require.NoError(t, err)
 	require.NotEqual(t, target, other)
-	other, err = (&ManagementRepository{allowArtifactTransfer: true}).ResolveSessionTarget(ctx)
+	other, err = (&ManagementRepository{access: access.Policy{}.WithConstant(access.RecordingsDownload, true)}).ResolveSessionTarget(ctx)
 	require.NoError(t, err)
 	require.NotEqual(t, target, other)
 	resolver, ok := SessionTargetResolverFor(&RepositoryFacade{entries: map[configuration.FlowName]CloseableRepository{"work": first}}, "work")

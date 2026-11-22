@@ -55,7 +55,7 @@ Start with an installed [Bifröst host](../setup/on-host.md), separate login key
             authorityIdentityFile: /etc/engity/bifroest/gateway-ca
     ```
 
-    `management` selects the administration flow, and `alice` selects the gateway. The management flow needs no optional permissions for public key exports. Alice's incoming login key, the gateway's outbound certificate CA, and target host trust have separate roles.
+    `management` selects the administration flow, and `alice` selects the gateway. The default management access object grants `keys.read` for public key exports. Alice's incoming login key, the gateway's outbound certificate CA, and target host trust have separate roles.
 
 3. Start or restart Bifröst through the host's service manager. Startup loads the provisioned trust and ensures the configured gateway subject and CA identities. Remote exports will only use these existing keys.
 

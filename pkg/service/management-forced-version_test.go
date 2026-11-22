@@ -33,7 +33,7 @@ func TestForcedManagementVersionReferenceSSHAndHTTPKeepExactNativeOutput(t *test
 		t.Run(test.command, func(t *testing.T) {
 			server := newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, "alice", "command="+strconv.Quote(test.command), nil, func(conf *configuration.Configuration) {
 				conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
-				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{IncludingCredentials: true, AllowArtifactTransfer: true}
+				conf.Flows[0].Environment.V = managementTestEnvironment(true, true)
 			})
 			client := server.mustDial(t)
 			invocation, err := client.NewSession()

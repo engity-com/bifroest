@@ -8,6 +8,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	bfRecording "github.com/engity-com/bifroest/pkg/recording"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -15,19 +16,43 @@ import (
 // ManagementAccess is bound to one authorized SSH invocation, never to the
 // shared, compiled command schema.
 type ManagementAccess struct {
-	Configuration         *configuration.Configuration
-	Sessions              session.Repository
-	SessionControl        ManagementSessionControl
-	IncludingCredentials  bool
-	AllowArtifactTransfer bool
-	WireFormat            bool
-	WireStream            bool
-	ProducerID            func(configuration.AuditlogName) (audit.ProducerId, error)
-	Recordings            ManagementRecordingBrowser
-	Audit                 ManagementAuditOperations
-	Recording             ManagementRecordingOperations
-	Keys                  ManagementKeyOperations
-	Metrics               ManagementMetrics
+	Configuration  *configuration.Configuration
+	Sessions       session.Repository
+	SessionControl ManagementSessionControl
+	Check          func(context.Context, managementaccess.Permission) error
+	WireFormat     bool
+	WireStream     bool
+	ProducerID     func(configuration.AuditlogName) (audit.ProducerId, error)
+	Recordings     ManagementRecordingBrowser
+	Audit          ManagementAuditOperations
+	Recording      ManagementRecordingOperations
+	Keys           ManagementKeyOperations
+	Metrics        ManagementMetrics
+}
+
+func (a ManagementAccess) Require(ctx context.Context, permission managementaccess.Permission) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !permission.Valid() {
+		return managementaccess.Denied(permission)
+	}
+	if a.Check != nil {
+		return a.Check(ctx, permission)
+	}
+	allowed, err := (managementaccess.Policy{}).Allows(permission, nil)
+	if err != nil || !allowed {
+		return managementaccess.Denied(permission)
+	}
+	return nil
+}
+
+func RequireManagementPermission(ctx context.Context, permission managementaccess.Permission) error {
+	access, ok := ManagementAccessFromContext(ctx)
+	if !ok {
+		return managementaccess.Denied(permission)
+	}
+	return access.Require(ctx, permission)
 }
 
 type ManagementMetrics interface {

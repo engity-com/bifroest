@@ -64,4 +64,4 @@ A missing artifact, invalid signature or ID mismatch produces an error instead o
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Metadata access needs no artifact-transfer permission. For a copied file, use [`recording inspect`](inspect.md).
+Remote metadata access requires `access.recordings.read`, but no download permission. For a copied file, use [`recording inspect`](inspect.md).

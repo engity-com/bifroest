@@ -35,7 +35,8 @@ func TestForcedManagementAuditReadPagesWithoutCliAndCannotCrossOperation(t *test
 		t.Run(format, func(t *testing.T) {
 			svc, handler, recorder, _ := managementWebFixture(t, func(conf *configuration.Configuration) {
 				management := conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement)
-				management.AllowArtifactTransfer, management.IncludingCredentials = true, true
+				setManagementTestDownloads(management, true)
+				setManagementTestCredentials(management, true)
 			})
 			svc.managementApplication = nil
 			addForcedAuditSummaries(svc)

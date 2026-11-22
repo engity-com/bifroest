@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReadProgress as Progress } from '../management/progress';
+import { useManagementPermissions } from '../management/use-permissions';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import type { GridWork } from '../ui/GridWork';
@@ -28,6 +29,8 @@ export function useRecordingVerification({
     active: boolean;
     disabled: boolean;
 }) {
+    const can = useManagementPermissions(access);
+    disabled ||= !can('recordings.read') || !can('recordings.download');
     const secrets = useArtifactSecrets(access);
     const controller = useRef<AbortController | null>(null);
     const generation = useRef(0);

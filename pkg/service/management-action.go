@@ -13,6 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -55,7 +56,7 @@ func managementSessionPin(ctx context.Context, current session.Session) ([32]byt
 	return sha256.Sum256(raw), nil
 }
 
-func (this *service) managementActionTarget(ctx context.Context, caller session.Session, request protocol.SessionAction, limited bool) (session.Session, protocol.ActionTarget, [32]byte, error) {
+func (this *service) managementActionTarget(ctx context.Context, caller session.Session, request protocol.SessionAction, limited, includeDetails bool) (session.Session, protocol.ActionTarget, [32]byte, error) {
 	var empty protocol.ActionTarget
 	if request.Validate() != nil || configuration.FlowName(request.Flow).Validate() != nil {
 		return nil, empty, [32]byte{}, protocol.ErrRequest
@@ -84,7 +85,7 @@ func (this *service) managementActionTarget(ctx context.Context, caller session.
 		return nil, empty, before, err
 	}
 	item := protocol.ActionTarget{ID: request.ID, Flow: request.Flow}
-	if !limited {
+	if includeDetails && !limited {
 		details, err := managementSessionItem(ctx, current)
 		if err != nil {
 			return nil, empty, before, err
@@ -98,9 +99,12 @@ func (this *service) managementActionTarget(ctx context.Context, caller session.
 	return current, item, before, nil
 }
 
-func (this *service) RunManagementAction(task environment.TaskContext, request protocol.SessionAction, output io.Writer, _ bool, _ bool) (int, error) {
+func (this *service) RunManagementAction(task environment.TaskContext, request protocol.SessionAction, output io.Writer) (int, error) {
 	if task == nil || task.Authorization() == nil || !task.Authorization().IsAuthorized() || task.Authorization().FindSession() == nil || task.Authorization().FindSession().Flow() != task.Authorization().Flow() || !this.isManagementFlow(task.Authorization().Flow()) || managementActionPolicy(task.Authorization(), request) != nil {
 		return -1, errManagementPolicy
+	}
+	if err := this.requireManagement(task.Context(), task, managementActionPermission(request.Action)); err != nil {
+		return -1, err
 	}
 	permission, ok := task.Context().Value(managementActionContextKey{}).(*webManagementConfirmation)
 	if !ok || permission == nil || permission.preparing == permission.claiming || permission.request != request || permission.connection != task.Connection().Id() {
@@ -113,7 +117,8 @@ func (this *service) RunManagementAction(task environment.TaskContext, request p
 	key := authorization.AuthorizedKeyPolicyOf(task.Authorization())
 	limited := key != nil && key.ForcedCommand != nil
 	if permission.preparing {
-		_, target, pin, err := this.managementActionTarget(task.Context(), caller, request, limited)
+		includeDetails := this.requireManagement(task.Context(), task, access.SessionsRead) == nil
+		_, target, pin, err := this.managementActionTarget(task.Context(), caller, request, limited, includeDetails)
 		if err != nil {
 			return -1, err
 		}
@@ -129,10 +134,13 @@ func (this *service) RunManagementAction(task environment.TaskContext, request p
 	}
 	var current session.Session
 	check := func(ctx context.Context) error {
+		if err := this.requireManagement(ctx, task, managementActionPermission(request.Action)); err != nil {
+			return err
+		}
 		if err := managementActionPolicy(task.Authorization(), request); err != nil {
 			return err
 		}
-		candidate, _, pin, err := this.managementActionTarget(ctx, caller, request, limited)
+		candidate, _, pin, err := this.managementActionTarget(ctx, caller, request, limited, false)
 		if err != nil {
 			return err
 		}

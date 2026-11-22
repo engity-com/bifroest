@@ -1,6 +1,10 @@
 import { useContext, useRef, useState } from 'react';
 import type { ManagementLocation } from '../application/management-location';
 import type { AuditlogSummary } from '../management/protocol';
+import {
+    ManagementPermissionContext,
+    useManagementPermissions,
+} from '../management/use-permissions';
 import type { WebAccess } from '../remember';
 import { AdminBreadcrumbs } from '../ui/AdminBreadcrumbs';
 import { AdminDetailContext } from '../ui/admin-navigation';
@@ -16,10 +20,13 @@ import { ArtifactSecretsBoundary } from './session-secrets';
 // Routing/composition only. Both pages retain their own selection, workers,
 // result and plaintext; the tab provider owns their shared volatile key cache.
 export function ArtifactPanel(props: ArtifactPanelProps) {
+    const can = useManagementPermissions(props.access);
     return (
-        <ArtifactSecretsBoundary access={props.access}>
-            <ArtifactPanelContents {...props} />
-        </ArtifactSecretsBoundary>
+        <ManagementPermissionContext.Provider value={can}>
+            <ArtifactSecretsBoundary access={props.access}>
+                <ArtifactPanelContents {...props} />
+            </ArtifactSecretsBoundary>
+        </ManagementPermissionContext.Provider>
     );
 }
 function ArtifactPanelContents(props: ArtifactPanelProps) {

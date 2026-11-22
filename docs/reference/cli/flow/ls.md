@@ -51,4 +51,4 @@ One row per flow, with its name, selected auditlog, authorization type and envir
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Local use reads a configuration file; remote use reads the service's loaded configuration. See [Invocation and data sources](../usage.md).
+Local use reads a configuration file; remote use reads the service's loaded configuration and requires `access.flows.read`. See [Invocation and data sources](../usage.md).

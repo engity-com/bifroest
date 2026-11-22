@@ -61,4 +61,4 @@ Rows contain session ID, flow, state, requesting user and creation time, ordered
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Local inspection supports filesystem session storage; management queries the running repository.
+Local inspection supports filesystem session storage; management queries the running repository and requires `access.sessions.read`.

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactCatalog } from '../src/artifacts/ArtifactCatalog';
 import { AuditCatalog } from '../src/artifacts/AuditCatalog';
 import type { ArtifactRequest } from '../src/artifacts/protocol';
+import { managementPermissions } from '../src/management/permissions';
 import type { AuditlogSummary, Page, RecordingSummary } from '../src/management/protocol';
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
@@ -50,6 +51,7 @@ function access(principal = 'alice') {
 }
 const cleanups: (() => void)[] = [];
 beforeEach(() => {
+    vi.spyOn(WebAccess.prototype, 'managementCapabilities').mockReturnValue(managementPermissions);
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.spyOn(WebAccess.prototype, 'managementAuditlogs').mockResolvedValue({
         items: [source],
@@ -178,6 +180,18 @@ function hasNamedCombobox(name: string): boolean {
 }
 
 describe('finding and opening recordings without API choreography', () => {
+    it('does not invent auditlog-read permission for recording-only access', async () => {
+        vi.mocked(WebAccess.prototype.managementCapabilities).mockReturnValue(['recordings.read']);
+        await mount();
+        expect(WebAccess.prototype.managementAuditlogs).not.toHaveBeenCalled();
+        expect(WebAccess.prototype.managementRecordings).not.toHaveBeenCalled();
+        expect(WebAccess.prototype.downloadArtifact).not.toHaveBeenCalled();
+    });
+    it('does not list auditlogs when only their events are allowed', async () => {
+        vi.mocked(WebAccess.prototype.managementCapabilities).mockReturnValue(['auditlogs.events']);
+        await mount(access(), true, false, 'auditlogs');
+        expect(WebAccess.prototype.managementAuditlogs).not.toHaveBeenCalled();
+    });
     it('streams auditlog-source progress and cancels without adopting a late page or borrowing recording results', async () => {
         const pending = Promise.withResolvers<Page<AuditlogSummary>>();
         vi.mocked(WebAccess.prototype.managementAuditlogs).mockImplementationOnce(

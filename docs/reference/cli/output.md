@@ -37,7 +37,7 @@ These commands do not accept `--format`. `--output`, where supported, chooses a 
 
 Audit event queries and JSONL exports are redacted by default. `--with-sensitive` includes confidential fields; encrypted journals additionally need the matching decryption key. A Recording export or playback always contains the complete captured terminal content and requires `--with-sensitive`.
 
-Configuration detail commands redact arbitrary strings. The management flow's `includingCredentials` property applies to `flow show`, not to all settings queries. See the relevant command page and [Trust and verification](verification.md).
+Configuration detail commands redact arbitrary strings. The management right `flows.credentials` applies to `flow show`, not to all settings queries. See the relevant command page and [Trust and verification](verification.md).
 
 ## Completion and errors
 

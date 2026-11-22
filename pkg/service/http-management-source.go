@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/management/wire"
 	"github.com/engity-com/bifroest/pkg/recording"
@@ -70,7 +71,8 @@ func (s *webService) handleManagementRecordingSource(w http.ResponseWriter, r *h
 		webError(w, http.StatusUnauthorized, "web access denied")
 		return
 	}
-	if !s.service.isManagementFlow(access.auth.Flow()) || !s.service.managementArtifactAllowed(access.auth) {
+	actor := &environmentContext{service: s.service, connection: channel.conn, authorization: access.auth, executionContext: r.Context()}
+	if !s.service.managementArtifactAllowed(r.Context(), access.auth, actor, managementaccess.RecordingsDownload) || s.service.requireManagement(r.Context(), actor, managementaccess.RecordingsRead) != nil {
 		webError(w, http.StatusForbidden, "artifact transfer denied")
 		return
 	}

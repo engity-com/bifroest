@@ -57,7 +57,7 @@ One OpenSSH CA public-key line, on stdout or in the requested file. Only a local
     bifroest @bifroest-admin key export ca gateway --output gateway-ca.pub
     ```
 
-    An authorized management flow can perform this public export without `allowArtifactTransfer` or `includingCredentials`. Direct SSH supports `ssh management@bifroest.example.org 'key export ca gateway'`.
+    The management flow must grant `keys.read`. Direct SSH supports `ssh management@bifroest.example.org 'key export ca gateway'`.
 
 ## Availability
 

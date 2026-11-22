@@ -17,7 +17,7 @@ Inspect session metadata: identity, requesting user, flow, lifecycle state and t
 
 Local inspection reads configured filesystem session storage. Remote queries use the running service's session repository. See [session configuration](../../session/index.md) for storage and reuse behavior.
 
-Session control is available only through `@target` or direct management SSH. All authorized management users can operate on sessions in any flow; neither `includingCredentials` nor `allowArtifactTransfer` is required. A command cannot target its own executing management session.
+Session control is available through `@target` or direct management SSH and requires `sessions.disconnect` or `sessions.dispose`. These rights apply across flows but do not imply `sessions.read`. A command cannot target its own executing management session.
 
 ## Examples
 

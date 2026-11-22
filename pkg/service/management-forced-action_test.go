@@ -99,10 +99,10 @@ func TestForcedManagementActionKeepsGlobalAmbiguityAtPreparationAndCommit(t *tes
 			svc.sessions = &ambiguousForcedReadRepository{CloseableRepository: original, target: target}
 			defer func() { svc.sessions = original }()
 			if late {
-				require.Equal(t, 503, managementActionRequest(handler, token, "confirm", map[string]string{"confirmationToken": prepared.ConfirmationToken}).Code)
+				require.Equal(t, 403, managementActionRequest(handler, token, "confirm", map[string]string{"confirmationToken": prepared.ConfirmationToken}).Code)
 				require.Equal(t, 403, managementActionRequest(handler, token, "confirm", map[string]string{"confirmationToken": prepared.ConfirmationToken}).Code)
 			} else {
-				require.Equal(t, 503, managementActionRequest(handler, token, "prepare", map[string]string{"action": "dispose", "flow": "worker", "id": target.Id().String()}).Code)
+				require.Equal(t, 403, managementActionRequest(handler, token, "prepare", map[string]string{"action": "dispose", "flow": "worker", "id": target.Id().String()}).Code)
 			}
 			require.Empty(t, auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionDisposeStarted))
 		})

@@ -55,7 +55,7 @@ func TestManagementStreamFailureIsLoggedAndSentToStderrAndClient(t *testing.T) {
 	var messages []string
 	svc := &service{Service: &Service{Logger: managementStreamLogCapture{messages: &messages}}}
 	sess := &managementStreamTestSession{input: bytes.NewReader([]byte{0xff})}
-	code, err := svc.RunManagementCommand(managementStreamTestTask{session: sess}, false, false)
+	code, err := svc.RunManagementCommand(managementStreamTestTask{session: sess})
 	require.Error(t, err)
 	require.NotZero(t, code)
 	require.Len(t, messages, 1)

@@ -58,4 +58,4 @@ Session ID, flow, lifecycle state, requesting user, remote endpoint and creation
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Local inspection supports filesystem session storage; management queries the running repository.
+Local inspection supports filesystem session storage; management queries the running repository and requires `access.sessions.read`.

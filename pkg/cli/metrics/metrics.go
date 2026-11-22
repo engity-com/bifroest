@@ -8,6 +8,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type showOptions struct {
@@ -29,6 +30,9 @@ func CreateCommands() []cli.CommandRequirementLike {
 }
 
 func handleShow(ctx context.Context, opts showOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.MetricsRead); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Metrics == nil {
 		return fmt.Errorf("management metrics are unavailable")

@@ -89,4 +89,4 @@ Journal verification includes events excluded by the filters. A selection is lim
 
 <<cli_availability(remote=True, direct_ssh=True)>>
 
-Public remote queries need no artifact-transfer permission. Sensitive queries require `allowArtifactTransfer: true`; the integrated client downloads and verifies the journal locally. Direct SSH can read clear private fields but cannot use a workstation's decryption key.
+Public remote queries require `auditlogs.events`. Sensitive queries require `auditlogs.download`; the integrated client downloads and verifies the journal locally. Direct-SSH sensitive queries require both rights. Direct SSH can read clear private fields but cannot use a workstation's decryption key.

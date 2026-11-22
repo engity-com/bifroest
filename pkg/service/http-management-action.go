@@ -82,10 +82,19 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 			return
 		}
 		defer func() { _ = conn.Close(); <-conn.done }()
+		if this.service.requireManagementConnection(r.Context(), conn, managementActionPermission(request.Action)) != nil {
+			this.monitoring().deny(access.auth.Flow(), "management", "policy")
+			webError(w, 403, "management action denied")
+			return
+		}
 		// A real audited/recorded preparation, never an implicit ShowSession grant.
 		permission := &webManagementConfirmation{access: access, peer: peer, request: request, preparing: true, connection: conn.Id()}
 		data, err := this.service.executeManagementAction(conn, permission)
 		if err != nil {
+			if managementAccessDenied(err) {
+				webError(w, 403, "management action denied")
+				return
+			}
 			webError(w, 503, "management preparation could not be confirmed")
 			return
 		}
@@ -96,7 +105,7 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 		}
 		key := authorization.AuthorizedKeyPolicyOf(access.auth)
 		limited := key != nil && key.ForcedCommand != nil
-		_, _, pin, err := this.service.managementActionTarget(conn.Lifetime(), caller, request, limited)
+		_, _, pin, err := this.service.managementActionTarget(conn.Lifetime(), caller, request, limited, false)
 		if err != nil || pin != permission.pin || limited && target.Details != nil || managementActionPolicy(access.auth, request) != nil {
 			webError(w, 403, "management target changed during preparation")
 			return
@@ -181,9 +190,18 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 		return
 	}
 	defer func() { _ = conn.Close(); <-conn.done }()
+	if this.service.requireManagementConnection(r.Context(), conn, managementActionPermission(permission.request.Action)) != nil {
+		this.monitoring().deny(access.auth.Flow(), "management", "policy")
+		webError(w, 403, "management action denied")
+		return
+	}
 	permission.connection = conn.Id()
 	data, err := this.service.executeManagementAction(conn, permission)
 	if err != nil {
+		if managementAccessDenied(err) {
+			webError(w, 403, "management action denied")
+			return
+		}
 		webError(w, 503, "management action result could not be confirmed")
 		return
 	}

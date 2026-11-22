@@ -3,6 +3,7 @@ import { exactFlow, type ManagementLocation } from '../application/management-lo
 import type { AuditEventItem, AuditOverviewPage } from '../management/audit-overview';
 import type { ReadProgress as Progress } from '../management/progress';
 import type { ColumnFilter } from '../management/protocol';
+import { useManagementPermissions } from '../management/use-permissions';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { CursorPages } from '../shared/cursor-pages';
@@ -37,6 +38,8 @@ export function AuditOverview({
     disabled: boolean;
     onSource?: (producer: string) => void;
 }) {
+    const can = useManagementPermissions(access);
+    disabled ||= !can('auditlogs.events');
     const navigation = useManagementNavigation();
     const route = navigation?.location.page === 'auditlogs' ? navigation.location : undefined;
     const flow = route?.flow;
@@ -60,7 +63,7 @@ export function AuditOverview({
     );
     const [sort, setSort] = useState<'asc' | 'desc'>('desc');
     const [ownSensitive, setOwnSensitive] = useState(false);
-    const sensitive = view?.sensitive ?? ownSensitive;
+    const sensitive = can('auditlogs.download') && (view?.sensitive ?? ownSensitive);
     const requestSensitive = sensitive && sourceInfo?.encrypted === false;
     const [busy, setBusy] = useState(false);
     const [progress, setProgress] = useState<Progress | null>(null);
@@ -349,6 +352,9 @@ export function AuditOverview({
                     detailToggle={{
                         checked: sensitive,
                         onChange: () => {
+                            if (!can('auditlogs.download')) {
+                                return;
+                            }
                             if (sourceInfo?.encrypted) {
                                 // The server cannot decrypt. Keep its completed page and open
                                 // explicit local options instead of clearing an unchanged RPC.
@@ -372,7 +378,7 @@ export function AuditOverview({
                                 setOwnSensitive((value) => !value);
                             }
                         },
-                        disabled: !!view?.running,
+                        disabled: !!view?.running || !can('auditlogs.download'),
                         label: 'privateDetails',
                         ...(sourceInfo?.encrypted
                             ? { showLabel: 'auditDecryptDetails' as const }

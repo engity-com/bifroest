@@ -232,7 +232,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 				conf.Flows = append(conf.Flows, worker)
 			}
 			if forcedReadMode {
-				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: mode == "management-forced-audit" || mode == "management-forced-version"}
+				conf.Flows[0].Environment.V = managementTestEnvironment(false, mode == "management-forced-audit" || mode == "management-forced-version")
 				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
 				var keys strings.Builder

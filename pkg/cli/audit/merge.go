@@ -10,6 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type mergeOptions struct {
@@ -41,6 +42,14 @@ func createMergeCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementMerge(ctx context.Context, opts managementMergeOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsEvents); err != nil {
+		return err
+	}
+	if opts.WithSensitive {
+		if err := common.RequireManagementPermission(ctx, managementaccess.AuditlogsDownload); err != nil {
+			return err
+		}
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Audit == nil {
 		return fmt.Errorf("management audit repository is unavailable")

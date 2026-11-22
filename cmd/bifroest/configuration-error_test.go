@@ -35,7 +35,7 @@ func TestExecutableConfigurationDiagnostics(t *testing.T) {
 		{name: "missing file", missing: true, fragments: []string{"does not exist"}},
 		{name: "YAML syntax", contents: "flows: [\n", fragments: []string{"yaml: line 1:", "did not find expected node content"}},
 		{name: "missing required flows", contents: "flows: []\n", fragments: []string{"[flows]", "required but absent"}},
-		{name: "invalid field type", contents: "flows:\n  - name: test\n    authorization:\n      type: none\n    environment:\n      type: management\n      includingCredentials: notBool\n", fragments: []string{"line 7:", "notBool", "into bool"}},
+		{name: "invalid field type", contents: "flows:\n  - name: test\n    authorization:\n      type: none\n    environment:\n      type: management\n      access: []\n", fragments: []string{"access", "must be a boolean, template or object"}},
 		{name: "invalid credential", contents: "flows:\n  - name: test\n    authorization:\n      type: simple\n      entries:\n        - name: test\n          password: CliCredentialMarker\n    environment:\n      type: dummy\n", fragments: []string{"[password]", "illegal password", "***redacted***", "[7:"}, absent: []string{"CliCredentialMarker"}},
 		{name: "invalid credential template", contents: "flows:\n  - name: test\n    authorization:\n      type: oidcDeviceAuth\n      issuer: https://example.invalid\n      clientId: test\n      clientSecret: '{{ CliSecretTemplateMarker }}'\n    environment:\n      type: dummy\n", fragments: []string{"[clientSecret]", "invalid credential template", "***redacted***", "[7:"}, absent: []string{"CliSecretTemplateMarker"}},
 	} {

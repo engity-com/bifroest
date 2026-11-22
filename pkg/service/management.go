@@ -18,17 +18,18 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 func (this *Service) warnOnManagementAccess() {
 	for _, flow := range this.Configuration.Flows {
 		if management, ok := flow.Environment.V.(*configuration.EnvironmentManagement); ok {
-			if management.IncludingCredentials {
-				this.logger().With("flow", flow.Name).Warn("management environment exposes Flow credentials; enable includingCredentials only temporarily for debugging or migration, never in production")
+			if management.Access.MayAllow(managementaccess.FlowsCredentials) {
+				this.logger().With("flow", flow.Name).Warn("management access may expose Flow credentials; restrict access.flows.credentials to trusted administrators")
 			}
-			if management.AllowArtifactTransfer {
-				this.logger().With("flow", flow.Name).Warn("management environment permits download of original audit and Recording artifacts; restrict allowArtifactTransfer to trusted administrators")
+			if management.Access.MayAllow(managementaccess.AuditlogsDownload) || management.Access.MayAllow(managementaccess.RecordingsDownload) {
+				this.logger().With("flow", flow.Name).Warn("management access may permit original evidence downloads; restrict access.auditlogs.download and access.recordings.download to trusted administrators")
 			}
 		}
 	}
@@ -44,7 +45,7 @@ func (this *service) isManagementFlow(name configuration.FlowName) bool {
 	return false
 }
 
-func (this *service) RunManagementCommand(task environment.Task, includingCredentials, allowArtifactTransfer bool) (exitCode int, resultErr error) {
+func (this *service) RunManagementCommand(task environment.Task) (exitCode int, resultErr error) {
 	raw := task.SshSession().RawCommand()
 	defer func() {
 		if resultErr != nil {
@@ -63,18 +64,18 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 		if len(args) < 2 || args[0] != "recording" || args[1] != "ls" {
 			return -1, fmt.Errorf("recording list streaming requires recording ls")
 		}
-		return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, managementStream)
+		return this.runManagementArgs(task, args, managementStream)
 	}
 	if raw == transport.WireCommand {
 		args, err := transport.DecodeWireRequest(task.SshSession())
 		if err != nil {
 			return -1, err
 		}
-		return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, managementWire)
+		return this.runManagementArgs(task, args, managementWire)
 	}
 	if raw == transport.WireRecordingCommand {
-		if !allowArtifactTransfer {
-			return -1, fmt.Errorf("raw artifact downloads require allowArtifactTransfer in the management environment")
+		if err := this.requireManagement(task.Context(), task, managementaccess.RecordingsDownload); err != nil {
+			return -1, err
 		}
 		args, err := transport.DecodeWireRequest(task.SshSession())
 		if err != nil {
@@ -83,8 +84,8 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 		return this.streamManagementRecording(task, args)
 	}
 	if raw == transport.WireAuditCommand {
-		if !allowArtifactTransfer {
-			return -1, fmt.Errorf("raw artifact downloads require allowArtifactTransfer in the management environment")
+		if err := this.requireManagement(task.Context(), task, managementaccess.AuditlogsDownload); err != nil {
+			return -1, err
 		}
 		args, err := transport.DecodeWireRequest(task.SshSession())
 		if err != nil {
@@ -99,7 +100,7 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 	if err != nil {
 		return -1, fmt.Errorf("invalid management command: %w", err)
 	}
-	return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, managementHuman)
+	return this.runManagementArgs(task, args, managementHuman)
 }
 
 func (this *service) streamManagementAudit(task environment.Task, args []string) (int, error) {
@@ -213,7 +214,7 @@ const (
 	managementStream
 )
 
-func (this *service) runManagementArgs(task environment.Task, includingCredentials, allowArtifactTransfer bool, args []string, outputMode managementOutputMode) (int, error) {
+func (this *service) runManagementArgs(task environment.Task, args []string, outputMode managementOutputMode) (int, error) {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "@") {
 			return -1, fmt.Errorf("management commands do not permit @file argument expansion")
@@ -221,14 +222,16 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 	}
 	access := cliCommon.ManagementAccess{
 		Configuration: &this.Configuration, Sessions: this.sessions,
-		SessionControl:       managementSessionControl{service: this, task: task},
-		IncludingCredentials: includingCredentials, AllowArtifactTransfer: allowArtifactTransfer,
+		SessionControl: managementSessionControl{service: this, task: task},
+		Check: func(ctx context.Context, permission managementaccess.Permission) error {
+			return this.requireManagement(ctx, task, permission)
+		},
 		WireFormat: outputMode != managementHuman, WireStream: outputMode == managementStream,
-		Audit:      managementAuditOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
-		Recording:  managementRecordingOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
-		Recordings: managementRecordingBrowser{service: this},
-		Keys:       managementKeyOperations{service: this},
-		Metrics:    this.monitoring,
+		Audit:      managementAuditOperations{service: this, task: task},
+		Recording:  managementRecordingOperations{service: this, task: task},
+		Recordings: managementRecordingBrowser{service: this, task: task},
+		Keys:       managementKeyOperations{service: this, task: task},
+		Metrics:    managementMetrics{service: this, task: task},
 		ProducerID: func(name configuration.AuditlogName) (audit.ProducerId, error) {
 			identity := this.auditIdentities[name]
 			if identity == nil {
@@ -247,9 +250,15 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 	return 0, nil
 }
 
-type managementRecordingBrowser struct{ service *service }
+type managementRecordingBrowser struct {
+	service *service
+	task environment.TaskContext
+}
 
 func (this managementRecordingBrowser) Visit(ctx context.Context, name configuration.AuditlogName, options recording.SealedPageOptions, consume func(model.RecordingView) error) error {
+	if err := this.service.requireManagement(ctx, this.task, managementaccess.RecordingsRead); err != nil {
+		return err
+	}
 	if err := options.Validate(); err != nil {
 		return err
 	}
@@ -281,6 +290,9 @@ func (this managementRecordingBrowser) Visit(ctx context.Context, name configura
 }
 
 func (this managementRecordingBrowser) Detail(ctx context.Context, name configuration.AuditlogName, id recording.Id) (result model.RecordingView, resultErr error) {
+	if err := this.service.requireManagement(ctx, this.task, managementaccess.RecordingsRead); err != nil {
+		return result, err
+	}
 	artifact, err := this.service.openManagementRecording(ctx, name.String(), id.String())
 	if err != nil {
 		return result, err

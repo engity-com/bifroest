@@ -94,7 +94,7 @@ With targets, `retainFor` begins after the last durable acknowledgement and requ
 * [`recording export`](../cli/recording/export.md) verifies the signature and content before writing a full, **never redacted** Cast; `--with-sensitive` is required. Protect `session.cast` and open it with an [asciicast v3 player](https://docs.asciinema.org/manual/asciicast/v3/).
 * [`recording play`](../cli/recording/play.md) verifies and replays captured terminal output directly, with `--with-sensitive` and optional `--speed`.
 * [`recording verify`](../cli/recording/verify.md) checks a locally selected UUID against the configured signing identity, or an offline or downloaded original against an independently trusted producer ID, without outputting Cast content. It reports whether verification was outer or full.
-* The [management client](../cli/management.md) downloads signed originals for client-side verification, export and playback when the authorized flow enables `allowArtifactTransfer`. Remote delivery targets store sealed originals, not plaintext Casts. For offline metadata without export, use [`recording inspect`](../cli/recording/inspect.md); see the [native format](../../formats/recording.md) for verification details.
+* The [management client](../cli/management.md) downloads signed originals for client-side verification, export and playback when the authorized flow grants `recordings.download`. Remote delivery targets store sealed originals, not plaintext Casts. For offline metadata without export, use [`recording inspect`](../cli/recording/inspect.md); see the [native format](../../formats/recording.md) for verification details.
 
 ## Examples
 

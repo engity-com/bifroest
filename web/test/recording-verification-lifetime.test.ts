@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { verifyRecordingSource } from '../src/artifacts/recording-source-verification';
 import { ArtifactSecretsBoundary } from '../src/artifacts/session-secrets';
 import { useRecordingVerification } from '../src/artifacts/use-recording-verification';
+import { managementPermissions } from '../src/management/permissions';
 import { WebAccess } from '../src/remember/client';
 import { Http } from '../src/remember/http';
 
@@ -31,6 +32,7 @@ function Probe({
 }
 
 it('does not let a late former-source finally erase a new source private-view intent or clear its input state', async () => {
+    vi.spyOn(WebAccess.prototype, 'managementCapabilities').mockReturnValue(managementPermissions);
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const scope = { origin: 'https://app.example.org', slug: 'Original' };
     const access = new WebAccess(

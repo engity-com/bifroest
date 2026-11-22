@@ -7,14 +7,19 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management/access"
 )
 
 type managementAuditOperations struct {
-	service               *service
-	allowArtifactTransfer bool
+	service *service
+	task    environment.TaskContext
 }
 
 func (this managementAuditOperations) Verify(ctx context.Context, name configuration.AuditlogName, requireFull bool) (string, error) {
+	if err := this.service.requireManagement(ctx, this.task, access.AuditlogsVerify); err != nil {
+		return "", err
+	}
 	sources, err := this.service.managementAuditSources([]configuration.AuditlogName{name}, false)
 	if err != nil {
 		return "", err
@@ -33,8 +38,13 @@ func (this managementAuditOperations) Verify(ctx context.Context, name configura
 }
 
 func (this managementAuditOperations) Export(ctx context.Context, names []configuration.AuditlogName, sensitive bool, order audit.RecordOrder, output io.Writer) error {
-	if sensitive && !this.allowArtifactTransfer {
-		return fmt.Errorf("sensitive audit export requires allowArtifactTransfer in the management environment")
+	if err := this.service.requireManagement(ctx, this.task, access.AuditlogsEvents); err != nil {
+		return err
+	}
+	if sensitive {
+		if err := this.service.requireManagement(ctx, this.task, access.AuditlogsDownload); err != nil {
+			return err
+		}
 	}
 	sources, err := this.service.managementAuditSources(names, sensitive)
 	if err != nil {

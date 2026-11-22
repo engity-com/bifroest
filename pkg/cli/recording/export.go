@@ -16,6 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	managementaccess "github.com/engity-com/bifroest/pkg/management/access"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -48,6 +49,9 @@ func createExportCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementExport(ctx context.Context, opts managementExportOptions) error {
+	if err := common.RequireManagementPermission(ctx, managementaccess.RecordingsDownload); err != nil {
+		return err
+	}
 	if !opts.WithSensitive {
 		return fmt.Errorf("recording export requires --with-sensitive")
 	}

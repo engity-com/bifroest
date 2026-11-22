@@ -58,7 +58,7 @@ Playback-speed multiplier, greater than zero and at most `100`. `2` plays twice 
 
 Replayed terminal content on stdout. The input is verified before playback begins. It is not an asciicast file; [`recording export`](export.md) writes that representation. `play` does not accept `--format`, `--output` or `--force`.
 
-Remote playback requires `allowArtifactTransfer: true`. The integrated client verifies the downloaded original against the trusted producer and requested Recording ID before reading its content. Cancellation or an output failure stops playback with an error. See [protected destinations](../verification.md#protected-destinations).
+Remote playback requires `recordings.download`. The integrated client verifies the downloaded original against the trusted producer and requested Recording ID before reading its content. Cancellation or an output failure stops playback with an error. See [protected destinations](../verification.md#protected-destinations).
 
 ## Examples
 

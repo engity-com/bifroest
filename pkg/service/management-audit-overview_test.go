@@ -52,7 +52,7 @@ func TestOperationalRecordingPageChecksOnlyItsVisibleTwentyAndVerifyAllIsExplici
 
 func TestAuditOverviewPreservesTransferPolicyPrivateProjectionAndFlowScope(t *testing.T) {
 	svc, handler, _, token := managementWebFixture(t, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement).AllowArtifactTransfer = true
+		setManagementTestDownloads(conf.Flows[0].Environment.V.(*configuration.EnvironmentManagement), true)
 	})
 	flow := svc.Configuration.Flows[0].Name
 	// The execution fixture replaces flow auditing with an in-memory observer;
@@ -91,5 +91,7 @@ func TestAuditOverviewPreservesTransferPolicyPrivateProjectionAndFlowScope(t *te
 	require.Equal(t, 400, code)
 	_, deniedHandler, _, deniedToken := managementWebFixture(t)
 	code, _, _ = managementWebRead(t, deniedHandler, deniedToken, "audit-events/list", map[string]string{"auditlog": "default"})
+	require.Equal(t, 200, code)
+	code, _, _ = managementWebRead(t, deniedHandler, deniedToken, "audit-events/list", map[string]string{"auditlog": "default", "sensitive": "true"})
 	require.Equal(t, 403, code)
 }

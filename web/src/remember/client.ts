@@ -7,6 +7,7 @@ import type { LoginKey } from '../login/key';
 import { publicKeyLogin } from '../login/key';
 import { ManagementConnection } from '../management/channel';
 import { ManagementClient } from '../management/client';
+import { noManagementPermissions } from '../management/permissions';
 import type { ProgressListener } from '../management/progress';
 import { auditlogName } from '../management/protocol';
 import type { RecordingSourceImages } from '../management/source-transfer';
@@ -279,6 +280,9 @@ export class WebAccess {
             throw new RememberMeError('denied');
         }
         return this.#response.accessToken;
+    }
+    managementCapabilities() {
+        return this.#managementChannel?.capabilities() ?? noManagementPermissions;
     }
     openManagement(
         changed: (state: TerminalState) => void,
