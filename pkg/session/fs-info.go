@@ -72,6 +72,8 @@ func (this *fsInfo) Id() Id {
 }
 
 func (this *fsInfo) State() State {
+	this.session.repository.mutex.RLock()
+	defer this.session.repository.mutex.RUnlock()
 	return this.VState
 }
 

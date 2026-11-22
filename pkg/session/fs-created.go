@@ -20,6 +20,8 @@ func (this *fsCreated) init(info *fsInfo) {
 }
 
 func (this *fsCreated) At() time.Time {
+	this.info.session.repository.mutex.RLock()
+	defer this.info.session.repository.mutex.RUnlock()
 	return this.info.createdAt
 }
 
