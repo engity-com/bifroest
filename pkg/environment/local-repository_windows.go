@@ -20,6 +20,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/windowslocal"
 )
 
 type LocalRepository struct {
@@ -58,34 +59,11 @@ func (this *LocalRepository) DoesSupportPty(_ Context, pty essh.Pty) (bool, erro
 }
 
 func (this *LocalRepository) lookupConfiguredAccount(ctx Context) (account windowsLocalAccount, name, uid string, err error) {
-	if name, err = this.conf.Name.Render(ctx); err != nil {
-		return account, "", "", fmt.Errorf("cannot evaluate local account name: %w", err)
+	identity, name, uid, err := resolveLocalWindowsTargetAccount(ctx, this.conf, localWindowsAccountLookup{})
+	if errors.Is(err, windowslocal.ErrNotFound) {
+		err = errLocalWindowsAccountNotFound
 	}
-	if uid, err = this.conf.Uid.Render(ctx); err != nil {
-		return account, "", "", fmt.Errorf("cannot evaluate local account UID: %w", err)
-	}
-	if name == "" && uid == "" {
-		return account, "", "", fmt.Errorf("local account name or UID is required")
-	}
-	if name != "" && !validLocalSAMName(name) {
-		return account, "", "", fmt.Errorf("invalid local SAM account name %q", name)
-	}
-	if uid != "" {
-		sid, parseErr := windows.StringToSid(uid)
-		if parseErr != nil || sid == nil || !sid.IsValid() {
-			return account, "", "", fmt.Errorf("invalid local account UID %q: %v", uid, parseErr)
-		}
-		uid = sid.String()
-	}
-	if name != "" {
-		account, err = lookupLocalWindowsAccount(name)
-	} else {
-		account, err = lookupLocalWindowsAccountByUID(uid)
-	}
-	if err == nil && uid != "" && account.SID != uid {
-		return windowsLocalAccount{}, "", "", fmt.Errorf("local account %q does not match UID %q", name, uid)
-	}
-	return account, name, uid, err
+	return windowsLocalAccount{Name: identity.Name, SID: identity.SID}, name, uid, err
 }
 
 func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {

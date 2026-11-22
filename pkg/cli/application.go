@@ -22,6 +22,7 @@ import (
 	cservice "github.com/engity-com/bifroest/pkg/cli/service"
 	csession "github.com/engity-com/bifroest/pkg/cli/session"
 	csftpserver "github.com/engity-com/bifroest/pkg/cli/sftp-server"
+	ctest "github.com/engity-com/bifroest/pkg/cli/test"
 	cversion "github.com/engity-com/bifroest/pkg/cli/version"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -51,6 +52,7 @@ func NewApplication[O any](version sys.Version, description string, run common.S
 		WithCommand(ckey.CreateCommands()...).
 		WithCommand(cmetrics.CreateCommands()...).
 		WithCommand(cid.CreateCommands()...).
+		WithCommand(ctest.CreateCommands(version)...).
 		WithCommand(cserve.CreateCommands(version, run)...).
 		WithCommand(cservice.CreateCommands(version)...).
 		WithCommand(csftpserver.CreateCommands()...)

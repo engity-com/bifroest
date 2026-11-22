@@ -1,0 +1,14 @@
+flows:
+  - name: primary
+    requirement:
+      includedRequestingName: "^ops$"
+    authorization:
+      type: local
+      principal: "mapped-{{ .authentication.principal }}"
+    environment:
+      type: ssh
+      address: WORK.EXAMPLE.
+      user: "{{ .authentication.principal }}"
+      # Only a selector fixture: no SSH connection or host-key trust takes place.
+      acceptAllHostKeys: true
+      portForwardingAllowed: false

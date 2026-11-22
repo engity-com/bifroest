@@ -3,9 +3,10 @@ package windowslocal
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
+
+	berrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
 var (
@@ -44,29 +45,19 @@ func (v *PasswordAccount) GetField(name string) (any, bool, error) {
 	if v == nil {
 		return nil, false, ErrPasswordAccountPolicyUnavailable
 	}
+	return accountField(name, v.account, v.textField, func() ([]group, error) { return v.groups, nil })
+}
+
+func (v *PasswordAccount) textField(name string) (string, error) {
 	switch name {
-	case "name":
-		return v.account.Name, true, nil
-	case "uid":
-		return v.account.SID, true, nil
 	case "displayName":
-		return v.displayName, true, nil
+		return v.displayName, nil
 	case "homeDir":
-		return v.homeDir, true, nil
+		return v.homeDir, nil
 	case "shell":
-		return v.shell, true, nil
-	case "managed":
-		return nil, true, nil
-	case "groups":
-		return slices.Clone(v.groups), true, nil
-	case "gids":
-		ids := make([]string, len(v.groups))
-		for i, g := range v.groups {
-			ids[i] = g.SID
-		}
-		return ids, true, nil
+		return v.shell, nil
 	default:
-		return nil, false, fmt.Errorf("unknown user field %q", name)
+		return "", berrors.Config.Newf("unknown user field %q", name)
 	}
 }
 

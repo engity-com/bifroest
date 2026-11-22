@@ -16,6 +16,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/pkg/windowslocal"
 )
 
 const (
@@ -468,10 +470,14 @@ func IsLocalWindowsAccountInGroup(name, sid, managedGroup string, allowSystemUse
 		var read, total uint32
 		err := localSAMCall("NetLocalGroupGetMembers", 0, uintptr(unsafe.Pointer(group)), 0, uintptr(unsafe.Pointer(&buffer)), 0xffffffff, uintptr(unsafe.Pointer(&read)), uintptr(unsafe.Pointer(&total)), uintptr(unsafe.Pointer(&resume)))
 		if buffer != nil {
-			for _, member := range unsafe.Slice(buffer, read) {
-				if member.SID != nil && member.SID.IsValid() && member.SID.String() == sid {
-					matched = true
+			if windowslocal.HasAccountSID(sid, func(yield func(string) bool) {
+				for _, member := range unsafe.Slice(buffer, read) {
+					if member.SID != nil && member.SID.IsValid() && !yield(member.SID.String()) {
+						return
+					}
 				}
+			}) {
+				matched = true
 			}
 			freeErr := localSAMCall("NetApiBufferFree", uintptr(unsafe.Pointer(buffer)))
 			if freeErr != nil {

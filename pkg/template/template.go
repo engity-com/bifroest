@@ -5,8 +5,9 @@ import (
 )
 
 func NewTemplate(name, plain string) (*template.Template, error) {
-	return template.New(name).
-		Funcs(allFuncs).
-		Option("missingkey=error", "invalid=nil", "nil=empty").
-		Parse(plain)
+	return withTemplateOptions(template.New(name).Funcs(allFuncs)).Parse(plain)
+}
+
+func withTemplateOptions(tmpl *template.Template) *template.Template {
+	return tmpl.Option("missingkey=error", "invalid=nil", "nil=empty")
 }

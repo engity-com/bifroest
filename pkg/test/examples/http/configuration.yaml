@@ -1,0 +1,51 @@
+# Only production decoding and logical selection run; no HTTPS server starts.
+http:
+  enabled: true
+  addresses: [":8443"]
+  domains: [app.example.org]
+  tls: { dummy: true }
+authorizations:
+  device:
+    type: oidcDeviceAuth
+    issuer: https://issuer.example.org
+    clientId: example-client
+    clientSecret: example-only-not-a-credential
+    retrieveIdToken: false
+    retrieveUserInfo: false
+    principal: "mapped-{{ .authentication.principal }}"
+  code:
+    type: oidcAuthorizationCode
+    issuer: https://issuer.example.org
+    clientId: example-client
+    clientSecret: example-only-not-a-credential
+    retrieveIdToken: false
+    retrieveUserInfo: false
+    principal: "mapped-{{ .authentication.principal }}"
+environments:
+  target:
+    type: ssh
+    address: work.example.org
+    user: "{{ .authentication.principal }}"
+    acceptAllHostKeys: true
+    portForwardingAllowed: false
+flows:
+  # Unpublished requests retain configuration-order matching. This earlier flow
+  # must never intercept the explicitly published Work/Sso assignments.
+  - name: generic
+    authorization: device
+    environment: target
+    requirement:
+      http: { includedHost: '^app\.example\.org$', includedSlug: ".*" }
+  - name: work
+    discoverAsSlug: Work
+    authorization: code
+    environment: target
+    requirement:
+      http: { includedHost: '^app\.example\.org$', includedSlug: "^Work$" }
+  - name: sso
+    discoverAsSlug: Sso
+    http: { requestUser: false }
+    authorization: code
+    environment: target
+    requirement:
+      http: { includedHost: '^app\.example\.org$', includedSlug: "^Sso$" }

@@ -12,6 +12,8 @@ type localTemplateContext struct {
 	managed bool
 }
 
+func (this localTemplateContext) TemplateEvaluationParent() any { return this.Request }
+
 func (this localTemplateContext) GetField(name string) (any, bool, error) {
 	if name == "connection" {
 		view, err := connection.TemplateViewOf(this.Request)

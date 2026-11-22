@@ -51,6 +51,13 @@ func hasRemoteNameMapping(value template.String) bool {
 	return !value.IsZero() && value.String() != configuration.DefaultAuthorizationRemoteName.String()
 }
 
+// ResolveRemoteName exposes the production mapping to controlled policy callers.
+// It performs no credential/account lookup or mutation. Callers own the request
+// fields and template capabilities; native authentication remains a separate step.
+func ResolveRemoteName(req Request, value template.String) (string, error) {
+	return resolveRemoteName(req, value)
+}
+
 // Resolve once, before credential lookup/validation. Never mutate the transport
 // remote: flow filters, audit, recording and session selectors need that name.
 func resolveRemoteName(req Request, value template.String) (string, error) {
@@ -76,6 +83,8 @@ func resolveRemoteName(req Request, value template.String) (string, error) {
 }
 
 type remoteNameRequest struct{ Request }
+
+func (r remoteNameRequest) TemplateEvaluationParent() any { return r.Request }
 
 func (r remoteNameRequest) GetField(name string) (any, bool, error) {
 	switch name {

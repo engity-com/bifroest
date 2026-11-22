@@ -131,6 +131,7 @@ nav:
           - SSH gateway: guides/ssh-gateway.md
           - SSH over HTTPS: guides/ssh-over-https.md
           - OIDC login: guides/oidc.md
+          - Test a configuration: guides/testing.md
           - Browser access: guides/browser-access.md
           - Session recording: guides/recording.md
           - Remote administration: guides/management.md
@@ -187,6 +188,22 @@ nav:
               - SFTP: reference/auditlog/remote-targets/sftp.md
               - WebDAV: reference/auditlog/remote-targets/webdav.md
       - reference/monitoring.md
+      - Testing:
+          - reference/testing/index.md
+          - Lua API:
+              - Functions and values: reference/testing/lua.md
+              - Suites: reference/testing/suites.md
+              - Tests: reference/testing/tests.md
+              - Input: reference/testing/input.md
+              - Requests: reference/testing/requests.md
+              - Environment facts: reference/testing/local.md
+              - OIDC data: reference/testing/oidc.md
+              - Test context: reference/testing/context.md
+              - Results: reference/testing/result.md
+              - Assertions: reference/testing/assertions.md
+              - Data types: reference/testing/data-types.md
+          - Reports: reference/testing/reports.md
+          - Isolation and limits: reference/testing/isolation.md
       - Command line interface:
           - reference/cli/index.md
           - Basics:
@@ -196,6 +213,7 @@ nav:
               - Trust and verification: reference/cli/verification.md
               - Help: reference/cli/help.md
           - serve: reference/cli/serve.md
+          - test: reference/cli/test.md
           - flow:
               - reference/cli/flow/index.md
               - ls: reference/cli/flow/ls.md

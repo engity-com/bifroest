@@ -93,13 +93,9 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 	start := time.Now()
 	l.Debug("building image...")
 
-	bifroestTargetFileLocation := sys.BifroestOciBinaryFileLocation(a.Os)
-	if bifroestTargetFileLocation == "" {
-		return failf("cannot find binary file location for os: %v", a.Os)
-	}
-	bifroestTargetDirLocation := sys.BifroestOciBinaryDirLocation(a.Os)
-	if bifroestTargetDirLocation == "" {
-		return failf("cannot find binary dir location for os: %v", a.Os)
+	buildRequest, err := images.BifroestBuildRequest(*a.Platform, binary.filepath)
+	if err != nil {
+		return fail(err)
 	}
 	licenseItems, err := releaseLicenseImageItems(".", a.Os)
 	if err != nil {
@@ -130,23 +126,9 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 		Mode:       0644,
 	})
 
-	buildRequest := images.BuildRequest{
-		From:                 from,
-		Os:                   a.Os,
-		Arch:                 a.Arch,
-		BifroestBinarySource: binary.filepath,
-		PathEnv:              []string{bifroestTargetDirLocation},
-		EntryPoint:           []string{bifroestTargetFileLocation},
-		Cmd:                  []string{"run"},
-		ExposedPorts: map[string]struct{}{
-			"22/tcp": {},
-		},
-		AddDummyConfiguration: true,
-		AddSkeletonStructure:  true,
-		Time:                  a.time,
-		Vendor:                this.vendor,
-		Contents:              common.Seq2ErrOf(licenseItems...),
-	}
+	buildRequest.Time = a.time
+	buildRequest.Vendor = this.vendor
+	buildRequest.Contents = common.Seq2ErrOf(licenseItems...)
 
 	if buildRequest.Annotations, err = this.createAnnotations(ctx, a.Edition, func(v version, rm *github.Repository, m map[string]string) error {
 		m[ImageAnnotationPlatform] = a.Platform.String()

@@ -10,3 +10,4 @@ uv            0.12.13
 nodejs        26.9.0
 biome         2.6.3
 bun           1.4.4
+stylua        2.6.0

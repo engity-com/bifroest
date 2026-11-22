@@ -32,12 +32,27 @@ run = "python -m pip install -r docs/requirements.txt"
 run = [
     { task = "lint:biome" },
     { task = "lint:go" },
+    { task = "lint:lua" },
     { task = "lint:web" },
     { task = "lint:reuse" }
 ]
 
 [tasks."format"]
-run = "biome format --write ."
+run = [
+    "biome format --write .",
+    { task = "format:lua" }
+]
+
+[tasks."lint:lua"]
+description = "Check repository Lua sources with Luacheck 1.2.0 and pinned StyLua; not a Bifröst command."
+run = [
+    "luacheck --config .luacheckrc --no-default-config pkg/test",
+    "stylua --config-path .stylua.toml --check pkg/test"
+]
+
+[tasks."format:lua"]
+description = "Format repository Lua sources, verifying the parsed output."
+run = "stylua --config-path .stylua.toml --verify pkg/test"
 
 [tasks."lint:biome"]
 run = "biome check --error-on-warnings ."
@@ -68,6 +83,14 @@ run = [
 [tasks."test:go:race"]
 depends = ["build:var"]
 run = "go test -p=1 -race ./..."
+
+[tasks."test:policy"]
+description = "Build and check the native offline policy CLI; var/policy-ci must not exist."
+run = "go run ./test/policyci --output var/policy-ci"
+
+[tasks."test:policy:oci"]
+description = "Check native/OCI parity with a hardened regular Generic Linux image; var/policy-oci must be new."
+run = "go run ./test/policyci --oci --runtime docker --output var/policy-oci"
 
 [tasks."test:go:browser"]
 description = "Run built HTTPS browser integration separately from the core package deadline."
@@ -224,6 +247,7 @@ env_file = ".env"
 biome = "aqua:biomejs/biome"
 golangci-lint = "aqua:golangci/golangci-lint"
 go-licenses = "go:github.com/google/go-licenses/v2"
+stylua = "aqua:JohnnyMorganz/StyLua"
 syft = "aqua:anchore/syft"
 
 [env]

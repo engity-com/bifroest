@@ -50,7 +50,7 @@ func (this Bool) Render(data any) (bool, error) {
 
 	if tmpl := this.tmpl; tmpl != nil {
 		var buf strings.Builder
-		if err := tmpl.Execute(&buf, data); err != nil {
+		if err := executeTemplate(tmpl, &buf, data); err != nil {
 			return false, err
 		}
 		switch strings.ToLower(strings.TrimSpace(buf.String())) {

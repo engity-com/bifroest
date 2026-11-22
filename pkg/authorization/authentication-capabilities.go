@@ -76,10 +76,19 @@ func (this *HtpasswdAuthorizer) AuthenticationCapabilities(input DiscoveryInput)
 }
 
 func (this *OidcDeviceAuthAuthorizer) AuthenticationCapabilities(input DiscoveryInput) AuthenticationCapabilities {
-	if !input.supported() || this == nil || this.conf == nil {
+	if this == nil {
 		return AuthenticationCapabilities{}
 	}
-	return AuthenticationCapabilities{KeyboardInteractive: this.code == nil || input.Transport == connection.TransportSsh, OidcAuthorizationCode: this.code != nil, SessionPublicKey: true}
+	return OidcAuthenticationCapabilities(this.conf, this.code != nil, input)
+}
+
+// OidcAuthenticationCapabilities is the pure configured grant/method boundary.
+// It performs no discovery, verification, browser, session or provider I/O.
+func OidcAuthenticationCapabilities(conf *configuration.AuthorizationOidcDeviceAuth, code bool, input DiscoveryInput) AuthenticationCapabilities {
+	if !input.supported() || conf == nil {
+		return AuthenticationCapabilities{}
+	}
+	return AuthenticationCapabilities{KeyboardInteractive: !code || input.Transport == connection.TransportSsh, OidcAuthorizationCode: code, SessionPublicKey: true}
 }
 
 func (this *BifroestAuthorizer) AuthenticationCapabilities(input DiscoveryInput) AuthenticationCapabilities {

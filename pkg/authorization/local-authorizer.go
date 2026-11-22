@@ -210,6 +210,8 @@ type userEnabledRequest struct {
 	user *user.User
 }
 
+func (this *userEnabledRequest) TemplateEvaluationParent() any { return this.Request }
+
 func (this *userEnabledRequest) GetField(name string) (any, bool, error) {
 	switch name {
 	case "user":

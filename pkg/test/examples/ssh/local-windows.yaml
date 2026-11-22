@@ -1,0 +1,17 @@
+flows:
+  - name: primary
+    requirement:
+      includedRequestingName: "^ops$"
+    authorization:
+      type: local
+      remoteName: ALICE
+      principal: "mapped-{{ .authentication.principal }}"
+    environment:
+      type: local
+      name: "{{ .authentication.principal }}"
+      managedGroup: bifroest-managed
+      # Explicit selectors prevent COMSPEC-derived defaults entering the test.
+      shellCommand: [C:/fixture/cmd.exe]
+      execCommandPrefix: []
+      directory: "{{ .authorization.user.homeDir }}/work"
+      portForwardingAllowed: "{{ .authorization.user.managed }}"

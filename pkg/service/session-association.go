@@ -121,6 +121,9 @@ type associationCandidateContext struct {
 }
 
 func (this *associationCandidateContext) Context() context.Context { return this.ctx }
+func (this *associationCandidateContext) TemplateEvaluationParent() any {
+	return this.associationBaseContext
+}
 func (this *associationCandidateContext) Authorization() authorization.Authorization {
 	return this.auth
 }
@@ -169,6 +172,9 @@ func newAssociationTargetContext(ctx context.Context, base environment.Context, 
 }
 func (this *associationTargetContext) Context() context.Context                   { return this.ctx }
 func (this *associationTargetContext) Authorization() authorization.Authorization { return this.auth }
+func (this *associationTargetContext) TemplateEvaluationParent() any {
+	return this.associationBaseContext
+}
 func (this *associationTargetContext) GetField(name string) (any, bool, error) {
 	switch name {
 	case "context":

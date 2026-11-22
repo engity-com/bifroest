@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
@@ -22,6 +21,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/webui"
 )
 
@@ -424,7 +424,7 @@ func (this *webService) password(w http.ResponseWriter, r *http.Request, scope w
 }
 
 func validWebLoginUser(user string) bool {
-	return len(user) <= 256 && utf8.ValidString(user) && !strings.ContainsFunc(user, unicode.IsControl)
+	return bconn.ValidHttpLoginUser(user)
 }
 
 // Every verified adapter converges here. An attempt token, certificate CA

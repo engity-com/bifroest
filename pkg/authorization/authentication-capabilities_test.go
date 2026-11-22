@@ -117,7 +117,7 @@ func TestAuthorizerFactoryRequiresCapabilitiesAndRejectsNil(t *testing.T) {
 			configurationTypeToAuthorizerFactory[configurationType] = test.factory
 			flow := selectionTestFlow("selected")
 			var entry facaded
-			require.ErrorContains(t, entry.newFrom(context.Background(), &flow), test.error)
+			require.ErrorContains(t, entry.newFrom(context.Background(), &flow, newRegisteredFlowAuthorizer), test.error)
 		})
 	}
 }

@@ -2,6 +2,9 @@ package connection
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/engity-com/bifroest/pkg/net"
 )
@@ -23,6 +26,12 @@ type Selection struct {
 
 type SelectionProvider interface {
 	Selection() Selection
+}
+
+// ValidHttpLoginUser validates adapter input, not an authenticated identity or
+// flow eligibility. Empty/whitespace names remain subject to named/nameless rules.
+func ValidHttpLoginUser(user string) bool {
+	return len(user) <= 256 && utf8.ValidString(user) && !strings.ContainsFunc(user, unicode.IsControl)
 }
 
 // SelectionOf preserves existing SSH request implementations. A non-SSH

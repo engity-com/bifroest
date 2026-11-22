@@ -17,19 +17,13 @@ func (this *environmentContext) ResolveLocalWindowsUserManaged(name configuratio
 		this.authorization.Flow() != name || account.Name == "" || account.SID == "" {
 		return false, false, nil
 	}
-	for _, flow := range this.service.Configuration.Flows {
-		if flow.Name != name {
-			continue
-		}
-		local, ok := flow.Environment.V.(*configuration.EnvironmentLocal)
-		if !ok || local.ManagedGroup == "" {
-			return false, false, nil
-		}
-		managed, err := environment.IsLocalWindowsAccountInGroup(account.Name, account.SID, local.ManagedGroup, true)
-		if errors.Is(err, windows.ERROR_NONE_MAPPED) {
-			return false, true, nil
-		}
-		return managed, true, err
+	group, available := this.service.Configuration.Flows.LocalManagedGroupFor(name)
+	if !available {
+		return false, false, nil
 	}
-	return false, false, nil
+	managed, err := environment.IsLocalWindowsAccountInGroup(account.Name, account.SID, group, true)
+	if errors.Is(err, windows.ERROR_NONE_MAPPED) {
+		return false, true, nil
+	}
+	return managed, true, err
 }

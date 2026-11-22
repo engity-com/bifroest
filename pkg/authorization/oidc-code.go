@@ -90,7 +90,11 @@ func (this *OidcDeviceAuthAuthorizer) ExchangeCode(ctx context.Context, code, ve
 }
 
 func (this *OidcDeviceAuthAuthorizer) matchesCodeOrigin(origin string) bool {
-	return this.code != nil && origin != "" && origin == this.code.Origin()
+	return matchesOidcCodeOrigin(this.code, origin)
+}
+
+func matchesOidcCodeOrigin(code *configuration.AuthorizationOidcAuthorizationCode, origin string) bool {
+	return code != nil && origin != "" && origin == code.Origin()
 }
 
 // Carry the absolute login deadline through verification and session creation,
@@ -103,6 +107,7 @@ type oidcCodeRequest struct {
 
 func (this *oidcCodeRequest) Context() context.Context        { return this.ctx }
 func (this *oidcCodeRequest) Selection() connection.Selection { return this.selection }
+func (this *oidcCodeRequest) TemplateEvaluationParent() any   { return this.InteractiveRequest }
 
 // Preserve the adapter's optional template context for custom SSH instructions.
 // The wrapper's bounded authentication context remains authoritative for I/O.

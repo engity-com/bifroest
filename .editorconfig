@@ -14,6 +14,10 @@ indent_size = 4
 indent_style = space
 indent_size = 2
 
+[*.lua]
+indent_style = space
+indent_size = 2
+
 [*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}]
 indent_style = space
 indent_size = 4

@@ -911,44 +911,20 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 		kind: this.authorizationKind(),
 	}
 	if t.Issuer != "" && t.Subject != "" && !t.LastVerifiedAt.IsZero() {
-		auth.identity = authentication.Identity{Principal: t.Subject, Issuer: t.Issuer, Subject: t.Subject}
+		auth.identity = oidcIdentity(t.Issuer, t.Subject)
 	}
 
 	if err := auth.token.SetRaw(t.Token); err != nil {
 		return failf("cannot store token at response: %w", err)
 	}
 
-	if retrieveArtifactsAllowed && this.conf.RetrieveIdToken && t.IdToken != "" {
-		idToken, err := this.verifyToken(ctx, t)
-		if err != nil {
-			return fail(err)
-		} else {
-			if t.Subject != "" && (idToken.Subject != t.Subject || idToken.Issuer != t.Issuer) {
-				return failf("OIDC ID token identity differs from session identity")
-			}
-			auth.idToken.IDToken = idToken
-			auth.identity = authentication.Identity{Principal: idToken.Subject, Issuer: idToken.Issuer, Subject: idToken.Subject}
-			logger.Debug("ID token verified")
-		}
-	} else if retrieveArtifactsAllowed && this.conf.RetrieveIdToken && !this.conf.RefreshEnabled() {
-		return failf("token does not contain id_token")
-	}
-
-	if retrieveArtifactsAllowed && this.conf.RetrieveUserInfo {
-		userInfo, err := this.getUserInfo(ctx, t)
-		if err != nil {
-			return fail(err)
-		}
-
-		auth.userInfo.UserInfo = userInfo
-		if auth.identity.IsAuthenticated() && userInfo.Subject != auth.identity.Subject {
-			return failf("OIDC UserInfo subject differs from authenticated identity")
-		}
-		if !auth.identity.IsAuthenticated() && this.issuer != "" && userInfo.Subject != "" {
-			auth.identity = authentication.Identity{Principal: userInfo.Subject, Issuer: this.issuer, Subject: userInfo.Subject}
-		}
-
-		logger.Debug("UserInfo verified")
+	if err := auth.publishArtifacts(this.conf, retrieveArtifactsAllowed, oidcArtifactSource{
+		hasIDToken: t.IdToken != "", expectedIssuer: t.Issuer, expectedSubject: t.Subject, providerIssuer: this.issuer,
+		idToken:    func() (*coidc.IDToken, error) { return this.verifyToken(ctx, t) },
+		userInfo:   func() (*coidc.UserInfo, error) { return this.getUserInfo(ctx, t) },
+		onVerified: func(message string) { logger.Debug(message) },
+	}); err != nil {
+		return fail(err)
 	}
 
 	return &auth, nil

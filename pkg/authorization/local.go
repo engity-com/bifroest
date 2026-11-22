@@ -83,10 +83,7 @@ type localUserWithManagement struct {
 }
 
 func (this localUserWithManagement) GetField(name string) (any, bool, error) {
-	if name == "managed" {
-		return this.managed, true, nil
-	}
-	return this.User.GetField(name)
+	return localAccountFieldWithManagement(name, this.User, &this.managed)
 }
 
 func (this *local) Dispose(ctx context.Context) (bool, error) {

@@ -156,6 +156,8 @@ type localUserRequest struct {
 	user windowslocal.Account
 }
 
+func (this *localUserRequest) TemplateEvaluationParent() any { return this.Request }
+
 func (this *localUserRequest) GetField(name string) (any, bool, error) {
 	if name == "user" {
 		return this.user, true, nil

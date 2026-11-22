@@ -1,0 +1,16 @@
+flows:
+  - name: primary
+    requirement:
+      includedRequestingName: "^ops$"
+    authorization:
+      type: local
+      remoteName: alice
+      principal: "mapped-{{ .authentication.principal }}"
+    environment:
+      type: local
+      name: "{{ .authentication.principal }}"
+      managedGroup: bifroest-managed
+      shellCommand: [/fixture/sh]
+      execCommandPrefix: []
+      directory: "{{ .authorization.user.homeDir }}/work"
+      portForwardingAllowed: "{{ .authorization.user.managed }}"
