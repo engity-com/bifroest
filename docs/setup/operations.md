@@ -1,0 +1,44 @@
+---
+description: Operate Bifröst behind a TCP load balancer, manage instance-local state and plan restarts or recovery.
+---
+
+# Operating model and availability
+
+* **Who operates it?** You run the [host service](on-host.md) or [container](in-docker.md), supply configuration and keys, and maintain the identity provider and workload dependencies. [Management](../reference/environment/management.md) acts on that instance; it does not provide fleet-wide or tenant-scoped administration.
+* **What survives a restart?** With durable storage, [sessions and saved-access registrations](../reference/session/fs.md) can survive. Preserve keys and complete evidence repositories too; use the [checklist below](#restart-and-recovery-checklist).
+* **What happens if an instance fails?** Reconnect to the same Bifröst endpoint and sign in on a healthy instance to continue working with the workload data available there. **Bifröst sessions are not shared between instances**; reconnecting starts a new execution, not the previous shell.[^instances]
+* **Is HA built in?** Not built in, but you can provide HA access by running independent instances behind a TCP load balancer such as [HAProxy](https://www.haproxy.com/documentation/haproxy-configuration-tutorials/protocol-support/tcp/) or [NGINX stream](https://nginx.org/en/docs/stream/ngx_stream_upstream_module.html). Prefer sticky sessions and a redundant load-balancer endpoint.
+
+## Choose a deployment {: #high-availability-current-limits }
+
+| Deployment | What to plan |
+| --- | --- |
+| One supervised instance | Durable storage, backups and a tested restart. Existing connections are interrupted. |
+| Independent instances behind a TCP load balancer | Sticky sessions for normal operation; health checks route reconnecting clients to a healthy instance. Use separate repositories and [audit signing identities](../reference/auditlog/index.md#property-identityFile), and make required workload data reachable from each instance. |
+| Replacement using an instance's existing state | Coordinate exclusive repository and workload ownership. Test recovery on your actual storage and infrastructure. |
+
+**Keep repositories instance-local.** Each repository has one writer.[^writer] When replacing an instance using its existing state, prevent the old writer from accessing that state or its workloads first. Local locks are not cross-host fencing; never delete a lock file to force a second writer to start.
+
+## Routing and probes
+
+* **Prepare the shared endpoint.** Configure [SSH host keys trusted by your clients](../reference/connection/ssh.md#keys). For HTTPS, use [TCP/TLS passthrough](../reference/connection/http/index.md#tls) and provision certificates for the shared domain on every backend.
+* **Prefer sticky sessions.** Keep [browser requests and SSH-initiated OIDC approvals](../reference/connection/http/index.md#load-balancers-and-instance-routing) on the same instance during normal operation. Configure TCP persistence through [HAProxy stick tables](https://www.haproxy.com/documentation/haproxy-configuration-tutorials/proxying-essentials/custom-rules/stick-tables/) or [NGINX upstream hashing](https://nginx.org/en/docs/stream/ngx_stream_upstream_module.html#hash).
+* **Monitor each instance.** Use [readiness checks](../guides/monitoring.md#configure-kubernetes-probes) to take unavailable backends out of rotation. `/ready` reports new-access readiness, `/status` process liveness; also test an actual login.
+
+## Restart or recover one instance {: #restart-and-recovery-checklist }
+
+In a load-balanced deployment, take only the affected instance out of rotation; healthy instances can keep accepting connections. Keep an independent administration path and define acceptable recovery time and data loss.
+
+1. **Block new traffic to this instance and stop its writer.** Let users finish or [disconnect their connections](../reference/cli/session/disconnect.md). Allow the configured [SSH](../reference/connection/ssh.md#property-gracefulShutdownTimeout) and [HTTP](../reference/connection/http/index.md#property-gracefulShutdownTimeout) shutdown budgets. A failed readiness probe is not proof that the old process has stopped.
+2. **Copy or restore complete state while stopped:** [configuration](../reference/configuration.md) and referenced keys, [sessions](../reference/session/fs.md#property-storage), [journals and signing identities](../reference/auditlog/index.md#journal), [Recording repositories](../reference/auditlog/recording.md#storage-and-recovery) and [ACME storage](../reference/connection/http/index.md#acme-property-storage). Protect backups as credentials; back up workload data separately and keep decryption private keys offline. Remote sealed artifacts alone are not a service backup.
+3. **Check identities and revocations.** Retain the matching host and signing keys. An older session backup can restore later-revoked saved access: reconcile it before reopening traffic. Perform [upgrades](upgrade.md) separately from the first recovery attempt.
+4. **Start one writer for the recovered state** through its existing [host service manager](on-host.md) or [container supervisor](in-docker.md), initially with the same release and configuration. Inspect startup logs and [check readiness directly](../guides/monitoring.md#scrape-a-host-locally); keep this instance out of rotation during acceptance checks. Resolve key or integrity errors instead of discarding repositories.
+5. **Test before reopening:**
+    * Test workload access over each enabled transport: [SSH](on-host.md), [SSH over HTTPS](../guides/ssh-over-https.md) and/or [browser](../guides/browser-access.md#open-your-first-shell). Then test eligible [saved access](../usecases.md#remembered-access). Old browser access and pending logins must be rejected; a reusable session must reach the intended environment, not restore an old shell.
+    * [Verify retained evidence](../reference/cli/verification.md#trust-a-producer) against independent producer trust and check [remote delivery](../reference/auditlog/remote-targets/index.md#delivery-behavior), if configured.
+    * Test [revocation](../usecases.md#offboard) and [cleanup](../reference/housekeeping.md#cleanup-guarantees). Record recovery time and data gaps against your objectives, then return this instance to the pool.
+
+**Result:** the recovered instance accepts new logins again. With healthy backends available, users can reconnect and continue working while the affected instance recovers; existing shells remain tied to their original instance.
+
+[^writer]: <<asset_link("pkg/session/fs-lock_test.go", "Process-lock and crash-reopen tests")>> cover local filesystem ownership and recovery.
+[^instances]: <<asset_link("pkg/service/instance-boundaries_test.go", "Instance-boundary tests")>> and <<asset_link("pkg/service/http-remember_test.go", "saved-access restart tests")>> cover local-service isolation and resumption after restart.

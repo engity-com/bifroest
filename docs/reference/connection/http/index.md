@@ -114,6 +114,14 @@ Enable the login page, its resources and required OIDC endpoints, including when
 
 TLS terminates directly at Bifröst; an HTTP reverse proxy must not terminate it instead. Existing certificates take priority over ACME.
 
+### Load balancers and instance routing
+
+Browser access, pending logins and management confirmations belong to the instance that created them. A TCP/TLS load balancer must keep related HTTP requests and channels on that instance.
+
+For [SSH Authorization Code logins](../../authorization/oidc/authorization-code.md#login), coordinate persistence across SSH and HTTPS so browser approval and the IdP callback reach the instance holding the SSH login. Browser-cookie affinity alone cannot establish that relationship; use instance-specific login endpoints when these paths cannot be pinned together.
+
+After a backend failure, the load balancer can route a new connection to a healthy instance, where the user signs in again. Bifröst sessions are not shared between instances. See [HA deployment and recovery](../../../setup/operations.md#high-availability-current-limits).
+
 ### Configuration {: #tls-configuration }
 
 These properties belong to `http.tls`.

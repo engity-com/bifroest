@@ -67,7 +67,11 @@ func exerciseSharedBrowserWorkload(t *testing.T, f *fixture, node, backend strin
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
-	result := runCommand(ctx, filepath.Join(f.repoRoot, "web"), nil, node, filepath.Join(f.repoRoot, "web", "test", "shared-workload-ui.ts"), f.browserOrigin, f.clientKey, backend)
+	command, args, err := sharedBrowserCommand(f.browserOrigin, node, filepath.Join(f.repoRoot, "web", "test", "shared-workload-ui.ts"), f.browserOrigin, f.clientKey, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := runCommand(ctx, filepath.Join(f.repoRoot, "web"), nil, command, args...)
 	if result.err != nil {
 		var producer audit.ProducerId
 		if producer.Set(f.recordingProducerID) == nil {

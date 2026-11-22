@@ -29,6 +29,12 @@ Bifröst combines **who may connect** with **where their session runs** in confi
 * **Auditable access decisions:** Enable the [signed audit journal](reference/auditlog/index.md) for structured authentication and session events that you can [verify later](reference/cli/audit/verify.md).
 * **Recorded terminal output:** Independently enable [session recording](guides/recording.md) when you need verifiable playback of shell and command output in the CLI or browser. Storage, retention and encryption remain operator choices.
 
+## Operating model and product boundaries
+
+Bifröst is self-hosted and configured through YAML, not a hosted access service or fleet-wide control plane. Its management interface inspects and controls the connected instance; it does not edit configuration or provide tenant-scoped administration. Flows select access policies and environments, not isolated tenants. See [management operation rights](reference/environment/management.md#property-access).
+
+For HA access, run independent instances behind a TCP load balancer, preferably with sticky sessions. If an instance fails, users reconnect to the same endpoint and sign in on a healthy instance to continue working with the workload data available there. Bifröst sessions are not shared between instances; the [operating model and availability guide](setup/operations.md) explains deployment, persistence and recovery.
+
 ## Feature and workflow comparison
 
 The cells describe the **documented workflow**, not every possible integration or an unconditional security guarantee. Features may depend on configuration, platform and edition. In Bifröst, a selected [audit logger](reference/auditlog/index.md) records access and session events; optional [session recording](reference/auditlog/recording.md) adds terminal output capture.

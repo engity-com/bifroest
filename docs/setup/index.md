@@ -9,6 +9,8 @@ Bifröst is available as a binary for many different platforms, or even as an OC
 
 For OIDC login, an SSH gateway or session recording, see the [task guides](../guides/index.md).
 
+For production and HA deployments, see the [operating model and availability guide](operations.md): TCP load balancing, instance-local state and recovery.
+
 Before we get started, you need to choose your operating mode. Here are the main differences to help you decide:
 
 | Criteria | [On Host](on-host.md) | [In Docker/Container](in-docker.md) |

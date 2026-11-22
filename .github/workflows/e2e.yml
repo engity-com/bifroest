@@ -59,6 +59,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Prepare and check browser network isolation
+        if: matrix.suite == 'docker'
+        shell: bash
+        run: &prepare-browser-network |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes passt
+          if pasta --quiet --config-net --ipv4-only --splice-only --tcp-ports none --udp-ports none --tcp-ns none --udp-ns none -- /bin/sh -c 'exec "$@"' bifroest-browser /bin/true; then
+            exit 0
+          fi
+          sudo cat /etc/apparmor.d/usr.bin.pasta /etc/apparmor.d/abstractions/pasta || true
+          sudo journalctl -k --since '-5 min' --no-pager | grep -E 'apparmor|pasta' || true
+          exit 1
+
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -108,11 +122,13 @@ jobs:
           set -euo pipefail
           export BIFROEST_TEST_NODE="$(mise -C web which node)"
           mkdir -p var/e2e
-          mise x -- go test -json -count=1 -tags=e2e -timeout=15m -run '^TestOpenSSHDockerBrowserSharedWorkload$' ./test/e2e | tee var/e2e/docker-browser.json
+          mise x -- go test -json -count=1 -tags=e2e -timeout=15m -run '^Test(SharedBrowserNetworkArguments|SharedBrowserNetworkIsolation|OpenSSHDockerBrowserSharedWorkload)$' ./test/e2e | tee var/e2e/docker-browser.json
           mise x -- python - <<'PY'
           import json, pathlib
           events = [json.loads(line) for line in pathlib.Path('var/e2e/docker-browser.json').read_text().splitlines() if line.startswith('{')]
-          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHDockerBrowserSharedWorkload' for e in events), 'Docker browser E2E did not execute successfully'
+          required = {'TestSharedBrowserNetworkArguments', 'TestSharedBrowserNetworkIsolation', 'TestOpenSSHDockerBrowserSharedWorkload'}
+          passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}
+          assert required <= passed, f'Docker browser E2E did not execute successfully: {required - passed}'
           assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Docker browser E2E was skipped or failed'
           PY
 
@@ -263,6 +279,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Prepare and check browser network isolation
+        shell: bash
+        run: *prepare-browser-network
+
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -290,15 +310,17 @@ jobs:
         shell: bash
         env:
           BIFROEST_TEST_BROWSER_UI: "1"
-        run: |
+        run: &verify-kubernetes-browser |
           set -euo pipefail
           export BIFROEST_TEST_NODE="$(mise -C web which node)"
           mkdir -p var/e2e
-          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesBrowserSharedWorkload$' ./test/e2e | tee var/e2e/kubernetes-browser.json
+          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^Test(SharedBrowserNetworkArguments|SharedBrowserNetworkIsolation|OpenSSHKubernetesBrowserSharedWorkload)$' ./test/e2e | tee var/e2e/kubernetes-browser.json
           mise x -- python - <<'PY'
           import json, pathlib
           events = [json.loads(line) for line in pathlib.Path('var/e2e/kubernetes-browser.json').read_text().splitlines() if line.startswith('{')]
-          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHKubernetesBrowserSharedWorkload' for e in events), 'Kubernetes browser E2E did not execute successfully'
+          required = {'TestSharedBrowserNetworkArguments', 'TestSharedBrowserNetworkIsolation', 'TestOpenSSHKubernetesBrowserSharedWorkload'}
+          passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}
+          assert required <= passed, f'Kubernetes browser E2E did not execute successfully: {required - passed}'
           assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Kubernetes browser E2E was skipped or failed'
           PY
 
@@ -342,6 +364,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Prepare and check browser network isolation
+        shell: bash
+        run: *prepare-browser-network
+
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -369,17 +395,7 @@ jobs:
         shell: bash
         env:
           BIFROEST_TEST_BROWSER_UI: "1"
-        run: |
-          set -euo pipefail
-          export BIFROEST_TEST_NODE="$(mise -C web which node)"
-          mkdir -p var/e2e
-          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesBrowserSharedWorkload$' ./test/e2e | tee var/e2e/kubernetes-browser.json
-          mise x -- python - <<'PY'
-          import json, pathlib
-          events = [json.loads(line) for line in pathlib.Path('var/e2e/kubernetes-browser.json').read_text().splitlines() if line.startswith('{')]
-          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHKubernetesBrowserSharedWorkload' for e in events), 'Kubernetes browser E2E did not execute successfully'
-          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Kubernetes browser E2E was skipped or failed'
-          PY
+        run: *verify-kubernetes-browser
 
       - name: Collect Kubernetes diagnostics
         if: failure()
