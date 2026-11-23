@@ -83,6 +83,9 @@ Archives contain for every supported operating systems and architecture the bina
 
 See the [release page](<< release_url() >>) for all available downloads.
 
+For a GitHub Actions job, [Setup Bifröst](github-actions.md) downloads and
+verifies the matching archive and adds the executable to `PATH` for you.
+
 #### Matrix {: #archive-matrix }
 
 <<compatibility_matrix(packaging="archive")>>
