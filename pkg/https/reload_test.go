@@ -16,6 +16,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func copyReloadPair(t *testing.T, source, target configuration.HttpCertificate) {
@@ -23,7 +24,21 @@ func copyReloadPair(t *testing.T, source, target configuration.HttpCertificate) 
 	for _, files := range [][2]string{{source.CertificateFile, target.CertificateFile}, {source.PrivateKeyFile, target.PrivateKeyFile}} {
 		raw, err := os.ReadFile(files[0])
 		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(files[1], raw, 0600))
+		// A Unix mode alone does not protect a newly created Windows key.
+		require.NoError(t, bfcrypto.WriteBootstrapFile(files[1], raw, true))
+	}
+}
+
+func TestTLSReloadCopiesKeepPrivateKeysProtected(t *testing.T) {
+	directory := t.TempDir()
+	target := configuration.HttpCertificate{CertificateFile: filepath.Join(directory, "tls.crt"), PrivateKeyFile: filepath.Join(directory, "tls.key")}
+	for range 2 {
+		source := newTlsTestCertificate(t, []string{"app.example.org"}, false, nil)
+		copyReloadPair(t, source.configured, target)
+		// Also runs without symlink privileges and checks the real platform ACL.
+		pair, err := loadCertificate(target, time.Now())
+		require.NoError(t, err)
+		require.Equal(t, source.certificate.Certificate, pair.value.Certificate)
 	}
 }
 
