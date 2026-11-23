@@ -35,6 +35,9 @@ func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 		"ghcr.io/engity-com/build-images/build:debian12-386":   "sha256:" + strings.Repeat("6", 64),
 		"ghcr.io/engity-com/build-images/build:debian12-armv7": "sha256:" + strings.Repeat("7", 64),
 		"ghcr.io/engity-com/build-images/build:debian12-arm64": "sha256:" + strings.Repeat("8", 64),
+		"mcr.microsoft.com/windows/servercore:ltsc2022":        "sha256:" + strings.Repeat("9", 64),
+		"mcr.microsoft.com/windows/nanoserver:ltsc2025":        "sha256:" + strings.Repeat("a", 64),
+		"mcr.microsoft.com/windows/servercore:ltsc2025":        "sha256:" + strings.Repeat("b", 64),
 	}
 	files := map[string][]byte{
 		dependencyBuildWorkflowPath: []byte(dependencyImages[0].source + "@" + old),
@@ -45,6 +48,9 @@ func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 		dependencyBuildImagesPath: []byte("docker.io/library/alpine:latest@" + old + "\n" +
 			"mcr.microsoft.com/windows/nanoserver:ltsc2022@" + old),
 		dependencyE2eHarnessPath: []byte("docker.io/library/alpine@" + old),
+		dependencyWindowsImagesPath: []byte("mcr.microsoft.com/windows/servercore:ltsc2022@" + old + "\n" +
+			"mcr.microsoft.com/windows/nanoserver:ltsc2025@" + old + "\n" +
+			"mcr.microsoft.com/windows/servercore:ltsc2025@" + old),
 	}
 	dependencies := &dependencies{resolveImageDigest: func(_ context.Context, source string) (string, error) {
 		return resolved[source], nil
@@ -66,6 +72,11 @@ func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 	require.Contains(t, string(files[dependencyBuildImagesPath]), "alpine:latest@"+resolved[dependencyImages[2].source])
 	require.Contains(t, string(files[dependencyE2eHarnessPath]), "alpine:latest@"+resolved[dependencyImages[2].source])
 	require.Contains(t, string(files[dependencyBuildArchPath]), "nanoserver:ltsc2022@"+resolved[dependencyImages[3].source])
+	for _, image := range dependencyImages {
+		for _, location := range image.locations {
+			require.Contains(t, string(files[location.path]), image.source+"@"+resolved[image.source])
+		}
+	}
 }
 
 func TestManagedImageReferencesMatchCurrentFiles(t *testing.T) {
@@ -375,13 +386,16 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 	require.NoError(t, bundle.writeTo(&certificates))
 
 	digests := map[string]string{
-		dependencyImages[0].source: "sha256:" + strings.Repeat("2", 64),
-		dependencyImages[1].source: "sha256:" + strings.Repeat("3", 64),
-		dependencyImages[2].source: "sha256:" + strings.Repeat("4", 64),
-		dependencyImages[3].source: "sha256:" + strings.Repeat("5", 64),
-		dependencyImages[4].source: "sha256:" + strings.Repeat("6", 64),
-		dependencyImages[5].source: "sha256:" + strings.Repeat("7", 64),
-		dependencyImages[6].source: "sha256:" + strings.Repeat("8", 64),
+		dependencyImages[0].source:                      "sha256:" + strings.Repeat("2", 64),
+		dependencyImages[1].source:                      "sha256:" + strings.Repeat("3", 64),
+		dependencyImages[2].source:                      "sha256:" + strings.Repeat("4", 64),
+		dependencyImages[3].source:                      "sha256:" + strings.Repeat("5", 64),
+		dependencyImages[4].source:                      "sha256:" + strings.Repeat("6", 64),
+		dependencyImages[5].source:                      "sha256:" + strings.Repeat("7", 64),
+		dependencyImages[6].source:                      "sha256:" + strings.Repeat("8", 64),
+		"mcr.microsoft.com/windows/servercore:ltsc2022": "sha256:" + strings.Repeat("9", 64),
+		"mcr.microsoft.com/windows/nanoserver:ltsc2025": "sha256:" + strings.Repeat("a", 64),
+		"mcr.microsoft.com/windows/servercore:ltsc2025": "sha256:" + strings.Repeat("b", 64),
 	}
 	files := map[string]string{
 		defaultCaCertsTargetFn:      certificates.String(),
@@ -395,6 +409,9 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 		dependencyBuildImagesPath: dependencyImages[2].source + "@" + digests[dependencyImages[2].source] + "\n" +
 			dependencyImages[3].source + "@" + digests[dependencyImages[3].source],
 		dependencyE2eHarnessPath: dependencyImages[2].source + "@" + digests[dependencyImages[2].source],
+		dependencyWindowsImagesPath: "mcr.microsoft.com/windows/servercore:ltsc2022@" + digests["mcr.microsoft.com/windows/servercore:ltsc2022"] + "\n" +
+			"mcr.microsoft.com/windows/nanoserver:ltsc2025@" + digests["mcr.microsoft.com/windows/nanoserver:ltsc2025"] + "\n" +
+			"mcr.microsoft.com/windows/servercore:ltsc2025@" + digests["mcr.microsoft.com/windows/servercore:ltsc2025"],
 	}
 	for _, filename := range dependencyConptyPaths() {
 		raw, err := gos.ReadFile(filepath.Join("..", "..", filepath.FromSlash(filename)))

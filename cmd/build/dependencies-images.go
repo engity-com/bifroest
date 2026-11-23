@@ -20,6 +20,7 @@ const (
 	dependencyBuildArchPath     = "internal/build/arch.go"
 	dependencyBuildImagesPath   = "internal/build/images/build.go"
 	dependencyE2eHarnessPath    = "test/e2e/harness_test.go"
+	dependencyWindowsImagesPath = "test/nanoserver/images_test.go"
 )
 
 type dependencyImageDigestResolver func(context.Context, string) (string, error)
@@ -93,6 +94,27 @@ var dependencyImages = []dependencyImage{
 		source: "ghcr.io/engity-com/build-images/build:debian12-arm64",
 		locations: []dependencyImageLocation{
 			{path: dependencyBuildMatrixPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-arm64"}, expected: 1},
+		},
+	},
+	{
+		name:   "Windows Server Core 2022 integration image",
+		source: "mcr.microsoft.com/windows/servercore:ltsc2022",
+		locations: []dependencyImageLocation{
+			{path: dependencyWindowsImagesPath, references: []string{"mcr.microsoft.com/windows/servercore:ltsc2022"}, expected: 1},
+		},
+	},
+	{
+		name:   "Windows Nano Server 2025 integration image",
+		source: "mcr.microsoft.com/windows/nanoserver:ltsc2025",
+		locations: []dependencyImageLocation{
+			{path: dependencyWindowsImagesPath, references: []string{"mcr.microsoft.com/windows/nanoserver:ltsc2025"}, expected: 1},
+		},
+	},
+	{
+		name:   "Windows Server Core 2025 integration image",
+		source: "mcr.microsoft.com/windows/servercore:ltsc2025",
+		locations: []dependencyImageLocation{
+			{path: dependencyWindowsImagesPath, references: []string{"mcr.microsoft.com/windows/servercore:ltsc2025"}, expected: 1},
 		},
 	},
 }

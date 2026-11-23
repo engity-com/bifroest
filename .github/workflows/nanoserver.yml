@@ -36,12 +36,17 @@ permissions:
 
 jobs:
   windows-local:
-    name: Windows local in Nano Server and Server Core
-    runs-on: windows-2022
+    name: Windows local in Nano Server and Server Core ${{ matrix.windows }}
+    strategy:
+      fail-fast: false
+      matrix:
+        windows: ["2022", "2025"]
+    runs-on: windows-${{ matrix.windows }}
     timeout-minutes: 25
     env:
       BIFROEST_TEST_NANOSERVER: "1"
       BIFROEST_TEST_NANOSERVER_ISOLATION: process
+      BIFROEST_TEST_NANOSERVER_VERSION: ${{ matrix.windows }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -117,7 +122,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: native-windows-browser
+          name: native-windows-browser-${{ matrix.windows }}
           path: var/e2e/windows-browser-*
           if-no-files-found: ignore
           retention-days: 7

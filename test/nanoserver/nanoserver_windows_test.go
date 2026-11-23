@@ -14,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	bib "github.com/engity-com/bifroest/internal/build"
 )
 
 func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
@@ -29,6 +27,11 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	if isolation != "hyperv" && isolation != "process" {
 		t.Fatalf("unsupported Windows container isolation %q", isolation)
 	}
+	images, err := windowsContainerImagesFor(os.Getenv("BIFROEST_TEST_NANOSERVER_VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("pinned Windows container comparison: isolation=%s nano=%s servercore=%s", isolation, images.nano, images.serverCore)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	_, source, _, ok := runtime.Caller(0)
@@ -108,7 +111,7 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		command = append(command, args...)
 		return run(t, root, "docker", command...)
 	}
-	nanoImage := buildImage(bib.DefaultWindowsContainerBaseImage(), "nanoserver")
+	nanoImage := buildImage(images.nano, "nanoserver")
 	t.Run("nanoserver-protected-conpty-library", func(t *testing.T) {
 		result := dockerRun(t, nanoImage, []string{"--user", "ContainerUser"}, `C:\smoke\conpty.test.exe`, "-test.run=^TestLibrary", "-test.v", "-test.timeout=30s")
 		for _, name := range []string{"TestLibraryLoadsOnlyTheProtectedEmbeddedDLLAndCleansUp", "TestLibraryRejectsTamperedAndUnprotectedPayloads", "TestLibraryPreservesHRESULTFailuresAndPacksCoordByValue"} {
@@ -149,7 +152,7 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 			t.Errorf("required Nano Server SAM lifecycle test did not pass:\n%s", result)
 		}
 	})
-	serverCoreImage := buildImage("mcr.microsoft.com/windows/servercore:ltsc2022@sha256:76cf422c98ca437b308374d0498280541fa42ac7061bb44015a6c8b70cf4db6a", "servercore")
+	serverCoreImage := buildImage(images.serverCore, "servercore")
 	t.Run("servercore-fixture-apis", func(t *testing.T) {
 		result := dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_SERVERCORE_IN_CONTAINER=1"},
 			`C:\smoke\environment.test.exe`, "-test.run=^TestLocalServerCoreAccountFixtureAPIs$", "-test.v")
