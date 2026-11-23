@@ -52,7 +52,7 @@ func enrichConptySbom(document map[string]any, format, subjectName string, inven
 	}
 	const spdxID = "SPDXRef-Bifroest-ConPTY"
 	const cdxRef = "urn:bifroest:component:conpty"
-	const sourceInfo = "unmodified interface DLL subset embedded in the Windows binary; inbox console host; OpenConsole.exe is not shipped; source NuGet package SHA256: " + conpty.PackageSHA256
+	sourceInfo := "unmodified interface DLL subset embedded in the Windows binary; inbox console host; OpenConsole.exe is not shipped; source NuGet package SHA256: " + conpty.PackageSHA256
 	purl := "pkg:nuget/" + conpty.Name + "@" + conpty.Version
 	var additions []any
 	switch format {

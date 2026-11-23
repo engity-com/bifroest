@@ -1,6 +1,8 @@
 # Microsoft ConPTY interface library
 
-The DLLs are unmodified subsets of the MIT-licensed NuGet package `Microsoft.Windows.Console.ConPTY`, pinned in `package.go`. Refresh them with `go generate ./internal/conpty`; the generator verifies the package SHA-256 and each DLL's digest and PE machine before writing anything.
+The DLLs are unmodified subsets of the MIT-licensed NuGet package `Microsoft.Windows.Console.ConPTY`, pinned in `pin.json`. The daily managed-dependency workflow proposes newer stable releases, updating the pin and DLLs together in its existing review PR. Preview versions and downgrades are excluded; identity, MIT license and all PE machines must match before an update is proposed. The usual PR CI includes Windows and Nano Server tests; nothing is auto-merged.
+
+Restore the current pinned DLLs with `go generate ./internal/conpty`; the generator verifies the package SHA-256 and each DLL's digest and PE machine before writing anything.
 
 Only Windows binaries embed these DLLs. Each relay extracts its process-architecture DLL into a fresh protected directory, verifies it and holds non-writable/non-deletable file handles through library unload. Loading uses an absolute path with only the protected directory and System32 in the DLL search path. No runtime network access or external DLL override is used.
 

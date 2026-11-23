@@ -21,6 +21,7 @@ import (
 	"github.com/google/go-github/v65/github"
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/internal/conpty"
 	"github.com/engity-com/bifroest/internal/mozilla/certdata"
 )
 
@@ -181,9 +182,18 @@ func TestIsDependencyPullRequestRequiresActorMarkerRepositoryAndBranch(t *testin
 
 func TestCreateDependencyCommitWritesSortedFilesOnBaseTree(t *testing.T) {
 	author := &github.CommitAuthor{Name: github.String("dependency-bot[bot]"), Email: github.String("1+dependency-bot[bot]@users.noreply.github.com")}
+	var blobs [][]byte
 	client := newDependencyTestGitHubClient(t, func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
+		case "/repos/owner/repository/git/blobs":
+			var blob github.Blob
+			require.NoError(t, json.NewDecoder(request.Body).Decode(&blob))
+			require.Equal(t, "base64", blob.GetEncoding())
+			raw, err := base64.StdEncoding.DecodeString(blob.GetContent())
+			require.NoError(t, err)
+			blobs = append(blobs, raw)
+			_, _ = fmt.Fprintf(response, `{"sha":"blob-%d"}`, len(blobs))
 		case "/repos/owner/repository/git/commits/base":
 			_, _ = response.Write([]byte(`{"sha":"base","tree":{"sha":"base-tree"}}`))
 		case "/repos/owner/repository/git/trees":
@@ -194,6 +204,8 @@ func TestCreateDependencyCommitWritesSortedFilesOnBaseTree(t *testing.T) {
 			require.NoError(t, json.NewDecoder(request.Body).Decode(&tree))
 			require.Equal(t, "base-tree", tree.BaseTree)
 			require.Equal(t, []string{"a.txt", "z.txt"}, []string{tree.Tree[0].GetPath(), tree.Tree[1].GetPath()})
+			require.Equal(t, "blob-1", tree.Tree[0].GetSHA())
+			require.Equal(t, "blob-2", tree.Tree[1].GetSHA())
 			_, _ = response.Write([]byte(`{"sha":"new-tree"}`))
 		case "/repos/owner/repository/git/commits":
 			var commit struct {
@@ -212,11 +224,13 @@ func TestCreateDependencyCommitWritesSortedFilesOnBaseTree(t *testing.T) {
 	})
 	repository := newDependencyTestRepo(client)
 
-	actual, tree, err := repository.createDependencyCommit(t.Context(), "base", map[string][]byte{"z.txt": []byte("z"), "a.txt": []byte("a")}, "message", author)
+	binary := []byte{0, 255, 128, 13, 10, 0, 254}
+	actual, tree, err := repository.createDependencyCommit(t.Context(), "base", map[string][]byte{"z.txt": binary, "a.txt": []byte("a")}, "message", author)
 
 	require.NoError(t, err)
 	require.Equal(t, "new-commit", actual)
 	require.Equal(t, "new-tree", tree)
+	require.Equal(t, [][]byte{[]byte("a"), binary}, blobs)
 }
 
 func TestDependencyPullRequestHasFilesRejectsExtraFile(t *testing.T) {
@@ -382,6 +396,11 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 			dependencyImages[3].source + "@" + digests[dependencyImages[3].source],
 		dependencyE2eHarnessPath: dependencyImages[2].source + "@" + digests[dependencyImages[2].source],
 	}
+	for _, filename := range dependencyConptyPaths() {
+		raw, err := gos.ReadFile(filepath.Join("..", "..", filepath.FromSlash(filename)))
+		require.NoError(t, err)
+		files[filename] = string(raw)
+	}
 	writes := 0
 	var serverURL string
 	client := newDependencyTestGitHubClient(t, func(response http.ResponseWriter, request *http.Request) {
@@ -417,11 +436,35 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 	dependencies := newDependencies(repository.base)
 	dependencies.caCerts.now = func() time.Time { return now }
 	dependencies.resolveImageDigest = func(_ context.Context, image string) (string, error) { return digests[image], nil }
+	conptyChecks := 0
+	dependencies.conptyHTTPClient = testConptyHTTPClient(t, func(request *http.Request) ([]byte, int) {
+		conptyChecks++
+		require.Equal(t, conpty.VersionIndexURL, request.URL.String())
+		return []byte(`{"versions":["` + conpty.Version + `"]}`), http.StatusOK
+	})
 
 	err = dependencies.updatePrInRepository(t.Context(), "dependency-bot[bot]")
 
 	require.NoError(t, err)
 	require.Zero(t, writes)
+	require.Equal(t, 1, conptyChecks, "the daily reconciliation must include ConPTY even when all dependencies are current")
+}
+
+func TestDependencyBinaryBlobFailureCannotPublishAPartialTree(t *testing.T) {
+	blobs := 0
+	client := newDependencyTestGitHubClient(t, func(response http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "/repos/owner/repository/git/blobs", request.URL.Path, "no tree, commit or branch may be published after a blob failure")
+		blobs++
+		if blobs == 1 {
+			_, _ = response.Write([]byte(`{"sha":"first"}`))
+			return
+		}
+		response.WriteHeader(http.StatusInternalServerError)
+	})
+	repository := newDependencyTestRepo(client)
+	_, _, err := repository.createDependencyCommit(t.Context(), "base", map[string][]byte{"a": {0, 255}, "b": {128, 0}}, "message", &github.CommitAuthor{})
+	require.ErrorContains(t, err, "cannot create dependency blob b")
+	require.Equal(t, 2, blobs)
 }
 
 func newDependencyTestRepo(client *github.Client) *repo {

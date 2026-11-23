@@ -14,29 +14,31 @@ import (
 //go:generate go run ./generate
 
 const (
-	Name          = "Microsoft.Windows.Console.ConPTY"
-	Version       = "1.25.261109001"
-	PackageSHA256 = "3d77f535df848e44225c2a8912ac844fecb23f3057732b639f3034b587496f09"
-	PackageURL    = "https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/" + Version + "/microsoft.windows.console.conpty." + Version + ".nupkg"
+	Name            = "Microsoft.Windows.Console.ConPTY"
+	VersionIndexURL = "https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/index.json"
+)
+
+//go:embed pin.json
+var PinJSON []byte
+
+var (
+	pinned        = mustParsePin(PinJSON)
+	Version       = pinned.Version
+	PackageSHA256 = pinned.PackageSHA256
+	PackageURL    = PackageURLForVersion(Version)
+	// Payloads contains only the interface DLLs. Microsoft's missing-OpenConsole
+	// path selects System32's conhost, including on Nano Server.
+	Payloads = pinned.Payloads
 )
 
 //go:embed LICENSE.txt
 var License string
 
 type Payload struct {
-	Arch    string
-	Source  string
-	SHA256  string
-	Machine uint16
-}
-
-// Payloads contains only the interface DLLs, not the GUI-dependent OpenConsole
-// executable. The DLL's supported missing-OpenConsole path selects System32's
-// conhost.exe; its public release API still releases the ConDrv reference.
-var Payloads = []Payload{
-	{Arch: "386", Source: "runtimes/win-x86/native/conpty.dll", SHA256: "914c7eb6840a5cb477e5f2fdd26610ba4272803b96866123cb87e21a8a2366cd", Machine: pe.IMAGE_FILE_MACHINE_I386},
-	{Arch: "amd64", Source: "runtimes/win-x64/native/conpty.dll", SHA256: "e971856f89748dc3b458125e9afdd79b5e9574a7c937676116d3cbbd3b71f492", Machine: pe.IMAGE_FILE_MACHINE_AMD64},
-	{Arch: "arm64", Source: "runtimes/win-arm64/native/conpty.dll", SHA256: "3608cef830a1c4fbbf3981594ad3f64ebe2df6db98fe43a48a4ca7d2875d8959", Machine: pe.IMAGE_FILE_MACHINE_ARM64},
+	Arch    string `json:"arch"`
+	SHA256  string `json:"sha256"`
+	Source  string `json:"-"`
+	Machine uint16 `json:"-"`
 }
 
 func (p Payload) Filename() string { return "assets/" + p.Arch + "/conpty.dll" }
