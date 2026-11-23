@@ -13,6 +13,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/google/go-github/v65/github"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/internal/build/charts"
@@ -48,6 +49,14 @@ func TestBuildChartIsVersionedReproducibleAndPublishable(t *testing.T) {
 	digest, err := gos.ReadFile(updated[1].filepath)
 	require.NoError(t, err)
 	require.Contains(t, string(digest), chart.name())
+}
+
+func TestChartOnlyChangesRunNormalBuildAndTestCI(t *testing.T) {
+	raw, err := gos.ReadFile(filepath.Join("..", "..", ".github", "filters.yml"))
+	require.NoError(t, err)
+	var filters map[string][]any
+	require.NoError(t, yaml.Unmarshal(raw, &filters))
+	require.Contains(t, filters["go"], "charts/**", "chart-only changes must run existing Go, Helm consumer and build jobs")
 }
 
 func TestBuildChartDoesNotRewriteNonSemanticApplicationVersions(t *testing.T) {
