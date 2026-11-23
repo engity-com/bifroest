@@ -12,6 +12,8 @@
 *.bcast   binary
 *.beaudit binary
 *.baudit  binary
+/internal/conpty/assets/** binary
+/internal/conpty/LICENSE.txt text eol=lf
 
 # Browser inputs are hashed once and consumed on every binary build host.
 /.gitattributes text eol=lf

@@ -30,7 +30,7 @@ func browserPurl(component browser.Component) string {
 	return "pkg:" + component.Ecosystem + "/" + strings.Join(parts, "/") + "@" + url.PathEscape(component.Version)
 }
 
-func appendBrowserSbomObjects(existing any, additions []any, id string) ([]any, error) {
+func appendSbomObjects(existing any, additions []any, id string) ([]any, error) {
 	objects, ok := existing.([]any)
 	if !ok {
 		return nil, fmt.Errorf("SBOM has no object list")
@@ -44,7 +44,7 @@ func appendBrowserSbomObjects(existing any, additions []any, id string) ([]any, 
 				before, beforeErr := json.Marshal(object)
 				after, afterErr := json.Marshal(candidate)
 				if beforeErr != nil || afterErr != nil || !bytes.Equal(before, after) {
-					return nil, fmt.Errorf("conflicting browser SBOM object %s", candidate[id])
+					return nil, fmt.Errorf("conflicting SBOM object %s", candidate[id])
 				}
 				found = true
 				break
@@ -107,7 +107,7 @@ func enrichBrowserSbom(document map[string]any, format, subjectName string, inve
 			additions = append(additions, map[string]any{"SPDXID": id, "name": "embedded-browser/" + asset.Name, "downloadLocation": spdxNoAssertion, "filesAnalyzed": false, "licenseConcluded": spdxNoAssertion, "licenseDeclared": spdxNoAssertion, "copyrightText": spdxNoAssertion, "checksums": []any{map[string]any{"algorithm": "SHA256", "checksumValue": asset.SHA256}}})
 			relationships = appendSpdxRelationshipIfMissing(relationships, spdxBundle, "CONTAINS", id)
 		}
-		packages, err := appendBrowserSbomObjects(document["packages"], additions, "SPDXID")
+		packages, err := appendSbomObjects(document["packages"], additions, "SPDXID")
 		if err != nil {
 			return err
 		}
@@ -139,7 +139,7 @@ func enrichBrowserSbom(document map[string]any, format, subjectName string, inve
 			additions = append(additions, map[string]any{"bom-ref": id, "type": "file", "name": "embedded-browser/" + asset.Name, "hashes": []any{map[string]any{"alg": "SHA-256", "content": asset.SHA256}}})
 			references = append(references, id)
 		}
-		components, err := appendBrowserSbomObjects(document["components"], additions, "bom-ref")
+		components, err := appendSbomObjects(document["components"], additions, "bom-ref")
 		if err != nil {
 			return err
 		}

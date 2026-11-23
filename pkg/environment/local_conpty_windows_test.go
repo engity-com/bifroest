@@ -18,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/internal/conpty"
 )
 
 func TestLocalConPTYFrame(t *testing.T) {
@@ -37,15 +39,30 @@ func TestLocalConPTYReleaseDrainsBeforeCloseAndPreservesOutputFailure(t *testing
 				if failure {
 					expected = errors.New("output forwarding failed")
 				}
-				err := finishLocalConPTYOutput(released, func() error {
+				var releaseErr error
+				if !released {
+					releaseErr = errors.New("release failed")
+				}
+				err := finishLocalConPTYOutput(func() error {
+					steps = append(steps, "release")
+					return releaseErr
+				}, func() error {
 					steps = append(steps, "drain")
 					return expected
 				}, func() { steps = append(steps, "close") })
-				require.ErrorIs(t, err, expected)
+				if expected != nil {
+					require.ErrorIs(t, err, expected)
+				}
+				if releaseErr != nil {
+					require.ErrorIs(t, err, releaseErr)
+				}
+				if expected == nil && releaseErr == nil {
+					require.NoError(t, err)
+				}
 				if released {
-					require.Equal(t, []string{"drain", "close"}, steps)
+					require.Equal(t, []string{"release", "drain", "close"}, steps)
 				} else {
-					require.Equal(t, []string{"close", "drain"}, steps)
+					require.Equal(t, []string{"release", "close", "drain"}, steps)
 				}
 			})
 		}
@@ -184,10 +201,14 @@ func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	if os.Getenv("BIFROEST_CONPTY_TEST_NONZERO_FIRST") == "1" {
 		statuses[0], statuses[1] = statuses[1], statuses[0]
 	}
-	for _, status := range statuses {
-		t.Run(fmt.Sprintf("exit=%d", status), func(t *testing.T) {
-			testLocalConPTYRelayRoundTrip(t, status)
-		})
+	// Independent fresh-host executions, not retries: every first-use result
+	// must retain all output, including from children that immediately exit.
+	for iteration := range 8 {
+		for _, status := range statuses {
+			t.Run(fmt.Sprintf("run=%d/exit=%d", iteration, status), func(t *testing.T) {
+				testLocalConPTYRelayRoundTrip(t, status)
+			})
+		}
 	}
 }
 
@@ -196,7 +217,7 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, status int) {
 	self, err := windows.GetCurrentProcessToken().GetTokenUser()
 	require.NoError(t, err)
 	version := windows.RtlGetVersion()
-	t.Logf("ConPTY release API available=%t runtimeOS=%d.%d.%d nativeConsoleWrite=%t rawFileWrite=%t nonzeroFirst=%t explicitZeroArg=%t nanoMarker=%t (child exit 2 means unexpected geometry)", windows.NewLazySystemDLL("kernel32.dll").NewProc("ReleasePseudoConsole").Find() == nil, version.MajorVersion, version.MinorVersion, version.BuildNumber, os.Getenv("BIFROEST_CONPTY_TEST_NATIVE_CONSOLE_WRITE") == "1", os.Getenv("BIFROEST_CONPTY_TEST_RAW_FILE_WRITE") == "1", os.Getenv("BIFROEST_CONPTY_TEST_NONZERO_FIRST") == "1", os.Getenv("BIFROEST_CONPTY_TEST_EXPLICIT_ZERO_ARG") == "1", os.Getenv("BIFROEST_TEST_NANOSERVER_IN_CONTAINER") == "1")
+	t.Logf("ConPTY library=%s systemReleaseAvailable=%t runtimeOS=%d.%d.%d nativeConsoleWrite=%t rawFileWrite=%t nonzeroFirst=%t explicitZeroArg=%t nanoMarker=%t (child exit 2 means unexpected geometry)", conpty.Version, windows.NewLazySystemDLL("kernel32.dll").NewProc("ReleasePseudoConsole").Find() == nil, version.MajorVersion, version.MinorVersion, version.BuildNumber, os.Getenv("BIFROEST_CONPTY_TEST_NATIVE_CONSOLE_WRITE") == "1", os.Getenv("BIFROEST_CONPTY_TEST_RAW_FILE_WRITE") == "1", os.Getenv("BIFROEST_CONPTY_TEST_NONZERO_FIRST") == "1", os.Getenv("BIFROEST_CONPTY_TEST_EXPLICIT_ZERO_ARG") == "1", os.Getenv("BIFROEST_TEST_NANOSERVER_IN_CONTAINER") == "1")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestLocalConPTYRelayRoundTrip$")
 	cmd.Env = append(os.Environ(), "BIFROEST_CONPTY_RELAY_TEST_CHILD=1", "BIFROEST_CONPTY_TEST_EXIT="+strconv.Itoa(status))
 	var stdout, stderr bytes.Buffer
@@ -223,6 +244,8 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, status int) {
 			require.Equal(t, status, exited.ExitCode())
 		}
 		require.Contains(t, stderr.String(), fmt.Sprintf("conpty-test relay-returned exit=%d error=false ", status))
+		require.Contains(t, stderr.String(), "released=true")
+		require.Contains(t, stderr.String(), "eofBeforeClose=true", "native EOF must precede ClosePseudoConsole")
 	case <-time.After(20 * time.Second):
 		_ = cmd.Process.Kill()
 		<-result

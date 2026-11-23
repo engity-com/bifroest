@@ -16,6 +16,7 @@ on:
       - go.mod
       - go.sum
       - internal/build/**
+      - internal/conpty/**
       - mise.toml
       - pkg/configuration/**
       - pkg/authorization/**

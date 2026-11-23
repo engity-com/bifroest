@@ -25,6 +25,7 @@ import (
 	bib "github.com/engity-com/bifroest/internal/build"
 	bbin "github.com/engity-com/bifroest/internal/build/binary"
 	"github.com/engity-com/bifroest/internal/build/browser"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const (
@@ -82,6 +83,7 @@ type thirdPartyLicenseInventory struct {
 	modules       []thirdPartyLicenseModule
 	browser       *browser.Manifest
 	browserDigest string
+	conPTY        bool
 }
 
 type thirdPartyLicenseModule struct {
@@ -183,6 +185,10 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 		_ = target.Close()
 		return err
 	}
+	if err := appendConptyNotices(artifact, gos.DirFS("internal/conpty"), target, policy); err != nil {
+		_ = target.Close()
+		return err
+	}
 	if err := appendBrowserNotices(artifact, gos.DirFS("."), target); err != nil {
 		_ = target.Close()
 		return err
@@ -197,6 +203,7 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 	artifact.thirdPartyLicenseInventory = inventory
 	inventory.browser = artifact.browserManifest
 	inventory.browserDigest = browserManifestDigest(artifact.browserManifestRaw)
+	inventory.conPTY = artifact.Os == sys.OsWindows
 	success = true
 	return nil
 }

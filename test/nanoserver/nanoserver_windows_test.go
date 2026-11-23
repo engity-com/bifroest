@@ -70,10 +70,11 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	run(t, root, "go", "build", "-o", filepath.Join(dir, "s4u-probe.exe"), "./test/manual/s4u-probe")
 	run(t, root, "go", "test", "-c", "-tags=nanoserver_integration", "-o", filepath.Join(dir, "environment.test.exe"), "./pkg/environment")
 	run(t, root, "go", "test", "-c", "-o", filepath.Join(dir, "windowslocal.test.exe"), "./pkg/windowslocal")
+	run(t, root, "go", "test", "-c", "-o", filepath.Join(dir, "conpty.test.exe"), "./internal/conpty")
 	browserKey := prepareServerCoreBrowserKey(t, dir)
 	buildImage := func(base, kind string) string {
 		t.Helper()
-		dockerfile := fmt.Sprintf("FROM %s\nUSER ContainerAdministrator\nWORKDIR C:/smoke\nCOPY bifroest.exe C:/smoke/bifroest.exe\nCOPY environment.test.exe C:/smoke/environment.test.exe\nCOPY s4u-probe.exe C:/smoke/s4u-probe.exe\n", base)
+		dockerfile := fmt.Sprintf("FROM %s\nUSER ContainerAdministrator\nWORKDIR C:/smoke\nCOPY bifroest.exe C:/smoke/bifroest.exe\nCOPY environment.test.exe C:/smoke/environment.test.exe\nCOPY s4u-probe.exe C:/smoke/s4u-probe.exe\nCOPY conpty.test.exe C:/smoke/conpty.test.exe\n", base)
 		if kind == "servercore" {
 			dockerfile += "COPY windowslocal.test.exe C:/smoke/windowslocal.test.exe\n"
 			dockerfile += "COPY browser-authorized-key C:/smoke/browser-authorized-key\n"
@@ -108,6 +109,14 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		return run(t, root, "docker", command...)
 	}
 	nanoImage := buildImage(bib.DefaultWindowsContainerBaseImage(), "nanoserver")
+	t.Run("nanoserver-protected-conpty-library", func(t *testing.T) {
+		result := dockerRun(t, nanoImage, []string{"--user", "ContainerUser"}, `C:\smoke\conpty.test.exe`, "-test.run=^TestLibrary", "-test.v", "-test.timeout=30s")
+		for _, name := range []string{"TestLibraryLoadsOnlyTheProtectedEmbeddedDLLAndCleansUp", "TestLibraryRejectsTamperedAndUnprotectedPayloads", "TestLibraryPreservesHRESULTFailuresAndPacksCoordByValue"} {
+			if !strings.Contains(result, "--- PASS: "+name+" ") {
+				t.Errorf("required Nano ConPTY library test %s did not pass:\n%s", name, result)
+			}
+		}
+	})
 	t.Run("nanoserver-bifroest-starts", func(t *testing.T) {
 		result := dockerRun(t, nanoImage, []string{"--user", "ContainerUser"}, `C:\smoke\bifroest.exe`, "version")
 		if strings.TrimSpace(result) == "" {
@@ -125,14 +134,6 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		}
 	})
 	t.Run("nanoserver-dlls-and-conpty", func(t *testing.T) {
-		// TODO: Re-enable the original first-use round-trip on pinned Nano LTSC
-		// 2022 once the output-loss cause is understood. A native Win32 reference
-		// also lost its first output; whether the runtime or test is wrong remains
-		// unresolved. DLL/pipe checks above and real Server Core proofs stay required.
-		// Limit quarantine to the investigated image; an image update runs it again.
-		if bib.DefaultWindowsContainerBaseImage() == "mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:5a1c3c8308f8f5c9b67d21d2332a449d4ab8f9a6cf277f07d4aeac27ff2a0213" {
-			t.Skip("temporarily quarantined: first-use ConPTY output loss on pinned Nano LTSC 2022; runtime/test cause unresolved (PR #632)")
-		}
 		result := dockerRun(t, nanoImage, []string{"--user", "ContainerUser", "--env", "BIFROEST_TEST_NANOSERVER_IN_CONTAINER=1"},
 			`C:\smoke\environment.test.exe`, "-test.run="+smokeTests, "-test.v", "-test.timeout=90s")
 		for _, test := range []string{"TestLocalNanoServerDLLExports", "TestLocalConPTYRelayRoundTrip", "TestLocalConPTYOutputReadKeepsEmptyMessagesDistinctFromEOF", "TestLocalConPTYOutputPipeKeepsEmptyWritesAndBinaryOutput"} {
