@@ -39,8 +39,11 @@ class GitHubActionsDocumentationTest(TestCase):
     def test_setup_overview_groups_all_installation_choices(self):
         overview = (DOCS / 'setup/index.md').read_text()
         installation = re.search(r'^## Installation\n(.*?)(?=^## |\Z)', overview, re.MULTILINE | re.DOTALL).group(1)
-        choices = re.findall(r'^\d+\. \[[^\]]+\]\(([^)]+)\)', installation, re.MULTILINE)
+        self.assertIn('| Installation | Use it when | Prerequisites |', installation)
+        choices = re.findall(r'^\| \[[^\]]+\]\(([^)]+)\) \|', installation, re.MULTILINE)
         self.assertEqual(choices, ['on-host.md', 'in-docker.md', 'in-kubernetes.md', 'github-actions.md'])
+        for choice in choices:
+            self.assertEqual(overview.count(f']({choice})'), 1)
 
     def test_entry_points_link_to_the_action_page(self):
         for name in ('index.md', 'setup/index.md', 'setup/distribution.md', 'guides/index.md', 'guides/testing.md'):
