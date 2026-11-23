@@ -116,7 +116,7 @@ func (this buildArtifactType) String() string {
 
 func (this buildArtifactType) canBePublished() bool {
 	switch this {
-	case buildArtifactTypeArchive, buildArtifactTypeSbom, buildArtifactTypeNotice, buildArtifactTypeManifest, buildArtifactTypeDigest, buildArtifactTypeChart:
+	case buildArtifactTypeArchive, buildArtifactTypeSbom, buildArtifactTypeManifest, buildArtifactTypeDigest, buildArtifactTypeChart:
 		return true
 	default:
 		return false

@@ -34,6 +34,10 @@ class Os(str, Enum):
     darwin = 'darwin'
     windows = 'windows'
 
+    @property
+    def display_name(self) -> str:
+        return {Os.linux: 'Linux', Os.darwin: 'macOS', Os.windows: 'Windows'}[self]
+
 
 class Arch(str, Enum):
     i386 = '386'
@@ -226,7 +230,7 @@ def load_release_manifest() -> dict:
 
     with open(filename, 'r', encoding='utf-8') as source:
         manifest = json.load(source)
-    if manifest.get('schemaVersion') != 1:
+    if manifest.get('schemaVersion') not in (1, 2):
         raise Exception(f"unsupported release manifest schema in {filename}")
     if manifest.get('project') != repo:
         raise Exception(f"release manifest project does not match {repo}")
@@ -278,8 +282,10 @@ def load_release_manifest() -> dict:
         if key in actual_variants:
             raise Exception(f"duplicate release variant {key}")
         actual_variants.add(key)
-        if not variant.get('archive') or not variant.get('notice'):
-            raise Exception(f"release variant {key} has no archive or notice")
+        if not variant.get('archive'):
+            raise Exception(f"release variant {key} has no archive")
+        if manifest['schemaVersion'] == 1 and not variant.get('notice'):
+            raise Exception(f"release variant {key} has no notice")
         archive_sboms = variant.get('sboms', {}).get('archive', {})
         if not archive_sboms.get('spdx') or not archive_sboms.get('cycloneDx'):
             raise Exception(f"release variant {key} has incomplete archive SBOMs")
@@ -323,7 +329,6 @@ def fallback_release_manifest() -> dict:
                     'architecture': arch.value,
                     'edition': kind.value,
                     'archive': archive,
-                    'notice': prefix + '.third-party-notices.txt',
                     'sboms': {
                         'archive': {
                             'spdx': archive + '.spdx.json',
@@ -341,7 +346,7 @@ def fallback_release_manifest() -> dict:
                     variant['image'] = {'tag': f"{repo_container_uri}:{tag}"}
                 variants.append(variant)
     return {
-        'schemaVersion': 1,
+        'schemaVersion': 2,
         'project': repo,
         'version': release,
         'manifestAsset': 'bifroest-release-manifest.json',
@@ -676,7 +681,9 @@ def define_env(env: MacrosPlugin):
 
     @env.macro
     def release_url(target: str = release) -> str:
-        return f"{repo_http_url}/releases/{target}"
+        if target == 'latest':
+            return f"{repo_http_url}/releases/latest"
+        return f"{repo_http_url}/releases/tag/{quote(target, safe='')}"
 
     @env.macro
     def release_asset_url(asset: str, target: str = release) -> str:
@@ -684,68 +691,72 @@ def define_env(env: MacrosPlugin):
             return f"{repo_http_url}/releases/latest/download/{quote(asset)}"
         return f"{repo_http_url}/releases/download/{quote(target, safe='')}/{quote(asset)}"
 
+    def distribution_icon(edition: EditionKind, label: str, url: str | None = None, reference: str | None = None) -> str:
+        if not url:
+            label = html.escape(f'{label} is not available', quote=True)
+            return (f'<span role="img" title="{label}" aria-label="{label}" '
+                    f'data-edition="{edition.value}" data-supported="none">:octicons-circle-24:</span>')
+        action = 'Copy' if reference is not None else 'Download'
+        label = html.escape(f'{action} {label}', quote=True)
+        url = html.escape(url, quote=True)
+        attributes = ''
+        icon = ':octicons-download-24:'
+        if reference is not None:
+            attributes = (
+                f' data-reference="{html.escape(reference, quote=True)}" '
+                'onclick="if (!navigator.clipboard || !window.isSecureContext) return true; '
+                'event.preventDefault(); try { navigator.clipboard.writeText(this.dataset.reference)'
+                '.catch(function () { window.location.assign(this.href); }.bind(this)); } '
+                'catch (_) { window.location.assign(this.href); } return false;"')
+            icon = ':octicons-copy-24:'
+        return (f'<a href="{url}" title="{label}" aria-label="{label}" '
+                f'data-edition="{edition.value}"{attributes}>{icon}</a>')
+
     @env.macro
-    def compliance_matrix() -> str:
+    def compliance_matrix(packaging: str | Packaging = Packaging.archive) -> str:
+        packaging = Packaging(packaging)
         manifest = load_release_manifest()
+        variants = {(v['os'], v['architecture'], v['edition']): v for v in manifest['variants']}
+        columns = [('archive', 'Download')] if packaging == Packaging.archive else [('reference', 'Reference')]
+        columns += [('spdx', 'SPDX'), ('cycloneDx', 'CycloneDX')]
 
-        result = '<table markdown="1" data-kind="compliance_matrix"><thead markdown="1">'
-        result += ('<tr markdown="1">'
-                   '<th rowspan="2">Variant</th>'
-                   '<th rowspan="2" class="vertical">Notice</th>'
-                   '<th colspan="3">Archive</th>'
-                   '<th colspan="3">OCI</th>'
-                   '</tr>'
-                   )
-        result += ('<tr markdown="1">'
-                   '<th class="vertical">Download</th>'
-                   '<th class="vertical">SPDX</th>'
-                   '<th class="vertical">CycloneDX</th>'
-                   '<th class="vertical">Reference</th>'
-                   '<th class="vertical">SPDX</th>'
-                   '<th class="vertical">CycloneDX</th>'
-                   '</tr>'
-                   )
-        result += '</thead><tbody markdown="1">'
+        result = (f'<table markdown="1" data-kind="compliance_matrix" data-packaging="{packaging.value}">'
+                  '<thead markdown="1"><tr markdown="1"><th rowspan="2" scope="col">Architecture</th>')
+        for target_os in Os:
+            result += f'<th colspan="3" scope="colgroup" markdown="span">{dist(target_os)}</th>'
+        result += '</tr><tr>'
+        for _ in Os:
+            for _, label in columns:
+                result += f'<th class="vertical" scope="col">{label}</th>'
+        result += '</tr></thead><tbody markdown="1">'
 
-        def asset(name: str | None, label: str) -> str:
-            if name is None or name.__len__() == 0:
-                return "-"
-            return f"[:octicons-download-24:{{. title='{f"{label}"}'}}]({release_asset_url(name)})"
-
-        for variant in manifest['variants']:
-            platform = f"`{variant['os']}/{variant['architecture']}/{variant['edition']}`"
-            sboms = variant.get('sboms', {})
-            archive_sboms = sboms.get('archive', {})
-            image_sboms = sboms.get('image', {})
-            image = variant.get('image')
-            image_cell = "-"
-            if image is not None:
-                full_reference, target_tag = resolve_container_image_reference(
-                    image, manifest.get('registry', repo_container_uri))
-                escaped_reference = html.escape(full_reference, quote=True)
-                target_url = html.escape(container_packages_url(target_tag), quote=True)
-                image_cell = (
-                    f'<a href="{target_url}" data-reference="{escaped_reference}" title="{escaped_reference}" '
-                    'onclick="if (!navigator.clipboard || !window.isSecureContext) return true; '
-                    'event.preventDefault(); try { navigator.clipboard.writeText(this.dataset.reference)'
-                    '.catch(function () { window.location.assign(this.href); }.bind(this)); } '
-                    'catch (_) { window.location.assign(this.href); } return false;">'
-                    ':octicons-copy-24:</a>'
-                )
-
-            result += ('<tr markdown="1">'
-                       f'<td markdown="1">{platform}</td>'
-                       f'<td markdown="1">{asset(variant.get('notice'), 'Notice')}</td>'
-                       f'<td markdown="1">{asset(variant.get('archive'), 'Archive')}</td>'
-                       f'<td markdown="1">{asset(archive_sboms.get('spdx'), 'SPDX')}</td>'
-                       f'<td markdown="1">{asset(archive_sboms.get('cycloneDx'), 'CycloneDX')}</td>'
-                       f'<td markdown="1">{image_cell}</td>'
-                       f'<td markdown="1">{asset(image_sboms.get('spdx'), 'SPDX')}</td>'
-                       f'<td markdown="1">{asset(image_sboms.get('cycloneDx'), 'CycloneDX')}</td>'
-                       '</tr>')
-
-        result += "</tbody></table>"
-        return result
+        for arch in Arch:
+            if not any((o.value, arch.value, e.value) in variants for o in Os for e in EditionKind):
+                continue
+            result += f'<tr markdown="1"><td markdown="span">`{arch.value}`</td>'
+            for target_os in Os:
+                for column, label in columns:
+                    editions = []
+                    for edition in EditionKind:
+                        variant = variants.get((target_os.value, arch.value, edition.value), {})
+                        target = f'{target_os.display_name} / {arch.value} / {edition.value.title()}'
+                        description = f'{target} {packaging.value} {label}'
+                        url = None
+                        reference = None
+                        if column == 'reference':
+                            image = variant.get('image')
+                            if image is not None:
+                                reference, tag = resolve_container_image_reference(image, manifest.get('registry', repo_container_uri))
+                                url = container_packages_url(tag)
+                                description += f': {reference}'
+                        else:
+                            name = variant.get('archive') if column == 'archive' else variant.get('sboms', {}).get(packaging.value, {}).get(column)
+                            if name:
+                                url = release_asset_url(name)
+                        editions.append(distribution_icon(edition, description, url, reference))
+                    result += f'<td markdown="span">{' / '.join(editions)}</td>'
+            result += '</tr>'
+        return result + '</tbody></table>'
 
     @env.macro
     def rel_file_path(in_path: str, start: str) -> str:
@@ -764,7 +775,7 @@ def define_env(env: MacrosPlugin):
             if type(os) is str:
                 os = Os[os]
 
-            title = f"<code>{os.name}</code>{f"/{title}" if title is not None else ""}"
+            title = f"{os.display_name}{f"/{title}" if title is not None else ""}"
 
         if supported is None:
             return f":octicons-circle-24:{{. data-supported=none title='{f"{title} is not supported" if title is not None else "Not supported"}'}}"
@@ -885,7 +896,7 @@ def define_env(env: MacrosPlugin):
         remote_link = cli_reference('reference/cli/management.md#select-a-target')
         ssh_link = cli_reference('reference/cli/management.md#direct-ssh')
         return (
-            "| `linux` | `darwin` | `windows` |\n"
+            f"| {Os.linux.display_name} | {Os.darwin.display_name} | {Os.windows.display_name} |\n"
             "| --- | --- | --- |\n"
             f"| {compatibility_editions(linux, linux, 'linux')} "
             f"| {compatibility_editions(darwin, None, 'darwin')} "
@@ -910,9 +921,35 @@ def define_env(env: MacrosPlugin):
     def compatibility_matrix(
             os: Os | None = None,
             packaging: str | Packaging | None = None,
+            downloads: bool = False,
     ) -> str:
         if type(packaging) is str:
             packaging = Packaging[packaging]
+
+        if downloads:
+            if packaging != Packaging.archive:
+                raise ValueError("download links require archive packaging")
+            manifest = load_release_manifest()
+            oses = [Os(os)] if os is not None else list(Os)
+            archives = {(v['os'], v['architecture'], v['edition']): v['archive'] for v in manifest['variants']}
+            result = ('<table markdown="1" data-kind="compatibility_matrix" data-downloads="true">'
+                      '<thead markdown="1"><tr markdown="1"><th>Architecture</th>')
+            for target_os in oses:
+                result += f'<th markdown="span">[{target_os.display_name}](#{target_os.value})</th>'
+            result += '</tr></thead><tbody markdown="1">'
+            for arch in Arch:
+                if not any((o.value, arch.value, e.value) in archives for o in oses for e in EditionKind):
+                    continue
+                result += f'<tr markdown="1"><td markdown="span">`{arch.value}`</td>'
+                for target_os in oses:
+                    editions = []
+                    for edition in EditionKind:
+                        archive = archives.get((target_os.value, arch.value, edition.value))
+                        variant = f'{target_os.display_name} / {arch.value} / {edition.value.title()}'
+                        editions.append(distribution_icon(edition, variant, release_asset_url(archive) if archive else None))
+                    result += f'<td markdown="span">{' / '.join(editions)}</td>'
+                result += '</tr>'
+            return result + '</tbody></table>'
 
         result = '<table markdown="1" data-kind="compatibility_matrix"><thead markdown="1">'
         result += f'<tr markdown="1"><th{' rowspan="2"' if packaging is None else ''}>Architecture</th>'
@@ -979,9 +1016,9 @@ def define_env(env: MacrosPlugin):
         file: File = files.get_file_from_path("setup/distribution.md")
         dst = PurePath(path.relpath(file.src_path, path.dirname(env.page.file.src_path)))
         if edition is None:
-            return f"[`{os.name}`]({dst.as_posix()}#{os.name}){{. class=dist-ref}}"
+            return f"[{os.display_name}]({dst.as_posix()}#{os.name}){{. class=dist-ref}}"
         else:
-            return f"[`{os.name}`/`{edition.name}`]({dst.as_posix()}#{os.name}-{edition.name}){{. class=dist-edition-ref}}"
+            return f"[{os.display_name}/{edition.value.title()}]({dst.as_posix()}#{os.name}-{edition.name}){{. class=dist-edition-ref}}"
 
     @env.macro
     def else_ref() -> str:

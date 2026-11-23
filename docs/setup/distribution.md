@@ -1,208 +1,127 @@
 ---
 toc_depth: 4
-description: Which kinds of different distribution are available of Bifröst and how to obtain them.
+description: Download Bifröst packages and select container images or a Helm chart for this release.
 ---
 
-# Distributions
+# Downloads and distributions
 
-Bifröst is available in different distributions.
+**Downloads for <<release_name()>>.** Choose an installation method, then select the package or image for your platform. Updating an existing installation? Read the [upgrade notes](upgrade.md).
 
-On this page you'll find:
+| Installation | Distribution | Instructions |
+| --- | --- | --- |
+| Host service on Linux, macOS or Windows | [Download an archive](#archive) | [Install on host](on-host.md) |
+| Docker or another container runtime | [OCI/Docker images](#image) | [Install in Docker](in-docker.md) |
+| Kubernetes | [Helm chart](#helm) | [Install with Helm](in-kubernetes.md) |
+| GitHub Actions job | [Archives via Setup Bifröst](#archive) | [Use in GitHub Actions](github-actions.md) |
 
-1. [Operating Systems](#os)
-    1. [Linux](#linux)
-    2. [macOS](#darwin)
-    3. [Windows](#windows)
-2. [Packaging](#packaging)
-    1. [Archives](#archive)
-    2. [OCI/Docker Images](#image)
-    3. [Helm Chart](#helm)
-    4. [Compliance Artifacts](#compliance)
+## Downloads {: #packaging}
+
+### Archives {: #archive }
+
+Archives include the executable, README, configuration examples, license texts and `THIRD_PARTY_NOTICES.txt`. For Linux local-account password authentication through PAM, choose [Extended](#linux-extended); choose [Generic](#linux-generic) when you do not need PAM and want no additional shared-library dependencies.
+
+For a GitHub Actions job, [Setup Bifröst](github-actions.md) downloads and verifies the matching archive and adds the executable to `PATH` for you.
+
+<div id="archive-matrix"></div>
+<div id="archive-syntax"></div>
+<div id="archive-examples"></div>
+
+<<compatibility_matrix(packaging="archive", downloads=True)>>
+
+Each cell shows **Generic / Extended** download icons, in that order. An empty circle means that edition is not available. Hover or focus a download icon to identify the package.
+
+Verify the download against [the SHA-256 checksum file](<<release_asset_url("bifroest-checksums.txt")>>), then follow [the host installation guide](on-host.md). All release files, including [SBOMs](#compliance), remain available on [GitHub](<<release_url()>>).
+
+### OCI/Docker Images {: #image}
+
+Use the image matching this documentation version and mount your configuration as described in [the Docker installation guide](in-docker.md).
+
+<div id="image-syntax"></div>
+<div id="image-examples"></div>
+
+```sh title="Generic"
+docker pull <<container_image_uri("generic*")>>
+```
+
+```sh title="Extended"
+docker pull <<container_image_uri("extended*")>>
+```
+
+Full version tags, including alpha/beta suffixes, select a release. Moving tags such as `latest`, `generic`, `extended`, and major/minor aliases refer only to stable releases. See [the container registry](<<container_packages_url()>>) for all tags and [the compliance table](#compliance) for immutable image references.
+
+#### Supported images {: #image-matrix }
+
+<<compatibility_matrix(packaging="image")>>
+
+Cells show Generic/Extended support; an empty circle means that edition is not distributed for the platform.
+
+### Helm Chart {: #helm}
+
+Use `oci://ghcr.io/engity-com/bifroest` with the full release version, without the leading `v`:
+
+```sh
+helm pull oci://ghcr.io/engity-com/bifroest --version <<release_name().removeprefix("v") if release_name() != "latest" else "<version>">>
+```
+
+The chart version matches the application version, including alpha/beta suffixes. See [Installing in Kubernetes with Helm](in-kubernetes.md) for prerequisites, configuration and a first login. The packaged chart is also available on [the release page](<<release_url()>>).
+
+## Platforms and editions {: #os}
 
 <div id="compatibility"></div>
+
 <<compatibility_matrix()>>
-> Cells express support in format of `<generic>`/`<extended>`.
 
-## Operating Systems {: #os}
-
-Bifröst is currently available for [Linux](#linux), [macOS](#darwin) and [Windows](#windows).
+Cells show Generic/Extended support for binaries and images. An empty circle means that edition is not distributed for the platform.
 
 ### Linux {: #linux}
 
 #### Generic {: #linux-generic}
 
-The generic Linux distribution of Bifröst requires kernel support for `PR_SET_CHILD_SUBREAPER`, which is available since Linux 3.4. The effective minimum kernel can be higher for newer architectures. The binary does not require other shared libraries to be installed, regardless of whether the distribution is Ubuntu, Alpine, RedHat, or another variant. On the other hand, it lacks some features of the [extended version](#linux-extended).
+The generic binary requires kernel support for `PR_SET_CHILD_SUBREAPER`, available since Linux 3.4. The effective minimum kernel can be higher for newer architectures. It requires no additional shared libraries, but does not support PAM authentication.
 
 #### Extended {: #linux-extended}
 
-The extended Linux distribution of Bifröst currently only runs on Debian 12+, Ubuntu 22.04+ and Fedora 39+.
+The extended binary supports [PAM authentication](../reference/authorization/local.md#property-pamService) and runs on Debian 12+, Ubuntu 22.04+ and Fedora 39+ with these dependencies:
 
-It does provide the following features:
+| Dependency | Shared library | Version |
+| --- | --- | --- |
+| [GNU C Library](https://www.gnu.org/software/libc/) | `libc.so.6` | 2.34+ |
+| [Linux PAM](https://github.com/linux-pam/linux-pam) | `libpam.so.0` | 1.4+ |
 
-1. [PAM authentication](../reference/authorization/local.md#property-pamService) via [Local authorization](../reference/authorization/local.md)
-
-### Dependencies
-
-| Name | Shared-Lib | Version |
-| - | - | - |
-| [GNU C Library (glibc)](https://www.gnu.org/software/libc/) | `libc.so.6` | 2.34+ |
-| [Linux PAM (Pluggable Authentication Modules for Linux)](https://github.com/linux-pam/linux-pam) | `libpam.so.0` | 1.4+ |
-
-##### Installation
-
-* **Debian/Ubuntu**: Usually installed by default, in some cases the following command might be necessary:
-   ```shell
-   sudo apt install libpam0g -y
-   ```
-* **RedHat/Fedora**: Already installed by default.
+PAM is normally installed already. If it is missing on Debian/Ubuntu, install it with `sudo apt install libpam0g`.
 
 ### macOS {: #darwin}
 
 #### Generic {: #darwin-generic}
 
-The generic macOS distribution of Bifröst contains all supported features for macOS 13 and later. It does not have any requirements on which other shared libraries need to be installed.
+Requires macOS 13 or later, with no additional shared-library dependencies.
 
-#### Extended {: #darwin-extended}
-Not available.
+<div id="darwin-extended"></div>
 
 ### Windows {: #windows}
 
 #### Generic {: #windows-generic}
-The generic Windows distribution of Bifröst contains all supported features for Windows 10, Windows Server 2016, and later versions. It does not have any requirements on which other shared libraries need to be installed.
 
-#### Extended {: #windows-extended}
-Not available.
+Requires Windows 10, Windows Server 2016, or later, with no additional shared-library dependencies.
 
-## Packaging
+<div id="windows-extended"></div>
 
-Bifröst is available as [archives containing the binaries](#archive), [OCI/Docker images](#image), or a [Helm chart](#helm) for Kubernetes.
+## Checksums, licenses and SBOMs {: #compliance}
 
-### Archives {: #archive }
+Every archive and container image includes `LICENSE`, the applicable license texts in `LICENSES/`, and its own `THIRD_PARTY_NOTICES.txt`, including notices for the [browser components](../legal/license.md#embedded-browser-components). In archives these files are at the top level; Linux images store them in `/usr/share/licenses/bifroest/`, Windows images in `C:\Program Files\Engity\Bifroest\`.
 
-Archives contain for every supported operating systems and architecture the binary of Bifröst itself with a basic README, licence information and demo material. It can be simply downloaded, extracted and run.
+Separate SPDX and CycloneDX SBOMs describe each downloadable archive and each platform image. Archive and image SBOMs remain distinct because their contents and subject digests can differ.
 
-See the [release page](<< release_url() >>) for all available downloads.
+The [release manifest](<<release_asset_url("bifroest-release-manifest.json")>>) relates downloads and images to their platform, edition, media type and SHA-256 digest. Use [the checksum file](<<release_asset_url("bifroest-checksums.txt")>>) to verify downloadable release assets.
 
-For a GitHub Actions job, [Setup Bifröst](github-actions.md) downloads and
-verifies the matching archive and adds the executable to `PATH` for you.
+Each entry shows **Generic / Extended**, in that order. An empty circle means the artifact is not available. Hover or focus an icon to identify the platform, edition and artifact.
 
-#### Matrix {: #archive-matrix }
+### Archive files {: #archive-compliance}
 
-<<compatibility_matrix(packaging="archive")>>
+<<compliance_matrix(packaging="archive")>>
 
-#### URL Syntax {: #archive-syntax }
+### OCI images {: #image-compliance}
 
-* Linux:
-    ```plain
-    <<release_asset_url("bifroest-linux-<arch>-<edition>.tgz")>>
-    ```
-* macOS:
-    ```plain
-    <<release_asset_url("bifroest-darwin-<arch>-<edition>.tgz")>>
-    ```
-* Windows:
-    ```plain
-    <<release_asset_url("bifroest-windows-<arch>-<edition>.zip")>>
-    ```
+<<compliance_matrix(packaging="image")>>
 
-##### Examples {: #archive-examples }
-
-* Linux Extended on AMD64:
-    ```shell
-    curl -sSLf <<release_asset_url("bifroest-linux-amd64-extended.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
-    ```
-
-* macOS Generic on ARM64:
-    ```shell
-    sudo install -d /usr/local/bin
-    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
-    ```
-
-* macOS Generic on AMD64:
-    ```shell
-    sudo install -d /usr/local/bin
-    curl -sSLf <<release_asset_url("bifroest-darwin-amd64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
-    ```
-
-* Windows Generic on AMD64:
-    ```{.powershell title="Run elevated"}
-    mkdir -Force 'C:\Program Files\Engity\Bifroest'
-    curl -sSLf -o "${Env:Temp}\bifroest.zip" <<release_asset_url("bifroest-windows-amd64-generic.zip")>>
-    Expand-Archive "${Env:Temp}\bifroest.zip" -DestinationPath 'C:\Program Files\Engity\Bifroest'
-    ```
-
-### OCI/Docker Images {: #image}
-
-Bifröst is also available in OCI/Docker images. You just need to mount a valid configuration into the container.
-
-See the [container registry page](<< container_packages_url() >>) for all available tags.
-
-Alpha and beta releases publish only their full version tags (for example, `1.0.0-beta1`, `generic-1.0.0-beta1` and `extended-1.0.0-beta1`). Moving tags such as `latest`, `generic`, `extended`, and major/minor aliases refer only to stable releases. Use the full version tag when installing a prerelease.
-
-#### Matrix {: #image-matrix }
-
-<<compatibility_matrix(packaging="image")>>
-
-#### TAG Syntax {: #image-syntax }
-
-* Generic:
-    ```plain
-    <<container_image_uri("generic-<major>.<minor>.<patch>")>>
-    <<container_image_uri("generic-<major>.<minor>")>>
-    <<container_image_uri("generic-<major>")>>
-    <<container_image_uri("generic")>>
-    <<container_image_uri("<major>.<minor>.<patch>")>>
-    <<container_image_uri("<major>.<minor>")>>
-    <<container_image_uri("<major>")>>
-    <<container_image_uri("latest")>>
-    ```
-
-* Extended:
-    ```plain
-    <<container_image_uri("extended-<major>.<minor>.<patch>")>>
-    <<container_image_uri("extended-<major>.<minor>")>>
-    <<container_image_uri("extended-<major>")>>
-    <<container_image_uri("extended")>>
-    ```
-
-##### Examples {: #image-examples }
-
-On a release-specific documentation page, the first image below matches that release. The other tags select moving stable releases and do not select alpha or beta versions.
-
-```shell
-<<container_image_uri("*")>>
-<<container_image_uri("latest")>>
-<<container_image_uri("extended")>>
-```
-
-### Helm Chart {: #helm}
-
-Use `oci://ghcr.io/engity-com/bifroest` with a full release version, without the leading `v`. The chart version matches the application version, including alpha/beta suffixes. See [Installing in Kubernetes with Helm](in-kubernetes.md) for prerequisites, configuration and a first login.
-
-The chart is also available as `bifroest-<version>.tgz` on the [release page](<<release_url()>>). Verify downloaded archives with the release's [checksum file](<<release_asset_url("bifroest-checksums.txt")>>).
-
-### Compliance Artifacts {: #compliance}
-
-Every release provides platform- and edition-specific third-party notices and
-SBOMs alongside its archives. Archive SBOMs describe the downloadable archive;
-OCI SBOMs describe the indicated platform image within the multi-platform OCI
-index. They are intentionally separate because their package inventories and
-subject digests can differ.
-
-The generic `darwin/amd64` and `darwin/arm64` release variants each
-include their architecture-specific archive, `.third-party-notices.txt` file,
-and archive `.spdx.json` and `.cdx.json` SBOMs. They have no OCI images or OCI
-SBOMs.
-
-The [release manifest](<<release_asset_url("bifroest-release-manifest.json")>>)
-relates every artifact to its platform, edition, media type and SHA-256 digest.
-Use [the checksum file](<<release_asset_url("bifroest-checksums.txt")>>) to verify
-all downloadable release assets.
-
-The included license notices also cover the [browser components](../legal/license.md#embedded-browser-components).
-
-<<compliance_matrix()>>
-
-OCI entries link to the container package. The abbreviated digest identifies
-the immutable multi-platform index; the complete index and platform references
-are available in the release manifest.
+OCI reference buttons copy the platform-specific image reference, including its immutable digest, when available. The container package opens if copying is unavailable. Full platform and multi-platform index references are also available in the release manifest.

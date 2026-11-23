@@ -40,12 +40,7 @@ rejected.
 
 ## Release artifacts
 
-Release archives and container images include the project license, applicable
-license texts and an artifact-specific `THIRD_PARTY_NOTICES.txt`. Companion SPDX
-2.3 and CycloneDX 1.6 SBOMs identify the components found in each archive or
-image. The release manifest relates these files to their platform, edition and
-digest; see the [compliance artifacts](../setup/distribution.md#compliance) for
-the current release.
+Release archives and container images include the project license, applicable license texts and an artifact-specific `THIRD_PARTY_NOTICES.txt`. Companion SPDX 2.3 and CycloneDX 1.6 SBOMs identify the components found in each archive or image. The release manifest relates archives, images and SBOM downloads to their platform, edition and digest; see the [compliance artifacts](../setup/distribution.md#compliance) for the current release.
 
 The Go dependency policy applies to modules linked into the Bifröst executable.
 Container image SBOMs additionally inventory packages inherited from the pinned

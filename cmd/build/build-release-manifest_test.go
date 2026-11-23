@@ -82,17 +82,20 @@ func TestReleaseManifestIsDeterministicAndRelatesComplianceArtifacts(t *testing.
 
 	var manifest releaseManifest
 	require.NoError(t, json.Unmarshal(first, &manifest))
-	require.Equal(t, 1, manifest.SchemaVersion)
+	require.Equal(t, 2, manifest.SchemaVersion)
 	require.Equal(t, "owner/repository", manifest.Project)
 	require.Equal(t, "v1.2.3", manifest.Version)
 	require.Equal(t, "revision", manifest.Revision)
-	require.Len(t, manifest.Assets, 7)
+	require.Len(t, manifest.Assets, 6)
+	for _, asset := range manifest.Assets {
+		require.NotEqual(t, notice.name(), asset.Name)
+	}
+	require.NotContains(t, string(first), `"notice"`)
 	require.Equal(t, chart.name(), manifest.Chart.Asset)
 	require.True(t, slices.IsSortedFunc(manifest.Assets, func(a, b releaseManifestAsset) int { return strings.Compare(a.Name, b.Name) }))
 	require.Len(t, manifest.Variants, 1)
 	variant := manifest.Variants[0]
 	require.Equal(t, archive.name(), variant.Archive)
-	require.Equal(t, notice.name(), variant.Notice)
 	require.Equal(t, archiveSpdx.name(), variant.Sboms.Archive.Spdx)
 	require.Equal(t, archiveCycloneDx.name(), variant.Sboms.Archive.CycloneDx)
 	require.Equal(t, imageSpdx.name(), variant.Sboms.Image.Spdx)
@@ -126,12 +129,17 @@ func TestReleaseManifestRejectsDuplicateAndIncompleteVariantArtifacts(t *testing
 	duplicateArchive := testReleaseManifestFile(t, buildContext, platform, buildArtifactTypeArchive, "bifroest-linux-amd64-generic.zip", "duplicate", nil)
 	_, err = build.releaseManifest.create(t.Context(), buildArtifacts{archive, duplicateArchive}, true)
 	require.ErrorContains(t, err, "duplicate archive")
+	_, err = build.releaseManifest.create(t.Context(), buildArtifacts{archive}, false)
+	require.ErrorContains(t, err, "has no third-party notice")
+	_, err = build.releaseManifest.create(t.Context(), buildArtifacts{archive, notice, notice}, false)
+	require.ErrorContains(t, err, "duplicate third-party notice")
 }
 
 func TestComplianceArtifactsArePublishable(t *testing.T) {
-	for _, artifactType := range []buildArtifactType{buildArtifactTypeNotice, buildArtifactTypeManifest} {
+	for _, artifactType := range []buildArtifactType{buildArtifactTypeSbom, buildArtifactTypeManifest, buildArtifactTypeDigest} {
 		require.True(t, artifactType.canBePublished())
 	}
+	require.False(t, buildArtifactTypeNotice.canBePublished())
 	require.Equal(t, "text/plain; charset=utf-8", (&buildArtifact{t: buildArtifactTypeNotice, filepath: "notice.txt"}).mediaType())
 	require.Equal(t, "application/json", (&buildArtifact{t: buildArtifactTypeManifest, filepath: "manifest.json"}).mediaType())
 }
