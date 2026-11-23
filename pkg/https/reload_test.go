@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -104,6 +105,16 @@ func TestTLSFileReloadFollowsProjectedSecretAndCertbotSymlinkRotations(t *testin
 	defer manager.Close()
 	require.NoError(t, manager.Prepare(t.Context()))
 	require.NoError(t, os.Symlink("generation-b", filepath.Join(directory, "..data-next")))
+	if runtime.GOOS == "windows" {
+		// Windows cannot replace an existing directory symlink with Rename.
+		// Exercise its unlink/rename rotation, including the missing-link gap;
+		// Unix still checks the atomic projected-Secret directory-link swap.
+		require.NoError(t, os.Remove(filepath.Join(directory, "..data")))
+		require.Error(t, manager.ReloadFiles(t.Context()))
+		retained, err := manager.Config().GetConfigForClient(testClientHello("app.example.org"))
+		require.NoError(t, err)
+		require.Equal(t, first.certificate.Certificate, retained.Certificates[0].Certificate)
+	}
 	require.NoError(t, os.Rename(filepath.Join(directory, "..data-next"), filepath.Join(directory, "..data")))
 	require.NoError(t, manager.ReloadFiles(t.Context()))
 	selected, err := manager.Config().GetConfigForClient(testClientHello("app.example.org"))
