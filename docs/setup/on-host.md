@@ -84,4 +84,4 @@ If login fails, check the logs in `/Library/Logs/Engity/Bifroest`. To revert, ru
 ## Next steps
 
 * Adjust [flows](../reference/flow.md), [local authorization](../reference/authorization/local.md) and [session environments](../reference/environment/index.md) for your access policy.
-* Configure [Docker or Kubernetes](in-docker.md) only if you need those environments.
+* Configure [Docker](../reference/environment/docker.md) or [Kubernetes](../reference/environment/kubernetes.md) only if you need those session environments.

@@ -76,6 +76,8 @@ This guide queries metrics from an installed, configured Bifröst instance throu
 
 ### Configure Kubernetes probes
 
+The [Helm chart](../setup/in-kubernetes.md) already configures these probes on a private Pod port. Use the next example to add Prometheus scraping; do not add a public monitoring Service.
+
 1. In the Bifröst Pod's existing configuration, bind monitoring to the Pod network:
 
     ```yaml title="Bifröst configuration"
@@ -117,6 +119,62 @@ This guide queries metrics from an installed, configured Bifröst instance throu
     This allows roughly five minutes for startup before Kubernetes restarts the container. Adjust the budget to your deployment. Startup gates the other probes; readiness failures remove the Pod from normal Service traffic without themselves causing a restart. A slow IdP or failed remote delivery does not deliberately fail liveness. With monitoring TLS enabled, set `scheme: HTTPS` on each HTTP probe; Kubernetes HTTPS probes do not validate the server certificate.
 
 3. Roll out the updated Pod specification and inspect its readiness with `kubectl get pods`. Configure your existing Prometheus discovery to scrape each Pod's `monitoring` port at `/metrics`, including bearer authorization if enabled.
+
+### Scrape the Helm deployment
+
+1. Use an existing Prometheus installation with permission to discover Pods in the `bifroest` namespace. Add this file to your [Helm installation](../setup/in-kubernetes.md), replacing both selectors with those of your Prometheus Pods:
+
+    ```yaml title="monitoring-values.yaml"
+    monitoring:
+      prometheusAnnotations: true
+    networkPolicy:
+      monitoringPeers:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+    ```
+
+    Keep both selectors in one peer entry. Upgrade with your existing values and the same full release version:
+
+    ```sh
+    helm upgrade bifroest oci://ghcr.io/engity-com/bifroest --version <version> --namespace bifroest -f values.yaml -f monitoring-values.yaml --wait --timeout 5m
+    ```
+
+    Retain any other values files, such as your ingress settings, in that command.
+
+2. If Prometheus already honors Pod scrape annotations, verify that it selects the named `monitoring` port exactly once per Pod. Otherwise, add this job to its configuration and reload Prometheus:
+
+    ```yaml title="Prometheus scrape job"
+    scrape_configs:
+      - job_name: bifroest
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [bifroest]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            action: keep
+            regex: bifroest
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            action: keep
+            regex: monitoring
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scheme]
+            target_label: __scheme__
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            target_label: __metrics_path__
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+    ```
+
+    Pod discovery supplies the address of the named port. The annotations supply the scrape switch, scheme, path and port; they do not install or configure Prometheus. No ServiceMonitor or PodMonitor is created. For protected metrics, add [bearer credentials](#use-a-bearer-token) and [TLS trust](../reference/monitoring.md#tls) to the job as required by your configuration.
+
+3. Check Prometheus targets and query `up{job="bifroest"}` and `bifroest_ready`. Each ready Bifröst Pod should appear separately with both values at `1`; do not scrape through the load-balanced SSH or HTTP Service.
 
 ### Add operational alerts
 

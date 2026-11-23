@@ -9,7 +9,7 @@ Provides browser terminals, management and SSH tunnels over HTTP/TLS, plus a log
 
 This connection type is optional and disabled by default; see [Browser access](../../../guides/browser-access.md) for a setup example.
 
-Workload links use browser fragments, such as `/#Shell` or `/#alice@Shell`; see [access links and hidden Slugs](../../../guides/browser-access.md#access-links-and-hidden-slugs). Slugs are sent in API request bodies, never in API paths or query strings. Public discovery uses `POST /api/v1/discovery` with `{"slug":"Shell"}`. Only `/` serves the workspace document; workload and management targets remain in its fragment.
+Workload links use browser fragments, such as `/#Shell` or `/#alice@Shell`; see [access links and hidden Slugs](../../../guides/browser-access.md#access-links-and-hidden-slugs). Paths such as `/Shell` are not access links.
 
 ## Configuration
 
@@ -154,20 +154,20 @@ Each entry in `http.tls.certificates` has these properties.
 <<property("certificateFile", "File Path", "../../data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
 Local PEM certificate-chain file.
 
-The default value is different, depending on the platform Bifröst runs on:
+##### Default settings
 
-* Linux: `/etc/engity/bifroest/tls/tls.crt`
-* macOS: `/Library/Application Support/Engity/Bifroest/tls/tls.crt`
-* Windows: `C:\ProgramData\Engity\Bifroest\tls\tls.crt`
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| `/etc/engity/bifroest/tls/tls.crt` | `/Library/Application Support/Engity/Bifroest/tls/tls.crt` | `C:\ProgramData\Engity\Bifroest\tls\tls.crt` |
 
 <<property("privateKeyFile", "File Path", "../../data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
 Local PEM private-key file, separate from SSH and audit keys.
 
-The default value is different, depending on the platform Bifröst runs on:
+##### Default settings
 
-* Linux: `/etc/engity/bifroest/tls/tls.key`
-* macOS: `/Library/Application Support/Engity/Bifroest/tls/tls.key`
-* Windows: `C:\ProgramData\Engity\Bifroest\tls\tls.key`
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| `/etc/engity/bifroest/tls/tls.key` | `/Library/Application Support/Engity/Bifroest/tls/tls.key` | `C:\ProgramData\Engity\Bifroest\tls\tls.key` |
 
 Do not put the key itself in the configuration. Keep the key privately owned by the service account, with owner-only permissions such as `0400` or `0600` on Unix, and separate from public assets and mutable application storage.
 
@@ -276,6 +276,53 @@ http:
 ```
 
 Restrict that backend port to the ingress and apply the [header and rewrite contract](#upstream-forwarded-headers). Set `defaultPort` as well if the public HTTPS port is not `443`.
+
+### Kubernetes ingress with Helm
+
+Start with a working [Helm installation](../../../setup/in-kubernetes.md). This example uses an existing Traefik controller and serves Bifröst at `https://gateway.example.org/`. Point that hostname at the controller and provide a valid TLS Secret named `bifroest-public-tls` in Bifröst's namespace. The chart does not install an ingress controller or a certificate manager.
+
+Configure the controller to satisfy the [forwarded-header contract](#upstream-forwarded-headers) before exposing the backend. Replace the trusted source range and both selectors below with those of your actual controller. Keep namespace and Pod selectors in the **same** peer entry so both must match. Review existing flows: enabling HTTP makes them HTTP-eligible by default; set `http.enabled: false` on flows that must stay SSH-only.
+
+```yaml title="ingress-values.yaml"
+configuration:
+  http:
+    enabled: true
+    addresses: [":8080"]
+    domains: [gateway.example.org]
+    tls:
+      enabled: false
+    upstream:
+      mode: reverseProxy
+      trustedPeers: [10.42.0.0/16]
+service:
+  http:
+    enabled: true
+    port: 80
+    targetPort: 8080
+ingress:
+  enabled: true
+  className: traefik
+  host: gateway.example.org
+  tlsSecretName: bifroest-public-tls
+networkPolicy:
+  httpPeers:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+```
+
+Apply this additional values file with the same full release version and the `values.yaml` from your installation. Retain any other values files, such as your monitoring settings:
+
+```sh
+helm upgrade bifroest oci://ghcr.io/engity-com/bifroest --version <version> --namespace bifroest -f values.yaml -f ingress-values.yaml --wait --timeout 5m
+```
+
+Check the public certificate and a permitted login: with the Helm guide's gateway flow, open `https://gateway.example.org/#gateway@Gateway` and sign in using the client's SSH key, or use [SSH over HTTPS](../../../guides/ssh-over-https.md). Also test rejection of access to the backend from unrelated Pods. This configuration explicitly disables backend TLS; the ingress-to-Pod traffic is unencrypted. Keep the HTTP Service private and NetworkPolicy enforced.
+
+For a subpath, also set `ingress.path` and `configuration.http.upstream.defaultPrefix` to the same path, for example `/bifroest`. Configure prefix stripping and `X-Forwarded-Prefix` in your controller's middleware and reference it through `ingress.annotations`; the Ingress resource alone does not configure these behaviors. Update OIDC [callback URLs](../../authorization/oidc/authorization-code.md#property-pathPrefix) to include the public path. Before adding replicas, plan [routing across SSH and HTTPS](#load-balancers-and-instance-routing).
 
 ## Compatibility
 

@@ -16,7 +16,8 @@ On this page you'll find:
 2. [Packaging](#packaging)
     1. [Archives](#archive)
     2. [OCI/Docker Images](#image)
-    3. [Compliance Artifacts](#compliance)
+    3. [Helm Chart](#helm)
+    4. [Compliance Artifacts](#compliance)
 
 <div id="compatibility"></div>
 <<compatibility_matrix()>>
@@ -74,7 +75,7 @@ Not available.
 
 ## Packaging
 
-Bifröst can be either obtained as [Archive which contains the binaries](#archive) or as [OCI/Docker images](#image).
+Bifröst is available as [archives containing the binaries](#archive), [OCI/Docker images](#image), or a [Helm chart](#helm) for Kubernetes.
 
 ### Archives {: #archive }
 
@@ -170,6 +171,12 @@ On a release-specific documentation page, the first image below matches that rel
 <<container_image_uri("latest")>>
 <<container_image_uri("extended")>>
 ```
+
+### Helm Chart {: #helm}
+
+Use `oci://ghcr.io/engity-com/bifroest` with a full release version, without the leading `v`. The chart version matches the application version, including alpha/beta suffixes. See [Installing in Kubernetes with Helm](in-kubernetes.md) for prerequisites, configuration and a first login.
+
+The chart is also available as `bifroest-<version>.tgz` on the [release page](<<release_url()>>). Verify downloaded archives with the release's [checksum file](<<release_asset_url("bifroest-checksums.txt")>>).
 
 ### Compliance Artifacts {: #compliance}
 

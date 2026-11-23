@@ -15,7 +15,7 @@ Bifröst is a configurable SSH server and gateway for teams managing access to h
 
 ## Get started
 
-[Install Bifröst on Linux, Windows or macOS](docs/setup/on-host.md) as a host service, or choose a [container installation](https://bifroest.engity.org/setup/in-docker/). Then follow a task guide:
+[Install Bifröst on Linux, Windows or macOS](docs/setup/on-host.md) as a host service, or choose [Docker](https://bifroest.engity.org/setup/in-docker/) or [Kubernetes with Helm](docs/setup/in-kubernetes.md). Then follow a task guide:
 
 * [OIDC login with a standard SSH client](docs/guides/oidc.md)
 * [SSH gateway to an OpenSSH server](docs/guides/ssh-gateway.md)

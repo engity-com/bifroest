@@ -15,6 +15,8 @@ Bifröst was created for teams with [time-bound off-boarding requirements](useca
 
 **Install it as a host service:** the [host guide](setup/on-host.md) starts Bifröst on port 22 with the privileges required to open a real shell as an existing local account. Linux uses systemd, Windows uses a Windows service, and macOS uses a LaunchDaemon.
 
+Already operate Kubernetes? The [Helm guide](setup/in-kubernetes.md) installs Bifröst in your cluster and connects it to an existing SSH target.
+
 ## Choose your task
 
 * [Connect to a private OpenSSH server](guides/ssh-gateway.md) through an SSH gateway.

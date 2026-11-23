@@ -24,6 +24,7 @@ import (
 
 	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/internal/build/browser"
+	"github.com/engity-com/bifroest/internal/build/charts"
 	"github.com/engity-com/bifroest/internal/build/images"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -293,6 +294,13 @@ func (this *buildImage) createdMerged(ctx context.Context, e sys.Edition, as bui
 			buildContext: refA.buildContext,
 			t:            buildArtifactTypeImagePlatform,
 			ociIndex:     mutate.AppendManifests(manifest, adds...),
+		}
+		for chart := range as.onlyOfType(buildArtifactTypeChart) {
+			combined, err := charts.Combine(result.ociIndex, chart.ociImage)
+			if err != nil {
+				return nil, fmt.Errorf("cannot combine chart and %s images: %w", e, err)
+			}
+			result.ociIndex = combined
 		}
 		defer common.IgnoreCloseErrorIfFalse(&success, result)
 	}

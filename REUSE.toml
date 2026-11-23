@@ -7,6 +7,12 @@ SPDX-FileCopyrightText = "2024-2026 Engity GmbH"
 SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
+path = "internal/build/charts/ignore.go"
+precedence = "override"
+SPDX-FileCopyrightText = ["The Helm Authors", "2026 Engity GmbH"]
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
 path = ["internal/fmtsort/**", "internal/text/template/**"]
 precedence = "override"
 SPDX-FileCopyrightText = "2009 The Go Authors"

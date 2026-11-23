@@ -17,6 +17,6 @@ Choose the task you want to accomplish:
 * [Verify encrypted evidence on a workstation](evidence.md): configure encrypted audit and Recording data, pin producer trust and keep decryption local.
 * [Monitor a Bifröst instance](monitoring.md): scrape Prometheus metrics and configure Kubernetes startup, readiness and liveness probes.
 
-Install Bifröst first using the [host installation guide](../setup/on-host.md), and use the guide from the **same release** as your binary. Each example requires you to provide your own identities and permissions; none replaces the [configuration reference](../reference/configuration.md).
+Choose a [host, Docker or Kubernetes installation](../setup/index.md) first, and use documentation from the **same release** as your installation. Each guide states its deployment prerequisites and requires you to provide your own identities and permissions; none replaces the [configuration reference](../reference/configuration.md).
 
 Not sure which setup fits? See [Choosing Bifröst](../choosing-bifroest.md) and [Security and trust](../security.md).

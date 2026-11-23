@@ -1,0 +1,133 @@
+replicaCount: 1
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/engity-com/bifroest
+  # Empty uses the chart's appVersion. Existing edition tags remain usable.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Regular Bifröst configuration as an object or a complete YAML string.
+# Alternatively: "secret:name" or "configMap:name"; the referenced object must
+# contain configuration.yaml. No Helm template evaluation is performed.
+# The default flow denies every login. Replace it with your own flow.
+configuration:
+  ssh:
+    addresses: [":2222"]
+    keys:
+      hostKeys: ["/var/lib/engity/bifroest/ssh/host"]
+  session:
+    type: fs
+    storage: /var/lib/engity/bifroest/sessions
+  monitoring:
+    enabled: true
+    addresses: [":9090"]
+    allowedRemoteHosts: []
+  flows:
+    - name: default
+      authorization:
+        type: simple
+        entries: []
+      environment:
+        type: dummy
+
+persistence:
+  size: 10Gi
+  # Empty uses the default StorageClass; "-" requests no StorageClass.
+  storageClass: ""
+  accessModes: [ReadWriteOnce]
+  annotations: {}
+
+service:
+  ssh:
+    enabled: true
+    type: ClusterIP
+    port: 22
+    targetPort: 2222
+    annotations: {}
+    sessionAffinity: None
+    loadBalancerSourceRanges: []
+  http:
+    enabled: false
+    type: ClusterIP
+    port: 443
+    targetPort: 8443
+    annotations: {}
+    sessionAffinity: None
+    loadBalancerSourceRanges: []
+
+monitoring:
+  # Private Pod port only, never exposed by a Service or Ingress.
+  port: 9090
+  scheme: HTTP
+  # Requires a Prometheus Pod scrape job that honors these annotations.
+  prometheusAnnotations: false
+
+probes:
+  startup:
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 60
+  readiness:
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  path: /
+  # Configure prefix stripping, forwarded-header handling and affinity on
+  # your controller. Ingress itself does not standardize these settings.
+  annotations: {}
+  tlsSecretName: ""
+
+networkPolicy:
+  enabled: true
+  # Native SSH is public if its Service is exposed. Empty peer lists deny.
+  sshPeers:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    - ipBlock:
+        cidr: "::/0"
+  # Combine namespaceSelector and podSelector in the SAME peer entry.
+  httpPeers: []
+  monitoringPeers: []
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+terminationGracePeriodSeconds: 60
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+env: []
+envFrom: []
+# Mount existing Secrets as directories (not subPath) for TLS rotation.
+extraVolumes: []
+extraVolumeMounts: []

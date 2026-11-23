@@ -6,7 +6,7 @@ toc_depth: 2
 # Installing in Docker
 
 !!! tip
-     This guide shows how to install Bifröst in Docker/Container. If you like to use Bifröst directly on your Host, see its documentation [here](on-host.md).
+     This guide runs Bifröst in Docker. For other deployments, see [on host](on-host.md) or [in Kubernetes with Helm](in-kubernetes.md).
 
 ## Before we start
 

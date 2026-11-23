@@ -16,6 +16,8 @@ This location can be changed by the `--configuration=<path>` flag when executing
 bifroest run --configuration=/my/config.yaml
 ```
 
+With the [Helm chart](../setup/in-kubernetes.md#configuration-sources), place these same settings under the `configuration` value, load a complete YAML file, or reference an existing Secret or ConfigMap. Chart settings such as `replicaCount` and `service` are separate from the Bifröst configuration.
+
 ## Properties
 
 <<property("ssh", "SSH", "connection/ssh.md")>>
@@ -130,11 +132,6 @@ If defined this message will be displayed in the log files of Bifröst on startu
           http:
             includedSlug: '^docker$'
     ```
-    Configure the [HTTP endpoint](connection/http/index.md) separately to publish
-    `/docker`. Without an `auditlogs.default` entry or an explicit flow selection,
-    this example does not log audit events or record sessions.
+    Configure the [HTTP endpoint](connection/http/index.md) separately, then open `https://bifroest.example.org/#docker`. Without an `auditlogs.default` entry or an explicit flow selection, this example does not log audit events or record sessions.
 
-    To also accept `/bla-bla` as an alias, use
-    `includedSlug: '^(docker|bla-bla)$'` while keeping `discoverAsSlug: docker`.
-    A tab opened through `/bla-bla` keeps that URL scope when selected; it is not
-    rewritten to `/docker`.
+    To also accept `bla-bla` as a Slug alias, use `includedSlug: '^(docker|bla-bla)$'` while keeping `discoverAsSlug: docker`. Open `/#bla-bla` to use that alias; its tab keeps the corresponding access link.

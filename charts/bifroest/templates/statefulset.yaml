@@ -1,0 +1,145 @@
+{{- include "bifroest.validate" . -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "bifroest.fullname" . }}
+  labels:
+    {{- include "bifroest.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "bifroest.fullname" . }}-headless
+  replicas: {{ .Values.replicaCount }}
+  podManagementPolicy: Parallel
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "bifroest.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bifroest.selectorLabels" . | nindent 8 }}
+      {{- $annotations := deepCopy .Values.podAnnotations }}
+      {{- if eq (include "bifroest.configurationSource" .) "inline" }}
+        {{- $_ := set $annotations "checksum/configuration" (include "bifroest.configuration" . | sha256sum) }}
+      {{- end }}
+      {{- if .Values.monitoring.prometheusAnnotations }}
+        {{- $_ := set $annotations "prometheus.io/scrape" "true" }}
+        {{- $_ := set $annotations "prometheus.io/path" "/metrics" }}
+        {{- $_ := set $annotations "prometheus.io/port" (toString .Values.monitoring.port) }}
+        {{- $_ := set $annotations "prometheus.io/scheme" (lower .Values.monitoring.scheme) }}
+      {{- end }}
+      annotations:
+        {{- toYaml $annotations | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml (merge (dict "kubernetes.io/os" "linux") .Values.nodeSelector) | nindent 8 }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bifroest
+          image: {{ include "bifroest.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [run, --configuration=/etc/engity/bifroest/configuration.yaml]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: monitoring
+              containerPort: {{ .Values.monitoring.port }}
+            {{- if .Values.service.ssh.enabled }}
+            - name: ssh
+              containerPort: {{ .Values.service.ssh.targetPort }}
+            {{- end }}
+            {{- if .Values.service.http.enabled }}
+            - name: http
+              containerPort: {{ .Values.service.http.targetPort }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: monitoring
+              scheme: {{ .Values.monitoring.scheme }}
+            {{- toYaml .Values.probes.startup | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: monitoring
+              scheme: {{ .Values.monitoring.scheme }}
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: monitoring
+              scheme: {{ .Values.monitoring.scheme }}
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: configuration
+              mountPath: /etc/engity/bifroest
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/engity/bifroest
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: configuration
+          {{- if eq (include "bifroest.configurationSource" .) "configMap" }}
+          configMap:
+            name: {{ include "bifroest.configurationName" . | quote }}
+          {{- else }}
+          secret:
+            secretName: {{ include "bifroest.configurationName" . | quote }}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- if eq .Values.persistence.storageClass "-" }}
+        storageClassName: ""
+        {{- else if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }}

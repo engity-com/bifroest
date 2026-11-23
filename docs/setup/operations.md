@@ -4,7 +4,7 @@ description: Operate Bifröst behind a load balancer or reverse proxy, manage in
 
 # Operating model and availability
 
-* **Who operates it?** You run the [host service](on-host.md) or [container](in-docker.md), supply configuration and keys, and maintain the identity provider and workload dependencies. [Management](../reference/environment/management.md) acts on that instance; it does not provide fleet-wide or tenant-scoped administration.
+* **Who operates it?** You run the [host service](on-host.md), [container](in-docker.md) or [Helm deployment](in-kubernetes.md), supply configuration and keys, and maintain the identity provider and workload dependencies. [Management](../reference/environment/management.md) acts on that instance; it does not provide fleet-wide or tenant-scoped administration.
 * **What survives a restart?** With durable storage, [sessions and saved-access registrations](../reference/session/fs.md) can survive. Preserve keys and complete evidence repositories too; use the [checklist below](#restart-and-recovery-checklist).
 * **What happens if an instance fails?** Reconnect to the same Bifröst endpoint and sign in on a healthy instance to continue working with the workload data available there. **Bifröst sessions are not shared between instances**; reconnecting starts a new execution, not the previous shell.[^instances]
 * **Is HA built in?** Not built in, but you can provide HA access by running independent instances behind a TCP load balancer such as [HAProxy](https://www.haproxy.com/documentation/haproxy-configuration-tutorials/protocol-support/tcp/) or [NGINX stream](https://nginx.org/en/docs/stream/ngx_stream_upstream_module.html). Prefer sticky sessions and a redundant load-balancer endpoint.
@@ -28,6 +28,47 @@ description: Operate Bifröst behind a load balancer or reverse proxy, manage in
 
 HTTP cookie affinity can keep browser requests on one instance, but does not tie a native SSH connection to a browser on another device. Use tested cross-transport routing, such as instance-specific OIDC endpoints. Kubernetes `ClientIP` affinity is not a general solution under NAT or when ingress routes directly to Pods.
 
+## Helm releases and persistent state
+
+The [Helm chart](in-kubernetes.md) runs a StatefulSet with one persistent volume per Pod. Sessions, host keys and configured evidence repositories belong to that Pod, not to a shared cluster-wide session store. Keep writable state under `/var/lib/engity/bifroest` and back up complete repositories and their keys using the [restart checklist](#restart-and-recovery-checklist).
+
+### Update configuration or upgrade
+
+Read the [upgrade notes](upgrade.md), back up state and allow for interrupted connections. Keep all your values files; replace `<version>` with the full target release, without its leading `v`:
+
+```sh
+helm upgrade bifroest oci://ghcr.io/engity-com/bifroest --version <version> --namespace bifroest -f values.yaml --wait --timeout 5m
+kubectl --namespace bifroest rollout status statefulset/bifroest-bifroest
+```
+
+Inline configuration changes trigger a Pod rollout through Helm. After changing configuration in an external Secret or ConfigMap, explicitly restart the Pods:
+
+```sh
+kubectl --namespace bifroest rollout restart statefulset/bifroest-bifroest
+kubectl --namespace bifroest rollout status statefulset/bifroest-bifroest
+```
+
+Test an actual login after readiness succeeds. Replacing Pods interrupts their connections; neither Helm rollback nor a retained PVC restores running shells. External HTTP certificates can [reload without a rollout](#rotate-external-http-certificates) when mounted as directories rather than `subPath` files.
+
+Choose storage class, access mode and initial claim size before installing. Changing the StatefulSet's claim template is not a normal Helm upgrade; plan storage migration or expansion using your provisioner's supported procedure. Do not delete PVCs to make an upgrade succeed.
+
+### Add replicas
+
+Increase `replicaCount` in your Helm values only after configuring a consistently trusted SSH identity and testing [related-connection routing](#routing-and-probes). Each ordinal gets a separate PVC; there is no shared `existingClaim`. Place replicas across suitable nodes if you need node-failure tolerance. An optional disruption budget must leave at least one replica available for voluntary disruption:
+
+```yaml title="Additional Helm values"
+replicaCount: 2
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+```
+
+This does not replicate sessions or move existing shells. When several instances create Kubernetes session Pods, also review their [cleanup ownership](../reference/environment/kubernetes.md#property-cleanOrphan).
+
+### Remove or reinstall
+
+`helm uninstall bifroest --namespace bifroest` stops the deployment but retains its PVCs. Scale-down also retains them. Reinstalling with the same release name, namespace and StatefulSet name can reuse that state. Keep these names stable and prevent any previous writer from running before reusing its volume. Delete PVCs or the namespace only when you deliberately want to remove the stored state and have the required backups.
+
 ## Rotate external HTTP certificates
 
 1. Provision a valid [certificate/key pair](../reference/connection/http/index.md#certificate), with private-key ownership and permissions suitable for the service account.
@@ -43,7 +84,7 @@ In a load-balanced deployment, take only the affected instance out of rotation; 
 1. **Block new traffic to this instance and stop its writer.** Let users finish or [disconnect their connections](../reference/cli/session/disconnect.md). Allow the configured [SSH](../reference/connection/ssh.md#property-gracefulShutdownTimeout) and [HTTP](../reference/connection/http/index.md#property-gracefulShutdownTimeout) shutdown budgets. A failed readiness probe is not proof that the old process has stopped.
 2. **Copy or restore complete state while stopped:** [configuration](../reference/configuration.md) and referenced keys, [sessions](../reference/session/fs.md#property-storage), [journals and signing identities](../reference/auditlog/index.md#journal), [Recording repositories](../reference/auditlog/recording.md#storage-and-recovery) and [ACME storage](../reference/connection/http/index.md#acme-property-storage). Protect backups as credentials; back up workload data separately and keep decryption private keys offline. Remote sealed artifacts alone are not a service backup.
 3. **Check identities and revocations.** Retain the matching host and signing keys. An older session backup can restore later-revoked saved access: reconcile it before reopening traffic. Perform [upgrades](upgrade.md) separately from the first recovery attempt.
-4. **Start one writer for the recovered state** through its existing [host service manager](on-host.md) or [container supervisor](in-docker.md), initially with the same release and configuration. Inspect startup logs and [check readiness directly](../guides/monitoring.md#scrape-a-host-locally); keep this instance out of rotation during acceptance checks. Resolve key or integrity errors instead of discarding repositories.
+4. **Start one writer for the recovered state** through its existing [host service manager](on-host.md), [container supervisor](in-docker.md) or [Helm deployment](#helm-releases-and-persistent-state), initially with the same release and configuration. Inspect startup logs and [check readiness directly](../guides/monitoring.md#scrape-a-host-locally); keep this instance out of rotation during acceptance checks. Resolve key or integrity errors instead of discarding repositories.
 5. **Test before reopening:**
     * Test workload access over each enabled transport: [SSH](on-host.md), [SSH over HTTPS](../guides/ssh-over-https.md) and/or [browser](../guides/browser-access.md#open-your-first-shell). Then test eligible [saved access](../usecases.md#remembered-access). Old browser access and pending logins must be rejected; a reusable session must reach the intended environment, not restore an old shell.
     * [Verify retained evidence](../reference/cli/verification.md#trust-a-producer) against independent producer trust and check [remote delivery](../reference/auditlog/remote-targets/index.md#delivery-behavior), if configured.

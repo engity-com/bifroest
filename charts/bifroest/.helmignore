@@ -1,0 +1,19 @@
+# Repository and editor files.
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+*~
+
+# Local credentials must never become chart contents.
+.env*
+*.key
+*.pem
+*.p12
+*.pfx

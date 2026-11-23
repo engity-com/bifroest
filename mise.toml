@@ -249,6 +249,7 @@ golangci-lint = "aqua:golangci/golangci-lint"
 go-licenses = "go:github.com/google/go-licenses/v2"
 stylua = "aqua:JohnnyMorganz/StyLua"
 syft = "aqua:anchore/syft"
+helm = "aqua:helm/helm"
 
 [env]
 _.python.venv = { path = ".pyvenv", create = true, uv_create_args = ['--seed'] }
