@@ -21,6 +21,8 @@ Bifröst is a configurable SSH server and gateway for teams managing access to h
 * [SSH gateway to an OpenSSH server](docs/guides/ssh-gateway.md)
 * [Verifiable session recording](docs/guides/recording.md)
 
+Install the CLI in a workflow with the [Setup Bifröst GitHub Action](docs/setup/github-actions.md), for example to run offline configuration tests before deployment.
+
 The links to files in this repository describe the current source. For an installation, choose a [published release](https://github.com/engity-com/bifroest/releases) and its **matching versioned documentation** at [bifroest.engity.org](https://bifroest.engity.org/); the site root describes the current stable release, which may differ from `main`. Alpha and beta container images use only full version tags such as `:1.0.0-beta1`; `:latest` and other moving tags are for stable releases.
 
 ## OpenSSH migration and security

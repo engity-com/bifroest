@@ -209,6 +209,13 @@ directories are created and existing regular reports can be replaced; see
 [report files](../reference/testing/reports.md#report-files) for protections and
 write-failure behavior. Use synthetic values: assertion details may appear in reports.
 
+## Run automatically in GitHub Actions {: #github-actions }
+
+To check these tests on every push and pull request, use the
+[GitHub Actions workflow](../setup/github-actions.md#configuration-tests).
+It checks out your configuration and suites, installs Bifröst with
+`engity-com/bifroest-action` and runs the tests. A failed test fails the job.
+
 ## Run in a container {: #container-execution }
 
 The same command is available in the normal Bifröst image. See the

@@ -11,7 +11,7 @@ For OIDC login, an SSH gateway or session recording, see the [task guides](../gu
 
 For production and HA deployments, see the [operating model and availability guide](operations.md): TCP load balancing, instance-local state and recovery.
 
-Before we get started, you need to choose your operating mode. Here are the main differences to help you decide:
+To run Bifröst as a server, choose a host, Docker or Kubernetes installation. The table compares these options:
 
 | Deployment | Use it when | Prerequisites |
 | --- | --- | --- |
@@ -21,15 +21,16 @@ Before we get started, you need to choose your operating mode. Here are the main
 
 See the [distribution matrices](distribution.md#compatibility) for platform and edition support. Installing Bifröst in a container or Pod does not automatically grant access to host accounts or permission to create session containers or Pods.
 
-If you're still not sure that to pick, maybe our [Use-Cases](../usecases.md) will help you.
+If you're still not sure which to pick, see the [use cases](../usecases.md).
 
 ## Installation
 
-Different guides, for the different ways how to operate Bifröst:
+Choose the installation guide for your task:
 
-1. [On Host](on-host.md)
-2. [In Docker/Container](in-docker.md)
-3. [In Kubernetes with Helm](in-kubernetes.md)
+1. [On Host](on-host.md): run Bifröst as a server directly on a Linux, Windows or macOS host.
+2. [In Docker/Container](in-docker.md): run Bifröst as a server in a container.
+3. [In Kubernetes with Helm](in-kubernetes.md): run Bifröst as a server in a Kubernetes cluster.
+4. [In GitHub Actions](github-actions.md): make the Bifröst command line available in a workflow, for example to test configuration changes.
 
 ## What's next?
 

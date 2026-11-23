@@ -23,7 +23,7 @@ Already operate Kubernetes? The [Helm guide](setup/in-kubernetes.md) installs Bi
 * [Log in with OIDC](guides/oidc.md) using an SSH client and a browser verification step.
 * [Open a terminal in your browser](guides/browser-access.md) with an existing local account.
 * [Verify a session recording](guides/recording.md) and export the recorded output.
-* [Test a configuration](guides/testing.md) offline before deployment.
+* [Test a configuration](guides/testing.md) offline before deployment, locally or in [GitHub Actions](setup/github-actions.md#configuration-tests).
 
 ## Features
 
