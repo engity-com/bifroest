@@ -11,7 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/v1/types"
+
 	bib "github.com/engity-com/bifroest/internal/build"
+	"github.com/engity-com/bifroest/internal/build/charts"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -33,6 +36,19 @@ type releaseManifest struct {
 	ChecksumAsset string                   `json:"checksumAsset"`
 	Assets        []releaseManifestAsset   `json:"assets"`
 	Variants      []releaseManifestVariant `json:"variants"`
+	Chart         *releaseManifestChart    `json:"chart,omitempty"`
+}
+
+type releaseManifestChart struct {
+	Version        string `json:"version"`
+	Asset          string `json:"asset"`
+	Tag            string `json:"tag"`
+	Reference      string `json:"reference"`
+	MediaType      string `json:"mediaType"`
+	Digest         string `json:"digest"`
+	IndexReference string `json:"indexReference,omitempty"`
+	IndexMediaType string `json:"indexMediaType,omitempty"`
+	IndexDigest    string `json:"indexDigest,omitempty"`
 }
 
 type releaseManifestAsset struct {
@@ -90,9 +106,10 @@ type releaseManifestVariantBuilder struct {
 }
 
 type releaseManifestImageIndex struct {
-	mediaType string
-	digest    string
-	platforms map[string]string
+	mediaType   string
+	digest      string
+	platforms   map[string]string
+	chartDigest string
 }
 
 func newBuildReleaseManifest(b *build) *buildReleaseManifest {
@@ -107,10 +124,11 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 	indexes := make(map[sys.Edition]releaseManifestImageIndex)
 	assets := make([]releaseManifestAsset, 0)
 	assetNames := make(map[string]struct{})
+	var chart *releaseManifestChart
 
 	for _, artifact := range artifacts {
 		switch artifact.t {
-		case buildArtifactTypeArchive, buildArtifactTypeNotice, buildArtifactTypeSbom:
+		case buildArtifactTypeArchive, buildArtifactTypeNotice, buildArtifactTypeSbom, buildArtifactTypeChart:
 			digest, err := sha256File(artifact.filepath)
 			if err != nil {
 				return nil, fmt.Errorf("cannot hash release asset %s: %w", artifact.name(), err)
@@ -120,6 +138,48 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 			}
 			assetNames[artifact.name()] = struct{}{}
 			assets = append(assets, releaseManifestAsset{Name: artifact.name(), MediaType: artifact.mediaType(), Digest: digest})
+			if artifact.t == buildArtifactTypeChart {
+				if chart != nil || artifact.ociImage == nil || artifact.chartVersion == "" {
+					return nil, fmt.Errorf("duplicate or incomplete chart artifact %s", artifact.name())
+				}
+				chartManifest, err := artifact.ociImage.Manifest()
+				if err != nil {
+					return nil, err
+				}
+				if chartManifest.Config.MediaType != charts.ConfigMediaType || len(chartManifest.Layers) != 1 || chartManifest.Layers[0].MediaType != charts.LayerMediaType || chartManifest.Layers[0].Digest.String() != digest {
+					return nil, fmt.Errorf("chart archive digest or media type does not match its OCI artifact")
+				}
+				rawConfig, err := artifact.ociImage.RawConfigFile()
+				if err != nil {
+					return nil, err
+				}
+				var metadata struct{ Version, AppVersion string }
+				if err := json.Unmarshal(rawConfig, &metadata); err != nil {
+					return nil, err
+				}
+				expectedVersion := artifact.version.String()
+				if artifact.version.semver != nil {
+					expectedVersion = artifact.version.semver.String()
+				}
+				if artifact.chartVersion != expectedVersion || metadata.Version != expectedVersion || metadata.AppVersion != expectedVersion {
+					return nil, fmt.Errorf("chart and application versions do not match")
+				}
+				chartDigest, err := artifact.ociImage.Digest()
+				if err != nil {
+					return nil, fmt.Errorf("cannot calculate chart digest: %w", err)
+				}
+				mediaType, err := artifact.ociImage.MediaType()
+				if err != nil {
+					return nil, err
+				}
+				registry := this.repo.fullImageName()
+				chart = &releaseManifestChart{
+					Version: artifact.chartVersion, Asset: artifact.name(),
+					Tag: registry + ":" + artifact.chartVersion, Reference: registry + "@" + chartDigest.String(),
+					MediaType: string(mediaType), Digest: chartDigest.String(),
+				}
+				continue
+			}
 
 			builder := releaseManifestBuilderFor(builders, artifact.Platform)
 			switch artifact.t {
@@ -204,7 +264,15 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 				return nil, fmt.Errorf("cannot read image index for edition %s: %w", artifact.Edition, err)
 			}
 			platforms := make(map[string]string, len(indexManifest.Manifests))
+			var chartDigest string
 			for _, descriptor := range indexManifest.Manifests {
+				if descriptor.ArtifactType == string(charts.ConfigMediaType) {
+					if chartDigest != "" || descriptor.Platform == nil || descriptor.Platform.OS != "unknown" || descriptor.Platform.Architecture != "unknown" || descriptor.MediaType != types.OCIManifestSchema1 {
+						return nil, fmt.Errorf("image index for edition %s has an invalid chart descriptor", artifact.Edition)
+					}
+					chartDigest = descriptor.Digest.String()
+					continue
+				}
 				if descriptor.Platform == nil {
 					return nil, fmt.Errorf("image index for edition %s contains a descriptor without platform", artifact.Edition)
 				}
@@ -214,7 +282,7 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 				}
 				platforms[descriptor.Digest.String()] = platform
 			}
-			indexes[artifact.Edition] = releaseManifestImageIndex{mediaType: string(mediaType), digest: digest.String(), platforms: platforms}
+			indexes[artifact.Edition] = releaseManifestImageIndex{mediaType: string(mediaType), digest: digest.String(), platforms: platforms, chartDigest: chartDigest}
 		}
 	}
 
@@ -295,8 +363,22 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 		variants = append(variants, variant)
 	}
 	for edition, index := range indexes {
+		if index.chartDigest != "" && (chart == nil || index.chartDigest != chart.Digest) {
+			return nil, fmt.Errorf("image index for edition %s contains an unknown chart", edition)
+		}
 		if requireComplete && len(usedImageDigests[edition]) != len(index.platforms) {
 			return nil, fmt.Errorf("image index for edition %s contains unreferenced platform images", edition)
+		}
+	}
+	if chart != nil {
+		index, exists := indexes[sys.EditionGeneric]
+		if requireComplete && (!exists || index.chartDigest != chart.Digest) {
+			return nil, fmt.Errorf("chart has no matching combined generic image index")
+		}
+		if exists && index.chartDigest == chart.Digest {
+			chart.IndexDigest = index.digest
+			chart.IndexMediaType = index.mediaType
+			chart.IndexReference = this.repo.fullImageName() + "@" + index.digest
 		}
 	}
 
@@ -311,6 +393,7 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 		ChecksumAsset: "bifroest-checksums.txt",
 		Assets:        assets,
 		Variants:      variants,
+		Chart:         chart,
 	}
 	raw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

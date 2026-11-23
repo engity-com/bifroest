@@ -15,6 +15,7 @@
       "!!**/vendor",
       "!!var",
       "!!pkg/webui/assets",
+      "!!charts/bifroest/templates",
       "!!docs/assets/audit-format-vectors",
       "!!docs/assets/recording-format-vectors"
     ]

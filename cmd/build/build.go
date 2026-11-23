@@ -41,6 +41,7 @@ func newBuild(b *base) *build {
 	result.binary = newBuildBinary(result)
 	result.archive = newBuildArchive(result)
 	result.image = newBuildImage(result)
+	result.chart = newBuildChart(result)
 	result.sbom = newBuildSbom(result)
 	result.releaseManifest = newBuildReleaseManifest(result)
 	result.digest = newBuildDigest(result)
@@ -52,6 +53,7 @@ type build struct {
 	binary          *buildBinary
 	archive         *buildArchive
 	image           *buildImage
+	chart           *buildChart
 	sbom            *buildSbom
 	releaseManifest *buildReleaseManifest
 	digest          *buildDigest
@@ -345,6 +347,16 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (_ buildArtifa
 	}
 	if platformCount == 0 && this.binaryMode != binaryBuildAndPackage {
 		return nil, errors.New("no binary platforms match the selected OS, architecture and edition")
+	}
+
+	if stages.contains(buildStageChart) {
+		chart, err := this.chart.create(ctx, forTesting)
+		if err != nil {
+			return nil, err
+		}
+		if chart != nil {
+			artifacts = append(artifacts, chart)
+		}
 	}
 
 	if stages.contains(buildStageSbom) {

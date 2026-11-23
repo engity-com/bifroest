@@ -1,6 +1,7 @@
 import type { AccessSnapshot } from '../remember';
 import { object } from '../remember/http';
 import { RememberMeError } from '../remember/protocol';
+import { publicPath } from '../shared/upstream';
 import { resourceID } from '../shared/uuid';
 import {
     defaultKeepAlive,
@@ -141,7 +142,7 @@ export class TerminalConnection {
         this.#renderer = renderer;
         this.#onState = onState;
         this.#pty = task.pty;
-        const url = new URL('/api/v1/terminal', scope.origin);
+        const url = new URL(publicPath('/api/v1/terminal'), scope.origin);
         url.protocol = 'wss:';
         this.#proof = () => access.terminalToken();
         this.#socket = factory(url.href, protocol);

@@ -63,7 +63,7 @@ func (this *webService) issue(scope webScope, base *environmentContext, credenti
 	if err != nil {
 		return "", nil, err
 	}
-	if pinned != nil && (identity != pinned.Identity || target != pinned.Target || scope.Origin != pinned.Origin || scope.Slug != pinned.Slug || base.Connection().Remote().User() != pinned.User) {
+	if pinned != nil && (identity != pinned.Identity || target != pinned.Target || scope.Origin != pinned.Origin || scope.Slug != pinned.Slug || scope.Prefix != pinned.PathPrefix || base.Connection().Remote().User() != pinned.User) {
 		return "", nil, errWebAccessDenied
 	}
 	keepAlive, err := this.keepAlivePolicy(base)

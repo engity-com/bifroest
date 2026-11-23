@@ -60,24 +60,25 @@ PEM certificate/key pairs, using the same file-property names as [HTTP certifica
 
 Each entry in `monitoring.tls.certificates` has these properties.
 
-<<property("certificateFile", "File Path", "data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
+<<property("certificateFile", "File Path", "data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
 Local PEM certificate-chain file. Use a certificate trusted by your scraper and covering its connection name or IP.
 
-<<property("privateKeyFile", "File Path", "data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
-Matching protected PEM private-key file, owned by the Bifröst service account. Its key must be distinct from SSH, audit-signing, SFTP and audit-encryption keys. Certificate and key validation use the same requirements as HTTP TLS. For Kubernetes on Linux, mount the TLS key with owner-only permissions, such as `defaultMode: 0400`, and ownership that lets the service account read it.
+The default value is different, depending on the platform Bifröst runs on:
 
-```yaml title="Example"
-monitoring:
-  enabled: true
-  addresses: ["192.0.2.10:9090"]
-  allowedRemoteHosts: ["192.0.2.20"]
-  bearerTokenFile: /run/secrets/monitoring-token
-  tls:
-    enabled: true
-    certificates:
-      - certificateFile: /etc/engity/bifroest/monitoring.crt
-        privateKeyFile: /etc/engity/bifroest/monitoring.key
-```
+* Linux: `/etc/engity/bifroest/tls/monitoring.crt`
+* macOS: `/Library/Application Support/Engity/Bifroest/tls/monitoring.crt`
+* Windows: `C:\ProgramData\Engity\Bifroest\tls\monitoring.crt`
+
+<<property("privateKeyFile", "File Path", "data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
+Local PEM private-key file, separate from SSH, audit-signing, SFTP and audit-encryption keys.
+
+The default value is different, depending on the platform Bifröst runs on:
+
+* Linux: `/etc/engity/bifroest/tls/monitoring.key`
+* macOS: `/Library/Application Support/Engity/Bifroest/tls/monitoring.key`
+* Windows: `C:\ProgramData\Engity\Bifroest\tls\monitoring.key`
+
+Do not put the key itself in the configuration. Keep the key privately owned by the service account, with owner-only permissions such as `0400` or `0600` on Unix, and separate from public assets and mutable application storage.
 
 ## Endpoints
 

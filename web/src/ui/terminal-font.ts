@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react';
+import { deploymentKey } from '../shared/upstream';
 import { reportUiError } from './error-report';
 import { profilePreferencesResetEvent } from './profile-reset';
 
-export const terminalFontPreferenceKey = 'bifroest-ui-v1:terminal-font-size';
+export const terminalFontPreferenceKey = deploymentKey('bifroest-ui-v1:terminal-font-size');
 const changed = 'bifroest-terminal-font-size';
 export const defaultTerminalFontSize = 14;
 let memory = defaultTerminalFontSize;

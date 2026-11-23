@@ -11,7 +11,7 @@ Authenticates through an IdP browser redirect with PKCE S256. Compared with [Dev
 
 * Enable the [HTTP connection](../../connection/http/index.md), including for SSH logins.
 * Register a confidential web client at the IdP with Authorization Code and PKCE S256 enabled.
-* Register `https://<domain>/login/callback` as the exact callback URL; see [`domain`](#property-domain).
+* Register the exact public callback URL at the IdP; see [`domain`](#property-domain) and [`pathPrefix`](#property-pathPrefix).
 
 !!! note "Browser sign-in for SSH"
     You can use the browser just to confirm an SSH login, without offering access through the WebUI. Users confirm their login in the browser, then return to their SSH client to work.
@@ -64,7 +64,12 @@ Default refresh checks require a refresh token. Add your provider's required sco
 <<property("domain", "Host", "../../data-type.md#host", default="<first http.domains entry>")>>
 Selects one of the configured [`http.domains`](../../connection/http/index.md#property-domains). Omit the scheme, port and path.
 
-The callback is `https://<domain>/login/callback`. A non-standard port comes from the first HTTP listener. Register this exact URL at the IdP; an ephemeral listener port (`:0`) is not supported.
+The callback is `https://<domain>[:port]<pathPrefix>/login/callback`. For SSH-initiated login, the public port comes from [`http.upstream.defaultPort`](../../connection/http/index.md#upstream-property-defaultPort): by default `443` in proxy mode, otherwise the first HTTP listener's port. Direct mode needs a fixed port unless an explicit public port is configured.
+
+<<property("pathPrefix", "string", default="<default>")>>
+Omission or the literal `"<default>"` inherits [`http.upstream.defaultPrefix`](../../connection/http/index.md#upstream-property-defaultPrefix) for SSH-generated links. An explicit `""` selects root; another value selects that public mount path. Non-empty prefixes require reverse-proxy mode and use its canonical path rules.
+
+Browser-initiated attempts use the trusted request's mount path unless an explicit authorization prefix is configured, in which case it must match. In proxy mode, the public port comes from that request, not the SSH URL default. Register every intended callback URL at the IdP. A transaction's start, callback and status requests must stay on the same mount and instance.
 
 <<property("loginTimeout", "Duration", "../../data-type.md#duration", default="2m")>>
 Maximum time for the login, including browser approval. Must be greater than zero and at most `10m`. SSH also applies its remaining [`handshakeTimeout`](../../connection/ssh.md#property-handshakeTimeout).

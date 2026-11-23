@@ -22,6 +22,7 @@ import {
 } from '../application/management-location';
 import { ViewIDs } from '../application/view-ids';
 import { type Scope, validateScope } from '../remember/protocol';
+import { pathPrefix } from '../shared/upstream';
 import { newViewID } from '../shared/uuid';
 import type { ConnectionView } from '../workspace/model';
 import { hashPath, parseHashTarget } from './hash-route';
@@ -67,7 +68,9 @@ function viewIntent(state: unknown): ViewIntent | null {
 
 // Keep the workspace mounted: routing owns URLs/history, not discovery or access.
 export function createSlugRouter(element: ReactNode): DataRouter {
-    return createBrowserRouter([{ id: 'workspace', path: '*', element }]);
+    return createBrowserRouter([{ id: 'workspace', path: '*', element }], {
+        basename: pathPrefix() || '/',
+    });
 }
 
 export function scopeFromSlugLocation(

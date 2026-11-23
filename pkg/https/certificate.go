@@ -64,13 +64,34 @@ func loadCertificate(configured configuration.HttpCertificate, now time.Time) (*
 	if err != nil {
 		return nil, &materialError{"cannot resolve TLS private key", err}
 	}
+	certificatePath, err := sys.CanonicalPath(configured.CertificateFile)
+	if err != nil {
+		return nil, &materialError{"cannot resolve TLS certificate", err}
+	}
+	keyBefore, keyErr := os.Stat(keyPath)
+	certificateBefore, certificateErr := os.Stat(certificatePath)
+	if keyErr != nil || certificateErr != nil {
+		return nil, fmt.Errorf("cannot inspect TLS certificate pair (details redacted)")
+	}
 	key, err := bfcrypto.LoadSecurePrivateKeyFile(keyPath, maximumCertificateFileBytes)
 	if err != nil {
 		return nil, &materialError{"cannot load protected TLS private key", err}
 	}
-	chain, err := readCertificateChain(configured.CertificateFile)
+	chain, err := readCertificateChain(certificatePath)
 	if err != nil {
 		return nil, &materialError{"cannot load TLS certificate chain", err}
+	}
+	for _, entry := range []struct {
+		configured, resolved string
+		before               os.FileInfo
+	}{
+		{configured.PrivateKeyFile, keyPath, keyBefore}, {configured.CertificateFile, certificatePath, certificateBefore},
+	} {
+		current, err := sys.CanonicalPath(entry.configured)
+		after, statErr := os.Stat(entry.resolved)
+		if err != nil || statErr != nil || current != entry.resolved || !os.SameFile(entry.before, after) || entry.before.Size() != after.Size() || !entry.before.ModTime().Equal(after.ModTime()) || entry.before.Mode() != after.Mode() {
+			return nil, fmt.Errorf("TLS certificate pair changed while reading")
+		}
 	}
 	certificate := &tls.Certificate{Certificate: chain, PrivateKey: key.ToSdk()}
 	return validateCertificate(certificate, now)

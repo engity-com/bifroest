@@ -65,7 +65,7 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      - name: Reconcile dependency update pull request
+      - name: Reconcile certificate, image and ConPTY update pull request
         env:
           DEPENDENCY_UPDATES_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

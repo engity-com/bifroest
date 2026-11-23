@@ -112,8 +112,7 @@ func validateHTTPRuntimePaths(conf *configuration.Configuration, storage string)
 		return nil
 	}
 	var tlsPaths []httpRuntimePath
-	for i := range h.Tls.Certificates {
-		pair := &h.Tls.Certificates[i]
+	for _, pair := range h.Tls.FileCertificates() {
 		for _, field := range []struct {
 			value       *string
 			description string
@@ -127,7 +126,8 @@ func validateHTTPRuntimePaths(conf *configuration.Configuration, storage string)
 			if err := check(value, private); err != nil {
 				return err
 			}
-			*field.value = value.path
+			// Keep the configured name: projected Secrets and Certbot replace
+			// symlink targets. A reload must resolve the current generation.
 			tlsPaths = append(tlsPaths, value)
 		}
 	}

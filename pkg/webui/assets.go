@@ -344,6 +344,21 @@ func (this *Assets) LoginDocument() ([]byte, string, error) {
 	return this.document("login.html")
 }
 
+func (this *Assets) DocumentWithPrefix(prefix string, login bool) ([]byte, string, error) {
+	if configuration.ValidateHttpPathPrefix(prefix) != nil {
+		return nil, "", ErrAsset
+	}
+	name := "index.html"
+	if login {
+		name = "login.html"
+	}
+	raw, err := this.Read(name)
+	if err != nil {
+		return nil, "", err
+	}
+	return this.render(raw, prefix)
+}
+
 func (this *Assets) document(name string) ([]byte, string, error) {
 	raw, err := this.Read(name)
 	if err != nil {
@@ -352,7 +367,11 @@ func (this *Assets) document(name string) ([]byte, string, error) {
 	return this.render(raw)
 }
 
-func (this *Assets) render(raw []byte) ([]byte, string, error) {
+func (this *Assets) render(raw []byte, prefixes ...string) ([]byte, string, error) {
+	prefix := ""
+	if len(prefixes) != 0 {
+		prefix = prefixes[0]
+	}
 	if len(raw) > maxIndex || !utf8.Valid(raw) {
 		return nil, "", ErrAsset
 	}
@@ -409,7 +428,14 @@ func (this *Assets) render(raw []byte) ([]byte, string, error) {
 	var secure func(*html.Node)
 	secure = func(node *html.Node) {
 		var external bool
-		for _, attr := range node.Attr {
+		for index, attr := range node.Attr {
+			if attr.Key == "src" || attr.Key == "href" {
+				if strings.HasPrefix(attr.Val, Prefix) {
+					node.Attr[index].Val = prefix + attr.Val
+				} else if strings.HasPrefix(attr.Val, "./") && safeResource(strings.TrimPrefix(attr.Val, "./")) {
+					node.Attr[index].Val = prefix + Prefix + strings.TrimPrefix(attr.Val, "./")
+				}
+			}
 			if attr.Key == "src" || node.Namespace == "svg" && attr.Key == "href" {
 				external = true
 			}
@@ -431,7 +457,7 @@ func (this *Assets) render(raw []byte) ([]byte, string, error) {
 			remove := false
 			if child.Type == html.ElementNode && child.Data == "meta" {
 				for _, attr := range child.Attr {
-					if attr.Key == "name" && strings.EqualFold(attr.Val, "bifroest-nonce") {
+					if attr.Key == "name" && (strings.EqualFold(attr.Val, "bifroest-nonce") || strings.EqualFold(attr.Val, "bifroest-path-prefix")) {
 						remove = true
 					}
 				}
@@ -446,6 +472,7 @@ func (this *Assets) render(raw []byte) ([]byte, string, error) {
 	}
 	secure(document)
 	head.AppendChild(&html.Node{Type: html.ElementNode, Data: "meta", DataAtom: atom.Meta, Attr: []html.Attribute{{Key: "name", Val: "bifroest-nonce"}, {Key: "content", Val: nonce}}})
+	head.AppendChild(&html.Node{Type: html.ElementNode, Data: "meta", DataAtom: atom.Meta, Attr: []html.Attribute{{Key: "name", Val: "bifroest-path-prefix"}, {Key: "content", Val: prefix}}})
 	var result bytes.Buffer
 	if html.Render(&result, document) != nil || result.Len() > 2*maxIndex {
 		return nil, "", ErrAsset

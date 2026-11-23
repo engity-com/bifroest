@@ -1,7 +1,8 @@
 import type { ProfileResetResult } from '../application/reset-contracts';
+import { deploymentKey } from '../shared/upstream';
 import { newViewID, resourceID, uuidEqual, uuidText } from '../shared/uuid';
 
-const channelName = 'bifroest-profile-reset-v1';
+const channelName = deploymentKey('bifroest-profile-reset-v1');
 const documentID = newViewID();
 function openChannel(): BroadcastChannel | null {
     try {

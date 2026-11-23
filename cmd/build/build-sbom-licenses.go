@@ -63,7 +63,10 @@ func enrichSbomLicenses(document map[string]any, format, subjectName string, inv
 	if err != nil {
 		return err
 	}
-	return enrichBrowserSbom(document, format, subjectName, inventory)
+	if err := enrichBrowserSbom(document, format, subjectName, inventory); err != nil {
+		return err
+	}
+	return enrichConptySbom(document, format, subjectName, inventory)
 }
 
 func enrichSpdxSbomLicenses(document map[string]any, subjectName string, inventory *thirdPartyLicenseInventory) error {

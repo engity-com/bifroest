@@ -1,4 +1,4 @@
-import { object, time } from '../remember/http';
+import { object, time } from '../remember/http-values';
 import { RememberMeError } from '../remember/protocol';
 import { resourceID } from '../shared/uuid';
 

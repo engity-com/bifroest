@@ -31,6 +31,7 @@ type buildArtifact struct {
 	sbom                       *buildArtifactSbom
 	ociImage                   v1.Image
 	ociIndex                   v1.ImageIndex
+	chartVersion               string
 
 	onClose []buildArtifactCloser
 	lock    sync.Mutex
@@ -46,7 +47,7 @@ func (this *buildArtifact) mediaType() string {
 		return "text/plain; charset=utf-8"
 	case buildArtifactTypeManifest:
 		return "application/json"
-	case buildArtifactTypeArchive:
+	case buildArtifactTypeArchive, buildArtifactTypeChart:
 		switch strings.ToLower(path.Ext(this.name())) {
 		case ".tgz":
 			return "application/tar+gzip"
@@ -102,6 +103,7 @@ const (
 	buildArtifactTypeNotice
 	buildArtifactTypeManifest
 	buildArtifactTypeDigest
+	buildArtifactTypeChart
 )
 
 func (this buildArtifactType) String() string {
@@ -114,7 +116,7 @@ func (this buildArtifactType) String() string {
 
 func (this buildArtifactType) canBePublished() bool {
 	switch this {
-	case buildArtifactTypeArchive, buildArtifactTypeSbom, buildArtifactTypeNotice, buildArtifactTypeManifest, buildArtifactTypeDigest:
+	case buildArtifactTypeArchive, buildArtifactTypeSbom, buildArtifactTypeNotice, buildArtifactTypeManifest, buildArtifactTypeDigest, buildArtifactTypeChart:
 		return true
 	default:
 		return false
@@ -131,6 +133,7 @@ var (
 		buildArtifactTypeNotice:        "notice",
 		buildArtifactTypeManifest:      "manifest",
 		buildArtifactTypeDigest:        "digest",
+		buildArtifactTypeChart:         "chart",
 	}
 )
 

@@ -1,8 +1,9 @@
+import { deploymentKey } from '../shared/upstream';
 import { newViewID, resourceID } from '../shared/uuid';
 import type { Binding, ProofPurpose, Scope } from './protocol';
 import { encode64, proofBytes, RememberMeError, validateBinding, validateScope } from './protocol';
 
-const databaseName = 'bifroest-browser-remember-v1';
+const databaseName = deploymentKey('bifroest-browser-remember-v1');
 const objectStore = 'bindings';
 const metadataStore = 'metadata';
 const schema = 'bifroest-browser-state-v1';

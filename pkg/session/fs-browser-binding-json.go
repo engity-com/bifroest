@@ -86,7 +86,7 @@ func decodeBrowserBindings(raw []byte, flow, id string) ([]BrowserBinding, error
 	result := make([]BrowserBinding, 0, len(entries))
 	seen := make(map[string]bool)
 	for _, raw := range entries {
-		fields, err := browserBindingObject(raw, "id", "origin", "slug", "identity", "target", "user", "publicKey", "revision", "createdAt", "lastUsedAt", "expiresAt", "credential")
+		fields, err := browserBindingObject(raw, "id", "origin", "slug", "pathPrefix", "identity", "target", "user", "publicKey", "revision", "createdAt", "lastUsedAt", "expiresAt", "credential")
 		if err != nil || len(fields) < 11 {
 			return nil, ErrInvalidBrowserBinding
 		}

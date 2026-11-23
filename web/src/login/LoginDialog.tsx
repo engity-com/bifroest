@@ -4,6 +4,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { useState } from 'react';
+import { publicPath } from '../shared/upstream';
 import { type ApplicationNotice, NoticeBody } from '../ui/ApplicationNotice';
 import {
     type LinkMetadata,
@@ -290,7 +291,7 @@ export function LoginDialog({
                             method === 'none' ||
                             method === 'oidc'
                                 ? undefined
-                                : '/api/v1/login/password'
+                                : publicPath('/api/v1/login/password')
                         }
                         className="login-form"
                         onInvalidCapture={(event) => {

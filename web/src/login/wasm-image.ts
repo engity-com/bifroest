@@ -1,3 +1,4 @@
+import { publicPath } from '../shared/upstream';
 import { readBoundedWasmResponse } from '../wasm/response-body';
 
 // The tab owns the public download, not the short-lived secret-key worker.
@@ -13,7 +14,7 @@ export async function loadLoginWasm(signal: AbortSignal): Promise<ArrayBuffer> {
         if (stopped.aborted) {
             throw new Error('WASM download cancelled');
         }
-        const response = await fetch('/assets/browser-key.wasm', {
+        const response = await fetch(publicPath('/assets/browser-key.wasm'), {
             credentials: 'omit',
             mode: 'same-origin',
             cache: 'no-store',

@@ -5,11 +5,13 @@ import (
 	"crypto"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -28,6 +30,7 @@ type EndpointOptions struct {
 	ObserveRequest    func(http.Handler) http.Handler
 	ObserveConnection func() ConnectionObservation
 	ObserveRejection  func(*http.Request, string)
+	ValidateFiles     func() error
 }
 
 // Endpoint serves already-bound listeners. The caller must bind every SSH and
@@ -40,26 +43,40 @@ type Endpoint struct {
 	closeOnce         sync.Once
 	closeErr          error
 	observeConnection func() ConnectionObservation
+	plainReady        atomic.Bool
+	closed            atomic.Bool
+	done              chan struct{}
 }
 
 func NewEndpoint(conf *configuration.Http, options EndpointOptions) (*Endpoint, error) {
 	var lazy *lazyACME
 	source := options.Source
-	if conf.IsEnabled() && conf.Tls.Acme.Enabled && source == nil {
+	if conf.IsEnabled() && conf.Tls.IsEnabled() && conf.Tls.Acme.Enabled && source == nil {
 		copyOfConf := *conf
 		lazy = &lazyACME{configuration: copyOfConf, validateKey: options.ValidateKey}
 		source = lazy
 	}
-	manager, err := NewTLS(conf, source)
-	if err != nil {
+	if conf == nil || !conf.IsEnabled() {
+		return nil, fmt.Errorf("HTTP is disabled")
+	}
+	if err := conf.Validate(); err != nil {
 		return nil, err
 	}
-	manager.validateKey = options.ValidateKey
-	for _, certificate := range manager.explicit {
-		if options.ValidateKey != nil {
-			if err := options.ValidateKey(certificate.value.Leaf.PublicKey); err != nil {
-				_ = manager.Close()
-				return nil, err
+	var manager *TLS
+	var err error
+	if conf.Tls.IsEnabled() {
+		manager, err = NewTLS(conf, source)
+		if err != nil {
+			return nil, err
+		}
+		manager.validateKey = options.ValidateKey
+		manager.validateFiles = options.ValidateFiles
+		for _, certificate := range manager.explicit {
+			if options.ValidateKey != nil {
+				if err := options.ValidateKey(certificate.value.Leaf.PublicKey); err != nil {
+					_ = manager.Close()
+					return nil, err
+				}
 			}
 		}
 	}
@@ -67,42 +84,67 @@ func NewEndpoint(conf *configuration.Http, options EndpointOptions) (*Endpoint, 
 	if handler == nil {
 		handler = http.HandlerFunc(unimplementedBrowserHandler)
 	}
-	boundary, err := boundary(conf.Domains, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !manager.Ready() {
+	endpoint := &Endpoint{tls: manager, source: lazy, grace: conf.GracefulShutdownTimeout.Native(), observeConnection: options.ObserveConnection, done: make(chan struct{})}
+	boundary, err := httpBoundary(conf, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !endpoint.Ready() {
 			http.Error(w, "HTTPS is not ready", http.StatusServiceUnavailable)
 			return
 		}
 		handler.ServeHTTP(w, r)
 	}), conf.SshTunnel.IsEnabled(), options.ObserveRejection)
 	if err != nil {
-		_ = manager.Close()
+		if manager != nil {
+			_ = manager.Close()
+		}
 		return nil, err
 	}
 	if options.ObserveRequest != nil {
 		boundary = options.ObserveRequest(boundary)
 	}
-	endpoint := &Endpoint{tls: manager, source: lazy, grace: conf.GracefulShutdownTimeout.Native(), observeConnection: options.ObserveConnection}
 	endpoint.server = &http.Server{
-		TLSConfig: manager.Config(), Handler: boundary,
+		Handler:           boundary,
 		ReadHeaderTimeout: conf.ReadHeaderTimeout.Native(), ReadTimeout: conf.ReadHeaderTimeout.Native(), IdleTimeout: conf.IdleTimeout.Native(), MaxHeaderBytes: int(conf.MaxHeaderBytes),
 		// Never log attacker-controlled handshake diagnostics or private causes.
 		ErrorLog:  log.New(discardHTTPDiagnostics{}, "", 0),
 		ConnState: observeConnectionState,
 	}
+	if manager != nil {
+		endpoint.server.TLSConfig = manager.Config()
+	}
 	return endpoint, nil
 }
 
-func (this *Endpoint) Prepare(ctx context.Context) error { return this.tls.Prepare(ctx) }
-func (this *Endpoint) Ready() bool                       { return this.tls.Ready() }
+func (this *Endpoint) Prepare(ctx context.Context) error {
+	if this.tls == nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if this.closed.Load() {
+			return ErrClosed
+		}
+		this.plainReady.Store(true)
+		return nil
+	}
+	return this.tls.Prepare(ctx)
+}
+func (this *Endpoint) Ready() bool {
+	return !this.closed.Load() && (this.tls != nil && this.tls.Ready() || this.tls == nil && this.plainReady.Load())
+}
 func (this *Endpoint) Serve(listener net.Listener) error {
 	if this.observeConnection != nil {
 		listener = observedListener{Listener: listener, observe: this.observeConnection}
+	}
+	if this.tls == nil {
+		return this.server.Serve(listener)
 	}
 	return this.server.ServeTLS(listener, "", "")
 }
 
 // CertificateExpirations snapshots only published, configured certificates.
 func (this *Endpoint) CertificateExpirations() map[string]time.Time {
+	if this.tls == nil {
+		return nil
+	}
 	this.tls.mutex.RLock()
 	defer this.tls.mutex.RUnlock()
 	result := make(map[string]time.Time, len(this.tls.certificates))
@@ -112,13 +154,26 @@ func (this *Endpoint) CertificateExpirations() map[string]time.Time {
 	return result
 }
 func (this *Endpoint) RunRenewal(ctx context.Context, onFailure func(error)) error {
+	if this.tls == nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-this.done:
+			return ErrClosed
+		}
+	}
 	return this.tls.RunRenewal(ctx, onFailure)
 }
 
 // Shutdown stops acquisition and new handshakes immediately, then bounds HTTP
 // draining independently of SSH's grace period. Serve loops are drained by caller.
 func (this *Endpoint) Shutdown() error {
-	_ = this.tls.Close()
+	if !this.closed.Swap(true) {
+		close(this.done)
+	}
+	if this.tls != nil {
+		_ = this.tls.Close()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), this.grace)
 	defer cancel()
 	err := this.server.Shutdown(ctx)

@@ -143,6 +143,7 @@ nav:
       - Installation:
           - On Host: setup/on-host.md
           - In Docker: setup/in-docker.md
+          - In Kubernetes with Helm: setup/in-kubernetes.md
       - setup/distribution.md
       - Operating model and availability: setup/operations.md
       - Upgrade notes: setup/upgrade.md

@@ -30,6 +30,7 @@ import {
     useManagementPermissions,
 } from '../management/use-permissions';
 import type { WebAccess } from '../remember';
+import { publicPath } from '../shared/upstream';
 import type { ConnectionActions } from '../terminal/connection-actions';
 import type { TerminalState } from '../terminal/socket';
 import { AdminBreadcrumbs } from './AdminBreadcrumbs';
@@ -241,7 +242,7 @@ export function ManagementWorkspace({
         }
     };
     const href = (target: ManagementLocation) =>
-        hashPath(access.snapshot().scope, routeId ?? '-', target);
+        publicPath(hashPath(access.snapshot().scope, routeId ?? '-', target));
     const crumbs = managementCrumbs(route, routeNavigate, disabled || locked, href);
     const drawerOpen = wide ? !collapsed : active && temporaryOpen;
     return (

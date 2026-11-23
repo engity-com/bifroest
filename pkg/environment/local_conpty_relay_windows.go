@@ -15,6 +15,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/internal/conpty"
 )
 
 // ReadLocalConPTYCommand reads the command before the relay begins receiving
@@ -64,7 +66,7 @@ type localConPTYRelayObservation struct {
 	eofBeforeClose  bool
 }
 
-func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTYRelayObservation) (int, error) {
+func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTYRelayObservation) (resultCode int, resultErr error) {
 	if cols < 1 || cols > 32767 || rows < 1 || rows > 32767 {
 		return -1, fmt.Errorf("invalid ConPTY size %d x %d", cols, rows)
 	}
@@ -84,6 +86,16 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 	if err != nil {
 		return -1, fmt.Errorf("invalid shell command line: %w", err)
 	}
+	library, err := conpty.Load()
+	if err != nil {
+		return -1, fmt.Errorf("prepare ConPTY library: %w", err)
+	}
+	defer func() {
+		if err := library.Close(); err != nil {
+			resultCode = -1
+			resultErr = errors.Join(resultErr, fmt.Errorf("close ConPTY library: %w", err))
+		}
+	}()
 
 	var inputRead, inputWrite, outputRead, outputWrite windows.Handle
 	defer func() {
@@ -105,8 +117,8 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 			observation.stdoutType, _ = windows.GetFileType(stdout)
 		}
 	}
-	var console windows.Handle
-	if err := windows.CreatePseudoConsole(windows.Coord{X: int16(cols), Y: int16(rows)}, inputRead, outputWrite, 0, &console); err != nil {
+	console, err := library.Create(windows.Coord{X: int16(cols), Y: int16(rows)}, inputRead, outputWrite)
+	if err != nil {
 		return -1, fmt.Errorf("create pseudoconsole: %w", err)
 	}
 	releaseCreationHandles := func() {
@@ -143,7 +155,7 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 			consoleClosed = true
 			consoleMu.Unlock()
 			outputReader.closeStarted.Store(true)
-			windows.ClosePseudoConsole(console)
+			library.CloseConsole(console)
 			close(done)
 		}()
 		return done
@@ -265,7 +277,7 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 					}
 					consoleMu.Lock()
 					if !consoleClosed {
-						err = windows.ResizePseudoConsole(console, windows.Coord{X: int16(w), Y: int16(h)})
+						err = library.Resize(console, windows.Coord{X: int16(w), Y: int16(h)})
 					}
 					consoleMu.Unlock()
 				}
@@ -362,14 +374,13 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 	// finished. ResumeThread alone does not confirm client initialization. Only
 	// then let conhost flush and finish naturally, before freeing HPCON at EOF.
 	// https://learn.microsoft.com/windows/console/releasepseudoconsole
-	released, err := releaseLocalConPTY(console)
-	if err != nil {
-		return -1, errors.Join(relayErr, err)
-	}
-	if observation != nil {
-		observation.released = released
-	}
-	if err := finishLocalConPTYOutput(released, func() error {
+	if err := finishLocalConPTYOutput(func() error {
+		err := library.Release(console)
+		if observation != nil {
+			observation.released = err == nil
+		}
+		return err
+	}, func() error {
 		if outputDone == nil {
 			return nil
 		}
@@ -410,38 +421,14 @@ func observeLocalConPTYRootState(wait func() (uint32, error)) string {
 	}
 }
 
-func releaseLocalConPTY(console windows.Handle) (bool, error) {
-	release := windows.NewLazySystemDLL("kernel32.dll").NewProc("ReleasePseudoConsole")
-	return resolveLocalConPTYRelease(release.Find, func() error {
-		if result, _, _ := release.Call(uintptr(console)); result != 0 {
-			return fmt.Errorf("release pseudoconsole: HRESULT 0x%08x", result)
-		}
-		return nil
-	})
-}
-
-func resolveLocalConPTYRelease(find func() error, release func() error) (bool, error) {
-	if err := find(); err != nil {
-		if errors.Is(err, windows.ERROR_PROC_NOT_FOUND) {
-			// Older Windows needs its supported ClosePseudoConsole operation to
-			// finish the stream. The output reader remains active during Close;
-			// never reinterpret an opaque HPCON to emulate a newer release API.
-			return false, nil
-		}
-		return false, fmt.Errorf("resolve pseudoconsole release: %w", err)
-	}
+func finishLocalConPTYOutput(release, drain func() error, closeConsole func()) error {
 	if err := release(); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func finishLocalConPTYOutput(released bool, drain func() error, closeConsole func()) error {
-	if released {
-		defer closeConsole()
-	} else {
+		// Close is cleanup on failure, never a successful legacy flush path.
+		// Keep the output reader active and join it before unloading the DLL.
 		closeConsole()
+		return errors.Join(err, drain())
 	}
+	defer closeConsole()
 	return drain()
 }
 

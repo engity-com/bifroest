@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	gos "os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,11 +18,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	bib "github.com/engity-com/bifroest/internal/build"
+	"github.com/engity-com/bifroest/internal/build/charts"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func TestReleaseManifestIsDeterministicAndRelatesComplianceArtifacts(t *testing.T) {
 	build, buildContext := testReleaseManifestBuild(t)
+	build.buildContextP.Store(buildContext)
+	build.chart.source = filepath.Join("..", "..", "charts", "bifroest")
+	chart, err := build.chart.create(t.Context(), false)
+	require.NoError(t, err)
 	platform := &bib.Platform{Os: sys.OsLinux, Arch: sys.ArchAmd64, Edition: sys.EditionGeneric}
 	archiveName := "bifroest-linux-amd64-generic.tgz"
 	archive := testReleaseManifestFile(t, buildContext, platform, buildArtifactTypeArchive, archiveName, "archive", nil)
@@ -31,8 +37,6 @@ func TestReleaseManifestIsDeterministicAndRelatesComplianceArtifacts(t *testing.
 	imageDigest, err := empty.Image.Digest()
 	require.NoError(t, err)
 	imageMediaType, err := empty.Image.MediaType()
-	require.NoError(t, err)
-	indexMediaType, err := empty.Index.MediaType()
 	require.NoError(t, err)
 	archiveSpdx := testReleaseManifestFile(t, buildContext, platform, buildArtifactTypeSbom, archiveName+".spdx.json", "archive spdx", &buildArtifactSbom{
 		format: "spdx-2.3", subjectType: buildArtifactTypeArchive, subjectName: archiveName, subjectMediaType: archive.mediaType(), subjectDigest: archiveDigest,
@@ -51,13 +55,17 @@ func TestReleaseManifestIsDeterministicAndRelatesComplianceArtifacts(t *testing.
 	require.NoError(t, err)
 	imageDescriptor.Platform = &v1.Platform{OS: "linux", Architecture: "amd64"}
 	imageIndex := mutate.AppendManifests(empty.Index, mutate.IndexAddendum{Add: empty.Image, Descriptor: *imageDescriptor})
+	imageIndex, err = charts.Combine(imageIndex, chart.ociImage)
+	require.NoError(t, err)
+	indexMediaType, err := imageIndex.MediaType()
+	require.NoError(t, err)
 	index := &buildArtifact{
 		Platform:     &bib.Platform{Edition: sys.EditionGeneric},
 		buildContext: buildContext,
 		t:            buildArtifactTypeImagePlatform,
 		ociIndex:     imageIndex,
 	}
-	artifacts := buildArtifacts{imageCycloneDx, archive, index, notice, archiveSpdx, imageSpdx, archiveCycloneDx}
+	artifacts := buildArtifacts{imageCycloneDx, archive, index, notice, archiveSpdx, imageSpdx, archiveCycloneDx, chart}
 
 	created, err := build.releaseManifest.create(t.Context(), artifacts, true)
 	require.NoError(t, err)
@@ -78,7 +86,8 @@ func TestReleaseManifestIsDeterministicAndRelatesComplianceArtifacts(t *testing.
 	require.Equal(t, "owner/repository", manifest.Project)
 	require.Equal(t, "v1.2.3", manifest.Version)
 	require.Equal(t, "revision", manifest.Revision)
-	require.Len(t, manifest.Assets, 6)
+	require.Len(t, manifest.Assets, 7)
+	require.Equal(t, chart.name(), manifest.Chart.Asset)
 	require.True(t, slices.IsSortedFunc(manifest.Assets, func(a, b releaseManifestAsset) int { return strings.Compare(a.Name, b.Name) }))
 	require.Len(t, manifest.Variants, 1)
 	variant := manifest.Variants[0]

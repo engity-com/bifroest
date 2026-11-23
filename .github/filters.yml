@@ -14,6 +14,7 @@ go: &go
   - "docs/assets/recording-format-vectors/**"
   - "cmd/**"
   - "internal/**"
+  - "charts/**"
   - "contrib/**"
   - "test/**"
   - ".github/**"

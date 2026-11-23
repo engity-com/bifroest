@@ -3,6 +3,7 @@ package configuration
 import (
 	"fmt"
 	stdnet "net"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,8 +24,11 @@ var _ = RegisterAuthorizationV(func() AuthorizationV { return &AuthorizationOidc
 type AuthorizationOidcAuthorizationCode struct {
 	AuthorizationOidcDeviceAuth `yaml:",inline"`
 	Domain                      string          `yaml:"domain,omitempty"`
+	PathPrefix                  *string         `yaml:"pathPrefix,omitempty"`
 	LoginTimeout                common.Duration `yaml:"loginTimeout,omitempty"`
 	origin                      string
+	pathPrefix                  string
+	reverseProxy                bool
 }
 
 func (this *AuthorizationOidcAuthorizationCode) SetDefaults() error {
@@ -49,6 +53,11 @@ func (this *AuthorizationOidcAuthorizationCode) Validate() error {
 			return fmt.Errorf("[domain] must be a configured HTTP domain without scheme, port or path")
 		}
 	}
+	if this.PathPrefix != nil && *this.PathPrefix != "<default>" {
+		if err := ValidateHttpPathPrefix(*this.PathPrefix); err != nil {
+			return fmt.Errorf("[pathPrefix] %w", err)
+		}
+	}
 	if this.LoginTimeout.Native() <= 0 || this.LoginTimeout.Native() > 10*time.Minute {
 		return fmt.Errorf("[loginTimeout] must be positive and at most 10m")
 	}
@@ -65,12 +74,13 @@ func (this *AuthorizationOidcAuthorizationCode) UnmarshalYAML(node *yaml.Node) e
 		}
 		raw := struct {
 			Domain       string          `yaml:"domain,omitempty"`
+			PathPrefix   *string         `yaml:"pathPrefix,omitempty"`
 			LoginTimeout common.Duration `yaml:"loginTimeout,omitempty"`
-		}{target.Domain, target.LoginTimeout}
+		}{target.Domain, target.PathPrefix, target.LoginTimeout}
 		if err := node.Decode(&raw); err != nil {
 			return err
 		}
-		target.Domain, target.LoginTimeout = raw.Domain, raw.LoginTimeout
+		target.Domain, target.PathPrefix, target.LoginTimeout = raw.Domain, raw.PathPrefix, raw.LoginTimeout
 		return nil
 	})
 }
@@ -82,19 +92,48 @@ func (this AuthorizationOidcAuthorizationCode) MarshalYAML() (any, error) {
 	return struct {
 		Common       `yaml:",inline"`
 		Domain       string          `yaml:"domain,omitempty"`
+		PathPrefix   *string         `yaml:"pathPrefix,omitempty"`
 		LoginTimeout common.Duration `yaml:"loginTimeout,omitempty"`
-	}{Common(this.AuthorizationOidcDeviceAuth), this.Domain, this.LoginTimeout}, nil
+	}{Common(this.AuthorizationOidcDeviceAuth), this.Domain, this.PathPrefix, this.LoginTimeout}, nil
 }
 
 func (this *AuthorizationOidcAuthorizationCode) Origin() string {
 	return this.origin
 }
 
+// MatchesHttpOrigin retains the configured domain. Only explicit proxy mode
+// may obtain the public browser port from the validated request authority.
+func (this *AuthorizationOidcAuthorizationCode) MatchesHttpOrigin(origin string) bool {
+	if this.origin == "" || origin == "" {
+		return false
+	}
+	if !this.reverseProxy {
+		return origin == this.origin
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	canonical, err := net.CanonicalHttpsOrigin(parsed.Host)
+	if err != nil || canonical != origin {
+		return false
+	}
+	configured, _ := url.Parse(this.origin)
+	host, _ := net.CanonicalHttpHost(configured.Host)
+	requested, _ := net.CanonicalHttpHost(parsed.Host)
+	return host == requested
+}
+
 func (this *AuthorizationOidcAuthorizationCode) RedirectURL() string {
 	if this.origin == "" {
 		return ""
 	}
-	return this.origin + OidcCallbackPath
+	return this.origin + this.pathPrefix + OidcCallbackPath
+}
+
+func (this *AuthorizationOidcAuthorizationCode) EffectivePathPrefix() string { return this.pathPrefix }
+func (this *AuthorizationOidcAuthorizationCode) HasExplicitPathPrefix() bool {
+	return this.PathPrefix != nil && *this.PathPrefix != "<default>"
 }
 
 func (this AuthorizationOidcAuthorizationCode) IsEqualTo(other any) bool {
@@ -105,7 +144,8 @@ func (this AuthorizationOidcAuthorizationCode) IsEqualTo(other any) bool {
 	case AuthorizationOidcAuthorizationCode:
 		value = &v
 	}
-	return value != nil && this.AuthorizationOidcDeviceAuth.IsEqualTo(value.AuthorizationOidcDeviceAuth) && this.Domain == value.Domain && this.LoginTimeout == value.LoginTimeout
+	prefixEqual := value != nil && (this.PathPrefix == nil && value.PathPrefix == nil || this.PathPrefix != nil && value.PathPrefix != nil && *this.PathPrefix == *value.PathPrefix)
+	return value != nil && prefixEqual && this.AuthorizationOidcDeviceAuth.IsEqualTo(value.AuthorizationOidcDeviceAuth) && this.Domain == value.Domain && this.LoginTimeout == value.LoginTimeout
 }
 func (AuthorizationOidcAuthorizationCode) Types() []string {
 	return []string{"oidcAuthorizationCode", "oidc-authorization-code", "oidc_authorization_code"}
@@ -137,6 +177,14 @@ func (this *Configuration) validateOidcDomains() error {
 		if !this.Http.IsEnabled() {
 			return fmt.Errorf("[flows][%s] OIDC Authorization Code requires enabled HTTPS", flow.Name)
 		}
+		conf.pathPrefix = this.Http.Upstream.DefaultPrefix
+		conf.reverseProxy = this.Http.Upstream.IsReverseProxy()
+		if conf.HasExplicitPathPrefix() {
+			conf.pathPrefix = *conf.PathPrefix
+		}
+		if conf.pathPrefix != "" && !this.Http.Upstream.IsReverseProxy() {
+			return fmt.Errorf("OIDC pathPrefix requires HTTP upstream.mode reverseProxy")
+		}
 		if !this.Http.LoginFlow.IsEnabled() {
 			return fmt.Errorf("[flows][%s] OIDC Authorization Code requires http.loginFlow.enabled", flow.Name)
 		}
@@ -154,12 +202,19 @@ func (this *Configuration) validateOidcDomains() error {
 		if len(this.Http.Addresses) == 0 {
 			return fmt.Errorf("OIDC Authorization Code requires an HTTP listener")
 		}
-		address, ok := this.Http.Addresses[0].Get().(*stdnet.TCPAddr)
-		if !ok || address.Port <= 0 {
-			return fmt.Errorf("OIDC Authorization Code requires a fixed HTTPS listener port")
+		port := int(this.Http.Upstream.DefaultPort)
+		if port == 0 && this.Http.Upstream.IsReverseProxy() {
+			port = 443
 		}
-		if address.Port != 443 {
-			host += ":" + strconv.Itoa(address.Port)
+		if port == 0 {
+			address, ok := this.Http.Addresses[0].Get().(*stdnet.TCPAddr)
+			if !ok || address.Port <= 0 {
+				return fmt.Errorf("OIDC Authorization Code requires a fixed HTTPS listener port")
+			}
+			port = address.Port
+		}
+		if port != 443 {
+			host += ":" + strconv.Itoa(port)
 		}
 		conf.origin = "https://" + host
 	}

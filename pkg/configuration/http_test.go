@@ -136,10 +136,9 @@ func TestDisabledHttpRoundTripPreservesExplicitEmptySourcesAndZeroGrace(t *testi
 	require.True(t, configured.IsEqualTo(restored))
 }
 
-func TestHttpEnabledRequiresDomainsListenerAndTlsSource(t *testing.T) {
+func TestHttpEnabledRequiresDomainsAndListener(t *testing.T) {
 	for _, test := range []struct{ source, message string }{
 		{"enabled: true", "[domains]"},
-		{"enabled: true\ndomains: [app.example.org]", "[tls]"},
 		{strings.Replace(httpTestCertificate, "enabled: true", "enabled: true\naddresses: []", 1), "[addresses]"},
 		{strings.Replace(httpTestCertificate, "domains: [app.example.org]", "domains: []", 1), "[domains]"},
 	} {
@@ -294,15 +293,22 @@ func TestHttpReferenceExamplesParseWithoutFilesystemOrNetworkAccess(t *testing.T
 	exampleSection := strings.SplitN(string(contents), "## Examples", 2)
 	require.Len(t, exampleSection, 2)
 	examples := regexp.MustCompile("(?s)```yaml\n(.*?)\n```").FindAllStringSubmatch(exampleSection[1], -1)
-	require.Len(t, examples, 1)
-	for _, example := range examples {
+	require.Len(t, examples, 2)
+	for index, example := range examples {
 		var conf Configuration
 		// The reference demonstrates HTTP settings for existing flows. Supply an
 		// owned, non-executing flow; parsing must not provision TLS or storage.
 		require.NoError(t, conf.LoadFromYaml(strings.NewReader(example[1]+"\n"+httpTestFlows), "http-reference-example"))
 		require.True(t, conf.Http.IsEnabled())
-		require.True(t, conf.Http.Tls.Acme.Enabled)
-		require.True(t, conf.Http.Tls.Acme.AcceptTerms)
+		if index == 0 {
+			require.True(t, conf.Http.Tls.IsEnabled())
+			require.True(t, conf.Http.Tls.Acme.Enabled)
+			require.True(t, conf.Http.Tls.Acme.AcceptTerms)
+		} else {
+			require.False(t, conf.Http.Tls.IsEnabled())
+			require.True(t, conf.Http.Upstream.IsReverseProxy())
+			require.Equal(t, "/bifroest", conf.Http.Upstream.DefaultPrefix)
+		}
 	}
 }
 

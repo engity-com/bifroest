@@ -277,7 +277,10 @@ func TestMonitoringTLSRejectsSSHKeyReuseWithoutBrowserAccess(t *testing.T) {
 	require.NoError(t, conf.Monitoring.SetDefaults())
 	conf.Monitoring.Enabled = true
 	conf.Monitoring.Addresses = bnet.NetAddresses{bnet.MustNewAddress("127.0.0.1:0")}
-	conf.Monitoring.Tls = configuration.MonitoringTls{Enabled: true, Certificates: conf.Http.Tls.Certificates}
+	conf.Monitoring.Tls.Enabled = true
+	for _, certificate := range conf.Http.Tls.Certificates {
+		conf.Monitoring.Tls.Certificates = append(conf.Monitoring.Tls.Certificates, configuration.MonitoringCertificate(certificate))
+	}
 	conf.Http = nil
 	paths, err := conf.Ssh.Keys.HostKeys.Render(noopContext{})
 	require.NoError(t, err)

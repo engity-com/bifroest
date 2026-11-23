@@ -13,6 +13,7 @@ import (
 	log "github.com/echocat/slf4g"
 
 	bconn "github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/https"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 )
 
@@ -21,6 +22,7 @@ import (
 type webScope struct {
 	Origin string `json:"origin"`
 	Slug   string `json:"slug"`
+	Prefix string `json:"-"`
 }
 
 func requestWebScope(r *http.Request, slug string) (webScope, error) {
@@ -31,7 +33,7 @@ func requestWebScope(r *http.Request, slug string) (webScope, error) {
 	if err != nil {
 		return webScope{}, err
 	}
-	return webScope{Origin: origin, Slug: slug}, nil
+	return webScope{Origin: origin, Slug: slug, Prefix: https.PathPrefix(r)}, nil
 }
 
 func (this webScope) selection() bconn.Selection {

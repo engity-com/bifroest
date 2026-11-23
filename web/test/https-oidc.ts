@@ -6,21 +6,74 @@ import { required } from './required.ts';
 // access issuance. Chromium enforces TLS, CSP, cookies and cross-site navigation.
 const origin = required(process.argv[2]);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
+const prefix = process.env.BIFROEST_TEST_HTTP_PREFIX ?? '';
+const base = origin + prefix;
+const publicPath = (path: string) => prefix + path;
 const browser = await chromium.launch({
     headless: true,
     args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'],
 });
 try {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    context.setDefaultTimeout(10_000);
+    if (prefix !== '') {
+        await context.route(`${base}/api/v1/remember/resume`, async (route) => {
+            const status = await route
+                .request()
+                .frame()
+                .evaluate(async (body: unknown) => {
+                    const response = await fetch('/other-bifroest/api/v1/remember/resume', {
+                        method: 'POST',
+                        credentials: 'omit',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    return response.status;
+                }, route.request().postDataJSON());
+            assert.equal(status, 401, 'saved registrations are bound to their mount');
+            await route.continue();
+        });
+        await context.route(`${base}/api/v1/oidc/callback`, async (route) => {
+            // Real cookies and callback data must not authorize a different
+            // mount, nor consume the original transaction on rejection.
+            const cookies = (await context.cookies(origin)).filter((cookie) =>
+                cookie.name.startsWith('__Host-bifroest-'),
+            );
+            assert(cookies.length > 0);
+            assert(
+                cookies.every(
+                    (cookie) =>
+                        cookie.secure &&
+                        cookie.httpOnly &&
+                        cookie.path === '/' &&
+                        cookie.sameSite === 'Lax',
+                ),
+            );
+            const status = await route
+                .request()
+                .frame()
+                .evaluate(async (body: unknown) => {
+                    const response = await fetch('/other-bifroest/api/v1/oidc/callback', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    return response.status;
+                }, route.request().postDataJSON());
+            assert.equal(status, 401);
+            await route.continue();
+        });
+    }
     if (process.argv[3] === 'forwarded') {
         // A real independent profile must not attach its IdP identity to an
         // attacker's attempt, even though the attacker knows the whole ticket.
         const initiatingPage = await context.newPage();
-        await initiatingPage.goto(`${origin}/#Work`);
+        await initiatingPage.goto(`${base}/#Work`);
         const post = (action: string, fields: Record<string, string>, token?: string) =>
             initiatingPage.evaluate(
-                async ({ action, fields, token }) => {
-                    const response = await fetch(`/api/v1/${action}`, {
+                async ({ action, fields, token, prefix }) => {
+                    const response = await fetch(`${prefix}/api/v1/${action}`, {
                         method: 'POST',
                         credentials: 'same-origin',
                         headers: {
@@ -32,7 +85,7 @@ try {
                     const body: unknown = response.status === 204 ? null : await response.json();
                     return { status: response.status, body };
                 },
-                { action, fields, token },
+                { action, fields, token, prefix },
             );
         const started = await post('login/oidc', { slug: 'Work', user: '' });
         assert.equal(started.status, 202);
@@ -65,7 +118,7 @@ try {
         try {
             const page = await victim.newPage();
             const decision = page.waitForResponse(
-                (response) => new URL(response.url()).pathname === '/api/v1/oidc/start',
+                (response) => new URL(response.url()).pathname === publicPath('/api/v1/oidc/start'),
             );
             await page.goto(link);
             assert.equal((await decision).status(), 401);
@@ -93,7 +146,7 @@ try {
         // authentication request is intercepted or replayed.
         const link = new URL(process.argv[3]);
         assert.equal(link.origin, origin);
-        assert.equal(link.pathname, '/login/');
+        assert.equal(link.pathname, publicPath('/login/'));
         assert.match(link.hash, /^#start\/[A-Za-z0-9_-]{43}$/u);
         const mail = 'https://mail.example.net/owned-ssh-link';
         await login.route(mail, (route) =>
@@ -107,7 +160,7 @@ try {
         await ownedLink.evaluate((element, href) => element.setAttribute('href', href), link.href);
         const navigation = login.waitForResponse(
             (response) =>
-                response.request().isNavigationRequest() && response.url() === `${origin}/login/`,
+                response.request().isNavigationRequest() && response.url() === `${base}/login/`,
         );
         await ownedLink.click();
         const loginDocument = await navigation;
@@ -188,9 +241,13 @@ try {
         const initial = await context.newPage();
         const named = process.argv[3] === 'named';
         if (named) {
-            await initial.addInitScript(() => {
-                localStorage.setItem('bifroest-ui-v1:username:Work', 'route-user');
-            });
+            await initial.addInitScript((prefix) => {
+                const key = 'bifroest-ui-v1:username:Work';
+                localStorage.setItem(
+                    prefix === '' ? key : `bifroest-path-${encodeURIComponent(prefix)}:${key}`,
+                    'route-user',
+                );
+            }, prefix);
         }
         const popupBlocked = process.argv[3] === 'blocked';
         if (popupBlocked) {
@@ -208,11 +265,16 @@ try {
             page.on('request', (request) => {
                 const url = new URL(request.url());
                 if (url.origin === origin) {
-                    loginRequests.push(url.pathname);
+                    if (prefix !== '' && url.pathname === '/other-bifroest/api/v1/oidc/callback') {
+                        // This one request is the explicit negative mount test.
+                        return;
+                    }
+                    assert(url.pathname.startsWith(`${prefix}/`));
+                    loginRequests.push(url.pathname.slice(prefix.length));
                 }
             });
             page.on('response', async (response) => {
-                if (new URL(response.url()).pathname === '/api/v1/oidc/status') {
+                if (new URL(response.url()).pathname === publicPath('/api/v1/oidc/status')) {
                     try {
                         outcomes.push(((await response.json()) as { status: string }).status);
                     } catch {
@@ -221,27 +283,74 @@ try {
                 }
             });
             page.on('request', (request) => {
-                if (new URL(request.url()).pathname === '/api/v1/oidc/approve') {
+                if (new URL(request.url()).pathname === publicPath('/api/v1/oidc/approve')) {
                     approved = true;
                 }
             });
         });
         const discovery: string[] = [];
         initial.on('request', (request) => {
-            if (new URL(request.url()).pathname === '/api/v1/discovery') {
+            if (new URL(request.url()).pathname === publicPath('/api/v1/discovery')) {
                 assert.equal(request.method(), 'POST');
                 assert.equal(request.postDataJSON()?.slug, 'Work');
-                discovery.push(new URL(request.url()).pathname);
+                discovery.push(new URL(request.url()).pathname.slice(prefix.length));
             }
         });
-        const missing = await initial.goto(`${origin}/df`);
+        const missing = await initial.goto(`${base}/df`);
         assert(missing && missing.status() === 404);
         assert.equal(
             (await missing.body()).byteLength,
             0,
             'unknown entries are empty server 404s, not an application error screen',
         );
-        await initial.goto(`${origin}/#Work`);
+        await initial.goto(`${base}/#Work`);
+        if (prefix !== '') {
+            // Exercise the real module worker, Go runtime and public WASM
+            // under the mount, not only the OIDC document's JavaScript graph.
+            assert.equal(
+                await initial.evaluate(async () => {
+                    const mount = document
+                        .querySelector('meta[name="bifroest-path-prefix"]')
+                        ?.getAttribute('content');
+                    if (!mount) {
+                        return false;
+                    }
+                    const response = await fetch(`${mount}/assets/browser-key.wasm`, {
+                        credentials: 'omit',
+                        mode: 'same-origin',
+                        redirect: 'error',
+                    });
+                    if (
+                        response.status !== 200 ||
+                        response.headers.get('Content-Type') !== 'application/wasm'
+                    ) {
+                        return false;
+                    }
+                    const wasm = await response.arrayBuffer();
+                    const worker = new Worker(`${mount}/assets/browser-key-worker.js`, {
+                        type: 'module',
+                    });
+                    return await new Promise<boolean>((resolve) => {
+                        const finish = (ready: boolean) => {
+                            clearTimeout(timer);
+                            worker.terminate();
+                            resolve(ready);
+                        };
+                        const timer = setTimeout(() => finish(false), 5000);
+                        worker.onerror = () => finish(false);
+                        worker.onmessage = (event: MessageEvent<unknown>) =>
+                            finish(
+                                event.data !== null &&
+                                    typeof event.data === 'object' &&
+                                    'kind' in event.data &&
+                                    event.data.kind === 'ready',
+                            );
+                        worker.postMessage({ kind: 'boot', wasm }, [wasm]);
+                    });
+                }),
+                true,
+            );
+        }
         if (named) {
             const dialog = initial.getByRole('dialog', { name: 'Sign in', exact: true });
             const user = dialog.getByLabel('User name', { exact: true });
@@ -327,10 +436,25 @@ try {
             // A resumed grant must also retain the server-bound requesting user.
             await initial.getByRole('button', { name: 'New connection', exact: true }).click();
             await dialog.getByRole('radio', { name: 'Saved', exact: true }).waitFor();
+            const resumeStatuses: { action: string; status: number }[] = [];
+            initial.on('response', (response) => {
+                const path = new URL(response.url()).pathname;
+                for (const action of ['resume', 'prove']) {
+                    if (path === publicPath(`/api/v1/remember/${action}`)) {
+                        resumeStatuses.push({ action, status: response.status() });
+                    }
+                }
+            });
             await dialog.locator('button[type="submit"]').click();
-            await initial.waitForURL((url) =>
-                /^#route-user@Work\/[1-9A-HJ-NP-Za-km-z]{16,22}$/u.test(url.hash),
-            );
+            await initial
+                .waitForURL((url) =>
+                    /^#route-user@Work\/[1-9A-HJ-NP-Za-km-z]{16,22}$/u.test(url.hash),
+                )
+                .catch(() => {
+                    throw new Error(
+                        `Saved resume did not finish: ${JSON.stringify(resumeStatuses)}`,
+                    );
+                });
         }
         process.stdout.write(
             'PASS: real OIDC redirect, automatic popup, lean assets and final accepted outcome\n',

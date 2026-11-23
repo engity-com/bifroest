@@ -48,7 +48,7 @@ function staticJavaScriptGraph(entry: string): Set<string> {
 
 test('initial JavaScript graph fits the four-worker admission budget after the entry document without eager xterm or grid loading', () => {
     const html = readFileSync(join(output, 'index.html'), 'utf8');
-    const entry = /src="\/assets\/([A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
+    const entry = /src="(?:\/assets\/|\.\/)([A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
     assert(entry, 'built document must name its same-origin module entry');
     const visited = staticJavaScriptGraph(entry);
     assert(visited.size <= 5, `initial module graph must stay bounded: ${[...visited].join(', ')}`);
@@ -64,7 +64,7 @@ test('standalone login shares its UI but never loads application, terminal, mana
     const entry = (document: string) => {
         const html = readFileSync(join(output, document), 'utf8');
         assert(!html.includes('/assets/assets/') && !html.includes('/_bifroest/'));
-        const module = /src="\/assets\/([A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
+        const module = /src="(?:\/assets\/|\.\/)([A-Za-z0-9_-]+\.js)"/u.exec(html)?.[1];
         assert(module);
         return staticJavaScriptGraph(module);
     };

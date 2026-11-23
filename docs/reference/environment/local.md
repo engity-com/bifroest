@@ -173,7 +173,7 @@ Name of a Unix group or local Windows alias.
 
 - On Linux and macOS, changing local accounts or impersonating a different user requires appropriate privileges, usually root. macOS account mutation is limited to the local `/Local/Default` Directory Services node.
 - On Windows, session processes require LocalSystem and an existing or explicitly managed local SAM account. S4U does not provide credentials for remote shares or EFS. See [Windows service installation](../cli/service/install.md).
-- Windows interactive PTYs require Windows 10 1809 or Windows Server 2019 or later. Older versions support non-PTY commands and SFTP.
+- Windows interactive PTYs require Windows 10 1809 or Windows Server 2019 or later. Older versions support non-PTY commands and SFTP. The session account needs a writable `%TEMP%`; application-control policies must permit Bifröst's bundled ConPTY library there.
 - In Windows containers, accounts and required native APIs must be available inside the container. The default Nano Server entrypoint is not a LocalSystem service; local process startup requires a service-based configuration.
 
 ## Examples

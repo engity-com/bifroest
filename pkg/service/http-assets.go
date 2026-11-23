@@ -83,11 +83,7 @@ func (this *webService) serveBrowserDocument(w http.ResponseWriter, r *http.Requ
 	var data []byte
 	var nonce string
 	var err error
-	if login {
-		data, nonce, err = this.assets.LoginDocument()
-	} else {
-		data, nonce, err = this.assets.Document()
-	}
+	data, nonce, err = this.assets.DocumentWithPrefix(https.PathPrefix(r), login)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false
 	}

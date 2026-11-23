@@ -138,7 +138,7 @@ func TestEndpointTokenFilesAndDisabledMode(t *testing.T) {
 	conf.Enabled = false
 	conf.BearerTokenFile = "missing"
 	conf.Tls.Enabled = true
-	conf.Tls.Certificates = []configuration.HttpCertificate{{CertificateFile: "missing", PrivateKeyFile: "missing"}}
+	conf.Tls.Certificates = []configuration.MonitoringCertificate{{CertificateFile: "missing", PrivateKeyFile: "missing"}}
 	endpoint, err = New(conf, nil)
 	require.NoError(t, err)
 	require.Nil(t, endpoint)
@@ -188,7 +188,7 @@ func TestEndpointTLSWithProvidedCertificate(t *testing.T) {
 	require.NoError(t, os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600))
 	require.NoError(t, bfcrypto.WriteBootstrapFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), false))
 	conf := endpointTestConfiguration(t)
-	conf.Tls = configuration.MonitoringTls{Enabled: true, Certificates: []configuration.HttpCertificate{{CertificateFile: certPath, PrivateKeyFile: keyPath}}}
+	conf.Tls = configuration.MonitoringTls{Enabled: true, Certificates: []configuration.MonitoringCertificate{{CertificateFile: certPath, PrivateKeyFile: keyPath}}}
 	endpoint, err := New(conf, endpointTestRegistry())
 	require.NoError(t, err)
 	require.NoError(t, endpoint.Start(nil))

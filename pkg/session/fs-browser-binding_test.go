@@ -43,6 +43,7 @@ func browserBindingFixture(t *testing.T) (*FsRepository, *configuration.SessionF
 
 func TestBrowserBindingSurvivesRestartWithoutTouchingSessionOrSshKeys(t *testing.T) {
 	repository, conf, sess, spec := browserBindingFixture(t)
+	spec.PathPrefix = "/team/bifroest"
 	ctx := t.Context()
 	now := time.Now().UTC()
 	require.NoError(t, sess.SetEnvironmentToken(ctx, []byte(`{"containerId":"keep-this-workload"}`)))
@@ -86,6 +87,26 @@ func TestBrowserBindingSurvivesRestartWithoutTouchingSessionOrSshKeys(t *testing
 	info, err := current.Info(ctx)
 	require.NoError(t, err)
 	require.Equal(t, StateNew, info.State())
+}
+
+func TestBrowserBindingsJSONRejectsInvalidMountMetadata(t *testing.T) {
+	_, _, sess, spec := browserBindingFixture(t)
+	spec.PathPrefix = "/team/bifroest"
+	binding, err := sess.CreateBrowserBinding(t.Context(), spec, time.Hour)
+	require.NoError(t, err)
+	raw, err := json.Marshal(browserBindingsFile{browserBindingsSchema, sess.flow.String(), sess.id.String(), []BrowserBinding{binding}})
+	require.NoError(t, err)
+	decoded, err := decodeBrowserBindings(raw, sess.flow.String(), sess.id.String())
+	require.NoError(t, err)
+	require.Equal(t, spec.PathPrefix, decoded[0].PathPrefix)
+	for _, replacement := range []string{
+		`"pathPrefix":null`, `"pathPrefix":42`, `"pathPrefix":[]`,
+		`"pathPrefix":"/a/../b"`, `"pathPrefix":"/a%2fb"`, `"pathPrefix":"/a/"`,
+		`"PathPrefix":"/team/bifroest"`, `"pathPrefix":"/a","pathPrefix":"/b"`,
+	} {
+		_, err := decodeBrowserBindings(bytesReplace(raw, `"pathPrefix":"/team/bifroest"`, replacement), sess.flow.String(), sess.id.String())
+		require.ErrorIs(t, err, ErrInvalidBrowserBinding, replacement)
+	}
 }
 
 func TestBrowserBindingUsesSlidingIdleAndCannotReviveExpiredOrStaleRevision(t *testing.T) {

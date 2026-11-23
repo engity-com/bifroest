@@ -1,5 +1,6 @@
 import type { ProfileResetResult } from '../application/reset-contracts';
 import { BrowserBinding, BrowserClient, type WebAccess } from '../remember';
+import { ownsPreferenceKey } from '../shared/upstream';
 import { notifyProfileResetPeers } from './profile-reset-peers';
 
 export const profileResetEvent = 'bifroest-profile-reset-start';
@@ -20,7 +21,7 @@ function clearPreferences(): boolean {
         try {
             const selected = storage();
             for (const key of Object.keys(selected)) {
-                if (key.startsWith('bifroest-')) {
+                if (ownsPreferenceKey(key)) {
                     selected.removeItem(key);
                 }
             }

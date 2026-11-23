@@ -1,0 +1,13 @@
+apiVersion: v2
+name: bifroest
+description: Bifröst SSH and HTTPS gateway
+type: application
+version: 0.0.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.32.0-0"
+home: https://bifroest.engity.org/
+sources:
+  - https://github.com/engity-com/bifroest
+maintainers:
+  - name: Engity
+    url: https://engity.com/

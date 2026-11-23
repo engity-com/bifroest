@@ -8,6 +8,7 @@ import { isCatalogWarmupResponse } from '../remember/catalog-error';
 import type { AccessSnapshot } from '../remember/client';
 import { type ArtifactResponseImage, object } from '../remember/http';
 import { RememberMeError } from '../remember/protocol';
+import { publicPath } from '../shared/upstream';
 import { resourceID } from '../shared/uuid';
 import {
     defaultKeepAlive,
@@ -103,7 +104,7 @@ export class ManagementConnection {
             this.#rejectReady = reject;
         });
         void this.#ready.catch(() => {});
-        const url = new URL('/api/v1/management/channel', snapshot.scope.origin);
+        const url = new URL(publicPath('/api/v1/management/channel'), snapshot.scope.origin);
         url.protocol = 'wss:';
         this.#socket = factory(url.href, protocol);
         this.#socket.binaryType = 'arraybuffer';

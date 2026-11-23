@@ -1250,6 +1250,11 @@ func cloneRuntimePathConfiguration(conf *configuration.Configuration) configurat
 	if conf.Http != nil {
 		cloned := *conf.Http
 		cloned.Tls.Certificates = slices.Clone(conf.Http.Tls.Certificates)
+		cloned.Upstream.TrustedPeers = slices.Clone(conf.Http.Upstream.TrustedPeers)
+		if conf.Http.Tls.Enabled != nil {
+			enabled := *conf.Http.Tls.Enabled
+			cloned.Tls.Enabled = &enabled
+		}
 		cloned.CustomCss = slices.Clone(conf.Http.CustomCss)
 		cloned.CustomJs = slices.Clone(conf.Http.CustomJs)
 		result.Http = &cloned

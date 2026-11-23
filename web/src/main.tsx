@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router/dom';
 import { OidcApplication } from './login/OidcLogin';
+import { internalPath } from './shared/upstream';
 import { bifroestTheme } from './ui/theme';
 import './ui/app.css';
 import { App } from './ui/App';
@@ -110,7 +111,8 @@ async function start() {
     }
     starting = true;
     try {
-        if (location.pathname === '/login' || location.pathname.startsWith('/login/')) {
+        const pathname = internalPath(location.pathname);
+        if (pathname === '/login' || pathname.startsWith('/login/')) {
             createRoot(container).render(<OidcApplication title={configureBrowserTitle()} />);
             started = true;
             return;

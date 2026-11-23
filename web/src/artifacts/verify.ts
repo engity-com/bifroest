@@ -1,6 +1,7 @@
 import type { ProgressListener } from '../management/progress';
 import { type ArtifactResponseImage, object } from '../remember/http';
 import { RememberMeError } from '../remember/protocol';
+import { publicPath } from '../shared/upstream';
 import { uuidEqual } from '../shared/uuid';
 import { readLocalBytes } from '../wasm/local-file';
 import type { EvidenceOptions, VerifiedArtifact } from './evidence-protocol';
@@ -132,7 +133,7 @@ async function verifyArtifactImage(
         if (session) {
             worker = session.worker;
         } else {
-            worker = new Worker('/assets/browser-evidence-worker.js', {
+            worker = new Worker(publicPath('/assets/browser-evidence-worker.js'), {
                 type: 'module',
                 credentials: 'omit',
                 name: 'bifroest-evidence',
@@ -263,7 +264,7 @@ async function createRecordingRuntimeInstance(
     }
     let worker: Worker;
     try {
-        worker = new Worker('/assets/browser-evidence-worker.js', {
+        worker = new Worker(publicPath('/assets/browser-evidence-worker.js'), {
             type: 'module',
             credentials: 'omit',
             name: recordingID ? 'bifroest-recording-open' : 'bifroest-recording-verification',

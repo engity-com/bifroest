@@ -7,6 +7,8 @@ toc_depth: 5
 
 When using Kubernetes environments, each user session runs in a dedicated [Pod](https://kubernetes.io/docs/concepts/workloads/pods/) inside a defined [Kubernetes cluster](https://kubernetes.io/docs/concepts/architecture/). This is in contrast to the [local environment](local.md), where each user session runs on the same host as Bifröst.
 
+To install **Bifröst itself** in a cluster, use the [Helm installation guide](../../setup/in-kubernetes.md). The chart does not grant the API credentials or RBAC permissions needed for these session Pods; configure them separately.
+
 ## With Bifröst
 
 As the resulting Pod runs inside of Kubernetes and the terminal session will be connected to this Pod, the user can access (depending on the cluster settings) access everything directly inside the cluster.

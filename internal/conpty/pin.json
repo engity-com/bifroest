@@ -1,0 +1,18 @@
+{
+  "version": "1.25.261109001",
+  "packageSHA256": "3d77f535df848e44225c2a8912ac844fecb23f3057732b639f3034b587496f09",
+  "payloads": [
+    {
+      "arch": "386",
+      "sha256": "914c7eb6840a5cb477e5f2fdd26610ba4272803b96866123cb87e21a8a2366cd"
+    },
+    {
+      "arch": "amd64",
+      "sha256": "e971856f89748dc3b458125e9afdd79b5e9574a7c937676116d3cbbd3b71f492"
+    },
+    {
+      "arch": "arm64",
+      "sha256": "3608cef830a1c4fbbf3981594ad3f64ebe2df6db98fe43a48a4ca7d2875d8959"
+    }
+  ]
+}

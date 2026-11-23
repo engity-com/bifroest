@@ -1,0 +1,11 @@
+{{- if eq (include "bifroest.configurationSource" .) "inline" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "bifroest.fullname" . }}
+  labels:
+    {{- include "bifroest.labels" . | nindent 4 }}
+type: Opaque
+data:
+  configuration.yaml: {{ include "bifroest.configuration" . | b64enc | quote }}
+{{- end }}

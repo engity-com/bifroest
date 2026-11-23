@@ -147,13 +147,16 @@ func (this *TLS) RenewDue(ctx context.Context) error {
 // work, honors shutdown, and applies per-domain backoff (including Retry-After).
 // onFailure receives log-safe errors; it must return promptly.
 func (this *TLS) RunRenewal(ctx context.Context, onFailure func(error)) error {
+	this.mutex.RLock()
 	if _, renewable := this.source.(RenewableCertificateSource); !renewable {
 		for _, domain := range this.domains {
 			if this.explicit[domain] == nil {
+				this.mutex.RUnlock()
 				return fmt.Errorf("TLS certificate source does not support renewal")
 			}
 		}
 	}
+	this.mutex.RUnlock()
 	select {
 	case this.renewing <- struct{}{}:
 		defer func() { <-this.renewing }()
@@ -184,6 +187,12 @@ func (this *TLS) RunRenewal(ctx context.Context, onFailure func(error)) error {
 			}
 		}
 		this.mutex.RUnlock()
+		if len(this.files) != 0 {
+			reloadAt := this.now().Add(this.reloadInterval)
+			if next.IsZero() || reloadAt.Before(next) {
+				next = reloadAt
+			}
+		}
 		var wake <-chan time.Time
 		var timer *time.Timer
 		if !next.IsZero() {
@@ -202,6 +211,9 @@ func (this *TLS) RunRenewal(ctx context.Context, onFailure func(error)) error {
 			}
 			return ErrClosed
 		case <-wake:
+		}
+		if err := this.ReloadFiles(ctx); err != nil && ctx.Err() == nil && onFailure != nil {
+			onFailure(err)
 		}
 		if err := this.RenewDue(ctx); err != nil {
 			if ctx.Err() != nil {

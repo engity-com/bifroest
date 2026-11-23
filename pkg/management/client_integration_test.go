@@ -199,6 +199,23 @@ func managementSSHTestServer(t *testing.T, command string, handle func(ssh.Chann
 
 func managementSSHAuthTestServer(t *testing.T, command string, handle func(ssh.Channel) error, configure func(*ssh.ServerConfig)) (Target, <-chan error) {
 	t.Helper()
+	return managementSSHAuthTestServerWithTransport(t, command, handle, configure, nil)
+}
+
+// A peer EOF must retire both directions before SSH closes channels: channel
+// cleanup can otherwise wait on a write lock held by a blocked TCP writer.
+type managementSSHTestConn struct{ net.Conn }
+
+func (conn managementSSHTestConn) Read(data []byte) (int, error) {
+	n, err := conn.Conn.Read(data)
+	if err != nil {
+		_ = conn.Close()
+	}
+	return n, err
+}
+
+func managementSSHAuthTestServerWithTransport(t *testing.T, command string, handle func(ssh.Channel) error, configure func(*ssh.ServerConfig), wrap func(net.Conn) net.Conn) (Target, <-chan error) {
+	t.Helper()
 	t.Setenv("SSH_AUTH_SOCK", "")
 	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -229,6 +246,10 @@ func managementSSHAuthTestServer(t *testing.T, command string, handle func(ssh.C
 			serverDone <- err
 			return
 		}
+		if wrap != nil {
+			conn = wrap(conn)
+		}
+		conn = managementSSHTestConn{conn}
 		defer conn.Close()
 		server, channels, requests, err := ssh.NewServerConn(conn, config)
 		if err != nil {

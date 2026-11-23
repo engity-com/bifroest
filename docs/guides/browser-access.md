@@ -8,7 +8,7 @@ Open a shell on a Bifröst host with a browser instead of an SSH client. HTTPS a
 
 This Linux example requires the [extended release installed as a host service](../setup/on-host.md#linux), running as root, and an existing local account `alice` whose password is accepted by `/etc/pam.d/sshd`.
 
-Point `bifroest.example.org` at the host and make TCP port 443 publicly reachable. Bifröst obtains and renews its certificate through ACME; TLS must terminate directly at Bifröst.
+Point `bifroest.example.org` at the host and make TCP port 443 publicly reachable. This example uses Bifröst's ACME support, so TLS must terminate directly at Bifröst. For TLS termination at an ingress, use the [reverse-proxy configuration](../reference/connection/http/index.md#upstream) instead.
 
 ## Configure HTTPS and a terminal flow
 
