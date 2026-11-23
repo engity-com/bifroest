@@ -158,8 +158,8 @@ func (this *Monitoring) IsEqualTo(value any) bool {
 }
 
 type MonitoringTls struct {
-	Enabled      bool              `yaml:"enabled,omitempty"`
-	Certificates []HttpCertificate `yaml:"certificates,omitempty"`
+	Enabled      bool                    `yaml:"enabled,omitempty"`
+	Certificates []MonitoringCertificate `yaml:"certificates,omitempty"`
 }
 
 func (this *MonitoringTls) SetDefaults() error { *this = MonitoringTls{}; return nil }
@@ -193,6 +193,21 @@ func (this *MonitoringTls) UnmarshalYAML(node *yaml.Node) error {
 }
 func (this MonitoringTls) IsEqualTo(other MonitoringTls) bool {
 	return this.Enabled == other.Enabled && slices.Equal(this.Certificates, other.Certificates)
+}
+
+type MonitoringCertificate HttpCertificate
+
+func (this *MonitoringCertificate) SetDefaults() error {
+	*this = MonitoringCertificate{CertificateFile: DefaultMonitoringCertificateFile, PrivateKeyFile: DefaultMonitoringPrivateKeyFile}
+	return nil
+}
+func (this *MonitoringCertificate) Trim() error     { return (*HttpCertificate)(this).Trim() }
+func (this *MonitoringCertificate) Validate() error { return (*HttpCertificate)(this).Validate() }
+func (this *MonitoringCertificate) UnmarshalYAML(node *yaml.Node) error {
+	return unmarshalYAML(this, node, func(target *MonitoringCertificate, node *yaml.Node) error {
+		type raw MonitoringCertificate
+		return decodeHttpFields(node, (*raw)(target), map[string]string{"certificateFile": "!!str", "privateKeyFile": "!!str"})
+	})
 }
 
 type MonitoringRemoteHosts []string

@@ -55,6 +55,7 @@ type oidcBrowserTransaction struct {
 	cancel                               context.CancelFunc
 	client                               *authorization.OidcDeviceAuthAuthorizer
 	origin, peer, user, comparison, csrf string
+	prefix, redirect                     string
 	id                                   string
 	ssh                                  bool
 	phase, reason                        string
@@ -244,11 +245,17 @@ func (this *webService) Login(req authorization.InteractiveRequest, client *auth
 		return nil, err
 	}
 	origin := conf.Origin()
+	prefix := conf.EffectivePathPrefix()
 	if selection.Transport == bconn.TransportHttp {
 		conn, ok := req.Connection().(*webLoginConnection)
-		if !ok || conn.scope.Origin != origin || attempt.initiator.name == "" {
+		if !ok || attempt.initiator.name == "" || !conf.MatchesHttpOrigin(conn.scope.Origin) {
 			return nil, fmt.Errorf("OIDC login requires its configured HTTPS origin")
 		}
+		origin = conn.scope.Origin
+		if conf.HasExplicitPathPrefix() && conn.scope.Prefix != prefix {
+			return nil, fmt.Errorf("OIDC login requires its configured path prefix")
+		}
+		prefix = conn.scope.Prefix
 	}
 	this.oidcMutex.Lock()
 	this.pruneOidcLocked()
@@ -290,6 +297,7 @@ func (this *webService) Login(req authorization.InteractiveRequest, client *auth
 	stopShutdown := context.AfterFunc(this.ctx, cancel)
 	remote := req.Connection().Remote()
 	tx := &oidcBrowserTransaction{ctx: ctx, cancel: cancel, client: client, origin: origin, peer: remote.Host().String(), user: remote.User(), comparison: comparison, ssh: selection.Transport == bconn.TransportSsh, initiator: attempt.initiator, phase: "created", done: make(chan *authorization.OidcCodeResult, 1)}
+	tx.prefix, tx.redirect = prefix, origin+prefix+configuration.OidcCallbackPath
 	context.AfterFunc(ctx, func() {
 		stopShutdown()
 		this.oidcMutex.Lock()
@@ -326,9 +334,9 @@ func (this *webService) Login(req authorization.InteractiveRequest, client *auth
 	attempt.transactions = append(attempt.transactions, tx)
 	attempt.current = tx
 	this.oidcMutex.Unlock()
-	message := "Open the following URL in your browser to login: " + origin + oidcBrowserPrefix + "#start/" + ticket
+	message := "Open the following URL in your browser to login: " + origin + prefix + oidcBrowserPrefix + "#start/" + ticket
 	if tx.ssh {
-		message, err = authorization.RenderOidcSshLoginMessage(req, conf.Ssh.LoginMessage, origin+oidcBrowserPrefix+"#start/"+ticket, tx.comparison, true)
+		message, err = authorization.RenderOidcSshLoginMessage(req, conf.Ssh.LoginMessage, origin+prefix+oidcBrowserPrefix+"#start/"+ticket, tx.comparison, true)
 		if err != nil {
 			this.oidcMutex.Lock()
 			this.finishOidcLocked(tx, "denied", "unavailable")
@@ -502,7 +510,7 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 	} else if oidcValidToken(values["id"]) {
 		tx = this.oidcBrowsers[sha256.Sum256([]byte(values["id"]))]
 	}
-	if tx == nil || tx.origin != scope.Origin {
+	if tx == nil || tx.origin != scope.Origin || tx.prefix != scope.Prefix {
 		webError(w, 401, "login unavailable")
 		return
 	}
@@ -536,7 +544,7 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		oidcCookie(w, id, binding, expires.Add(time.Minute))
 		view := this.oidcViewLocked(tx)
-		view.URL = tx.client.CodeAuthorizationURL(state, nonce, verifier)
+		view.URL = tx.client.CodeAuthorizationURLFor(state, nonce, verifier, tx.redirect)
 		webJSONResponse(w, 200, view)
 		return
 	}
@@ -548,7 +556,7 @@ func (this *webService) serveOidcAPI(w http.ResponseWriter, r *http.Request) {
 	if action == "start" || action == "status" {
 		view := this.oidcViewLocked(tx)
 		if tx.phase == "redirected" {
-			view.URL = tx.client.CodeAuthorizationURL(tx.state, tx.nonce, tx.verifier)
+			view.URL = tx.client.CodeAuthorizationURLFor(tx.state, tx.nonce, tx.verifier, tx.redirect)
 		}
 		webJSONResponse(w, 200, view)
 		return
@@ -611,7 +619,7 @@ func (this *webService) oidcCallback(w http.ResponseWriter, r *http.Request, raw
 	this.pruneOidcLocked()
 	tx := this.oidcStates[key]
 	_, hasIssuer := query["iss"]
-	if tx == nil || !oidcBound(r, tx) || !tx.ssh && !tx.initiator.matches(r) || scopeErr != nil || tx.origin != scope.Origin || hasIssuer && query.Get("iss") != tx.client.CodeIssuer() {
+	if tx == nil || !oidcBound(r, tx) || !tx.ssh && !tx.initiator.matches(r) || scopeErr != nil || tx.origin != scope.Origin || tx.prefix != scope.Prefix || hasIssuer && query.Get("iss") != tx.client.CodeIssuer() {
 		this.oidcMutex.Unlock()
 		webError(w, 401, "callback denied")
 		return
@@ -644,7 +652,7 @@ func (this *webService) oidcCallback(w http.ResponseWriter, r *http.Request, raw
 	var result *authorization.OidcCodeResult
 	if !hasError {
 		ctx, cancel := context.WithTimeout(tx.ctx, 15*time.Second)
-		result, err = tx.client.ExchangeCode(ctx, query.Get("code"), verifier, nonce)
+		result, err = tx.client.ExchangeCodeFor(ctx, query.Get("code"), verifier, nonce, tx.redirect)
 		cancel()
 	}
 	this.oidcMutex.Lock()

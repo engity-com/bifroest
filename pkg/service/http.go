@@ -8,6 +8,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/webui"
@@ -58,6 +59,14 @@ func (this *service) prepareHTTPS() error {
 		this.sshTunnel.monitoring = this.monitoring
 	}
 	options := https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: http.HandlerFunc(this.serveHTTPS)}
+	options.ValidateFiles = func() error {
+		candidate := cloneRuntimePathConfiguration(&this.Configuration)
+		var storage string
+		if configured, ok := candidate.Session.V.(*configuration.SessionFs); ok && configured != nil {
+			storage = configured.Storage
+		}
+		return validateHTTPRuntimePaths(&candidate, storage)
+	}
 	if this.monitoring != nil {
 		options.ObserveRequest = this.monitoring.observeHTTPRequest
 		options.ObserveConnection = this.monitoring.httpConnectionOpened

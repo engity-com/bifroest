@@ -111,7 +111,7 @@ func New(conf *configuration.Monitoring, gatherer prometheus.Gatherer) (*Endpoin
 	if conf.Tls.Enabled {
 		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 		for _, entry := range conf.Tls.Certificates {
-			certificate, err := https.LoadCertificate(entry, time.Now())
+			certificate, err := https.LoadCertificate(configuration.HttpCertificate(entry), time.Now())
 			if err != nil {
 				return nil, fmt.Errorf("cannot load monitoring TLS certificate/key: %w", err)
 			}

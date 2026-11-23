@@ -1,3 +1,5 @@
+import { internalPath, publicPath } from '../shared/upstream';
+
 export type OidcStatus =
     | 'created'
     | 'redirected'
@@ -47,7 +49,7 @@ export async function oidcRequest(
 ): Promise<OidcView> {
     let response: Response;
     try {
-        response = await fetch(`/api/v1/oidc/${action}`, {
+        response = await fetch(publicPath(`/api/v1/oidc/${action}`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify(fields),
@@ -177,13 +179,16 @@ export function oidcEntry(
     location: Pick<Location, 'pathname' | 'search' | 'hash'>,
 ): { action: 'start' | 'callback' | 'status'; fields: Record<string, string> } | null {
     if (
-        location.pathname === '/login/callback' &&
+        internalPath(location.pathname) === '/login/callback' &&
         location.search.length <= 8193 &&
         location.hash === ''
     ) {
         return { action: 'callback', fields: { query: location.search.slice(1) } };
     }
-    if (!['/login', '/login/'].includes(location.pathname) || location.search !== '') {
+    if (
+        !['/login', '/login/'].includes(internalPath(location.pathname)) ||
+        location.search !== ''
+    ) {
         return null;
     }
     const match = /^#(start|attempt)\/([A-Za-z0-9_-]{43})$/u.exec(location.hash);

@@ -13,10 +13,10 @@ Workload links use browser fragments, such as `/#Shell` or `/#alice@Shell`; see 
 
 ## Configuration
 
-These properties belong to the root `http` block. `domains` and `tls` are required when HTTP is enabled.
+These properties belong to the root `http` block. `domains` is required when HTTP is enabled.
 
 <<property("enabled", "bool", default=False)>>
-Enables HTTPS. There is no unencrypted HTTP fallback.
+Enables the HTTP connection. TLS remains enabled unless explicitly disabled in [reverse-proxy mode](#upstream).
 
 <<property("webUi", "WebUI", "#webui")>>
 Controls the browser workspace and its API independently of SSH tunnels and the login page.
@@ -31,10 +31,13 @@ Controls the OIDC login page and its required endpoints independently of the wor
 Addresses to listen on; at least one is required when enabled.
 
 <<property("domains", array_ref("Host", "../../data-type.md#host"), required=True)>>
-Accepted host names or IP addresses, without schemes, ports, paths or wildcards. Each needs a matching TLS certificate. [Flow requirements](../../flow.md#http-requirements) can restrict this list further.
+Accepted public host names or IP addresses, without schemes, ports, paths or wildcards. With backend TLS enabled, each needs a matching certificate. [Flow requirements](../../flow.md#http-requirements) can restrict this list further.
 
-<<property("tls", "TLS", "#tls", required=True)>>
-Existing certificates, ACME, or self-signed TLS for local testing; see [TLS](#tls).
+<<property("tls", "TLS", "#tls")>>
+Existing certificates, ACME, or self-signed TLS for local testing. Without an explicit source, uses the [default certificate files](#certificate).
+
+<<property("upstream", "Upstream", "#upstream")>>
+Direct HTTPS or an explicitly trusted reverse proxy, including public path and port defaults.
 
 <<property("startupTimeout", "Duration", "../../data-type.md#duration", default="2m")>>
 Maximum startup time, including certificate acquisition. Must be greater than zero.
@@ -101,7 +104,7 @@ These properties belong to `http.sshTunnel`.
 <<property("enabled", "bool", default=True, id_prefix="ssh-tunnel-", heading=3)>>
 Enable the SSH tunnel for native clients. Existing SSH authentication, host-key verification, [SSH flow requirements](../../flow.md), limits, auditing, SFTP and forwarding policies apply. Browser-only flows do not grant SSH access.
 
-Transport admission additionally allows at most 1024 simultaneous tunnels, with at most 64 per direct peer IP. Lower SSH limits still apply; forwarded headers do not replace the peer address.
+Transport admission additionally allows at most 1024 simultaneous tunnels, with at most 64 per effective client IP. Lower SSH limits still apply. In direct mode this is the socket peer; reverse-proxy mode uses the [validated client chain](#upstream-forwarded-headers).
 
 ## Login flow
 
@@ -112,11 +115,11 @@ Enable the login page, its resources and required OIDC endpoints, including when
 
 ## TLS
 
-TLS terminates directly at Bifröst; an HTTP reverse proxy must not terminate it instead. Existing certificates take priority over ACME.
+By default, TLS terminates at Bifröst. Existing certificates take priority over ACME. External TLS termination requires explicit [reverse-proxy configuration](#upstream).
 
 ### Load balancers and instance routing
 
-Browser access, pending logins and management confirmations belong to the instance that created them. A TCP/TLS load balancer must keep related HTTP requests and channels on that instance.
+Browser access, pending logins and management confirmations belong to the instance that created them. A load balancer or reverse proxy must keep related HTTP requests and channels on that instance.
 
 For [SSH Authorization Code logins](../../authorization/oidc/authorization-code.md#login), coordinate persistence across SSH and HTTPS so browser approval and the IdP callback reach the instance holding the SSH login. Browser-cookie affinity alone cannot establish that relationship; use instance-specific login endpoints when these paths cannot be pinned together.
 
@@ -126,6 +129,12 @@ After a backend failure, the load balancer can route a new connection to a healt
 
 These properties belong to `http.tls`.
 
+<<property("enabled", "bool", default=True, id_prefix="tls-", heading=4)>>
+Enable TLS on the Bifröst listener. `false` requires `http.upstream.mode: reverseProxy`; it cannot be combined with certificates, ACME or dummy TLS. Proxy mode alone does not disable TLS.
+
+<<property("reloadInterval", "Duration", "../../data-type.md#duration", default="5s", id_prefix="tls-", heading=4)>>
+Interval for reloading external certificate/key files. `0s` uses the default; negative values are invalid. A complete valid set replaces the previous certificates without restarting or closing established connections. Invalid rotations are logged and retain the last valid set; expired certificates cannot accept new connections.
+
 <<property("dummy", "bool", default=False, id_prefix="tls-", heading=4)>>
 Generate a temporary self-signed certificate for local testing. Cannot be combined with existing certificates or ACME.
 
@@ -133,7 +142,7 @@ Generate a temporary self-signed certificate for local testing. Cannot be combin
     Use trusted certificates or ACME for production, not dummy TLS.
 
 <<property("certificates", array_ref("Certificate", "#certificate"), id_prefix="tls-", heading=4)>>
-PEM certificate/key pairs covering the configured domains.
+PEM certificate/key pairs covering the configured domains. If omitted or empty, the default pair below is used only when neither ACME nor dummy TLS is selected. Explicit pairs can be combined with ACME for the remaining domains.
 
 <<property("acme", "ACME", "#acme", id_prefix="tls-", heading=4)>>
 Optional automatic certificate issuance and renewal. Disabled by default.
@@ -142,11 +151,25 @@ Optional automatic certificate issuance and renewal. Disabled by default.
 
 Each entry in `http.tls.certificates` has these properties.
 
-<<property("certificateFile", "File Path", "../../data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
+<<property("certificateFile", "File Path", "../../data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
 Local PEM certificate-chain file.
 
-<<property("privateKeyFile", "File Path", "../../data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
-Local PEM private-key file, separate from SSH and audit keys. Do not put the key itself in the configuration.
+The default value is different, depending on the platform Bifröst runs on:
+
+* Linux: `/etc/engity/bifroest/tls/tls.crt`
+* macOS: `/Library/Application Support/Engity/Bifroest/tls/tls.crt`
+* Windows: `C:\ProgramData\Engity\Bifroest\tls\tls.crt`
+
+<<property("privateKeyFile", "File Path", "../../data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
+Local PEM private-key file, separate from SSH and audit keys.
+
+The default value is different, depending on the platform Bifröst runs on:
+
+* Linux: `/etc/engity/bifroest/tls/tls.key`
+* macOS: `/Library/Application Support/Engity/Bifroest/tls/tls.key`
+* Windows: `C:\ProgramData\Engity\Bifroest\tls\tls.key`
+
+Do not put the key itself in the configuration. Keep the key privately owned by the service account, with owner-only permissions such as `0400` or `0600` on Unix, and separate from public assets and mutable application storage.
 
 ### ACME
 
@@ -177,9 +200,43 @@ Persistent private directory for ACME account and certificate keys. Preserve it 
 | - | - | - |
 | `/var/lib/engity/bifroest/http/acme` | `/Library/Application Support/Engity/Bifroest/http/acme` | `C:\ProgramData\Engity\Bifroest\http\acme` |
 
+## Upstream
+
+These properties belong to `http.upstream`.
+
+<<property("mode", "string", default="direct", id_prefix="upstream-", heading=3)>>
+`direct` uses Bifröst's TLS connection, SNI and Host; forwarded headers are ignored. `reverseProxy` requires a trusted socket peer and validated public HTTPS metadata on every request, including when backend TLS is enabled.
+
+<<property("trustedPeers", array_ref("IP Address or Network", "../../data-type.md#ip-address-or-network"), id_prefix="upstream-", heading=3)>>
+Required in proxy mode, with no default. List explicit proxy IPs or CIDRs. The optional value `private` includes RFC1918 IPv4 ranges and IPv6 ULA (`fc00::/7`), not loopback, link-local or CGNAT. It trusts all such private networks, not just your cluster; use narrow ranges and restrict backend access to your ingress.
+
+<<property("defaultPrefix", "string", default="", id_prefix="upstream-", heading=3)>>
+Public mount path for URLs generated without an HTTP request, notably SSH-initiated OIDC. Empty means root. Otherwise use an absolute path such as `/team/bifroest`, without a trailing slash. Segments may contain ASCII letters, digits and `-._~`, but not `.` or `..` alone. Encoded paths, empty segments, queries and fragments are rejected. Requires proxy mode when non-empty.
+
+<<property("defaultPort", "uint16", default=0, id_prefix="upstream-", heading=3)>>
+Public HTTPS port for URLs generated without an HTTP request. `0` selects the mode-specific default:
+
+| Direct | Reverse proxy |
+| - | - |
+| First listener's port | `443` |
+
+### Forwarded headers {: #upstream-forwarded-headers }
+
+The ingress must remove client-supplied metadata and set the authoritative values below. RFC 7239 `Forwarded` is not used. Except for the comma-separated IP chain, duplicate headers and value lists are rejected.
+
+| Header | Contract |
+| - | - |
+| `X-Forwarded-Proto` | Required, exactly `https`. Public HTTP is rejected. |
+| `X-Forwarded-Host` | Optional single public authority, restricted by `http.domains`; otherwise the HTTP Host is used. Include a non-standard public port. |
+| `X-Forwarded-Port` | Optional numeric port from `1` to `65535`; must agree with a port already present in the authority. |
+| `X-Forwarded-For` | Required single IP chain. Evaluation starts at the socket peer and proceeds right to left while hops are trusted, stopping at the first untrusted address. The resulting IP is used for access rules, audit and client limits. |
+| `X-Forwarded-Prefix` | Optional canonical mount path using the rules for `defaultPrefix`. Missing or empty means root, never the configured default. |
+
+For subpaths, strip the public prefix and set `X-Forwarded-Prefix`; preserve Origin and browser fetch metadata. Restrict backend access to the ingress; internal HTTP is unencrypted. Subpaths do not isolate untrusted applications.
+
 ## RememberMe
 
-The authorization's [RememberMe](../../data-type.md#rememberme) setting controls saved access. One non-exportable signing key is shared within this browser profile and origin; permissions remain separate. Resumption requires current authorization and a valid session. Use **Log out** to revoke saved access.
+The authorization's [RememberMe](../../data-type.md#rememberme) setting controls saved access. One non-exportable signing key is shared within this browser profile, origin and mount path; permissions remain separate. Resumption requires current authorization and a valid session. Use **Log out** to revoke saved access.
 
 ### Configuration {: #rememberme-configuration }
 
@@ -202,6 +259,23 @@ http:
 ```
 
 To expose only SSH over HTTPS/WSS, keep the HTTPS configuration above and set `ssh.enabled`, `http.webUi.enabled` and `http.loginFlow.enabled` to `false`. Leave `http.sshTunnel.enabled` at its default of `true`.
+
+For a TLS-terminating ingress at `https://gateway.example.org/bifroest/`, forwarding from `10.20.0.0/24` to backend port `8080`:
+
+```yaml
+http:
+  enabled: true
+  addresses: [":8080"]
+  domains: [gateway.example.org]
+  tls:
+    enabled: false
+  upstream:
+    mode: reverseProxy
+    trustedPeers: [10.20.0.0/24]
+    defaultPrefix: /bifroest
+```
+
+Restrict that backend port to the ingress and apply the [header and rewrite contract](#upstream-forwarded-headers). Set `defaultPort` as well if the public HTTPS port is not `443`.
 
 ## Compatibility
 

@@ -4,6 +4,7 @@ import {
     parseManagementLocation,
 } from '../application/management-location';
 import { type Scope, validateScope } from '../remember/protocol';
+import { publicPath } from '../shared/upstream';
 import { resourceID, uuidText } from '../shared/uuid';
 
 export interface HashTarget {
@@ -130,5 +131,5 @@ export function bookmarkPath(
     management?: ManagementLocation,
     user?: string | null,
 ): string {
-    return hashPath(scope, '-', management, user);
+    return publicPath(hashPath(scope, '-', management, user));
 }

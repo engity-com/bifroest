@@ -34,6 +34,41 @@ func TestMonitoringDefaultsAndIsolation(t *testing.T) {
 	require.NotEqual(t, first.Addresses[0].String(), second.Addresses[0].String())
 }
 
+func TestMonitoringCertificateDefaultsAreSeparateFromHTTP(t *testing.T) {
+	require.NotEqual(t, DefaultHttpCertificateFile, DefaultMonitoringCertificateFile)
+	require.NotEqual(t, DefaultHttpPrivateKeyFile, DefaultMonitoringPrivateKeyFile)
+	for _, test := range []struct {
+		source, certificate, key string
+	}{
+		{"{}", DefaultMonitoringCertificateFile, DefaultMonitoringPrivateKeyFile},
+		{"{certificateFile: custom.crt}", "custom.crt", DefaultMonitoringPrivateKeyFile},
+		{"{privateKeyFile: custom.key}", DefaultMonitoringCertificateFile, "custom.key"},
+		{"{certificateFile: custom.crt, privateKeyFile: custom.key}", "custom.crt", "custom.key"},
+	} {
+		t.Run(test.source, func(t *testing.T) {
+			var conf Monitoring
+			require.NoError(t, yaml.Unmarshal([]byte("enabled: true\ntls: {enabled: true, certificates: ["+test.source+"]}"), &conf))
+			require.Equal(t, []MonitoringCertificate{{CertificateFile: test.certificate, PrivateKeyFile: test.key}}, conf.Tls.Certificates)
+			encoded, err := yaml.Marshal(conf)
+			require.NoError(t, err)
+			var restored Monitoring
+			require.NoError(t, yaml.Unmarshal(encoded, &restored))
+			require.True(t, conf.IsEqualTo(&restored))
+		})
+	}
+	for _, source := range []string{
+		"{certificateFile: ''}", "{privateKeyFile: ''}", "{certificateFile: null}",
+		"{privateKeyFile: false}", "{unknown: value}",
+	} {
+		var certificate MonitoringCertificate
+		require.Error(t, yaml.Unmarshal([]byte(source), &certificate), source)
+	}
+	var http HttpCertificate
+	require.NoError(t, yaml.Unmarshal([]byte("{}"), &http))
+	require.Equal(t, DefaultHttpCertificateFile, http.CertificateFile)
+	require.Equal(t, DefaultHttpPrivateKeyFile, http.PrivateKeyFile)
+}
+
 func TestMonitoringEmptyPeerListsAndNetworks(t *testing.T) {
 	for _, value := range []string{"null", "~", "", "[]", "''", "' '", "['', '  ', null]"} {
 		t.Run(value, func(t *testing.T) {
@@ -56,7 +91,7 @@ func TestMonitoringEmptyPeerListsAndNetworks(t *testing.T) {
 func TestMonitoringConfigurationShapesAndTLS(t *testing.T) {
 	for _, content := range []string{
 		"enabled: null", "addresses: []\nenabled: true", "addresses: [null]", "addresses: ['127.0.0.1:9090','127.0.0.1:9090']", "tls: null", "tls: {enabled: true}",
-		"tls: {acme: {enabled: true}}", "tls: {dummy: true}", "tls: {enabled: true, certificates: [{certificateFile: file}]}",
+		"tls: {acme: {enabled: true}}", "tls: {dummy: true}", "tls: {enabled: true, certificates: [{certificateFile: file, privateKeyFile: ''}]}",
 		"bearerToken: 'secret secret'", "bearerToken: abc\nbearerTokenFile: token", "readHeaderTimeout: 0s", "maxHeaderBytes: 0", "misspelled: true",
 	} {
 		t.Run(content, func(t *testing.T) { var conf Monitoring; require.Error(t, yaml.Unmarshal([]byte(content), &conf)) })

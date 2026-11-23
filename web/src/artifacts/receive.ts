@@ -2,6 +2,7 @@ import type { ProgressListener } from '../management/progress';
 import type { ArtifactResponseImage } from '../remember/http';
 import { object } from '../remember/http';
 import { RememberMeError } from '../remember/protocol';
+import { publicPath } from '../shared/upstream';
 import { expectedFiles, transferMetadata } from './metadata';
 import type { ArtifactRequest, ReceivedArtifact } from './protocol';
 import { artifactFields } from './protocol';
@@ -88,7 +89,7 @@ export async function receiveArtifact(
     if (stopped.aborted) {
         throw new RememberMeError('cancelled');
     }
-    const worker = new Worker('/assets/browser-transfer-worker.js', {
+    const worker = new Worker(publicPath('/assets/browser-transfer-worker.js'), {
         type: 'module',
         credentials: 'omit',
         name: 'bifroest-transfer',

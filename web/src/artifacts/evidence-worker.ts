@@ -1,4 +1,4 @@
-import { object } from '../remember/http';
+import { object } from '../remember/http-values';
 import { uuidEqual } from '../shared/uuid';
 import { EvidenceError, evidenceMetadata, evidenceOptions } from './evidence-protocol';
 import { expectedFiles, transferMetadata } from './metadata';

@@ -40,7 +40,11 @@ func Boundary(domains configuration.HttpDomains, next http.Handler) (http.Handle
 }
 
 func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnabled bool, observers ...func(*http.Request, string)) (http.Handler, error) {
-	canonical, err := domains.Canonical()
+	return httpBoundary(&configuration.Http{Domains: domains}, next, tunnelEnabled, observers...)
+}
+
+func httpBoundary(conf *configuration.Http, next http.Handler, tunnelEnabled bool, observers ...func(*http.Request, string)) (http.Handler, error) {
+	canonical, err := conf.Domains.Canonical()
 	if err != nil || len(canonical) == 0 {
 		return nil, fmt.Errorf("HTTPS boundary needs configured domains")
 	}
@@ -66,10 +70,20 @@ func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnable
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		if r.TLS == nil || r.TLS.Version < tls.VersionTLS12 || r.URL == nil || r.URL.IsAbs() || r.URL.Opaque != "" || r.URL.User != nil || r.Method == http.MethodConnect {
+		proxy := conf.Upstream.IsReverseProxy()
+		if (!proxy || conf.Tls.IsEnabled()) && (r.TLS == nil || r.TLS.Version < tls.VersionTLS12) || r.URL == nil || r.URL.IsAbs() || r.URL.Opaque != "" || r.URL.User != nil || r.Method == http.MethodConnect {
 			reject("transport")
 			http.Error(w, "direct HTTPS request required", http.StatusBadRequest)
 			return
+		}
+		if proxy {
+			normalized, err := proxyRequest(conf.Upstream, r)
+			if err != nil {
+				reject("transport")
+				http.Error(w, "invalid or untrusted upstream request", http.StatusBadRequest)
+				return
+			}
+			r = normalized
 		}
 		host, err := bnet.CanonicalHttpHost(r.Host)
 		if err != nil || !allowed[host] {
@@ -77,17 +91,19 @@ func boundary(domains configuration.HttpDomains, next http.Handler, tunnelEnable
 			http.Error(w, "request authority is not configured", http.StatusMisdirectedRequest)
 			return
 		}
-		name := r.TLS.ServerName
-		if name == "" && len(canonical) == 1 {
-			if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
-				name = host
+		if !proxy {
+			name := r.TLS.ServerName
+			if name == "" && len(canonical) == 1 {
+				if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
+					name = host
+				}
 			}
-		}
-		sni, err := bnet.CanonicalHttpHost(name)
-		if err != nil || sni != host {
-			reject("authority")
-			http.Error(w, "request authority differs from TLS", http.StatusMisdirectedRequest)
-			return
+			sni, err := bnet.CanonicalHttpHost(name)
+			if err != nil || sni != host {
+				reject("authority")
+				http.Error(w, "request authority differs from TLS", http.StatusMisdirectedRequest)
+				return
+			}
 		}
 		// Reject path aliases before a router can clean or discard RawPath.
 		if strings.Contains(r.URL.EscapedPath(), "%") || (r.URL.RawPath != "" && r.URL.RawPath != r.URL.Path) || strings.Contains(r.URL.Path, "\\") {

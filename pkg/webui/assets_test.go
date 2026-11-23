@@ -29,6 +29,21 @@ func TestLoginOnlyResourcesFollowBuildDependenciesNotWorkspaceAssets(t *testing.
 	}
 }
 
+func TestPublicDocumentsUseRuntimePrefixWithoutTrustingOverlayMetadata(t *testing.T) {
+	assets := &Assets{embedded: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte(`<html><head><meta name="bifroest-path-prefix" content="/evil"><link href="./main.css" rel="stylesheet"></head><body><script type="module" src="./main.js"></script><img src="/assets/favicon.svg"></body></html>`)}}}
+	data, nonce, err := assets.DocumentWithPrefix("/team/bifroest", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, nonce)
+	require.NotContains(t, string(data), "/evil")
+	require.Equal(t, 1, strings.Count(string(data), `name="bifroest-path-prefix"`))
+	for _, path := range []string{"main.css", "main.js", "favicon.svg"} {
+		require.Contains(t, string(data), "/team/bifroest/assets/"+path)
+	}
+	require.Contains(t, string(data), `content="/team/bifroest"`)
+	_, _, err = assets.DocumentWithPrefix("/a/../evil", false)
+	require.Error(t, err)
+}
+
 func TestLoginOnlyAssetsDoNotInspectDisabledWorkspaceDocument(t *testing.T) {
 	directory := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(directory, "index.html"), 0700))

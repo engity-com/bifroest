@@ -1,6 +1,7 @@
 import { object } from '../remember/http';
 import type { Scope } from '../remember/protocol';
 import { decode64, RememberMeError } from '../remember/protocol';
+import { publicPath } from '../shared/upstream';
 import { readLocalBytes } from '../wasm/local-file';
 import { KeyLoginError, type KeyLoginPhase, keyLoginError } from './diagnostic';
 import type { LoginKey } from './key';
@@ -76,7 +77,7 @@ export class WasmLoginKey implements LoginKey {
                 throw new RememberMeError('cancelled');
             }
             phase = 'worker-start';
-            worker = new Worker('/assets/browser-key-worker.js', {
+            worker = new Worker(publicPath('/assets/browser-key-worker.js'), {
                 type: 'module',
                 credentials: 'omit',
                 name: 'bifroest-key',

@@ -3,6 +3,7 @@ import { rememberMeEnabled } from '../remember/policy';
 import { RememberMeError } from '../remember/protocol';
 import { OperationSlot } from '../shared/operation';
 import { SnapshotObservers } from '../shared/snapshot-observers';
+import { publicPath } from '../shared/upstream';
 import { keyLoginError } from './diagnostic';
 import { verificationLink } from './links';
 
@@ -207,7 +208,7 @@ export class LoginAttempt {
                             step.kind !== 'info' ||
                             link === null ||
                             new URL(link).origin !== request.scope.origin ||
-                            new URL(link).pathname !== '/login/' ||
+                            new URL(link).pathname !== publicPath('/login/') ||
                             new URL(link).search !== '' ||
                             !/^#start\/[A-Za-z0-9_-]{43}$/u.test(new URL(link).hash)
                         ) {

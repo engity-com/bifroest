@@ -44,6 +44,9 @@ type activeChallenge struct {
 type TLS struct {
 	domains        []string
 	explicit       map[string]*preparedCertificate
+	files          []configuration.HttpCertificate
+	reloadInterval time.Duration
+	validateFiles  func() error
 	source         CertificateSource
 	validateKey    KeyValidator
 	startupTimeout time.Duration
@@ -77,7 +80,8 @@ func newTLS(conf *configuration.Http, source CertificateSource, now func() time.
 		return nil, err
 	}
 	explicit := make(map[string]*preparedCertificate)
-	for index, configured := range conf.Tls.Certificates {
+	files := conf.Tls.FileCertificates()
+	for index, configured := range files {
 		certificate, err := loadCertificate(configured, now())
 		if err != nil {
 			return nil, fmt.Errorf("[http][tls][certificates][%d] %w", index, err)
@@ -115,7 +119,7 @@ func newTLS(conf *configuration.Http, source CertificateSource, now func() time.
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
 	return &TLS{
-		domains: domains, explicit: explicit, source: source, startupTimeout: conf.StartupTimeout.Native(), now: now,
+		domains: domains, explicit: explicit, files: files, reloadInterval: conf.Tls.ReloadEvery(), source: source, startupTimeout: conf.StartupTimeout.Native(), now: now,
 		lifetime: lifetime, cancel: cancel, challenges: make(map[string]*activeChallenge), preparing: make(chan struct{}, 1),
 		renewing: make(chan struct{}, 1), renewRetry: make(map[string]time.Time),
 	}, nil

@@ -54,7 +54,14 @@ func (this *OidcDeviceAuthAuthorizer) CodeConfiguration() *configuration.Authori
 func (this *OidcDeviceAuthAuthorizer) CodeFlow() configuration.FlowName { return this.flow }
 
 func (this *OidcDeviceAuthAuthorizer) CodeAuthorizationURL(state, nonce, verifier string) string {
-	return this.oauth2Config.AuthCodeURL(state, coidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
+	return this.CodeAuthorizationURLFor(state, nonce, verifier, this.oauth2Config.RedirectURL)
+}
+
+// The trusted HTTP adapter supplies a per-attempt redirect, never client JSON.
+func (this *OidcDeviceAuthAuthorizer) CodeAuthorizationURLFor(state, nonce, verifier, redirect string) string {
+	conf := this.oauth2Config
+	conf.RedirectURL = redirect
+	return conf.AuthCodeURL(state, coidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
 }
 
 func (this *OidcDeviceAuthAuthorizer) CodeIssuer() string { return this.issuer }
@@ -67,6 +74,10 @@ type OidcCodeResult struct {
 }
 
 func (this *OidcDeviceAuthAuthorizer) ExchangeCode(ctx context.Context, code, verifier, nonce string) (*OidcCodeResult, error) {
+	return this.ExchangeCodeFor(ctx, code, verifier, nonce, this.oauth2Config.RedirectURL)
+}
+
+func (this *OidcDeviceAuthAuthorizer) ExchangeCodeFor(ctx context.Context, code, verifier, nonce, redirect string) (*OidcCodeResult, error) {
 	if this.code == nil {
 		return nil, fmt.Errorf("code grant unavailable")
 	}
@@ -74,7 +85,9 @@ func (this *OidcDeviceAuthAuthorizer) ExchangeCode(ctx context.Context, code, ve
 	if err != nil {
 		return nil, fmt.Errorf("code exchange unavailable")
 	}
-	token, err := this.oauth2Config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
+	conf := this.oauth2Config
+	conf.RedirectURL = redirect
+	token, err := conf.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil || !token.Valid() {
 		return nil, fmt.Errorf("code exchange failed")
 	}
@@ -94,7 +107,7 @@ func (this *OidcDeviceAuthAuthorizer) matchesCodeOrigin(origin string) bool {
 }
 
 func matchesOidcCodeOrigin(code *configuration.AuthorizationOidcAuthorizationCode, origin string) bool {
-	return code != nil && origin != "" && origin == code.Origin()
+	return code != nil && code.MatchesHttpOrigin(origin)
 }
 
 // Carry the absolute login deadline through verification and session creation,

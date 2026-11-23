@@ -1,10 +1,11 @@
 import { useEffect, useEffectEvent, useRef, useSyncExternalStore } from 'react';
+import { deploymentKey } from '../shared/upstream';
 import { reportUiError } from './error-report';
 import { profilePreferencesResetEvent } from './profile-reset';
 
 // Presentation only: never a credential, permission, decryption or trust flag.
 // localStorage is origin-bound; no account names or artifact selectors are saved.
-export const detailPreferenceKey = 'bifroest-ui-v1:details';
+export const detailPreferenceKey = deploymentKey('bifroest-ui-v1:details');
 const changedEvent = 'bifroest-details-preference';
 let volatileOverride: boolean | null = null;
 function snapshot(): boolean {

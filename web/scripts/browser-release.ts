@@ -124,7 +124,9 @@ export function writeBrowserRelease(
     const favicon = assets.find((asset) => /^favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name));
     if (
         favicon === undefined ||
-        !readFileSync(join(target, 'index.html'), 'utf8').includes(`href="/assets/${favicon.name}"`)
+        ![`href="/assets/${favicon.name}"`, `href="./${favicon.name}"`].some((reference) =>
+            readFileSync(join(target, 'index.html'), 'utf8').includes(reference),
+        )
     ) {
         throw new Error(
             'Browser release favicon is missing or not referenced by its local asset URL',

@@ -1,4 +1,4 @@
-import { object } from '../remember/http';
+import { object } from '../remember/http-values';
 import { expectedFiles, transferMetadata } from './metadata';
 import type { ArtifactRequest } from './protocol';
 import { artifactFields, maximumTransferImageBytes, transferMediaType } from './protocol';

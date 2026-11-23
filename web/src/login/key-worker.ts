@@ -1,4 +1,4 @@
-import { object } from '../remember/http';
+import { object } from '../remember/http-values';
 
 type Bridge = {
     Go: new () => {

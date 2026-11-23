@@ -1,4 +1,4 @@
-import { object } from '../remember/http';
+import { object } from '../remember/http-values';
 import { RememberMeError } from '../remember/protocol';
 import { uuidEqual } from '../shared/uuid';
 import type {

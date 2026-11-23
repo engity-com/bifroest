@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import logo from '../../../docs/assets/favicon.svg?no-inline';
+import { publicPath } from '../shared/upstream';
 import { t } from '../ui/messages';
 import { bifroestTheme } from '../ui/theme';
 import { type OidcView, oidcEntry, oidcFinished, oidcRequest } from './oidc';
@@ -66,7 +67,7 @@ export function OidcLogin({ title = t('brand') }: { title?: string }) {
                 if (controller.signal.aborted) {
                     return;
                 }
-                history.replaceState(null, '', `/login/#attempt/${next.id}`);
+                history.replaceState(null, '', publicPath(`/login/#attempt/${next.id}`));
                 setView(next);
                 if (next.url) {
                     await new Promise<void>((resolve) =>

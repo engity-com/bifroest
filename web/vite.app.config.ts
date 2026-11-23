@@ -18,7 +18,7 @@ const xtermVersion = JSON.parse(
 
 // Vite 8's native Oxc/Rolldown JSX pipeline; no Webpack/Babel build chain.
 export default defineConfig({
-    base: '/assets/',
+    base: './',
     build: {
         target: 'es2022',
         outDir: '../pkg/webui/assets',
@@ -52,13 +52,16 @@ export default defineConfig({
                             // Leave room for the protocol and bundler helpers inside
                             // the existing four-file initial dependency budget.
                             name: 'ui-runtime',
-                            test: /[/\\]node_modules[/\\](?:(?:react|react-dom|scheduler)|@emotion[/\\][^/\\]+)[/\\]/,
+                            test: /[/\\]node_modules[/\\](?:(?:react|react-dom|scheduler)|@emotion[/\\][^/\\]+|@mui[/\\]material[/\\](?:Tabs|Tab|MenuItem))[/\\]/,
                             tags: ['$initial'],
                             priority: 20,
                         },
                         {
                             name: 'browser-protocol',
-                            test: /[/\\]src[/\\](?:remember[/\\]|login[/\\]diagnostic\.ts$|artifacts[/\\]evidence-protocol\.ts$)/,
+                            // Only worker-safe protocols belong here. HTTP/storage
+                            // clients depend on document mount metadata; capturing
+                            // those would also pull this graph into standalone OIDC.
+                            test: /[/\\]src[/\\](?:remember[/\\](?:protocol|http-values)\.ts$|login[/\\]diagnostic\.ts$|management[/\\]protocol\.ts$|artifacts[/\\](?:evidence-protocol|metadata|protocol)\.ts$)/,
                         },
                     ],
                 },

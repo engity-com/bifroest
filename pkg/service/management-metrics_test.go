@@ -45,7 +45,7 @@ func TestMonitoringCollectionActivationMatrix(t *testing.T) {
 				if !enabled {
 					conf.Monitoring.BearerTokenFile = filepath.Join(t.TempDir(), "missing-token")
 					conf.Monitoring.Tls.Enabled = true
-					conf.Monitoring.Tls.Certificates = []configuration.HttpCertificate{{CertificateFile: "missing.crt", PrivateKeyFile: "missing.key"}}
+					conf.Monitoring.Tls.Certificates = []configuration.MonitoringCertificate{{CertificateFile: "missing.crt", PrivateKeyFile: "missing.key"}}
 				}
 				m, err := newServiceMonitoring(conf)
 				require.NoError(t, err, "disabled HTTP must not read credentials")

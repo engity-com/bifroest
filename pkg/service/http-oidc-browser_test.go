@@ -4,10 +4,15 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,20 +35,43 @@ func TestBrowserOidcCodeRedirectWithRealCookies(t *testing.T) {
 	t.Run("WebUI-forwarded-ticket", func(t *testing.T) { browserOidcCode(t, false, "forwarded") })
 	t.Run("SSH", func(t *testing.T) { browserOidcCode(t, true, "") })
 	t.Run("SSH-login-only", func(t *testing.T) { browserOidcCode(t, true, "login-only") })
+	t.Run("Proxy-WebUI", func(t *testing.T) { browserOidcCode(t, false, "", "/team/bifroest") })
+	t.Run("Proxy-WebUI-named", func(t *testing.T) { browserOidcCode(t, false, "named", "/team/bifroest") })
+	t.Run("Proxy-WebUI-request-port", func(t *testing.T) { browserOidcCode(t, false, "request-port", "/team/bifroest") })
+	t.Run("Proxy-forwarded-ticket", func(t *testing.T) { browserOidcCode(t, false, "forwarded", "/team/bifroest") })
+	t.Run("Proxy-SSH", func(t *testing.T) { browserOidcCode(t, true, "", "/team/bifroest") })
+	t.Run("Proxy-SSH-login-only", func(t *testing.T) { browserOidcCode(t, true, "login-only", "/team/bifroest") })
 }
 
-func browserOidcCode(t *testing.T, isSSH bool, mode string) {
+func browserOidcCode(t *testing.T, isSSH bool, mode string, prefixes ...string) {
+	prefix := ""
+	if len(prefixes) != 0 {
+		prefix = prefixes[0]
+	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
+	backend := listener
+	if prefix != "" {
+		backend, err = net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = backend.Close() })
+	}
 	customJS := filepath.Join(t.TempDir(), "custom.js")
 	customCSS := filepath.Join(t.TempDir(), "custom.css")
 	require.NoError(t, os.WriteFile(customJS, []byte(`window.oidcCustomEvents = []; addEventListener('bifroest:configure', ({detail}) => { window.oidcCustomEvents.push('configure'); detail.title = 'Fixture sign-in'; }); addEventListener('bifroest:ready', () => window.oidcCustomEvents.push('ready'));`), 0600))
 	require.NoError(t, os.WriteFile(customCSS, []byte(`.bifroest-login-card { --login-custom-check: applied; }`), 0600))
 	svc, _, p, _ := oidcCodeFixture(t, func(conf *configuration.Configuration, _ *oidcCodeProvider) {
-		conf.Http.Addresses = bnet.NetAddresses{bnet.MustNewAddress(listener.Addr().String())}
+		conf.Http.Addresses = bnet.NetAddresses{bnet.MustNewAddress(backend.Addr().String())}
+		if prefix != "" {
+			conf.Http.Tls = configuration.HttpTls{Enabled: new(false)}
+			conf.Http.Upstream = configuration.HttpUpstream{Mode: "reverseProxy", TrustedPeers: configuration.HttpTrustedPeers{"127.0.0.1"}, DefaultPrefix: prefix, DefaultPort: uint16(listener.Addr().(*net.TCPAddr).Port)}
+			if mode == "request-port" {
+				conf.Http.Upstream.DefaultPort = 0
+			}
+		}
 		conf.Http.CustomJs, conf.Http.CustomCss = []string{customJS}, []string{customCSS}
 		conf.Http.CustomHtmlBody = `<span hidden id="custom-login-body">Operator content</span>`
 		if mode == "login-only" {
@@ -56,6 +84,10 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 	})
 	navigations := make(chan [3]string, 4)
 	endpoint, err := https.NewEndpoint(svc.Configuration.Http, https.EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if prefix != "" {
+			require.Nil(t, r.TLS, "the ingress must terminate TLS")
+			require.NotEmpty(t, https.PathPrefix(r))
+		}
 		if isSSH && r.Method == http.MethodGet && r.URL.Path == "/login/" {
 			select {
 			case navigations <- [3]string{r.Header.Get("Sec-Fetch-Site"), r.Header.Get("Sec-Fetch-Mode"), r.Header.Get("Sec-Fetch-Dest")}:
@@ -67,7 +99,7 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 	require.NoError(t, err)
 	require.NoError(t, endpoint.Prepare(t.Context()))
 	done := make(chan error, 1)
-	go func() { done <- endpoint.Serve(listener) }()
+	go func() { done <- endpoint.Serve(backend) }()
 	t.Cleanup(func() {
 		require.NoError(t, endpoint.Close())
 		select {
@@ -77,6 +109,25 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 			t.Error("OIDC HTTPS test endpoint did not stop")
 		}
 	})
+	if prefix != "" {
+		target, err := url.Parse("http://" + backend.Addr().String())
+		require.NoError(t, err)
+		proxy := &httputil.ReverseProxy{Rewrite: func(request *httputil.ProxyRequest) {
+			mount := prefix
+			if strings.HasPrefix(request.In.URL.Path, "/other-bifroest/") {
+				mount = "/other-bifroest"
+			}
+			request.SetURL(target)
+			request.SetXForwarded()
+			request.Out.URL.Path = strings.TrimPrefix(request.In.URL.Path, mount)
+			request.Out.Header.Set("X-Forwarded-Prefix", mount)
+		}}
+		ingress := httptest.NewUnstartedServer(proxy)
+		require.NoError(t, ingress.Listener.Close())
+		ingress.Listener = listener
+		ingress.StartTLS()
+		t.Cleanup(ingress.Close)
+	}
 	node := os.Getenv("BIFROEST_TEST_NODE")
 	if node == "" {
 		node, err = exec.LookPath("node")
@@ -84,9 +135,9 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	code := svc.Configuration.Flows[0].Authorization.V.(*configuration.AuthorizationOidcAuthorizationCode)
-	arguments := []string{filepath.Join(root, "web", "test", "https-oidc.ts"), code.Origin()}
-	if mode != "" && mode != "login-only" {
+	publicOrigin := "https://app.example.org:" + strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	arguments := []string{filepath.Join(root, "web", "test", "https-oidc.ts"), publicOrigin}
+	if mode != "" && mode != "login-only" && mode != "request-port" {
 		arguments = append(arguments, mode)
 	}
 	if isSSH {
@@ -122,6 +173,7 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string) {
 		})
 	}
 	command := exec.CommandContext(ctx, node, arguments...)
+	command.Env = append(os.Environ(), "BIFROEST_TEST_HTTP_PREFIX="+prefix)
 	command.Dir = filepath.Join(root, "web")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)

@@ -1,10 +1,11 @@
 import type { Scope } from '../remember';
+import { deploymentKey } from '../shared/upstream';
 import { keepAliveDuration } from '../terminal/keepalive';
 import { reportUiError } from './error-report';
 
-export const themePreferenceKey = 'bifroest-ui-v1:theme';
-export const usernamePreferencePrefix = 'bifroest-ui-v1:username:';
-export const keepAlivePreferencePrefix = 'bifroest-ui-v1:keepalive:';
+export const themePreferenceKey = deploymentKey('bifroest-ui-v1:theme');
+export const usernamePreferencePrefix = deploymentKey('bifroest-ui-v1:username:');
+export const keepAlivePreferencePrefix = deploymentKey('bifroest-ui-v1:keepalive:');
 export type ThemePreference = 'auto' | 'light' | 'dark';
 export function isThemePreference(value: unknown): value is ThemePreference {
     return value === 'auto' || value === 'light' || value === 'dark';

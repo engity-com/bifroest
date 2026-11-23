@@ -21,6 +21,7 @@ import { verificationLink } from '../login/links';
 import type { AccessSnapshot, LogoutResult, WebAccess } from '../remember';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
 import { rememberMeEnabled } from '../remember/policy';
+import { publicPath } from '../shared/upstream';
 import type { AuthenticationView } from '../terminal/authentication-view';
 import { ConnectionWorkspace } from '../workspace/ConnectionWorkspace';
 import { type ConnectionView, maximumTabs, type WorkspaceControls } from '../workspace/model';
@@ -612,7 +613,7 @@ export function App({
         setPasswordKey((value) => value + 1); // Also discard the input's internal uncontrolled state.
         const remember = rememberMeEnabled(option.rememberMe, optIn ?? undefined);
         const oidcWindow =
-            option.method === 'oidc' ? window.open('/login/#waiting', '_blank') : null;
+            option.method === 'oidc' ? window.open(publicPath('/login/#waiting'), '_blank') : null;
         if (oidcWindow) {
             oidcWindow.opener = null;
         }

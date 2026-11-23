@@ -3,6 +3,7 @@ import LoginIcon from '@mui/icons-material/Login';
 import { Box, CircularProgress, IconButton, Tab, Tabs } from '@mui/material';
 import type { ReactNode } from 'react';
 import type { ManagementLocation } from '../application/management-location';
+import { publicPath } from '../shared/upstream';
 import type { AuthenticationView } from '../terminal/authentication-view';
 import { ConnectionTab } from '../terminal/ConnectionTab';
 import { bookmarkPath, hashPath } from '../ui/hash-route';
@@ -163,11 +164,13 @@ export function WorkspaceTabBar({
                                 key={tab.id}
                                 id={tab.id}
                                 value={tab.id}
-                                href={hashPath(
-                                    tab.scope,
-                                    tab.routeId ?? null,
-                                    locations?.get(tab.id),
-                                    tab.access.snapshot().requestingUser,
+                                href={publicPath(
+                                    hashPath(
+                                        tab.scope,
+                                        tab.routeId ?? null,
+                                        locations?.get(tab.id),
+                                        tab.access.snapshot().requestingUser,
+                                    ),
                                 )}
                                 kind={tab.kind}
                                 access={tab.access}

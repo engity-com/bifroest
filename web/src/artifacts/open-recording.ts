@@ -1,4 +1,5 @@
 import { object } from '../remember/http';
+import { publicPath } from '../shared/upstream';
 import { resourceID, uuidEqual } from '../shared/uuid';
 import { readLocalBytes } from '../wasm/local-file';
 import { EvidenceError } from './evidence-protocol';
@@ -72,7 +73,7 @@ export async function openRecordingWithWorker(
     try {
         worker =
             existing ??
-            new Worker('/assets/browser-evidence-worker.js', {
+            new Worker(publicPath('/assets/browser-evidence-worker.js'), {
                 type: 'module',
                 credentials: 'omit',
                 name: 'bifroest-recording-open',

@@ -93,7 +93,7 @@ func (this *webService) handleRemember(w http.ResponseWriter, r *http.Request, s
 			return
 		}
 		attempt.sess = access.auth.FindSession()
-		attempt.spec = session.BrowserBindingSpec{Origin: scope.Origin, Slug: scope.Slug, Identity: access.identity, Target: access.target, User: access.user, PublicKey: browserauth.PublicKey(values["publicKey"]), Credential: access.credential}
+		attempt.spec = session.BrowserBindingSpec{Origin: scope.Origin, Slug: scope.Slug, PathPrefix: scope.Prefix, Identity: access.identity, Target: access.target, User: access.user, PublicKey: browserauth.PublicKey(values["publicKey"]), Credential: access.credential}
 		if attempt.spec.Validate() != nil {
 			webError(w, 400, "invalid browser public key")
 			return
@@ -136,7 +136,7 @@ func (this *webService) handleRemember(w http.ResponseWriter, r *http.Request, s
 		}
 		found := false
 		for _, binding := range entries {
-			if binding.ID == values["bindingId"] && binding.Origin == scope.Origin && binding.Slug == scope.Slug {
+			if binding.ID == values["bindingId"] && binding.Origin == scope.Origin && binding.Slug == scope.Slug && binding.PathPrefix == scope.Prefix {
 				attempt.binding = binding
 				attempt.spec = binding.BrowserBindingSpec
 				found = true

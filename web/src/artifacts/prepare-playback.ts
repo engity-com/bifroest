@@ -1,3 +1,4 @@
+import { publicPath } from '../shared/upstream';
 import { EvidenceError } from './evidence-protocol';
 import type { PlaybackOptions } from './playback-protocol';
 import { PlaybackImage, playbackOptions } from './playback-protocol';
@@ -28,7 +29,7 @@ export async function prepareRecordingPlayback(
     const terminate = () => worker?.terminate();
     stopped.addEventListener('abort', terminate, { once: true });
     try {
-        worker = new Worker('/assets/browser-evidence-worker.js', {
+        worker = new Worker(publicPath('/assets/browser-evidence-worker.js'), {
             type: 'module',
             credentials: 'omit',
             name: 'bifroest-playback',

@@ -14,6 +14,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/browserauth"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 )
 
@@ -30,6 +31,7 @@ var (
 type BrowserBindingSpec struct {
 	Origin     string                           `json:"origin"`
 	Slug       string                           `json:"slug"`
+	PathPrefix string                           `json:"pathPrefix,omitempty"`
 	Identity   authentication.Identity          `json:"identity"`
 	Target     Target                           `json:"target"`
 	User       string                           `json:"user"`
@@ -61,6 +63,9 @@ type BrowserBindingSession interface {
 }
 
 func (this BrowserBindingSpec) Validate() error {
+	if configuration.ValidateHttpPathPrefix(this.PathPrefix) != nil {
+		return ErrInvalidBrowserBinding
+	}
 	parsed, err := url.Parse(this.Origin)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawFragment != "" {
 		return ErrInvalidBrowserBinding

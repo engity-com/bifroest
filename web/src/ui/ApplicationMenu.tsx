@@ -2,6 +2,7 @@ import ClearAllIcon from '@mui/icons-material/ClearAllOutlined';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForeverOutlined';
 import DescriptionIcon from '@mui/icons-material/Description';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import { publicPath } from '../shared/upstream';
 import { ActionIcon, Menu } from './material';
 import { t } from './messages';
 
@@ -51,7 +52,7 @@ export function ApplicationMenu({
                 <Menu.Item
                     component="a"
                     icon={<DescriptionIcon fontSize="small" />}
-                    href="/assets/third-party-licenses.txt"
+                    href={publicPath('/assets/third-party-licenses.txt')}
                     target="_blank"
                     rel="noopener noreferrer"
                 >

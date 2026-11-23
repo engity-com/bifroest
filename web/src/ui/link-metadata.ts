@@ -8,6 +8,7 @@ import {
 import type { Scope } from '../remember';
 import { rememberMePolicy } from '../remember/policy';
 import { RememberMeError, validateScope } from '../remember/protocol';
+import { internalPath, publicPath } from '../shared/upstream';
 import { parseHashTarget } from './hash-route';
 
 export type {
@@ -57,7 +58,7 @@ export async function loadLinkMetadata(
 ): Promise<LinkMetadata> {
     validateScope(scope);
     const value = await readMetadataURL(
-        new URL('/api/v1/discovery', scope.origin),
+        new URL(publicPath('/api/v1/discovery'), scope.origin),
         scope.slug,
         signal,
         transport,
@@ -72,7 +73,11 @@ export async function loadEntryMetadata(
     signal?: AbortSignal,
     transport: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<LinkMetadata> {
-    if (current.pathname !== '/' || current.search !== '' || origin !== location.origin) {
+    if (
+        internalPath(current.pathname) !== '/' ||
+        current.search !== '' ||
+        origin !== location.origin
+    ) {
         throw new RememberMeError('unavailable');
     }
     if (current.hash !== '') {

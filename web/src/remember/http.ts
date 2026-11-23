@@ -5,9 +5,13 @@ import {
     transferMediaType,
 } from '../artifacts/protocol';
 import { type ProgressListener, streamingManagementAction } from '../management/progress';
+import { publicPath } from '../shared/upstream';
 import { isCatalogWarmupResponse } from './catalog-error';
+import { isToken } from './http-values';
 import type { Scope } from './protocol';
-import { decode64, RememberMeError, validateScope } from './protocol';
+import { RememberMeError, validateScope } from './protocol';
+
+export { isToken, object, time } from './http-values';
 
 export type Transport = typeof fetch;
 const maximumResponseBytes = 64 << 10;
@@ -16,46 +20,6 @@ export interface ArtifactResponseImage {
     readonly bytes: ArrayBuffer;
     readonly mediaType: string;
     readonly status: number;
-}
-
-export function isToken(
-    value: unknown,
-    prefix: 'bwa1.' | 'bwr1.' | 'bwl1.' | 'bmc1.',
-): value is string {
-    if (
-        typeof value !== 'string' ||
-        !value.startsWith(prefix) ||
-        !/^[A-Za-z0-9_-]{43}$/.test(value.slice(5))
-    ) {
-        return false;
-    }
-    try {
-        return (
-            decode64(`${value.slice(5).replaceAll('-', '+').replaceAll('_', '/')}=`, 32).length ===
-            32
-        );
-    } catch {
-        return false;
-    }
-}
-
-export function object(value: unknown, fields: string[]): Record<string, unknown> {
-    if (
-        value === null ||
-        typeof value !== 'object' ||
-        Array.isArray(value) ||
-        Object.keys(value).sort().join(',') !== [...fields].sort().join(',')
-    ) {
-        throw new RememberMeError('unavailable');
-    }
-    return value as Record<string, unknown>;
-}
-
-export function time(value: unknown): string {
-    if (typeof value !== 'string' || value.length > 64 || !Number.isFinite(Date.parse(value))) {
-        throw new RememberMeError('unavailable');
-    }
-    return value;
 }
 
 // No retry, redirect, URL credential, ambient workload authority, persistence or unbounded response
@@ -96,7 +60,10 @@ export class Http {
         }
         const controller = new AbortController();
         const stopped = AbortSignal.any([signal, controller.signal]);
-        const url = new URL(`/api/v1/management/artifacts/${selected.kind}`, this.#scope.origin);
+        const url = new URL(
+            publicPath(`/api/v1/management/artifacts/${selected.kind}`),
+            this.#scope.origin,
+        );
         let response: Response | undefined;
         let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>> | undefined;
         let result: ArtifactResponseImage | undefined;
@@ -321,21 +288,24 @@ export class Http {
             if (stopped.aborted) {
                 throw new RememberMeError('cancelled');
             }
-            response = await this.#transport(new URL(`/api/v1/${action}`, this.#scope.origin), {
-                method: 'POST',
-                headers,
-                body,
-                credentials:
-                    this.#oidcLogin &&
-                    ['login/oidc', 'login/poll', 'login/reply', 'login/cancel'].includes(action)
-                        ? 'same-origin'
-                        : 'omit',
-                cache: 'no-store',
-                mode: 'same-origin',
-                redirect: 'error',
-                referrerPolicy: 'no-referrer',
-                signal: request.signal,
-            });
+            response = await this.#transport(
+                new URL(publicPath(`/api/v1/${action}`), this.#scope.origin),
+                {
+                    method: 'POST',
+                    headers,
+                    body,
+                    credentials:
+                        this.#oidcLogin &&
+                        ['login/oidc', 'login/poll', 'login/reply', 'login/cancel'].includes(action)
+                            ? 'same-origin'
+                            : 'omit',
+                    cache: 'no-store',
+                    mode: 'same-origin',
+                    redirect: 'error',
+                    referrerPolicy: 'no-referrer',
+                    signal: request.signal,
+                },
+            );
             if (stopped.aborted) {
                 throw new RememberMeError('cancelled');
             }

@@ -10,9 +10,7 @@ Represents a user who is connected to Bifröst.
 
 <<property("host", "Host", "../data-type.md#host")>>
 
-Direct numeric peer IP address, without a port, of the incoming connection. For
-HTTP, this does not come from `Forwarded` or `X-Forwarded-*` headers and is not the HTTP host
-selection; that is `.connection.http.host`.
+Numeric client IP address, without a port, of the incoming connection. Direct HTTP uses the socket peer; explicit [reverse-proxy mode](../connection/http/index.md#upstream-forwarded-headers) uses the validated `X-Forwarded-For` chain. This is not HTTP host selection; that is `.connection.http.host`. Native SSH peer handling is unchanged.
 
 <<property("user", "string")>>
 

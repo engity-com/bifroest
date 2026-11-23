@@ -28,7 +28,6 @@ func TestHttpDummyIsExplicitStrictAndRoundTrips(t *testing.T) {
 	other.Dummy = false
 	require.False(t, original.Http.Tls.IsEqualTo(other))
 	for _, source := range []string{
-		`http: {enabled: true, domains: [localhost], tls: {dummy: false}}`,
 		`http: {enabled: true, tls: {dummy: true}}`,
 		`http: {tls: {dummy: "true"}}`, `http: {tls: {dummy: null}}`, `http: {tls: {dummy: 1}}`,
 		`http: {tls: {dummy: true, certificates: [{certificateFile: a, privateKeyFile: b}]}}`,

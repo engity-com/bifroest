@@ -1,5 +1,5 @@
 ---
-description: Operate Bifröst behind a TCP load balancer, manage instance-local state and plan restarts or recovery.
+description: Operate Bifröst behind a load balancer or reverse proxy, manage instance-local state and plan restarts or recovery.
 ---
 
 # Operating model and availability
@@ -15,15 +15,26 @@ description: Operate Bifröst behind a TCP load balancer, manage instance-local 
 | --- | --- |
 | One supervised instance | Durable storage, backups and a tested restart. Existing connections are interrupted. |
 | Independent instances behind a TCP load balancer | Sticky sessions for normal operation; health checks route reconnecting clients to a healthy instance. Use separate repositories and [audit signing identities](../reference/auditlog/index.md#property-identityFile), and make required workload data reachable from each instance. |
+| Independent instances behind an HTTP ingress | Explicit [reverse-proxy mode](../reference/connection/http/index.md#upstream), protected backend access, controlled forwarded headers and HTTP affinity. Native SSH needs separate routing. |
 | Replacement using an instance's existing state | Coordinate exclusive repository and workload ownership. Test recovery on your actual storage and infrastructure. |
 
 **Keep repositories instance-local.** Each repository has one writer.[^writer] When replacing an instance using its existing state, prevent the old writer from accessing that state or its workloads first. Local locks are not cross-host fencing; never delete a lock file to force a second writer to start.
 
 ## Routing and probes
 
-* **Prepare the shared endpoint.** Configure [SSH host keys trusted by your clients](../reference/connection/ssh.md#keys). For HTTPS, use [TCP/TLS passthrough](../reference/connection/http/index.md#tls) and provision certificates for the shared domain on every backend.
+* **Prepare the shared endpoint.** Configure [SSH host keys trusted by your clients](../reference/connection/ssh.md#keys). Choose [TLS passthrough](../reference/connection/http/index.md#tls) with certificates on every backend, or [explicit reverse-proxy mode](../reference/connection/http/index.md#upstream) with public TLS at the ingress. For subpaths, configure prefix stripping and forwarded headers. Keep the backend private; in Kubernetes, use an enforced NetworkPolicy allowing only the intended ingress sources.
 * **Prefer sticky sessions.** Keep [browser requests and SSH-initiated OIDC approvals](../reference/connection/http/index.md#load-balancers-and-instance-routing) on the same instance during normal operation. Configure TCP persistence through [HAProxy stick tables](https://www.haproxy.com/documentation/haproxy-configuration-tutorials/proxying-essentials/custom-rules/stick-tables/) or [NGINX upstream hashing](https://nginx.org/en/docs/stream/ngx_stream_upstream_module.html#hash).
 * **Monitor each instance.** Use [readiness checks](../guides/monitoring.md#configure-kubernetes-probes) to take unavailable backends out of rotation. `/ready` reports new-access readiness, `/status` process liveness; also test an actual login.
+
+HTTP cookie affinity can keep browser requests on one instance, but does not tie a native SSH connection to a browser on another device. Use tested cross-transport routing, such as instance-specific OIDC endpoints. Kubernetes `ClientIP` affinity is not a general solution under NAT or when ingress routes directly to Pods.
+
+## Rotate external HTTP certificates
+
+1. Provision a valid [certificate/key pair](../reference/connection/http/index.md#certificate), with private-key ownership and permissions suitable for the service account.
+2. Publish both files as one generation, preserving their configured paths. Projected Secret or Certbot symlink changes are supported; Kubernetes `subPath` mounts do not update automatically.
+3. Allow the configured [reload interval](../reference/connection/http/index.md#tls-property-reloadInterval), check logs and test a new TLS connection. Existing connections remain open. A rejected rotation keeps the previous valid material, not a certificate past its expiry.
+
+This reload applies to the application HTTP listener, not the separate monitoring listener. With TLS termination at the ingress and backend TLS disabled, rotate the ingress certificate through its own certificate manager.
 
 ## Restart or recover one instance {: #restart-and-recovery-checklist }
 

@@ -1,5 +1,5 @@
 import { recordingTime } from '../management/protocol';
-import { object } from '../remember/http';
+import { object } from '../remember/http-values';
 import { resourceID, uuidEqual } from '../shared/uuid';
 import type { ArtifactRequest } from './protocol';
 

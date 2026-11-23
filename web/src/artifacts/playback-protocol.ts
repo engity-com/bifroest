@@ -1,4 +1,4 @@
-import { object } from '../remember/http';
+import { object } from '../remember/http-values';
 import { resourceID, uuidEqual } from '../shared/uuid';
 import { EvidenceError } from './evidence-protocol';
 import { maximumBufferedArtifactBytes } from './protocol';

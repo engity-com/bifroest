@@ -33,6 +33,7 @@ type Http struct {
 	Addresses               net.NetAddresses `yaml:"addresses"`
 	Domains                 HttpDomains      `yaml:"domains,omitempty"`
 	Tls                     HttpTls          `yaml:"tls"`
+	Upstream                HttpUpstream     `yaml:"upstream,omitempty"`
 	StartupTimeout          common.Duration  `yaml:"startupTimeout,omitempty"`
 	ReadHeaderTimeout       common.Duration  `yaml:"readHeaderTimeout,omitempty"`
 	IdleTimeout             common.Duration  `yaml:"idleTimeout,omitempty"`
@@ -100,8 +101,11 @@ func (this *Http) Validate() error {
 	if err := this.Tls.Validate(); err != nil {
 		return configurationFieldError(this, "tls", err)
 	}
-	if this.Enabled && len(this.Tls.Certificates) == 0 && !this.Tls.Acme.Enabled && !this.Tls.Dummy {
-		return fmt.Errorf("[tls] configure certificates, explicitly enable ACME or explicitly select dummy TLS for testing")
+	if err := this.Upstream.Validate(); err != nil {
+		return configurationFieldError(this, "upstream", err)
+	}
+	if !this.Tls.IsEnabled() && !this.Upstream.IsReverseProxy() {
+		return fmt.Errorf("[tls][enabled] false requires upstream.mode reverseProxy")
 	}
 	for _, field := range []struct {
 		name  string
@@ -139,7 +143,7 @@ func (this *Http) UnmarshalYAML(node *yaml.Node) error {
 		type raw Http
 		return decodeHttpFields(node, (*raw)(target), map[string]string{
 			"webUi": "!!map", "sshTunnel": "!!map", "loginFlow": "!!map",
-			"enabled": "!!bool", "addresses": "!!seq/!!str", "domains": "!!seq/!!str", "tls": "!!map",
+			"enabled": "!!bool", "addresses": "!!seq/!!str", "domains": "!!seq/!!str", "tls": "!!map", "upstream": "!!map",
 			"startupTimeout": "!!str", "readHeaderTimeout": "!!str", "idleTimeout": "!!str", "gracefulShutdownTimeout": "!!str", "maxHeaderBytes": "!!int",
 			"rememberMe": "!!map", "assetsDirectory": "!!str", "customCss": "!!seq/!!str", "customJs": "!!seq/!!str", "customHtmlHead": "!!str", "customHtmlBody": "!!str",
 		})
@@ -161,7 +165,7 @@ func (this *Http) IsEqualTo(other any) bool {
 }
 func (this *Http) isEqualTo(other *Http) bool {
 	return this.Enabled == other.Enabled && this.WebUi.IsEqualTo(other.WebUi) && this.SshTunnel.IsEqualTo(other.SshTunnel) && this.LoginFlow.IsEqualTo(other.LoginFlow) &&
-		this.Addresses.IsEqualTo(other.Addresses) && this.Domains.IsEqualTo(other.Domains) && this.Tls.IsEqualTo(other.Tls) &&
+		this.Addresses.IsEqualTo(other.Addresses) && this.Domains.IsEqualTo(other.Domains) && this.Tls.IsEqualTo(other.Tls) && this.Upstream.IsEqualTo(other.Upstream) &&
 		this.StartupTimeout.IsEqualTo(other.StartupTimeout) && this.ReadHeaderTimeout.IsEqualTo(other.ReadHeaderTimeout) && this.IdleTimeout.IsEqualTo(other.IdleTimeout) &&
 		this.GracefulShutdownTimeout.IsEqualTo(other.GracefulShutdownTimeout) && this.MaxHeaderBytes == other.MaxHeaderBytes && this.RememberMe == other.RememberMe &&
 		this.AssetsDirectory == other.AssetsDirectory && slices.Equal(this.CustomCss, other.CustomCss) && slices.Equal(this.CustomJs, other.CustomJs) &&
