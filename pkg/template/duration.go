@@ -46,7 +46,7 @@ func (this Duration) Render(data any) (time.Duration, error) {
 
 	if tmpl := this.tmpl; tmpl != nil {
 		var buf strings.Builder
-		if err := tmpl.Execute(&buf, data); err != nil {
+		if err := executeTemplate(tmpl, &buf, data); err != nil {
 			return 0, err
 		}
 		plain := strings.TrimSpace(buf.String())

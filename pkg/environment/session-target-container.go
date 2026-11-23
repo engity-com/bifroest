@@ -1,62 +1,122 @@
 package environment
 
 import (
-	"fmt"
-
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
+
+// DockerTargetMetadata is explicit backend identity, not a Docker client or a
+// request to discover a daemon. Offline callers must supply their own facts.
+type DockerTargetMetadata struct {
+	Backend string
+	Os      sys.Os
+	Arch    sys.Arch
+}
 
 func (this *DockerRepository) ResolveSessionTarget(ctx Context) (session.Target, error) {
 	backend, ok := this.apiClient.(interface{ DaemonHost() string })
-	if !ok || backend.DaemonHost() == "" {
-		return "", fmt.Errorf("docker backend identity is unavailable")
+	if !ok {
+		return "", errors.System.Newf("docker backend identity is unavailable")
 	}
-	fields := newTargetFields(ctx)
-	fields.values["backend"] = backend.DaemonHost()
-	fields.values["os"] = this.hostOs.String()
-	fields.values["arch"] = this.hostArch.String()
-	fields.string("image", &this.conf.Image)
-	fields.string("user", &this.conf.User)
-	fields.string("directory", &this.conf.Directory)
-	fields.strings("networks", &this.conf.Networks)
-	fields.strings("volumes", &this.conf.Volumes)
-	fields.strings("mounts", &this.conf.Mounts)
-	fields.strings("capabilities", &this.conf.Capabilities)
-	fields.strings("dnsServers", &this.conf.DnsServers)
-	fields.strings("dnsSearch", &this.conf.DnsSearch)
-	fields.boolean("privileged", &this.conf.Privileged)
-	fields.boolean("portForwardingAllowed", &this.conf.PortForwardingAllowed)
-	fields.strings("shellCommand", &this.conf.ShellCommand)
-	fields.strings("execCommand", &this.conf.ExecCommand)
-	fields.strings("sftpCommand", &this.conf.SftpCommand)
-	return fields.target("docker")
+	projection, err := ProjectDockerTarget(ctx, this.conf, DockerTargetMetadata{Backend: backend.DaemonHost(), Os: this.hostOs, Arch: this.hostArch})
+	if err != nil {
+		return "", err
+	}
+	return projection.SessionTarget()
+}
+
+// ProjectDockerTarget evaluates exactly the existing session-target selectors.
+// It does not inspect images, resolve runtime defaults or read credentials,
+// Docker environment variables, TLS files, or the daemon. Context getters and
+// template functions still need controlled dependencies for hermetic execution.
+func ProjectDockerTarget(ctx Context, conf *configuration.EnvironmentDocker, metadata DockerTargetMetadata) (TargetProjection, error) {
+	if metadata.Backend == "" {
+		return TargetProjection{}, errors.System.Newf("docker backend identity is unavailable")
+	}
+	if conf == nil {
+		return TargetProjection{}, errors.Config.Newf("docker target configuration is unavailable")
+	}
+	fields := newTargetProjectionFields(ctx)
+	fields.values["backend"] = metadata.Backend
+	fields.values["os"] = metadata.Os.String()
+	fields.values["arch"] = metadata.Arch.String()
+	fields.string("image", &conf.Image)
+	fields.string("user", &conf.User)
+	fields.string("directory", &conf.Directory)
+	fields.strings("networks", &conf.Networks)
+	fields.strings("volumes", &conf.Volumes)
+	fields.strings("mounts", &conf.Mounts)
+	fields.strings("capabilities", &conf.Capabilities)
+	fields.strings("dnsServers", &conf.DnsServers)
+	fields.strings("dnsSearch", &conf.DnsSearch)
+	fields.boolean("privileged", &conf.Privileged)
+	fields.boolean("portForwardingAllowed", &conf.PortForwardingAllowed)
+	fields.strings("shellCommand", &conf.ShellCommand)
+	fields.strings("execCommand", &conf.ExecCommand)
+	fields.strings("sftpCommand", &conf.SftpCommand)
+	return fields.projection("docker")
+}
+
+// KubernetesTargetMetadata contains only the backend identity and its default
+// namespace. Namespace is used only when the rendered selector is empty.
+type KubernetesTargetMetadata struct {
+	Backend   string
+	Namespace string
 }
 
 func (this *KubernetesRepository) ResolveSessionTarget(ctx Context) (session.Target, error) {
-	if this.client == nil || this.client.RestConfig() == nil || this.client.RestConfig().Host == "" {
-		return "", fmt.Errorf("kubernetes backend identity is unavailable")
+	if this.client == nil {
+		return "", errors.System.Newf("kubernetes backend identity is unavailable")
 	}
-	fields := newTargetFields(ctx)
-	fields.values["backend"] = this.client.RestConfig().Host
-	fields.values["os"] = this.conf.Os.String()
-	fields.values["arch"] = this.conf.Arch.String()
-	fields.string("name", &this.conf.Name)
-	fields.string("namespace", &this.conf.Namespace)
+	conf := this.client.RestConfig()
+	if conf == nil || conf.Host == "" {
+		return "", errors.System.Newf("kubernetes backend identity is unavailable")
+	}
+	projection, err := projectKubernetesTarget(ctx, this.conf, conf.Host, this.client.Namespace)
+	if err != nil {
+		return "", err
+	}
+	return projection.SessionTarget()
+}
+
+// ProjectKubernetesTarget needs no Kubernetes client or kubeconfig. It projects
+// the production session-target selectors using explicitly supplied metadata,
+// without resolving credentials, inspecting images or provisioning resources.
+// Template functions and context getters remain caller dependencies.
+func ProjectKubernetesTarget(ctx Context, conf *configuration.EnvironmentKubernetes, metadata KubernetesTargetMetadata) (TargetProjection, error) {
+	return projectKubernetesTarget(ctx, conf, metadata.Backend, func() string { return metadata.Namespace })
+}
+
+func projectKubernetesTarget(ctx Context, conf *configuration.EnvironmentKubernetes, backend string, namespace func() string) (TargetProjection, error) {
+	if backend == "" {
+		return TargetProjection{}, errors.System.Newf("kubernetes backend identity is unavailable")
+	}
+	if conf == nil {
+		return TargetProjection{}, errors.Config.Newf("kubernetes target configuration is unavailable")
+	}
+	fields := newTargetProjectionFields(ctx)
+	fields.values["backend"] = backend
+	fields.values["os"] = conf.Os.String()
+	fields.values["arch"] = conf.Arch.String()
+	fields.string("name", &conf.Name)
+	fields.string("namespace", &conf.Namespace)
 	if fields.err == nil && fields.values["namespace"] == "" {
-		fields.values["namespace"] = this.client.Namespace()
+		fields.values["namespace"] = namespace()
 	}
-	fields.string("serviceAccountName", &this.conf.ServiceAccountName)
-	fields.string("image", &this.conf.Image)
-	fields.string("user", &this.conf.User)
-	fields.string("group", &this.conf.Group)
-	fields.string("directory", &this.conf.Directory)
-	fields.strings("capabilities", &this.conf.Capabilities)
-	fields.strings("dnsServers", &this.conf.DnsServers)
-	fields.strings("dnsSearch", &this.conf.DnsSearch)
-	fields.boolean("privileged", &this.conf.Privileged)
-	fields.boolean("portForwardingAllowed", &this.conf.PortForwardingAllowed)
-	fields.strings("shellCommand", &this.conf.ShellCommand)
-	fields.strings("execCommand", &this.conf.ExecCommand)
-	fields.strings("sftpCommand", &this.conf.SftpCommand)
-	return fields.target("kubernetes")
+	fields.string("serviceAccountName", &conf.ServiceAccountName)
+	fields.string("image", &conf.Image)
+	fields.string("user", &conf.User)
+	fields.string("group", &conf.Group)
+	fields.string("directory", &conf.Directory)
+	fields.strings("capabilities", &conf.Capabilities)
+	fields.strings("dnsServers", &conf.DnsServers)
+	fields.strings("dnsSearch", &conf.DnsSearch)
+	fields.boolean("privileged", &conf.Privileged)
+	fields.boolean("portForwardingAllowed", &conf.PortForwardingAllowed)
+	fields.strings("shellCommand", &conf.ShellCommand)
+	fields.strings("execCommand", &conf.ExecCommand)
+	fields.strings("sftpCommand", &conf.SftpCommand)
+	return fields.projection("kubernetes")
 }

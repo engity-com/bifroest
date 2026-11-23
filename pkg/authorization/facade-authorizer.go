@@ -21,18 +21,7 @@ func NewAuthorizerFacade(ctx context.Context, flows *configuration.Flows) (*Auth
 }
 
 func NewAuthorizerFacadeWithObserver(ctx context.Context, flows *configuration.Flows, observer FlowAuthorizationObserver) (*AuthorizerFacade, error) {
-	if flows == nil {
-		return &AuthorizerFacade{observer: observer}, nil
-	}
-
-	entries := make([]facaded, len(*flows))
-	for i, flow := range *flows {
-		if err := entries[i].newFrom(ctx, &flow); err != nil {
-			return nil, err
-		}
-	}
-
-	return &AuthorizerFacade{entries: entries, flows: append(configuration.Flows(nil), (*flows)...), observer: observer}, nil
+	return NewAuthorizerFacadeWithFactory(ctx, flows, newRegisteredFlowAuthorizer, observer)
 }
 
 type AuthorizerFacade struct {
@@ -327,23 +316,17 @@ type facaded struct {
 	rememberMe         configuration.RememberMe
 }
 
-func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow) error {
+func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow, factory FlowAuthorizerFactory) error {
 	fail := func(err error) error {
-		return fmt.Errorf("cannot initizalize authorization for flow %q: %w", flow.Name, err)
+		return errors.System.Newf("cannot initizalize authorization for flow %q: %w", flow.Name, err)
 	}
 
-	factory, ok := configurationTypeToAuthorizerFactory[reflect.TypeOf(flow.Authorization.V)]
-	if !ok {
-		return fail(errors.Config.Newf("cannot handle authorization type %v", reflect.TypeOf(flow.Authorization.V)))
-	}
-	m := reflect.ValueOf(factory)
-	rets := m.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(flow.Name), reflect.ValueOf(flow.Authorization.V)})
-	if err, ok := rets[1].Interface().(error); ok && err != nil {
+	authorizer, err := factory(ctx, flow)
+	if err != nil {
 		return fail(err)
 	}
-	authorizer, ok := rets[0].Interface().(DiscoveryAuthorizer)
-	if !ok {
-		return fail(errors.Config.Newf("authorizer does not provide authentication capabilities"))
+	if authorizer == nil {
+		return fail(errors.Config.Newf("authorizer factory returned nil"))
 	}
 	value := reflect.ValueOf(authorizer)
 	if (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) && value.IsNil() {

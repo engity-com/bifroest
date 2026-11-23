@@ -11,6 +11,7 @@ Use `bifroest` to run the server, inspect its state, manage SSH keys, and work w
 | Command | Purpose |
 | --- | --- |
 | [`serve`](serve.md) | Run the Bifröst server. |
+| [`test`](test.md) | Run offline configuration tests and write text, JSON or JUnit results. |
 | [`flow`](flow/index.md) | List configured flows and inspect their settings. |
 | [`session`](session/index.md) | Inspect sessions; remotely disconnect or dispose of them. |
 | [`metrics`](metrics/index.md) | Query operational metric snapshots through management SSH. |
@@ -50,6 +51,7 @@ For more background, see [Output and errors](output.md) and [Trust and verificat
 For a complete setup followed by actual commands, choose an end-to-end guide:
 
 * [Manage a Bifröst host remotely](../../guides/management.md).
+* [Test a configuration before deployment](../../guides/testing.md).
 * [Record, find and replay a session](../../guides/recording.md).
 * [Verify encrypted evidence on a workstation](../../guides/evidence.md).
 

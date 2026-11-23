@@ -43,7 +43,7 @@ func (this TextMarshaller[T, PT]) Render(data any) (T, error) {
 
 	if tmpl := this.tmpl; tmpl != nil {
 		var buf strings.Builder
-		if err := tmpl.Execute(&buf, data); err != nil {
+		if err := executeTemplate(tmpl, &buf, data); err != nil {
 			return bufT, err
 		}
 		plain := buf.String()

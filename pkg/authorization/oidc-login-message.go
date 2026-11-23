@@ -14,6 +14,8 @@ type oidcLoginMessageContext struct {
 	codeRequired bool
 }
 
+func (this *oidcLoginMessageContext) TemplateEvaluationParent() any { return this.request }
+
 func (this *oidcLoginMessageContext) GetField(name string) (any, bool, error) {
 	switch name {
 	case "url":

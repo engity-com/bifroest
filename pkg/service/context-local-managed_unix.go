@@ -12,23 +12,10 @@ func (this *environmentContext) ResolveLocalUserManaged(name configuration.FlowN
 		this.authorization.Flow() != name || account == nil {
 		return false, false, nil
 	}
-	for _, flow := range this.service.Configuration.Flows {
-		if flow.Name != name {
-			continue
-		}
-		local, ok := flow.Environment.V.(*configuration.EnvironmentLocal)
-		if !ok || local.ManagedGroup == "" {
-			return false, false, nil
-		}
-		if account.Group.Name == local.ManagedGroup {
-			return true, true, nil
-		}
-		for _, group := range account.Groups {
-			if group.Name == local.ManagedGroup {
-				return true, true, nil
-			}
-		}
-		return false, true, nil
+	group, available := this.service.Configuration.Flows.LocalManagedGroupFor(name)
+	if !available {
+		return false, false, nil
 	}
-	return false, false, nil
+	managed, err := user.IsInGroupByName(account, group)
+	return managed, true, err
 }

@@ -48,7 +48,7 @@ func (this Url) Render(data any) (*url.URL, error) {
 
 	if tmpl := this.tmpl; tmpl != nil {
 		var buf strings.Builder
-		if err := tmpl.Execute(&buf, data); err != nil {
+		if err := executeTemplate(tmpl, &buf, data); err != nil {
 			return nil, err
 		}
 		if buf.Len() == 0 {

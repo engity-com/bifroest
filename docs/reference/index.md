@@ -17,8 +17,11 @@ Bifröst does have the following important entities:
 
 5. Bifröst can have one or more [**Flows**](flow.md). This can define different combinations of [authorizations](authorization/index.md) and [environments](environment/index.md) based on different rules. This is comparable with [Virtual hosting](https://en.wikipedia.org/wiki/Virtual_hosting) like HTTP server are already providing it for years.
 
+6. [**Configuration tests**](testing/index.md) check how flow requirements, identity mapping and environment settings work together for a request. They use the same configuration you intend to deploy, with supplied authentication results and account facts. No login or session is started.
+
 ## Next topics
 
 1. [Installation](../setup/index.md)
 2. [Configuration](configuration.md)
 3. [Command line interface (CLI)](cli/index.md)
+4. [Testing configurations](testing/index.md) and the [first-test guide](../guides/testing.md)

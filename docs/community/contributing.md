@@ -29,6 +29,44 @@ When submitting a Pull Request ("PR"), make sure that it:
 1. Changes are manually reviewed by [Engity's Bifröst](https://echocat.org) team members.
 2. When the PR passes all tests, the PR is merged by the reviewer(s) in the GitHub [`main` branch](https://github.com/engity-com/bifroest/tree/main).
 
+### Offline testing checks
+
+The <<asset_link("pkg/test/README.md", "testing package and examples")>> live
+together under `pkg/test`. To write configuration tests, use the
+[guide](../guides/testing.md) and [reference](../reference/testing/index.md).
+The repository's <<asset_link("test/policyci/README.md", "CLI comparison harness")>>
+documents prerequisites, commands and output artifacts for developer-only
+native/container checks. Attach verification results to CI runs or the PR,
+rather than maintaining execution logs in the repository.
+
+The separate service integration tests that invoke `ssh` need a client native
+to the OS running the tests. In WSL/Linux, a Windows `ssh.exe` cannot use Linux
+temporary paths. Select a suitable client through the test process's `PATH`
+without replacing the user's global SSH installation. The offline runner itself
+does not launch SSH clients.
+
+Lua source checks are repository tools, not Bifröst subcommands:
+
+```shell
+mise run lint:lua
+mise run format:lua
+```
+
+StyLua is pinned in `.tool-versions`. Install [Luacheck 1.2.0](https://github.com/lunarmodules/luacheck)
+separately: `luarocks install luacheck 1.2.0-1` on Linux/macOS, or the upstream
+native `luacheck.exe` release on Windows (no WSL required). Both must be on
+`PATH` for `mise run lint:lua`. CI installs the same Luacheck version and runs
+the read-only lint/format checks. `.luacheckrc` declares only the runner's real
+read-only globals; unknown globals, unused code and formatting drift still fail.
+
+The examples stay within Lua 5.4-compatible syntax for these tools; Bifröst's
+embedded GoLua runtime remains unchanged. Static analysis is not policy execution
+or a security sandbox. The Lua tools are not runtime/distribution dependencies.
+
+Optional <<asset_link("pkg/test/types/README.md", "Lua editor declarations")>>
+provide completion/navigation hints for compatible GoLand Lua plugins and LuaLS,
+without changing runtime globals or committing personal IDE settings.
+
 ### Release process
 
 #### Schedule

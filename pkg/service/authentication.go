@@ -1,42 +1,20 @@
 package service
 
 import (
-	"fmt"
-
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
 )
 
 func (this *environmentContext) Authentication() (authentication.Identity, error) {
-	identity, err := authorization.AuthenticationOf(this.authorization)
-	if err != nil {
-		return authentication.Identity{}, err
-	}
 	if this.service == nil || this.service.Service == nil || this.authorization == nil {
-		return identity, nil
+		return authorization.AuthenticationOf(this.authorization)
 	}
-	for _, flow := range this.service.Configuration.Flows {
-		if flow.Name != this.authorization.Flow() || flow.Authorization.Principal.IsZero() {
-			continue
-		}
-		if !identity.IsAuthenticated() {
-			return authentication.Identity{}, fmt.Errorf("cannot map an anonymous authentication principal")
-		}
+	return authorization.AuthenticationWithPrincipal(this.authorization, this.service.Configuration.Flows, func(identity authentication.Identity) authorization.PrincipalMappingContext {
 		// A mapping may refer to the default principal without recursively
 		// evaluating itself. All other fields retain their original context,
 		// including platform-specific local-account management helpers.
-		mappingContext := principalMappingContext{environmentContext: this, identity: identity}
-		principal, err := flow.Authorization.Principal.Render(&mappingContext)
-		if err != nil {
-			return authentication.Identity{}, fmt.Errorf("cannot resolve authentication principal: %w", err)
-		}
-		identity.Principal = principal
-		if err := identity.Validate(); err != nil {
-			return authentication.Identity{}, err
-		}
-		return identity, nil
-	}
-	return identity, nil
+		return &principalMappingContext{environmentContext: this, identity: identity}
+	})
 }
 
 type principalMappingContext struct {

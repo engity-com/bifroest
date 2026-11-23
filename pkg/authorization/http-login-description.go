@@ -38,13 +38,22 @@ type HttpLoginDescriber interface {
 
 var _ HttpLoginDescriber = (*AuthorizerFacade)(nil)
 
+// Trusted authorizer adapters may expose their configured code-grant metadata
+// without being the concrete network authorizer. This getter must be pure; it
+// does not supply a browser, credentials, verification or login capability.
+type oidcCodeConfigurationProvider interface {
+	CodeConfiguration() *configuration.AuthorizationOidcAuthorizationCode
+}
+
 // Discovery and the HTTP adapter must agree before invoking an OIDC candidate.
 // A foreign code origin is ineligible, not a failed login that stops fallback.
 // Other methods (including remembered-key access) retain their own capabilities.
 func (this *facaded) httpLoginCapabilities(origin string, named bool) AuthenticationCapabilities {
 	capabilities := this.capabilityProvider.AuthenticationCapabilities(DiscoveryInput{Transport: connection.TransportHttp, RequestingName: named})
-	if oidc, ok := this.CloseableAuthorizer.(*OidcDeviceAuthAuthorizer); ok && oidc.code != nil {
-		capabilities.OidcAuthorizationCode = capabilities.OidcAuthorizationCode && oidc.matchesCodeOrigin(origin)
+	if provider, ok := this.CloseableAuthorizer.(oidcCodeConfigurationProvider); ok {
+		if code := provider.CodeConfiguration(); code != nil {
+			capabilities.OidcAuthorizationCode = capabilities.OidcAuthorizationCode && matchesOidcCodeOrigin(code, origin)
+		}
 	}
 	return capabilities
 }

@@ -1,0 +1,39 @@
+# Configuration decoding/selection only: no listener, provider or session starts.
+http:
+  enabled: true
+  addresses: [":8443"]
+  domains: [app.example.org]
+  tls: { dummy: true }
+authorizations:
+  device:
+    type: oidcDeviceAuth
+    issuer: https://issuer.example.org
+    clientId: example-client
+    clientSecret: example-only-not-a-credential
+    retrieveIdToken: true
+    retrieveUserInfo: false
+    principal: "mapped-{{ .authorization.idToken.preferred_username }}"
+  code:
+    type: oidcAuthorizationCode
+    issuer: https://issuer.example.org
+    clientId: example-client
+    clientSecret: example-only-not-a-credential
+    retrieveIdToken: true
+    retrieveUserInfo: false
+    principal: "mapped-{{ .authorization.idToken.preferred_username }}"
+environments:
+  target:
+    type: ssh
+    address: work.example.org
+    user: "{{ .authentication.principal }}"
+    acceptAllHostKeys: true
+    portForwardingAllowed: false
+flows:
+  - name: device
+    requirement: { includedRequestingName: "^device$" }
+    authorization: device
+    environment: target
+  - name: code
+    requirement: { includedRequestingName: "^code$" }
+    authorization: code
+    environment: target

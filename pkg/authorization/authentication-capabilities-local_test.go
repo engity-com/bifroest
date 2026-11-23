@@ -68,10 +68,15 @@ func TestAuthenticationCapabilitiesLocalMatrixWithoutNativeAuthentication(t *tes
 			for _, transport := range []connection.Transport{connection.TransportHttp, connection.TransportSsh} {
 				require.Equal(t, test.named, provider.AuthenticationCapabilities(DiscoveryInput{Transport: transport, RequestingName: true}))
 				require.Equal(t, test.nameless, provider.AuthenticationCapabilities(DiscoveryInput{Transport: transport}))
+				require.Equal(t, test.named, LocalAuthenticationCapabilities(conf, DiscoveryInput{Transport: transport, RequestingName: true}))
+				require.Equal(t, test.nameless, LocalAuthenticationCapabilities(conf, DiscoveryInput{Transport: transport}))
 			}
 			require.Equal(t, AuthenticationCapabilities{}, provider.AuthenticationCapabilities(DiscoveryInput{Transport: "unknown", RequestingName: true}))
 		})
 	}
+	require.Equal(t, AuthenticationCapabilities{}, LocalAuthenticationCapabilities(nil, DiscoveryInput{Transport: connection.TransportHttp, RequestingName: true}))
+	var missing *LocalAuthorizer
+	require.Equal(t, AuthenticationCapabilities{}, missing.AuthenticationCapabilities(DiscoveryInput{Transport: connection.TransportHttp, RequestingName: true}))
 }
 
 func TestDiscoveryBoolPossibleNeverExecutesDynamicTemplates(t *testing.T) {

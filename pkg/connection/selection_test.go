@@ -2,6 +2,7 @@ package connection
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,15 @@ func (selectionTestContext) Connection() Connection   { return nil }
 type selectionTestRequest struct {
 	selectionTestContext
 	selection Selection
+}
+
+func TestHttpLoginUserValidationDoesNotConflateSyntaxAndEligibility(t *testing.T) {
+	for _, name := range []string{"", "ops", "  ops  ", "   ", "älice", strings.Repeat("x", 256), strings.Repeat("ä", 128)} {
+		require.True(t, ValidHttpLoginUser(name), "%q", name)
+	}
+	for _, name := range []string{"bad\nname", "bad\tname", "bad\x00name", string([]byte{0xff}), strings.Repeat("x", 257), strings.Repeat("ä", 129)} {
+		require.False(t, ValidHttpLoginUser(name), "%q", name)
+	}
 }
 
 func (this selectionTestRequest) Selection() Selection { return this.selection }

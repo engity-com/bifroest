@@ -12,14 +12,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
-	"unicode/utf8"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
-
-var ErrNotFound = errors.New("local SAM account not found")
 
 // GetField implements the template context for a local account. Group data
 // includes direct local and BUILTIN aliases, not domain or nested membership.
@@ -71,19 +67,6 @@ func (a Account) GetField(name string) (any, bool, error) {
 	default:
 		return nil, false, fmt.Errorf("unknown user field %q", name)
 	}
-}
-
-func validName(name string) bool {
-	if name == "" || name == "." || name == ".." || name != strings.TrimSpace(name) || !utf8.ValidString(name) ||
-		strings.ContainsAny(name, `\/@"[]:;|=,+*?<>`) || strings.HasSuffix(name, ".") {
-		return false
-	}
-	for _, r := range name {
-		if unicode.IsControl(r) {
-			return false
-		}
-	}
-	return true
 }
 
 func hostName() (string, error) {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/engity-com/bifroest/internal/text/template"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -56,33 +57,7 @@ func init() {
 }
 
 func firstMatching(tmpl string, list any) (string, error) {
-	t, err := NewTemplate("firstMatching", tmpl)
-	if err != nil {
-		return "", fmt.Errorf("'firstMatching' cannot parse template: %w", err)
-	}
-
-	tp := reflect.TypeOf(list).Kind()
-	switch tp {
-	case reflect.Slice, reflect.Array:
-		rl := reflect.ValueOf(list)
-
-		l := rl.Len()
-		for i := 0; i < l; i++ {
-			var buf strings.Builder
-			elem := rl.Index(i).Interface()
-			if err := t.Execute(&buf, elem); err != nil {
-				return "", fmt.Errorf("#%d element cannot be evaluated: %w", i, err)
-			}
-			if buf.Len() > 0 {
-				if v := buf.String(); !isFalse(v) {
-					return v, nil
-				}
-			}
-		}
-		return "", nil
-	default:
-		return "", fmt.Errorf("cannot do firstMatching on element kind %s", tp)
-	}
+	return matching("firstMatching", tmpl, list, false, executeProductionTemplate)
 }
 
 func isFalse(what string) bool {
@@ -95,9 +70,17 @@ func isFalse(what string) bool {
 }
 
 func lastMatching(tmpl string, list any) (string, error) {
-	t, err := NewTemplate("lastMatching", tmpl)
+	return matching("lastMatching", tmpl, list, true, executeProductionTemplate)
+}
+
+func executeProductionTemplate(tmpl *template.Template, writer io.Writer, data any) error {
+	return tmpl.Execute(writer, data)
+}
+
+func matching(name, tmpl string, list any, last bool, execute func(*template.Template, io.Writer, any) error) (string, error) {
+	t, err := NewTemplate(name, tmpl)
 	if err != nil {
-		return "", fmt.Errorf("'lastMatching' cannot parse template: %w", err)
+		return "", errors.Config.Newf("'%s' cannot parse template: %w", name, err)
 	}
 
 	var result string
@@ -109,18 +92,21 @@ func lastMatching(tmpl string, list any) (string, error) {
 		l := rl.Len()
 		for i := 0; i < l; i++ {
 			var buf strings.Builder
-			if err := t.Execute(&buf, rl.Index(i).Interface()); err != nil {
-				return "", fmt.Errorf("#%d element cannot be evaluated: %w", i, err)
+			if err := execute(t, &buf, rl.Index(i).Interface()); err != nil {
+				return "", errors.Config.Newf("#%d element cannot be evaluated: %w", i, err)
 			}
 			if buf.Len() > 0 {
 				if v := buf.String(); !isFalse(v) {
+					if !last {
+						return v, nil
+					}
 					result = v
 				}
 			}
 		}
 		return result, nil
 	default:
-		return "", fmt.Errorf("cannot do lastMatching on element kind %s", tp)
+		return "", errors.Config.Newf("cannot do %s on element kind %s", name, tp)
 	}
 }
 
@@ -137,7 +123,7 @@ func (this *readFileArgs) parseArgs(arg0 string, args []string) error {
 				this.optional = true
 				return nil
 			default:
-				return fmt.Errorf("illegal optional: %q", v)
+				return errors.Config.Newf("illegal optional: %q", v)
 			}
 		}
 		if err := evalOpt(arg0); err != nil {
@@ -156,6 +142,10 @@ func (this *readFileArgs) parseArgs(arg0 string, args []string) error {
 }
 
 func file(arg0 string, args ...string) (string, error) {
+	return fileWith(func(name string) (io.ReadCloser, error) { return os.Open(name) }, arg0, args...)
+}
+
+func fileWith(open func(string) (io.ReadCloser, error), arg0 string, args ...string) (string, error) {
 	var fa readFileArgs
 	if err := fa.parseArgs(arg0, args); err != nil {
 		return "", err
@@ -164,27 +154,31 @@ func file(arg0 string, args ...string) (string, error) {
 		if fa.optional {
 			return "", nil
 		}
-		return "", fmt.Errorf("no file specified")
+		return "", errors.Config.Newf("no file specified")
 	}
 
-	f, err := os.Open(fa.filename)
+	f, err := open(fa.filename)
 	if err != nil {
 		if sys.IsNotExist(err) && fa.optional {
 			return "", nil
 		}
-		return "", err
+		return "", errors.System.Newf("%w", err)
 	}
 	defer common.IgnoreCloseError(f)
 
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, io.LimitReader(f, maximumReadFileSize)); err != nil {
-		return "", err
+		return "", errors.System.Newf("%w", err)
 	}
 
 	return buf.String(), nil
 }
 
 func stat(arg0 string, args ...string) (fs.FileInfo, error) {
+	return statWith(os.Stat, arg0, args...)
+}
+
+func statWith(statFile func(string) (fs.FileInfo, error), arg0 string, args ...string) (fs.FileInfo, error) {
 	var fa readFileArgs
 	if err := fa.parseArgs(arg0, args); err != nil {
 		return nil, err
@@ -193,42 +187,38 @@ func stat(arg0 string, args ...string) (fs.FileInfo, error) {
 		if fa.optional {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("no file specified")
+		return nil, errors.Config.Newf("no file specified")
 	}
 
-	fi, err := os.Stat(fa.filename)
+	fi, err := statFile(fa.filename)
 	if err != nil {
 		if sys.IsNotExist(err) && fa.optional {
 			return nil, nil
 		}
-		return nil, err
+		return nil, errors.System.Newf("%w", err)
 	}
 
 	return fi, nil
 }
 
 func fileExists(filename string) (bool, error) {
-	fi, err := os.Stat(filename)
-	if err != nil {
-		if sys.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-
-	return !fi.IsDir(), nil
+	return pathExistsWith(os.Stat, filename, false)
 }
 
 func dirExists(filename string) (bool, error) {
-	fi, err := os.Stat(filename)
+	return pathExistsWith(os.Stat, filename, true)
+}
+
+func pathExistsWith(statFile func(string) (fs.FileInfo, error), filename string, directory bool) (bool, error) {
+	fi, err := statFile(filename)
 	if err != nil {
 		if sys.IsNotExist(err) {
 			return false, nil
 		}
-		return false, err
+		return false, errors.System.Newf("%w", err)
 	}
 
-	return fi.IsDir(), nil
+	return fi.IsDir() == directory, nil
 }
 
 func fingerprint(arg any, args ...any) (string, error) {
@@ -348,12 +338,23 @@ func formatDate(what *time.Time, opts ...any) (string, error) {
 }
 
 func env(key string, or ...string) string {
-	v, ok := os.LookupEnv(key)
+	value, _ := lookupEnvironment(func(key string) (string, bool, error) {
+		value, present := os.LookupEnv(key)
+		return value, present, nil
+	}, key, or...)
+	return value
+}
+
+func lookupEnvironment(lookup func(string) (string, bool, error), key string, or ...string) (string, error) {
+	v, ok, err := lookup(key)
+	if err != nil {
+		return "", err
+	}
 	if ok {
-		return v
+		return v, nil
 	}
 	if len(or) > 0 {
-		return or[0]
+		return or[0], nil
 	}
-	return ""
+	return "", nil
 }

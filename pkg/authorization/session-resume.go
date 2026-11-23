@@ -156,6 +156,8 @@ type resumePublicKeyRequest struct {
 	key ssh.PublicKey
 }
 
+func (this resumePublicKeyRequest) TemplateEvaluationParent() any { return this.Request }
+
 func (this resumePublicKeyRequest) RemotePublicKey() ssh.PublicKey { return this.key }
 
 func (this resumePublicKeyRequest) Selection() connection.Selection {

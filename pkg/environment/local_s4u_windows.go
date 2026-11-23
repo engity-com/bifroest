@@ -9,14 +9,13 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
-	"unicode"
-	"unicode/utf8"
 	"unsafe"
 
 	log "github.com/echocat/slf4g"
 	"golang.org/x/sys/windows"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/windowslocal"
 )
 
 var (
@@ -135,15 +134,7 @@ func lookupLocalWindowsAccountByUID(uid string) (windowsLocalAccount, error) {
 }
 
 func validLocalSAMName(name string) bool {
-	if name == "" || name == "." || name == ".." || name != strings.TrimSpace(name) || !utf8.ValidString(name) || strings.ContainsAny(name, `\/@"[]:;|=,+*?<>`) || strings.HasSuffix(name, ".") {
-		return false
-	}
-	for _, r := range name {
-		if unicode.IsControl(r) {
-			return false
-		}
-	}
-	return true
+	return windowslocal.ValidSAMName(name)
 }
 
 // logon returns a primary token and a cleanup that unloads its profile and

@@ -11,6 +11,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
@@ -24,12 +25,24 @@ func (principalTestAuthorization) Flow() configuration.FlowName { return "flow" 
 func (this principalTestAuthorization) Authentication() (authentication.Identity, error) {
 	return this.identity, nil
 }
-func (principalTestAuthorization) GetField(name string, _ authorization.ContextEnabled) (any, bool, error) {
-	if name == "entry" {
+func (principalTestAuthorization) GetField(name string, ctx authorization.ContextEnabled) (any, bool, error) {
+	switch name {
+	case "entry":
 		return map[string]any{"name": "canonical-entry"}, true, nil
+	case "contextValue":
+		return ctx.Context().Value(principalTestContextKey{}), true, nil
+	case "requestingName":
+		request, ok := ctx.(bconn.Context)
+		if !ok {
+			return nil, false, fmt.Errorf("request context capability is unavailable")
+		}
+		return request.Connection().Remote().User(), true, nil
+	default:
+		return nil, false, fmt.Errorf("unknown field %q", name)
 	}
-	return nil, false, fmt.Errorf("unknown field %q", name)
 }
+
+type principalTestContextKey struct{}
 
 type principalTestSshContext struct{ essh.Context }
 
@@ -102,4 +115,32 @@ func TestAuthenticationContextAvailableInRememberMeNotification(t *testing.T) {
 	actual, err := template.MustNewString("{{ .authentication.principal }}").Render(notification)
 	require.NoError(t, err)
 	require.Equal(t, "verified-user@example.org", actual)
+}
+
+func TestAuthenticationPrincipalPreservesConcreteRequestContext(t *testing.T) {
+	ctx := newPrincipalTestContext("{{ .authorization.contextValue }}|{{ .authorization.requestingName }}|{{ .authentication.principal }}")
+	ctx.executionContext = context.WithValue(t.Context(), principalTestContextKey{}, "request-marker")
+	identity, err := ctx.Authentication()
+	require.NoError(t, err)
+	require.Equal(t, authentication.Identity{
+		Principal: "request-marker|requested-target|verified-user", Issuer: "issuer", Subject: "subject",
+	}, identity)
+	base, err := authorization.AuthenticationOf(ctx.authorization)
+	require.NoError(t, err)
+	require.Equal(t, "verified-user", base.Principal)
+}
+
+func TestAuthenticationPrincipalWithoutServiceUsesVerifiedIdentity(t *testing.T) {
+	for _, service := range []*service{nil, {}} {
+		ctx := newPrincipalTestContext("must-not-be-used")
+		ctx.service = service
+		identity, err := ctx.Authentication()
+		require.NoError(t, err)
+		require.Equal(t, authentication.Identity{Principal: "verified-user", Issuer: "issuer", Subject: "subject"}, identity)
+	}
+	ctx := newPrincipalTestContext("must-not-be-used")
+	ctx.authorization = nil
+	identity, err := ctx.Authentication()
+	require.NoError(t, err)
+	require.Equal(t, authentication.Anonymous(), identity)
 }

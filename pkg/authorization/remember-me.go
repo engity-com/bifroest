@@ -25,6 +25,8 @@ func (r withoutRememberedSessions) FindByPublicKey(context.Context, ssh.PublicKe
 
 type primaryPublicKeyRequest struct{ PublicKeyRequest }
 
+func (r primaryPublicKeyRequest) TemplateEvaluationParent() any { return r.PublicKeyRequest }
+
 func (r primaryPublicKeyRequest) Sessions() session.Repository {
 	return withoutRememberedSessions{r.PublicKeyRequest.Sessions()}
 }
@@ -58,6 +60,8 @@ type sshSessionResumeRequest struct {
 	sess   session.Session
 	stored session.SSHRememberedCredential
 }
+
+func (r sshSessionResumeRequest) TemplateEvaluationParent() any { return r.PublicKeyRequest }
 
 func (r sshSessionResumeRequest) SessionPossessionVerified() bool {
 	return isPublicKeyVerified(r.PublicKeyRequest)
