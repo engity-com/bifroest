@@ -94,6 +94,22 @@ func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T
 	require.Empty(t, restore.Run)
 }
 
+func TestGoCacheCompositeActionDoesNotUseYAMLAnchors(t *testing.T) {
+	raw, err := gos.ReadFile("../../.github/actions/cache-go/action.yml")
+	require.NoError(t, err)
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal(raw, &root))
+	var visit func(*yaml.Node)
+	visit = func(node *yaml.Node) {
+		require.Empty(t, node.Anchor, "GitHub supports anchors in workflows, not composite action manifests")
+		require.NotEqual(t, yaml.AliasNode, node.Kind)
+		for _, child := range node.Content {
+			visit(child)
+		}
+	}
+	visit(&root)
+}
+
 func runGoCacheDetection(t *testing.T, goEnv, scope, context, status string) (map[string]string, string, error) {
 	t.Helper()
 	bash, err := osexec.LookPath("bash")
