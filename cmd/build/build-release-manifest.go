@@ -62,7 +62,6 @@ type releaseManifestVariant struct {
 	Architecture       string                       `json:"architecture"`
 	Edition            string                       `json:"edition"`
 	Archive            string                       `json:"archive,omitempty"`
-	Notice             string                       `json:"notice,omitempty"`
 	BrowserBuildDigest string                       `json:"browserBuildDigest,omitempty"`
 	Sboms              releaseManifestVariantSboms  `json:"sboms"`
 	Image              *releaseManifestVariantImage `json:"image,omitempty"`
@@ -128,7 +127,13 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 
 	for _, artifact := range artifacts {
 		switch artifact.t {
-		case buildArtifactTypeArchive, buildArtifactTypeNotice, buildArtifactTypeSbom, buildArtifactTypeChart:
+		case buildArtifactTypeNotice:
+			builder := releaseManifestBuilderFor(builders, artifact.Platform)
+			if builder.notice != "" {
+				return nil, fmt.Errorf("duplicate third-party notice for %s", artifact.Platform)
+			}
+			builder.notice = artifact.name()
+		case buildArtifactTypeArchive, buildArtifactTypeSbom, buildArtifactTypeChart:
 			digest, err := sha256File(artifact.filepath)
 			if err != nil {
 				return nil, fmt.Errorf("cannot hash release asset %s: %w", artifact.name(), err)
@@ -192,11 +197,6 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 				if artifact.thirdPartyLicenseInventory != nil && artifact.thirdPartyLicenseInventory.browser != nil {
 					builder.browserBuildDigest = artifact.thirdPartyLicenseInventory.browserDigest
 				}
-			case buildArtifactTypeNotice:
-				if builder.notice != "" {
-					return nil, fmt.Errorf("duplicate third-party notice for %s", artifact.Platform)
-				}
-				builder.notice = artifact.name()
 			case buildArtifactTypeSbom:
 				if artifact.sbom == nil {
 					return nil, fmt.Errorf("SBOM artifact %s has no subject metadata", artifact.name())
@@ -324,7 +324,6 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 			Architecture:       builder.platform.Arch.String(),
 			Edition:            builder.platform.Edition.String(),
 			Archive:            builder.archive,
-			Notice:             builder.notice,
 			BrowserBuildDigest: builder.browserBuildDigest,
 		}
 		if builder.archiveSboms.Spdx != "" || builder.archiveSboms.CycloneDx != "" {
@@ -383,7 +382,7 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 	}
 
 	manifest := releaseManifest{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Project:       this.repo.String(),
 		Version:       artifacts[0].version.String(),
 		Revision:      artifacts[0].revision,

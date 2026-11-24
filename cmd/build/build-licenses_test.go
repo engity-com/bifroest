@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/internal/build/images"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -138,6 +139,55 @@ func TestReleaseLicenseImageItems(t *testing.T) {
 				expected[tt.prefix+license] = value
 			}
 			require.Equal(t, expected, readTarFileContents(t, content))
+		})
+	}
+}
+
+func TestReleaseArchivesKeepLicensesAndNoticesWithoutSeparateNoticeDownloads(t *testing.T) {
+	for _, targetOs := range []sys.Os{sys.OsLinux, sys.OsDarwin, sys.OsWindows} {
+		t.Run(targetOs.String(), func(t *testing.T) {
+			build, bc := testReleaseManifestBuild(t)
+			build.buildContextP.Store(bc)
+			build.archive.includedResources = nil
+			platform := &bib.Platform{Os: targetOs, Arch: sys.ArchAmd64, Edition: sys.EditionGeneric}
+			binary := testReleaseManifestFile(t, bc, platform, buildArtifactTypeBinary, "binary", "binary", nil)
+			notice := testReleaseManifestFile(t, bc, platform, buildArtifactTypeNotice, "notice.txt", "third-party notices", nil)
+			binary.thirdPartyNoticesFilepath = notice.filepath
+			binary.thirdPartyLicenseInventory = testThirdPartyLicenseInventory()
+			testBrowserManifest(t, binary)
+			t.Chdir(filepath.Join("..", ".."))
+
+			archive, err := build.archive.create(t.Context(), binary)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, archive.Close()) })
+			var contents map[string]string
+			if targetOs == sys.OsWindows {
+				reader, err := zip.OpenReader(archive.filepath)
+				require.NoError(t, err)
+				defer reader.Close()
+				contents = make(map[string]string)
+				for _, file := range reader.File {
+					source, err := file.Open()
+					require.NoError(t, err)
+					raw, err := io.ReadAll(source)
+					require.NoError(t, err)
+					require.NoError(t, source.Close())
+					contents[file.Name] = string(raw)
+				}
+			} else {
+				source, err := gos.Open(archive.filepath)
+				require.NoError(t, err)
+				defer source.Close()
+				compressed, err := gzip.NewReader(source)
+				require.NoError(t, err)
+				defer compressed.Close()
+				contents = readTarFileContents(t, compressed)
+			}
+			require.Equal(t, "third-party notices", contents[thirdPartyNoticesFilename])
+			require.NotEmpty(t, contents["LICENSE"])
+			require.NotEmpty(t, contents["LICENSES/Apache-2.0.txt"])
+			require.NotEmpty(t, contents["LICENSES/"+goToolchainLicenseFile])
+			require.False(t, notice.t.canBePublished())
 		})
 	}
 }

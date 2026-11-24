@@ -26,6 +26,6 @@ Audit logging and recording are **off by default**. When enabled, Bifröst can p
 
 ## Verification and disclosure
 
-The repository includes automated Go tests, race tests, end-to-end scenarios and CodeQL checks. The OIDC E2E test uses a simulated IdP; it does not certify every external provider. For a **published release**, the [distribution page](setup/distribution.md#compliance) links archive checksums, a release manifest, third-party notices and per-variant SBOMs. Inspect the artifacts for the version you actually install; checksums and tests are not a claim of an independent security audit.
+The repository includes automated Go tests, race tests, end-to-end scenarios and CodeQL checks. The OIDC E2E test uses a simulated IdP; it does not certify every external provider. For a **published release**, the [distribution page](setup/distribution.md#compliance) links checksums, a release manifest and per-variant SBOMs, and explains where to find the included license texts and third-party notices. Inspect the artifacts for the version you actually install; checksums and tests are not a claim of an independent security audit.
 
 Report vulnerabilities through the <<asset_link("SECURITY.md", "security policy") >>. For an overview of where Bifröst fits, see [Choosing an SSH access approach](choosing-bifroest.md).

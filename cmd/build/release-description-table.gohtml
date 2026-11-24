@@ -1,0 +1,9 @@
+<table>
+<thead>
+<tr><th rowspan="2" align="left">Architecture</th>{{range .OperatingSystems}}<th colspan="{{len $.Columns}}" align="center">{{.}}</th>{{end}}</tr>
+<tr>{{range .OperatingSystems}}{{range $.Columns}}<th align="center">{{.}}</th>{{end}}{{end}}</tr>
+</thead>
+<tbody>
+{{range .Rows}}<tr><td align="left"><code>{{.Architecture}}</code></td>{{range .Cells}}<td align="center">{{range $index, $link := .Links}}{{if $index}} <img src="{{$.SeparatorIconURL}}" width="8" height="16" align="middle" alt="/" aria-hidden="true"> {{end}}{{if .URL}}<a href="{{.URL}}" title="{{.Title}}" aria-label="{{.Title}}"><img src="{{$.DownloadIconURL}}" width="16" height="16" align="middle" alt="↓"></a>{{else}}<img src="{{$.UnavailableIconURL}}" width="16" height="16" align="middle" alt="○" title="{{.Title}}" aria-label="{{.Title}}">{{end}}{{end}}</td>{{end}}</tr>
+{{end}}</tbody>
+</table>

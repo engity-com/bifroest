@@ -341,8 +341,15 @@ footer .md-footer-meta.md-typeset ul.md-footer-links > li:last-child::after {
     padding-top: 0.5em;
 }
 
+.md-typeset table[data-downloads=true] tbody td:not(:first-child),
+.md-typeset table[data-kind=compliance_matrix] tbody td:not(:first-child) {
+    text-align: center;
+    white-space: nowrap;
+}
+
 .md-typeset table[data-kind=compliance_matrix] thead tr:first-child th:not([rowspan]) {
     padding-bottom: 0;
+    text-align: center;
 }
 
 .md-typeset table[data-kind=compliance_matrix] thead tr:last-child th {

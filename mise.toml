@@ -184,6 +184,18 @@ run = "go run ./cmd/build build-binary --log.colorMode=always"
 [tasks."build:go:package"]
 run = "go run ./cmd/build package-binaries --log.colorMode=always"
 
+[tasks."release:preview"]
+description = "Preview release artifacts locally: <version> [--snapshot <directory>] [--body-file <file>]. Never edits GitHub."
+raw = true
+raw_args = true
+run = "go run ./cmd/build release-description preview"
+
+[tasks."release:update"]
+description = "Update a published release description: <version>. Requires a write-capable GitHub token."
+raw = true
+raw_args = true
+run = "go run ./cmd/build release-description update"
+
 [tasks."build:web"]
 dir = "web"
 run = "bun run build"

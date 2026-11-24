@@ -42,6 +42,10 @@ func main() {
 	if len(gos.Args) > 1 && gos.Args[1] == "browser-licenses" {
 		// Local license collection must not require GitHub API credentials.
 		initBrowserLicenses(ctx, app)
+	} else if len(gos.Args) > 1 && gos.Args[1] == "release-description" {
+		// Public and offline previews must not require GitHub credentials.
+		app.Terminate(gos.Exit)
+		initReleaseDescription(ctx, app, b.repo)
 	} else {
 		b.init(ctx, app)
 	}

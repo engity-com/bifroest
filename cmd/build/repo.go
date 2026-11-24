@@ -111,8 +111,10 @@ func (this *repo) client() *github.Client {
 		if v != nil {
 			return v
 		}
-		v = github.NewClient(nil).
-			WithAuthToken(this.githubToken)
+		v = github.NewClient(nil)
+		if this.githubToken != "" {
+			v = v.WithAuthToken(this.githubToken)
+		}
 		if this.clientP.CompareAndSwap(nil, v) {
 			return v
 		}

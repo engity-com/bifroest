@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Release preview: {{.Tag}}</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+a { color: light-dark(#0969da, #58a6ff); }
+aside { border: 1px solid #8886; border-radius: .4rem; padding: 1rem; }
+h2 { border-bottom: 1px solid #8886; margin-top: 2rem; padding-bottom: .4rem; }
+.matrix { overflow-x: auto; }
+table { border-collapse: collapse; margin: 1rem 0; }
+th, td { border: 1px solid #8886; padding: .6rem 1rem; white-space: nowrap; }
+td a { display: inline-block; min-width: 1rem; }
+tbody tr:nth-child(even), pre { background: #8881; }
+pre { padding: 1rem; overflow-x: auto; border-radius: .4rem; }
+</style>
+</head>
+<body>
+<aside><strong>Local preview — {{.Tag}}. No GitHub release was changed.</strong><br>
+The tables and links below are the generated release content. GitHub controls the final styling.
+<a href="release-notes.md">Complete proposed release description</a> · <a href="artifacts.md">Generated section</a></aside>
+<h2>Downloads</h2>
+<p><a href="{{.DocsURL}}distribution/">Installation and platform details</a> · <a href="{{.ChecksumsURL}}">SHA-256 checksums</a> · <a href="{{.ManifestURL}}">Release manifest</a></p>
+<p>Each entry shows <strong>Generic / Extended</strong>. <img src="release-description-unavailable.svg" width="16" height="16" align="middle" alt="○"> means not available.</p>
+<div class="matrix">{{.ArchiveTable}}</div>
+{{if .PullCommands}}<h2>Docker/OCI images</h2>
+<p><a href="{{.DocsURL}}in-docker/">Container installation instructions</a></p>
+{{range .PullCommands}}<pre><code>{{.}}</code></pre>{{end}}
+<div class="matrix">{{.ImageTable}}</div>{{end}}
+{{if .ChartURL}}<h2>Helm chart</h2>
+<p><a href="{{.ChartURL}}">Download the chart</a> · <a href="{{.ChartDocsURL}}">Installation instructions</a></p>
+<pre><code>{{.ChartCommand}}</code></pre>{{end}}
+</body>
+</html>
