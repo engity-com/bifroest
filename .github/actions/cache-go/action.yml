@@ -9,6 +9,10 @@ inputs:
     description: Additional build context, such as the container image or target edition.
     required: false
     default: ""
+  build-cache:
+    description: Restore and save Go build results for expensive test jobs.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -78,6 +82,7 @@ runs:
           ${{ runner.os }}-go-
 
     - name: Cache Go build results
+      if: ${{ inputs.build-cache == 'true' }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ${{ steps.go.outputs.gocache }}

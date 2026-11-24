@@ -15,8 +15,8 @@ import (
 
 type goCacheAction struct {
 	Inputs map[string]struct {
-		Required bool   `yaml:"required"`
-		Default  string `yaml:"default"`
+		Required bool `yaml:"required"`
+		Default  any  `yaml:"default"`
 	} `yaml:"inputs"`
 	Runs struct {
 		Using string `yaml:"using"`
@@ -45,19 +45,23 @@ func readGoCacheAction(t *testing.T) goCacheAction {
 // These guards cover the composite action, not hosted cache-service execution.
 func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T) {
 	action := readGoCacheAction(t)
-	require.Len(t, action.Inputs, 2)
+	require.Len(t, action.Inputs, 3)
 	require.True(t, action.Inputs["scope"].Required)
 	context, ok := action.Inputs["context"]
 	require.True(t, ok)
 	require.False(t, context.Required)
 	require.Empty(t, context.Default)
+	buildCache, ok := action.Inputs["build-cache"]
+	require.True(t, ok)
+	require.False(t, buildCache.Required)
+	require.Equal(t, "false", buildCache.Default, "build caching must default to the string false, not a YAML boolean")
 	require.Equal(t, "composite", action.Runs.Using)
 	require.Len(t, action.Runs.Steps, 3)
 	for _, step := range action.Runs.Steps {
-		require.Empty(t, step.If)
 		require.False(t, step.ContinueOnError)
 	}
 	detect := action.Runs.Steps[0]
+	require.Empty(t, detect.If)
 	require.Equal(t, "go", detect.ID)
 	require.Equal(t, "bash", detect.Shell)
 	require.Empty(t, detect.Uses)
@@ -67,6 +71,8 @@ func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T
 	require.Contains(t, detect.Run, "mise exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED")
 	require.NotContains(t, detect.Run, "${{", "inputs must be passed as data, not interpolated into shell commands")
 	modules, build := action.Runs.Steps[1], action.Runs.Steps[2]
+	require.Empty(t, modules.If, "module caching remains enabled without the build-cache opt-in")
+	require.Equal(t, "${{ inputs.build-cache == 'true' }}", build.If, "only an explicit true may restore and save build results")
 	for _, step := range action.Runs.Steps[1:] {
 		require.Equal(t, "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", step.Uses)
 		require.Empty(t, step.Run)
