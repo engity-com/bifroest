@@ -10,13 +10,12 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
 func TestNeutralConnectionSharesSessionLimitWithSshLease(t *testing.T) {
-	svc, _, _ := executionTestFixture(t, func(environment.TerminalTask) (int, error) { return 0, nil }, func(conf *configuration.Configuration) { conf.Session.V.(*configuration.SessionFs).MaxConnections = 1 })
-	transport, auth := newExecutionTestLogin(t, svc, "run")
+	t.Parallel()
+	svc, transport, auth := terminalConnectionTestFixture(t, func(conf *configuration.SessionFs) { conf.MaxConnections = 1 })
 	ssh := newTrackedSessionConnection(t, svc)
 	ssh.context.SetValue(authorizationCtxKey, auth)
 	require.NoError(t, ssh.doWithInterceptor(func(session.ConnectionInterceptor) error { return nil }))
@@ -25,16 +24,16 @@ func TestNeutralConnectionSharesSessionLimitWithSshLease(t *testing.T) {
 	require.ErrorIs(t, err, session.ErrMaxConnectionsPerSessionReached)
 	require.Nil(t, conn)
 	require.NoError(t, ssh.Close())
-	registered := registerExecutionTestConnection(t, svc, transport, auth)
+	registered := registerTerminalConnectionForTest(t, svc, transport, auth)
 	require.False(t, registered.IsClosed())
 }
 
 func TestNeutralConnectionIdleWatchDoesNotRenewItsOwnDeadline(t *testing.T) {
-	svc, _, _ := executionTestFixture(t, func(environment.TerminalTask) (int, error) { return 0, nil }, func(conf *configuration.Configuration) {
-		conf.Session.V.(*configuration.SessionFs).IdleTimeout = common.DurationOf(400 * time.Millisecond)
+	t.Parallel()
+	svc, transport, auth := terminalConnectionTestFixture(t, func(conf *configuration.SessionFs) {
+		conf.IdleTimeout = common.DurationOf(400 * time.Millisecond)
 	})
-	transport, auth := newExecutionTestLogin(t, svc, "run")
-	conn := registerExecutionTestConnection(t, svc, transport, auth)
+	conn := registerTerminalConnectionForTest(t, svc, transport, auth)
 	for range 8 {
 		require.NoError(t, conn.activity())
 		time.Sleep(70 * time.Millisecond)
@@ -47,11 +46,11 @@ func TestNeutralConnectionIdleWatchDoesNotRenewItsOwnDeadline(t *testing.T) {
 }
 
 func TestNeutralConnectionMaximumLifetimeIsNotExtendedByActivity(t *testing.T) {
-	svc, _, _ := executionTestFixture(t, func(environment.TerminalTask) (int, error) { return 0, nil }, func(conf *configuration.Configuration) {
-		conf.Session.V.(*configuration.SessionFs).MaxTimeout = common.DurationOf(400 * time.Millisecond)
+	t.Parallel()
+	svc, transport, auth := terminalConnectionTestFixture(t, func(conf *configuration.SessionFs) {
+		conf.MaxTimeout = common.DurationOf(400 * time.Millisecond)
 	})
-	transport, auth := newExecutionTestLogin(t, svc, "run")
-	conn := registerExecutionTestConnection(t, svc, transport, auth)
+	conn := registerTerminalConnectionForTest(t, svc, transport, auth)
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(30 * time.Millisecond)
@@ -67,21 +66,21 @@ func TestNeutralConnectionMaximumLifetimeIsNotExtendedByActivity(t *testing.T) {
 }
 
 func TestNeutralConnectionDirectDisposalAndParentCancelCloseTransport(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"dispose", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
-			svc, _, _ := executionTestFixture(t, func(environment.TerminalTask) (int, error) { return 0, nil })
-			transport, auth := newExecutionTestLogin(t, svc, "run")
-			conn := registerExecutionTestConnection(t, svc, transport, auth)
+			svc, transport, auth := terminalConnectionTestFixture(t)
+			conn := registerTerminalConnectionForTest(t, svc, transport, auth)
 			if mode == "dispose" {
 				_, err := auth.FindSession().Dispose(t.Context())
 				require.NoError(t, err)
 			} else {
-				transport.stream.cancel()
+				transport.cancel()
 			}
 			require.Eventually(t, func() bool {
-				return conn.IsClosed() && errors.Is(transport.stream.Context().Err(), context.Canceled)
+				return conn.IsClosed() && errors.Is(transport.Lifetime().Err(), context.Canceled)
 			}, 2*time.Second, 10*time.Millisecond, "closing admission precedes actual transport cancellation")
-			require.ErrorIs(t, transport.stream.Context().Err(), context.Canceled)
+			require.ErrorIs(t, transport.Lifetime().Err(), context.Canceled)
 		})
 	}
 }
@@ -99,18 +98,20 @@ func (this *blockedTerminalClose) Close() error {
 }
 
 func TestNeutralConnectionClosingAdmissionDoesNotClaimCompletedTransportCleanup(t *testing.T) {
-	svc, _, _ := executionTestFixture(t, func(environment.TerminalTask) (int, error) { return 0, nil })
-	transport, auth := newExecutionTestLogin(t, svc, "run")
+	t.Parallel()
+	svc, transport, auth := terminalConnectionTestFixture(t)
 	blocked := &blockedTerminalClose{terminalTransport: transport, started: make(chan struct{}), allow: make(chan struct{})}
+	conn, err := svc.registerTerminalConnection(blocked, auth)
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		select {
 		case <-blocked.allow:
 		default:
 			close(blocked.allow)
 		}
+		require.NoError(t, conn.Close())
+		waitTerminalConnectionForTest(t, conn)
 	})
-	conn, err := svc.registerTerminalConnection(blocked, auth)
-	require.NoError(t, err)
 	_, err = auth.FindSession().Dispose(t.Context())
 	require.NoError(t, err)
 	select {
@@ -119,7 +120,7 @@ func TestNeutralConnectionClosingAdmissionDoesNotClaimCompletedTransportCleanup(
 		t.Fatal("disposed connection did not start transport cleanup")
 	}
 	require.True(t, conn.IsClosed(), "new operations must already be denied while cleanup is blocked")
-	require.NoError(t, transport.stream.Context().Err(), "the fixture holds actual transport cancellation")
+	require.NoError(t, transport.Lifetime().Err(), "the fixture holds actual transport cancellation")
 	select {
 	case <-conn.done:
 		t.Fatal("watcher claimed completion while its transport close was blocked")
@@ -131,5 +132,5 @@ func TestNeutralConnectionClosingAdmissionDoesNotClaimCompletedTransportCleanup(
 	case <-time.After(2 * time.Second):
 		t.Fatal("transport cleanup did not complete after release")
 	}
-	require.ErrorIs(t, transport.stream.Context().Err(), context.Canceled)
+	require.ErrorIs(t, transport.Lifetime().Err(), context.Canceled)
 }
