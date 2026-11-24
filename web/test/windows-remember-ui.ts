@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { type BrowserContext, chromium, type Request } from 'playwright';
 import type { NativeProbe, NetworkObservation, Page } from './fixture-types.ts';
-import { installPollDiagnostics, pollDiagnostics } from './poll-diagnostics.ts';
+import {
+    installLoginControlDiagnostics,
+    loginControlDiagnostics,
+} from './login-control-diagnostics.ts';
 import { required } from './required.ts';
 import { expectTerminalExit, observeTerminalResults } from './terminal-results.ts';
 import {
@@ -31,9 +34,10 @@ const origin = 'https://app.example.org:8443';
 const input = createInterface({ input: process.stdin });
 const executions: NativeProbe[] = [];
 type FailureObservation = Partial<NetworkObservation> & { type: string; stage: string };
-type PollObservation = {
+type LoginControlObservation = {
     profile: number;
-    poll: number | undefined;
+    action: 'poll' | 'reply';
+    sequence: number;
     id: number | undefined;
     event: string;
     status?: number;
@@ -43,15 +47,20 @@ type PollObservation = {
 const failures: FailureObservation[] = [];
 const responses: FailureObservation[] = [];
 const transportObservations: NetworkObservation[] = [];
-const pollObservations: PollObservation[] = [];
-const pollIDs = new WeakMap<Request, number>();
-const pollProfiles: {
+const loginControlObservations: LoginControlObservation[] = [];
+const controlRequests = new WeakMap<Request, { action: 'poll' | 'reply'; sequence: number }>();
+const loginControlProfiles: {
     profile: number;
-    diagnostics: Awaited<ReturnType<typeof pollDiagnostics>>;
+    diagnostics: Awaited<ReturnType<typeof loginControlDiagnostics>>;
+    closingAt: number | null;
+    closedAt: number | null;
 }[] = [];
-const observePoll = (value: PollObservation) => {
-    if (pollObservations.length < 256) {
-        pollObservations.push({ ...value, at: Math.round(performance.now()) });
+const observeLoginControl = (value: LoginControlObservation) => {
+    if (loginControlObservations.length < 256) {
+        loginControlObservations.push({
+            ...value,
+            at: Math.round(performance.timeOrigin + performance.now()),
+        });
     }
 };
 const expectedDenials = new Set<number | undefined>();
@@ -110,22 +119,35 @@ async function open(profile: string) {
             window.cspViolations.push(event.violatedDirective),
         );
     });
-    await context.addInitScript(installPollDiagnostics);
+    await context.addInitScript(installLoginControlDiagnostics);
     const page = await context.newPage();
     resources.page = page;
-    const profileNumber = pollProfiles.length + 1;
-    let pollNumber = 0;
-    pollProfiles.push({ profile: profileNumber, diagnostics: null });
+    const profileNumber = loginControlProfiles.length + 1;
+    const sequences = { poll: 0, reply: 0 };
+    loginControlProfiles.push({
+        profile: profileNumber,
+        diagnostics: null,
+        closingAt: null,
+        closedAt: null,
+    });
     terminals.set(page, observeTerminalResults(page));
     page.on('pageerror', () => failures.push({ type: 'pageerror', stage }));
     page.on('request', (request) => {
         requestIDs.set(request, ++requestNumber);
-        const path = new URL(request.url()).pathname;
-        if (path === '/api/v1/login/poll' && request.method() === 'POST') {
-            pollIDs.set(request, ++pollNumber);
-            observePoll({
+        const url = new URL(request.url());
+        const path = url.pathname;
+        const action =
+            url.href === `${origin}/api/v1/login/poll`
+                ? 'poll'
+                : url.href === `${origin}/api/v1/login/reply`
+                  ? 'reply'
+                  : null;
+        if (action !== null && request.method() === 'POST') {
+            const control = { action, sequence: ++sequences[action] } as const;
+            controlRequests.set(request, control);
+            observeLoginControl({
                 profile: profileNumber,
-                poll: pollNumber,
+                ...control,
                 id: requestIDs.get(request),
                 event: 'request',
                 stage,
@@ -151,10 +173,11 @@ async function open(profile: string) {
     });
     page.on('response', (response) => {
         const path = new URL(response.url()).pathname;
-        if (pollIDs.has(response.request())) {
-            observePoll({
+        const control = controlRequests.get(response.request());
+        if (control !== undefined) {
+            observeLoginControl({
                 profile: profileNumber,
-                poll: pollIDs.get(response.request()),
+                ...control,
                 id: requestIDs.get(response.request()),
                 event: 'response',
                 status: response.status(),
@@ -199,10 +222,11 @@ async function open(profile: string) {
     );
     const observeRequestEnd =
         (event: 'requestfinished' | 'requestfailed') => (request: Request) => {
-            if (pollIDs.has(request)) {
-                observePoll({
+            const control = controlRequests.get(request);
+            if (control !== undefined) {
+                observeLoginControl({
                     profile: profileNumber,
-                    poll: pollIDs.get(request),
+                    ...control,
                     id: requestIDs.get(request),
                     event,
                     stage,
@@ -240,8 +264,11 @@ async function open(profile: string) {
 }
 
 async function closeProfile() {
-    required(pollProfiles.at(-1)).diagnostics = await pollDiagnostics(page);
+    const profile = required(loginControlProfiles.at(-1));
+    profile.diagnostics = await loginControlDiagnostics(page);
+    profile.closingAt = Math.round(performance.timeOrigin + performance.now());
     await required(context).close();
+    profile.closedAt = Math.round(performance.timeOrigin + performance.now());
     context = undefined;
 }
 
@@ -499,7 +526,13 @@ try {
     assert.equal(new Set(executions.map((value) => value.connection)).size, 10);
     assert.equal(new Set(executions.map((value) => value.execution)).size, 10);
     assert.equal(new Set(executions.map((value) => value.session)).size, 1);
-    console.error(JSON.stringify({ tag: 'poll-diagnostics', pollObservations, pollProfiles }));
+    console.error(
+        JSON.stringify({
+            tag: 'login-control-diagnostics',
+            loginControlObservations,
+            loginControlProfiles,
+        }),
+    );
     console.log(JSON.stringify({ executions, primaryLogins, resumes, denied, groupDenied }));
 } catch (error) {
     // Playwright action errors can include a fill() argument. Never forward their
@@ -524,9 +557,11 @@ try {
             failures,
             responses,
             transportObservations,
-            pollObservations,
-            pollProfiles,
-            livePollDiagnostics: resources.page ? await pollDiagnostics(resources.page) : null,
+            loginControlObservations,
+            loginControlProfiles,
+            liveLoginControlDiagnostics: resources.page
+                ? await loginControlDiagnostics(resources.page)
+                : null,
             completedExecutions: executions.length,
             error:
                 failure && ['Error', 'TimeoutError', 'AssertionError'].includes(failure.name)

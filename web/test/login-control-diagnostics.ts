@@ -1,71 +1,90 @@
 import type { Page } from './fixture-types.ts';
 
-export interface PollDiagnostics {
-    events: { poll: number; event: string; eof: boolean; aborted: boolean; at: number }[];
+export interface LoginControlDiagnostics {
+    events: {
+        action: 'poll' | 'reply';
+        sequence: number;
+        event: string;
+        eof: boolean;
+        aborted: boolean;
+        at: number;
+        status?: number;
+    }[];
     dropped(): number;
 }
 
-// Test-only init script. Observe the original poll stream: no clone, read-ahead,
-// replacement response, retry, body/header inspection or production hook.
-export function installPollDiagnostics() {
-    const events: PollDiagnostics['events'] = [];
+// Test-only init script. Observe the original login-control streams: no clone,
+// read-ahead, replacement response, retry, payload inspection or production hook.
+export function installLoginControlDiagnostics() {
+    const events: LoginControlDiagnostics['events'] = [];
     let dropped = 0;
-    let sequence = 0;
+    const sequences = { poll: 0, reply: 0 };
     const transport = globalThis.fetch.bind(globalThis);
     const record = (
-        poll: number,
+        action: 'poll' | 'reply',
+        sequence: number,
         event: string,
         eof: boolean,
         signal: AbortSignal | null | undefined,
+        status?: number,
     ) => {
         if (events.length === 256) {
             dropped++;
             return;
         }
         events.push({
-            poll,
+            action,
+            sequence,
             event,
             eof,
             aborted: signal?.aborted === true,
-            at: Math.round(performance.now()),
+            at: Math.round(performance.timeOrigin + performance.now()),
+            ...(status === undefined ? {} : { status }),
         });
     };
-    globalThis.bifroestPollDiagnostics = { events, dropped: () => dropped };
+    globalThis.bifroestLoginControlDiagnostics = { events, dropped: () => dropped };
     globalThis.fetch = async (...args) => {
         const [input, options] = args;
         // Http.post supplies a URL and RequestInit; leave all other fetches alone.
-        if (
-            !(input instanceof URL) ||
-            input.href !== new URL('/api/v1/login/poll', location.origin).href ||
-            options?.method !== 'POST'
-        ) {
+        if (!(input instanceof URL) || options?.method !== 'POST') {
             return transport(...args);
         }
-        const poll = ++sequence;
+        const action =
+            input.href === new URL('/api/v1/login/poll', location.origin).href
+                ? 'poll'
+                : input.href === new URL('/api/v1/login/reply', location.origin).href
+                  ? 'reply'
+                  : null;
+        if (action === null) {
+            return transport(...args);
+        }
+        const sequence = ++sequences[action];
         const signal = options.signal;
         let eof = false;
-        record(poll, 'start', eof, signal);
-        signal?.addEventListener('abort', () => record(poll, 'signal-abort', eof, signal), {
-            once: true,
-        });
+        record(action, sequence, 'start', eof, signal);
+        signal?.addEventListener(
+            'abort',
+            () => record(action, sequence, 'signal-abort', eof, signal),
+            { once: true },
+        );
         let response: Response;
         try {
             response = await transport(...args);
         } catch (error) {
-            record(poll, 'fetch-failed', eof, signal);
+            record(action, sequence, 'fetch-failed', eof, signal);
             throw error; // Preserve the original failure, never retain it in diagnostics.
         }
-        record(poll, response.status === 200 ? 'headers-200' : 'headers-other', eof, signal);
+        record(action, sequence, 'headers', eof, signal, response.status);
         const body = response.body;
         if (body !== null) {
             const getReader = body.getReader.bind(body);
             const cancelBody = body.cancel.bind(body);
             body.cancel = (...arguments_) => {
-                record(poll, 'body-cancel', eof, signal);
+                record(action, sequence, 'body-cancel', eof, signal);
                 return cancelBody(...arguments_);
             };
             body.getReader = ((...arguments_: Parameters<typeof body.getReader>) => {
-                record(poll, 'get-reader', eof, signal);
+                record(action, sequence, 'get-reader', eof, signal);
                 const reader = getReader(...arguments_) as ReadableStreamDefaultReader<Uint8Array>;
                 const read = reader.read.bind(reader);
                 const cancel = reader.cancel.bind(reader);
@@ -74,19 +93,19 @@ export function installPollDiagnostics() {
                     try {
                         const part = await read(...readArguments);
                         eof ||= part.done === true;
-                        record(poll, part.done ? 'eof' : 'chunk', eof, signal);
+                        record(action, sequence, part.done ? 'eof' : 'chunk', eof, signal);
                         return part;
                     } catch (error) {
-                        record(poll, 'read-failed', eof, signal);
+                        record(action, sequence, 'read-failed', eof, signal);
                         throw error;
                     }
                 };
                 reader.cancel = (...cancelArguments) => {
-                    record(poll, 'reader-cancel', eof, signal);
+                    record(action, sequence, 'reader-cancel', eof, signal);
                     return cancel(...cancelArguments);
                 };
                 reader.releaseLock = () => {
-                    record(poll, 'release-lock', eof, signal);
+                    record(action, sequence, 'release-lock', eof, signal);
                     return release();
                 };
                 return reader;
@@ -96,12 +115,16 @@ export function installPollDiagnostics() {
     };
 }
 
-export async function pollDiagnostics(page: Pick<Page, 'evaluate'>) {
+export async function loginControlDiagnostics(page: Pick<Page, 'evaluate'>) {
     try {
         return await page.evaluate(() => {
-            const diagnostics = globalThis.bifroestPollDiagnostics;
+            const diagnostics = globalThis.bifroestLoginControlDiagnostics;
             return diagnostics
-                ? { events: diagnostics.events, dropped: diagnostics.dropped() }
+                ? {
+                      events: diagnostics.events,
+                      dropped: diagnostics.dropped(),
+                      timeOrigin: performance.timeOrigin,
+                  }
                 : null;
         });
     } catch {
