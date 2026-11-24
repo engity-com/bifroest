@@ -36,6 +36,10 @@ type nativeRecorder struct {
 
 // newNativeRecorder is the native implementation entry point for NewRecorder.
 func newNativeRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, error) {
+	return newNativeRecorderWithSortOptions(conf, identity, journalSegmentSortOptions{})
+}
+
+func newNativeRecorderWithSortOptions(conf *configuration.Auditlog, identity *Identity, options journalSegmentSortOptions) (Recorder, error) {
 	if conf == nil {
 		return nil, fmt.Errorf("nil native audit configuration")
 	}
@@ -115,7 +119,7 @@ func newNativeRecorder(conf *configuration.Auditlog, identity *Identity) (Record
 		activeName = nativeActiveEncrypted
 	}
 	activePath := filepath.Join(directory, activeName)
-	file, state, err := nativeRecover(directory, activePath, identity, fingerprint)
+	file, state, err := nativeRecover(directory, activePath, identity, fingerprint, options)
 	if err != nil {
 		return nil, err
 	}
@@ -129,15 +133,15 @@ func newNativeRecorder(conf *configuration.Auditlog, identity *Identity) (Record
 		minimumFreeBytes: minimum, availableBytes: availableJournalBytes}, nil
 }
 
-func nativeRecover(directory, activePath string, identity *Identity, fingerprint string) (*os.File, nativeSegmentState, error) {
+func nativeRecover(directory, activePath string, identity *Identity, fingerprint string, options journalSegmentSortOptions) (*os.File, nativeSegmentState, error) {
 	var empty nativeSegmentState
 	temps, err := nativeHeadTempsForInventory(directory)
 	if err != nil {
 		return nil, empty, err
 	}
-	inventory, err := newNativeSegmentInventory(context.Background(), directory, filepath.Base(activePath), fingerprint != "", temps, func() (*journalSegmentWorkspace, error) {
+	inventory, err := newNativeSegmentInventoryWithOptions(context.Background(), directory, filepath.Base(activePath), fingerprint != "", temps, func() (*journalSegmentWorkspace, error) {
 		return newRecorderJournalSegmentWorkspace(filepath.Dir(directory))
-	})
+	}, options)
 	if err != nil {
 		return nil, empty, err
 	}

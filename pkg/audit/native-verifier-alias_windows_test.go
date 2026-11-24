@@ -11,9 +11,10 @@ import (
 )
 
 func TestNativeVerifierRejectsJunctionIntoJournal(t *testing.T) {
+	options := smallJournalSegmentSortOptions()
 	conf, id := nativeRecorderTestConfig(t, false)
 	r := nativeTestOpen(t, &conf, id)
-	nativeTestWriteSealedChain(t, r, journalSegmentSortChunkSize+1)
+	nativeTestWriteSealedChain(t, r, options.chunkSize+1)
 	alias := filepath.Join(t.TempDir(), "journal-junction")
 	if output, err := exec.Command("cmd.exe", "/c", "mklink", "/J", alias, conf.Directory).CombinedOutput(); err != nil {
 		t.Skipf("cannot create local test junction: %v: %s", err, output)
@@ -24,6 +25,7 @@ func TestNativeVerifierRejectsJunctionIntoJournal(t *testing.T) {
 	}
 	before := snapshotJournalTestTree(t, conf.Directory)
 	source := JournalSource{Name: "native", Directory: conf.Directory, ExpectedProducerId: id.ProducerId()}
-	require.ErrorContains(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}), "inside selected journal")
+	_, err := verifyNativeJournalsWithSortOptions(context.Background(), []JournalSource{source}, false, nil, options)
+	require.ErrorContains(t, err, "inside selected journal")
 	require.Equal(t, before, snapshotJournalTestTree(t, conf.Directory))
 }

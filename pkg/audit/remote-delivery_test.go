@@ -804,12 +804,25 @@ func TestRemoteDeliveryWakesForNewSegmentWithoutIdlePolling(t *testing.T) {
 	}
 }
 
+func TestRemoteDeliverySegmentReaderRetainsProductionSortDefaults(t *testing.T) {
+	directory := t.TempDir()
+	for _, options := range []journalSegmentSortOptions{smallJournalSegmentSortOptions(), {}} {
+		reader := remoteDeliverySegmentReader{directory: directory, sortOptions: options}
+		require.NoError(t, reader.startScan())
+		require.Equal(t, 128, reader.scan.readBatchSize)
+		require.Equal(t, options.defaults().chunkSize, cap(reader.scan.sorter.chunk))
+		require.Equal(t, options.defaults(), reader.scan.sorter.options.defaults())
+		require.NoError(t, reader.Close())
+	}
+}
+
 func TestRemoteDeliverySegmentReaderScansLargeBacklogOnceWithBoundedMemory(t *testing.T) {
 	directory := t.TempDir()
 	tempDirectory := t.TempDir()
 	content := []byte("sealed segment")
 	hash := hashNativeAuditSegment(content)
-	lastSequence := uint64(journalSegmentSortChunkSize + 17)
+	options := smallJournalSegmentSortOptions()
+	lastSequence := uint64(3*(options.chunkSize+1) + 1)
 	for sequence := uint64(1); sequence <= lastSequence; sequence++ {
 		name := nativeSegmentName(sequence, hash, false)
 		segmentPath := filepath.Join(directory, name)
@@ -820,13 +833,17 @@ func TestRemoteDeliverySegmentReaderScansLargeBacklogOnceWithBoundedMemory(t *te
 		directory:     directory,
 		producerId:    ProducerId{1},
 		tempDirectory: tempDirectory,
+		readBatchSize: options.readBatchSize,
+		sortOptions:   options,
 	}
 	defer reader.Close()
 	observed := make(chan journalSegmentFile)
 	var force atomic.Bool
 	var confirmed uint64
+	var spilled bool
 	for confirmed < lastSequence {
 		result := reader.Next(context.Background(), confirmed, observed, &force)
+		spilled = spilled || reader.iterator != nil && reader.iterator.runPath != ""
 		if result.err != nil {
 			require.NoError(t, result.err)
 		}
@@ -839,24 +856,27 @@ func TestRemoteDeliverySegmentReaderScansLargeBacklogOnceWithBoundedMemory(t *te
 		confirmed = result.segment.Sequence()
 	}
 	require.Equal(t, uint64(1), reader.scanCount)
-	require.LessOrEqual(t, reader.maximumScanChunk, journalSegmentSortChunkSize)
+	require.True(t, spilled)
+	require.Positive(t, reader.maximumScanChunk)
+	require.LessOrEqual(t, reader.maximumScanChunk, options.chunkSize)
 	runs, err := os.ReadDir(tempDirectory)
 	require.NoError(t, err)
 	require.Empty(t, runs)
 }
 
 func TestRemoteDeliverySegmentReaderDefaultWorkspaceIsOutsideProducer(t *testing.T) {
+	options := smallJournalSegmentSortOptions()
 	journalDirectory := t.TempDir()
 	producerDirectory := filepath.Join(journalDirectory, "producer")
 	require.NoError(t, os.Mkdir(producerDirectory, 0o700))
 	t.Setenv("TMPDIR", producerDirectory)
 	content := []byte("sealed segment")
 	hash := hashNativeAuditSegment(content)
-	for sequence := uint64(1); sequence <= journalSegmentSortChunkSize+1; sequence++ {
+	for sequence := uint64(1); sequence <= uint64(options.chunkSize+1); sequence++ {
 		path := filepath.Join(producerDirectory, nativeSegmentName(sequence, hash, false))
 		require.NoError(t, os.WriteFile(path, content, journalFileMode))
 	}
-	reader := remoteDeliverySegmentReader{directory: producerDirectory, producerId: ProducerId{1}}
+	reader := remoteDeliverySegmentReader{directory: producerDirectory, producerId: ProducerId{1}, sortOptions: options, readBatchSize: options.readBatchSize}
 	defer reader.Close()
 	var inspected bool
 	reader.scanEntryHook = func(_ context.Context, _ journalSegmentFile) error {
@@ -892,7 +912,7 @@ func TestRemoteDeliverySegmentReaderAdvancesThroughBacklog(t *testing.T) {
 	directory := t.TempDir()
 	content := []byte("sealed segment")
 	hash := hashNativeAuditSegment(content)
-	lastSequence := uint64(257)
+	lastSequence := uint64(7)
 	for sequence := uint64(1); sequence <= lastSequence; sequence++ {
 		name := nativeSegmentName(sequence, hash, false)
 		segmentPath := filepath.Join(directory, name)
@@ -900,8 +920,9 @@ func TestRemoteDeliverySegmentReaderAdvancesThroughBacklog(t *testing.T) {
 		require.NoError(t, os.Chmod(segmentPath, 0o400))
 	}
 	reader := remoteDeliverySegmentReader{
-		directory:  directory,
-		producerId: ProducerId{1},
+		directory:     directory,
+		producerId:    ProducerId{1},
+		readBatchSize: 2,
 	}
 	defer reader.Close()
 	observed := make(chan journalSegmentFile)

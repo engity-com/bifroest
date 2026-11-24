@@ -108,6 +108,7 @@ type remoteDeliverySegmentReader struct {
 	poisoned         error
 	gapVerification  bool
 	readBatchSize    int
+	sortOptions      journalSegmentSortOptions
 	tempDirectory    string
 	scanEntryHook    func(context.Context, journalSegmentFile) error
 	scanCount        uint64
@@ -906,7 +907,8 @@ func (this *remoteDeliverySegmentReader) startScan() error {
 		sorter: &journalSegmentSorter{
 			directory:     this.directory,
 			tempDirectory: this.tempDirectory,
-			chunk:         make([]journalSegmentFile, 0, journalSegmentSortChunkSize),
+			chunk:         make([]journalSegmentFile, 0, this.sortOptions.defaults().chunkSize),
+			options:       this.sortOptions,
 		},
 	}
 	if this.scan.sorter.tempDirectory == "" {

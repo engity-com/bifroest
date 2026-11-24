@@ -673,11 +673,13 @@ func nativeTestWriteSealedChain(t *testing.T, r *nativeRecorder, count int) {
 }
 
 func TestNativeRecorderRecoveryAcrossSortedRuns(t *testing.T) {
+	options := smallJournalSegmentSortOptions()
+	count := 3*(options.chunkSize+1) + 1
 	for _, encrypted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "clear", true: "encrypted"}[encrypted], func(t *testing.T) {
 			conf, id := nativeRecorderTestConfig(t, encrypted)
 			r := nativeTestOpen(t, &conf, id)
-			nativeTestWriteSealedChain(t, r, journalSegmentSortChunkSize+1)
+			nativeTestWriteSealedChain(t, r, count)
 			if encrypted {
 				unusable := filepath.Join(t.TempDir(), "not-a-directory")
 				require.NoError(t, os.WriteFile(unusable, nil, 0600))
@@ -685,8 +687,10 @@ func TestNativeRecorderRecoveryAcrossSortedRuns(t *testing.T) {
 					t.Setenv(variable, unusable)
 				}
 			}
-			r = nativeTestOpen(t, &conf, id)
-			require.EqualValues(t, journalSegmentSortChunkSize+2, r.state.seq)
+			recovered, err := newNativeRecorderWithSortOptions(&conf, id, options)
+			require.NoError(t, err)
+			r = recovered.(*nativeRecorder)
+			require.EqualValues(t, count+1, r.state.seq)
 			require.NoError(t, r.Close())
 			work := filepath.Join(conf.Directory, journalWorkDirectoryName)
 			entries, err := os.ReadDir(work)
@@ -694,6 +698,57 @@ func TestNativeRecorderRecoveryAcrossSortedRuns(t *testing.T) {
 			require.Empty(t, entries)
 		})
 	}
+}
+
+func TestNativeSortedRunsRejectInvalidSignatureAndCleanWorkspace(t *testing.T) {
+	options := smallJournalSegmentSortOptions()
+	conf, id := nativeRecorderTestConfig(t, false)
+	r := nativeTestOpen(t, &conf, id)
+	nativeTestWriteSealedChain(t, r, 3*(options.chunkSize+1)+1)
+	segments, _, _, err := nativeInventory(r.headDirectory, nativeActiveClear, false)
+	require.NoError(t, err)
+	last := segments[len(segments)-1]
+	data, err := os.ReadFile(last.path)
+	require.NoError(t, err)
+	offset := int64(len(nativeformat.AuditMagic))
+	for {
+		unit, next, tail, err := nativeformat.ReadUnitAt(bytes.NewReader(data), offset, int64(len(data)), nativeformat.MaxAuditRecordPayload)
+		require.NoError(t, err)
+		require.False(t, tail)
+		if unit.Type == nativeformat.SealUnit {
+			seal, err := nativeformat.Unmarshal[nativeAuditSeal](unit.Payload, nativeformat.MaxMetadataPayload)
+			require.NoError(t, err)
+			seal.Signature[0] ^= 1
+			payload, err := nativeformat.Marshal(seal, nativeformat.MaxMetadataPayload)
+			require.NoError(t, err)
+			frame, err := nativeformat.EncodeUnit(nativeformat.SealUnit, payload, nativeformat.MaxMetadataPayload)
+			require.NoError(t, err)
+			data = append(data[:offset:offset], frame...)
+			break
+		}
+		offset = next
+	}
+	// Keep framing, CRC and filename hash valid: the signature must reject it.
+	path := filepath.Join(r.headDirectory, nativeSegmentName(last.seq, hashNativeAuditSegment(data), false))
+	require.NoError(t, os.Remove(last.path))
+	require.NoError(t, os.WriteFile(path, data, journalFileMode))
+	before := snapshotJournalTestTree(t, conf.Directory)
+	source := JournalSource{Name: "native", Directory: conf.Directory, ExpectedProducerId: id.ProducerId()}
+	for _, collect := range []bool{false, true} {
+		verified, err := verifyNativeJournalsWithSortOptions(t.Context(), []JournalSource{source}, collect, nil, options)
+		require.ErrorContains(t, err, "signature")
+		require.Nil(t, verified)
+		require.Equal(t, before, snapshotJournalTestTree(t, conf.Directory))
+	}
+	recovered, err := newNativeRecorderWithSortOptions(&conf, id, options)
+	require.ErrorContains(t, err, "signature")
+	require.Nil(t, recovered)
+	entries, err := os.ReadDir(filepath.Join(conf.Directory, journalWorkDirectoryName))
+	require.NoError(t, err)
+	require.Empty(t, entries)
+	stored, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, data, stored)
 }
 
 func TestNativeRecorderRejectsAliasedPublishedSegmentBeforeTruncation(t *testing.T) {
