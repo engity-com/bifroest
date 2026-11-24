@@ -81,8 +81,8 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ${{ steps.go.outputs.gocache }}
-        # A new key on each run lets successful jobs extend a restored build cache.
-        key: go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        # Each commit extends the cache; reruns and parallel callers reuse the same snapshot.
+        key: go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
         restore-keys: |
           go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-${{ hashFiles('**/go.sum') }}-
           go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-

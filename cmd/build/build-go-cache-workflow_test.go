@@ -79,7 +79,7 @@ func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T
 	require.NotContains(t, modules.With["key"], "context-hash", "module downloads remain reusable across job scopes")
 	buildPrefix := "go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-"
 	dependencyPrefix := buildPrefix + "${{ hashFiles('**/go.sum') }}-"
-	require.Equal(t, dependencyPrefix+"${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}", build.With["key"])
+	require.Equal(t, dependencyPrefix+"${{ github.sha }}", build.With["key"], "reruns and parallel callers must reuse the same immutable snapshot per commit")
 	require.Equal(t, dependencyPrefix+"\n"+buildPrefix+"\n", build.With["restore-keys"], "fallbacks must not cross toolchain, platform, CGO or scope/context boundaries")
 }
 
