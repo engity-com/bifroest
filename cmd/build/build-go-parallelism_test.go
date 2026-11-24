@@ -47,3 +47,17 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestGoWorkflowKeepsWindowsTestsSerialWithoutNarrowingTheSuite(t *testing.T) {
+	jobs := readGoJobsWorkflow(t)
+	require.Equal(t, "${{ matrix.os == 'windows' && '1' || '2' }}", jobs["test-host"].Env["GO_TEST_PARALLELISM"])
+	for _, job := range []string{"test-container", "test-race", "browser"} {
+		configuration, found := jobs[job]
+		require.True(t, found)
+		require.Empty(t, configuration.Env["GO_TEST_PARALLELISM"], "%s must retain the bounded default", job)
+	}
+	step := jobs["test-host"].Steps[goJobsStepContaining(t, jobs["test-host"], "scripts/native-go-tests.ts")]
+	require.Equal(t, "mise -C web exec -- node scripts/native-go-tests.ts", step.Run)
+	require.Empty(t, step.If)
+	require.False(t, step.ContinueOnError)
+}

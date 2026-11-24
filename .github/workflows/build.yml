@@ -138,6 +138,8 @@ jobs:
       CGO_ENABLED: "0"
       GITHUB_TOKEN: ""
       GOFLAGS: "-p=2"
+      # Keep disk-heavy Windows fixtures within the existing package timeout.
+      GO_TEST_PARALLELISM: ${{ matrix.os == 'windows' && '1' || '2' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
