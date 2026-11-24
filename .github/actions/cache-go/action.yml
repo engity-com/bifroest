@@ -32,7 +32,8 @@ runs:
         go_env="$(mise exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED)"
         values=()
         while IFS= read -r value; do
-          values+=("${value%$'\r'}")
+          value="${value%$'\r'}"
+          values+=("$value")
         done <<< "$go_env"
         if [ "${#values[@]}" -ne 6 ]; then
           echo "::error::Unexpected Go cache environment"
