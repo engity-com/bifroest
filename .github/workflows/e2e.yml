@@ -81,7 +81,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
-      - name: Cache Go modules and build
+      - name: Cache Go modules
         uses: ./.github/actions/cache-go
         with:
           scope: e2e-runtime
@@ -170,7 +170,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
-      - name: Cache Go modules and build
+      - name: Cache Go modules
         uses: ./.github/actions/cache-go
         with:
           scope: e2e-authorization
@@ -204,7 +204,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
-      - name: Cache Go modules and build
+      - name: Cache Go modules
         uses: ./.github/actions/cache-go
         with:
           scope: e2e-pam-browser
@@ -240,7 +240,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
-      - name: Cache Go modules and build
+      - name: Cache Go modules
         uses: ./.github/actions/cache-go
         with:
           scope: e2e-darwin
@@ -280,7 +280,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
-      - name: Cache Go modules and build
+      - name: Cache Go modules
         uses: ./.github/actions/cache-go
         with:
           scope: e2e-kubernetes
@@ -363,7 +363,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
-      - name: Cache Go modules and build
+      - name: Cache Go modules
         uses: ./.github/actions/cache-go
         with:
           scope: e2e-kubernetes

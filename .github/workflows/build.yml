@@ -86,6 +86,7 @@ jobs:
         with:
           scope: browser
           context: cgo0
+          build-cache: "true"
 
       - name: Install pinned browser toolchain
         run: mise -C web install
@@ -158,6 +159,7 @@ jobs:
         with:
           scope: test-host
           context: cgo0
+          build-cache: "true"
 
       - name: Install pinned WebCrypto test runtime
         run: mise -C web install node
@@ -393,6 +395,7 @@ jobs:
         with:
           scope: test-container
           context: native-${{ matrix.image }}
+          build-cache: "true"
 
       - &configure-container-git
         name: Git configure
@@ -450,6 +453,7 @@ jobs:
         with:
           scope: test-race
           context: native-${{ matrix.image }}
+          build-cache: "true"
 
       - *configure-container-git
 

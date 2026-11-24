@@ -80,7 +80,7 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
-      - name: Cache Go modules and build
+      - name: Cache Go modules
         uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: build-tools

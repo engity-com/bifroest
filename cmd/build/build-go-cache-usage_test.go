@@ -29,7 +29,7 @@ func TestGoWorkflowCachesFollowPinnedToolchain(t *testing.T) {
 				} `yaml:"jobs"`
 			}
 			require.NoError(t, yaml.Unmarshal(raw, &workflow))
-			cached := 0
+			cached, buildCached := 0, 0
 			for jobName, job := range workflow.Jobs {
 				checkout, toolchain, helper := false, false, false
 				for _, step := range job.Steps {
@@ -57,10 +57,19 @@ func TestGoWorkflowCachesFollowPinnedToolchain(t *testing.T) {
 						}
 						require.NotEmpty(t, step.With["scope"], "%s must select a build-cache scope", jobName)
 						cached++
+						if name == "build.yml" && (jobName == "browser" || jobName == "test-host" || jobName == "test-container" || jobName == "test-race") {
+							require.Equal(t, "true", step.With["build-cache"], "%s must persist expensive test builds", jobName)
+							buildCached++
+						} else {
+							require.Empty(t, step.With["build-cache"], "%s must keep the module-only default instead of crowding out expensive test caches", jobName)
+						}
 					}
 				}
 			}
-			require.Positive(t, cached, "the workflow must persist Go build results, not just its toolchain")
+			require.Positive(t, cached, "the workflow must cache Go dependencies, not just its toolchain")
+			if name == "build.yml" {
+				require.Equal(t, 4, buildCached, "only core tests, race and browser may write build snapshots")
+			}
 		})
 	}
 }
