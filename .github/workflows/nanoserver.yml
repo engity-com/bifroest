@@ -34,6 +34,11 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Keep non-PR runs independent, including while pending.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   windows-local:
     name: Windows local in Nano Server and Server Core ${{ matrix.windows }}
