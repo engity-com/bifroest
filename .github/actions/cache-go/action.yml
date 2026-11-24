@@ -1,0 +1,88 @@
+name: Cache Go
+description: Cache modules and build results from the Go toolchain installed by MISE.
+
+inputs:
+  scope:
+    description: Job or build purpose, including whether the race detector is enabled.
+    required: true
+  context:
+    description: Additional build context, such as the container image or target edition.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Locate Go caches after installing MISE
+      id: go
+      shell: bash
+      env:
+        CACHE_SCOPE: ${{ inputs.scope }}
+        CACHE_CONTEXT: ${{ inputs.context }}
+      run: |
+        set -euo pipefail
+        if [ -z "$CACHE_SCOPE" ]; then
+          echo "::error::A Go cache scope is required"
+          exit 1
+        fi
+        go_env="$(mise exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED)"
+        values=()
+        while IFS= read -r value; do
+          values+=("${value%$'\r'}")
+        done <<< "$go_env"
+        if [ "${#values[@]}" -ne 6 ]; then
+          echo "::error::Unexpected Go cache environment"
+          exit 1
+        fi
+        for value in "${values[@]}"; do
+          if [ -z "$value" ] || [ "$value" = off ]; then
+            echo "::error::Go caches and toolchain settings must be enabled"
+            exit 1
+          fi
+        done
+        context_hash() {
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum
+          else
+            shasum -a 256
+          fi
+        }
+        identity="$(printf '%s\0' "$CACHE_SCOPE" "$CACHE_CONTEXT" | context_hash)"
+        module_cache="${values[1]//\\//}"
+        cache_home="$HOME"
+        if [ "${RUNNER_OS:-}" = Windows ]; then
+          cache_home="${USERPROFILE:-$HOME}"
+        fi
+        cache_home="${cache_home//\\//}"
+        # Cache versions include the path string; retain the old spelling when equivalent.
+        if [ "$module_cache" = "${cache_home%/}/go/pkg/mod" ]; then
+          # shellcheck disable=SC2088
+          module_cache='~/go/pkg/mod'
+        fi
+        {
+          printf 'gocache=%s\n' "${values[0]//\\//}"
+          printf 'gomodcache=%s\n' "$module_cache"
+          printf 'goversion=%s\n' "${values[2]}"
+          printf 'goos=%s\n' "${values[3]}"
+          printf 'goarch=%s\n' "${values[4]}"
+          printf 'cgo-enabled=%s\n' "${values[5]}"
+          printf 'context-hash=%s\n' "${identity%% *}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Cache Go modules
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.go.outputs.gomodcache }}
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Cache Go build results
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.go.outputs.gocache }}
+        # A new key on each run lets successful jobs extend a restored build cache.
+        key: go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-${{ hashFiles('**/go.sum') }}-
+          go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-
