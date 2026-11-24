@@ -193,59 +193,72 @@ func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testi
 		}
 	}
 
-	// Execute the actual first step, not a second implementation of its logic.
+	// Run every case in one Bash invocation, using the actual first step verbatim.
 	t.Run("bash", func(t *testing.T) {
 		bash, err := goexec.LookPath("bash")
 		if err != nil {
 			t.Skip("Bash is unavailable; structural gate guards still run")
 		}
-		run := func(t *testing.T, values map[string]string) (string, error) {
-			t.Helper()
-			command := goexec.Command(bash, "-e", "-o", "pipefail", "-c", gate.Run)
-			command.Env = gos.Environ()
+		var script strings.Builder
+		script.WriteString("actual_gate() (\n")
+		script.WriteString(gate.Run)
+		script.WriteString("\n)\n")
+		script.WriteString(`assert_gate() {
+  local expected_status="$1" expected_job="$2" case_name="$3"
+  local status=0 output
+  output="$(actual_gate 2>&1)" || status=$?
+  if [ "$status" -ne "$expected_status" ]; then
+    printf '%s: expected exit %s, got %s\n%s\n' "$case_name" "$expected_status" "$status" "$output" >&2
+    exit 1
+  fi
+  if [ "$expected_status" -ne 0 ] && [[ "$output" != *"::error::Required job $expected_job did not succeed"* ]]; then
+    printf '%s: missing error annotation for %s\n%s\n' "$case_name" "$expected_job" "$output" >&2
+    exit 1
+  fi
+}
+`)
+		cases := 0
+		addCase := func(values map[string]string, expectedStatus int, expectedJob, name string) {
 			for key, value := range values {
-				command.Env = append(command.Env, key+"="+value)
+				script.WriteString(key + "=" + strconv.Quote(value) + "\n")
 			}
-			output, err := command.CombinedOutput()
-			return string(output), err
+			script.WriteString("assert_gate " + strconv.Itoa(expectedStatus) + " " + strconv.Quote(expectedJob) + " " + strconv.Quote(name) + "\n")
+			cases++
 		}
 		for _, enabled := range []bool{false, true} {
-			t.Run("lint="+strconv.FormatBool(enabled), func(t *testing.T) {
-				values := map[string]string{"LINT_GO": strconv.FormatBool(enabled)}
-				for _, key := range mandatory {
-					values[key] = "success"
-				}
+			label := "lint=" + strconv.FormatBool(enabled)
+			values := map[string]string{"LINT_GO": strconv.FormatBool(enabled)}
+			for _, key := range mandatory {
+				values[key] = "success"
+			}
+			for _, key := range lint {
+				values[key] = "success"
+			}
+			addCase(values, 0, "", label+"/all-success")
+			if !enabled {
 				for _, key := range lint {
+					values[key] = "skipped"
+				}
+				addCase(values, 0, "", label+"/skipped-lint")
+			}
+			required := []map[string]string{mandatory}
+			if enabled {
+				required = append(required, lint)
+			}
+			for _, group := range required {
+				for name, key := range group {
+					for _, status := range []string{"failure", "cancelled", "skipped", ""} { //nolint:misspell // GitHub Actions job result.
+						values[key] = status
+						addCase(values, 1, name, label+"/"+name+"="+status)
+					}
 					values[key] = "success"
 				}
-				output, err := run(t, values)
-				require.NoError(t, err, output)
-				if !enabled {
-					for _, key := range lint {
-						values[key] = "skipped"
-					}
-					output, err = run(t, values)
-					require.NoError(t, err, "release must allow skipped lint: %s", output)
-				}
-				required := []map[string]string{mandatory}
-				if enabled {
-					required = append(required, lint)
-				}
-				for _, group := range required {
-					for name, key := range group {
-						for _, status := range []string{"failure", "cancelled", "skipped", ""} { //nolint:misspell // GitHub Actions job result.
-							values[key] = status
-							output, err = run(t, values)
-							var exit *goexec.ExitError
-							require.ErrorAs(t, err, &exit, "%s=%s must fail Package", name, status)
-							require.Equal(t, 1, exit.ExitCode())
-							require.Contains(t, output, "::error::Required job "+name+" did not succeed")
-						}
-						values[key] = "success"
-					}
-				}
-			})
+			}
 		}
+		command := goexec.Command(bash, "-e", "-o", "pipefail", "-c", script.String())
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, string(output))
+		t.Logf("checked %d gate cases in one Bash invocation", cases)
 	})
 
 	var workflow struct {
