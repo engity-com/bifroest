@@ -4,13 +4,13 @@ import { test } from 'node:test';
 import { inspect } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { installDrawerDiagnostics } from './drawer-diagnostics.ts';
+import {
+    installLoginControlDiagnostics,
+    type LoginControlDiagnostics,
+    loginControlDiagnostics,
+} from './login-control-diagnostics.ts';
 import { observeSingleRootDirectory } from './login-options-ui.ts';
 import { type ManagementRequest, managementWire } from './management-wire.ts';
-import {
-    installPollDiagnostics,
-    type PollDiagnostics,
-    pollDiagnostics,
-} from './poll-diagnostics.ts';
 import { required } from './required.ts';
 import type { CaptureResponse } from './response-capture.ts';
 import {
@@ -19,8 +19,16 @@ import {
     installPreparationObserver,
 } from './response-capture.ts';
 
-function pollFixture({ failRead = false, fetchFailure = false } = {}) {
-    const secret = 'PRIVATE-POLL-KEY-ANSWER-CAUSE';
+function controlFixture({
+    action = 'poll',
+    failRead = false,
+    fetchFailure = false,
+}: {
+    action?: 'poll' | 'reply';
+    failRead?: boolean;
+    fetchFailure?: boolean;
+} = {}) {
+    const secret = 'PRIVATE-LOGIN-KEY-ANSWER-CAUSE';
     const failure = new Error(secret, { cause: { password: secret } });
     const calls: (string | unknown[])[] = [];
     let reads = 0;
@@ -43,7 +51,7 @@ function pollFixture({ failRead = false, fetchFailure = false } = {}) {
         },
     };
     const response = {
-        status: 200,
+        status: action === 'reply' ? 202 : 200,
         body: {
             getReader() {
                 calls.push('get-reader');
@@ -56,7 +64,7 @@ function pollFixture({ failRead = false, fetchFailure = false } = {}) {
         },
     };
     const globals = {
-        bifroestPollDiagnostics: undefined as PollDiagnostics | undefined,
+        bifroestLoginControlDiagnostics: undefined as LoginControlDiagnostics | undefined,
         URL,
         location: { origin: 'https://app.example.org' },
         performance,
@@ -68,9 +76,9 @@ function pollFixture({ failRead = false, fetchFailure = false } = {}) {
             return response;
         },
     };
-    runInNewContext(`(${installPollDiagnostics.toString()})()`, globals);
+    runInNewContext(`(${installLoginControlDiagnostics.toString()})()`, globals);
     const signal = new AbortController();
-    const url = new URL('/api/v1/login/poll', globals.location.origin);
+    const url = new URL(`/api/v1/login/${action}`, globals.location.origin);
     const options = {
         method: 'POST',
         signal: signal.signal,
@@ -79,130 +87,175 @@ function pollFixture({ failRead = false, fetchFailure = false } = {}) {
     };
     const events = () =>
         JSON.parse(
-            JSON.stringify(required(globals.bifroestPollDiagnostics).events),
-        ) as PollDiagnostics['events'];
+            JSON.stringify(required(globals.bifroestLoginControlDiagnostics).events),
+        ) as LoginControlDiagnostics['events'];
     return { globals, signal, url, options, response, reader, calls, failure, secret, events };
 }
 
-test('poll diagnostics preserve response/reader identity and EOF ownership without reading, cloning or retaining secrets', async () => {
-    const f = pollFixture();
-    const response = await f.globals.fetch(f.url, f.options);
-    assert.equal(response, f.response);
-    assert.equal(f.calls.length, 1, 'headers observation must not read the body');
-    const reader = response.body.getReader();
-    assert.equal(reader, f.reader);
-    const chunk = await reader.read();
-    assert.equal(new TextDecoder().decode(chunk.value), f.secret);
-    assert.equal((await reader.read()).done, true);
-    reader.releaseLock();
-    f.signal.abort(f.failure);
-    const events = f.events();
-    assert.deepEqual(
-        events.map((event) => event.event),
-        ['start', 'headers-200', 'get-reader', 'chunk', 'eof', 'release-lock', 'signal-abort'],
-    );
-    assert.equal(required(events.at(-1)).eof, true);
-    assert.equal(required(events.at(-1)).aborted, true);
-    assert.equal(f.calls.filter((call) => Array.isArray(call) && call[0] === 'fetch').length, 1);
-    assert.equal(f.calls.includes('read'), true);
-    assert.equal(JSON.stringify(events).includes(f.secret), false);
-});
+for (const action of ['poll', 'reply'] as const) {
+    test(`${action} diagnostics preserve response/reader identity and EOF ownership without reading, cloning or retaining secrets`, async () => {
+        const f = controlFixture({ action });
+        const response = await f.globals.fetch(f.url, f.options);
+        assert.equal(response, f.response);
+        assert.equal(f.calls.length, 1, 'headers observation must not read the body');
+        const reader = response.body.getReader();
+        assert.equal(reader, f.reader);
+        const chunk = await reader.read();
+        assert.equal(new TextDecoder().decode(chunk.value), f.secret);
+        assert.equal((await reader.read()).done, true);
+        reader.releaseLock();
+        f.signal.abort(f.failure);
+        const events = f.events();
+        assert.deepEqual(
+            events.map((event) => event.event),
+            ['start', 'headers', 'get-reader', 'chunk', 'eof', 'release-lock', 'signal-abort'],
+        );
+        assert.equal(
+            events.every((event) => event.action === action && event.sequence === 1),
+            true,
+        );
+        assert.equal(
+            events.find((event) => event.event === 'headers')?.status,
+            action === 'reply' ? 202 : 200,
+        );
+        assert(events.every((event) => event.at >= performance.timeOrigin));
+        assert.equal(required(events.at(-1)).eof, true);
+        assert.equal(required(events.at(-1)).aborted, true);
+        assert.equal(
+            f.calls.filter((call) => Array.isArray(call) && call[0] === 'fetch').length,
+            1,
+        );
+        assert.equal(f.calls.includes('read'), true);
+        assert.equal(JSON.stringify(events).includes(f.secret), false);
+    });
 
-test('poll diagnostics preserve original read/fetch failures and incomplete cancellation without replay', async () => {
-    const f = pollFixture({ failRead: true });
-    const response = await f.globals.fetch(f.url, f.options);
-    const reader = response.body.getReader();
-    await assert.rejects(reader.read(), (error) => error === f.failure);
-    await reader.cancel(f.failure);
-    reader.releaseLock();
-    await response.body.cancel(f.failure);
-    f.signal.abort(f.failure);
-    assert.deepEqual(
-        f.events().map((event) => event.event),
-        [
-            'start',
-            'headers-200',
-            'get-reader',
-            'read-failed',
-            'reader-cancel',
-            'release-lock',
-            'body-cancel',
-            'signal-abort',
-        ],
-    );
-    assert.equal(
-        f.events().every((event) => !event.eof),
-        true,
-    );
-    assert.equal(JSON.stringify(f.events()).includes(f.secret), false);
-    const lost = pollFixture({ fetchFailure: true });
-    await assert.rejects(
-        lost.globals.fetch(lost.url, lost.options),
-        (error) => error === lost.failure,
-    );
-    assert.deepEqual(
-        lost.events().map((event) => event.event),
-        ['start', 'fetch-failed'],
-    );
-    assert.equal(lost.calls.length, 1);
-    assert.deepEqual(
-        await pollDiagnostics({
-            evaluate: async () => {
-                throw f.failure;
-            },
-        }),
-        { unavailable: true },
-    );
-});
+    test(`${action} diagnostics preserve original read/fetch failures and incomplete cancellation without replay`, async () => {
+        const f = controlFixture({ action, failRead: true });
+        const response = await f.globals.fetch(f.url, f.options);
+        const reader = response.body.getReader();
+        await assert.rejects(reader.read(), (error) => error === f.failure);
+        await reader.cancel(f.failure);
+        reader.releaseLock();
+        await response.body.cancel(f.failure);
+        f.signal.abort(f.failure);
+        assert.deepEqual(
+            f.events().map((event) => event.event),
+            [
+                'start',
+                'headers',
+                'get-reader',
+                'read-failed',
+                'reader-cancel',
+                'release-lock',
+                'body-cancel',
+                'signal-abort',
+            ],
+        );
+        assert.equal(
+            f.events().every((event) => !event.eof),
+            true,
+        );
+        assert.equal(JSON.stringify(f.events()).includes(f.secret), false);
+        const lost = controlFixture({ action, fetchFailure: true });
+        await assert.rejects(
+            lost.globals.fetch(lost.url, lost.options),
+            (error) => error === lost.failure,
+        );
+        assert.deepEqual(
+            lost.events().map((event) => event.event),
+            ['start', 'fetch-failed'],
+        );
+        assert.equal(lost.calls.length, 1);
+        assert.deepEqual(
+            await loginControlDiagnostics({
+                evaluate: async () => {
+                    throw f.failure;
+                },
+            }),
+            { unavailable: true },
+        );
+    });
+}
 
-test('poll observations are bounded and unrelated or foreign requests are untouched', async () => {
-    const f = pollFixture();
+test('login-control observations are bounded and unrelated or foreign requests are untouched', async () => {
+    const f = controlFixture();
     for (const url of [
         new URL('https://foreign.example/api/v1/login/poll'),
-        new URL('/api/v1/login/reply', f.url),
-        new URL(`${f.url}?private-query`),
+        new URL('https://foreign.example/api/v1/login/reply'),
+        new URL('/api/v1/login/cancel', f.url),
+        new URL(`${f.url}?${f.secret}`),
+        new URL(`/api/v1/login/reply?${f.secret}`, f.url),
+        new URL(`/api/v1/login/reply#${f.secret}`, f.url),
     ]) {
         assert.equal(await f.globals.fetch(url, f.options), f.response);
     }
+    assert.equal(await f.globals.fetch(f.url, { ...f.options, method: 'GET' }), f.response);
     assert.deepEqual(f.events(), []);
     for (let index = 0; index < 150; index++) {
         await f.globals.fetch(f.url, f.options);
     }
     assert.equal(f.events().length, 256);
-    assert.equal(required(f.globals.bifroestPollDiagnostics).dropped(), 44);
+    assert.equal(required(f.globals.bifroestLoginControlDiagnostics).dropped(), 44);
     assert.equal(JSON.stringify(f.events()).includes(f.secret), false);
 });
 
-test('poll instrumentation works with the native response stream without consuming or substituting bytes', async () => {
-    const secret = 'PRIVATE-NATIVE-RESPONSE';
-    const response = new Response(JSON.stringify({ answer: secret }));
-    assert(response.body);
-    const globals = {
-        bifroestPollDiagnostics: undefined as PollDiagnostics | undefined,
-        URL,
-        location: { origin: 'https://app.example.org' },
-        performance,
-        fetch: async (..._args: unknown[]) => response,
-    };
-    runInNewContext(`(${installPollDiagnostics.toString()})()`, globals);
-    assert.equal(
-        await globals.fetch(new URL('/api/v1/login/poll', globals.location.origin), {
-            method: 'POST',
-        }),
-        response,
-    );
-    const reader = response.body.getReader();
-    const part = await reader.read();
-    assert.equal(new TextDecoder().decode(part.value), JSON.stringify({ answer: secret }));
-    assert.equal((await reader.read()).done, true);
-    reader.releaseLock();
-    assert.equal(
-        JSON.stringify(required(globals.bifroestPollDiagnostics).events).includes(secret),
-        false,
-    );
+for (const action of ['poll', 'reply'] as const) {
+    test(`${action} instrumentation works with the native response stream without consuming or substituting bytes`, async () => {
+        const secret = 'PRIVATE-NATIVE-RESPONSE';
+        const response = new Response(JSON.stringify({ answer: secret }), {
+            status: action === 'reply' ? 202 : 200,
+        });
+        assert(response.body);
+        const globals = {
+            bifroestLoginControlDiagnostics: undefined as LoginControlDiagnostics | undefined,
+            URL,
+            location: { origin: 'https://app.example.org' },
+            performance,
+            fetch: async (..._args: unknown[]) => response,
+        };
+        runInNewContext(`(${installLoginControlDiagnostics.toString()})()`, globals);
+        assert.equal(
+            await globals.fetch(new URL(`/api/v1/login/${action}`, globals.location.origin), {
+                method: 'POST',
+            }),
+            response,
+        );
+        const reader = response.body.getReader();
+        const part = await reader.read();
+        assert.equal(new TextDecoder().decode(part.value), JSON.stringify({ answer: secret }));
+        assert.equal((await reader.read()).done, true);
+        reader.releaseLock();
+        assert.equal(
+            JSON.stringify(required(globals.bifroestLoginControlDiagnostics).events).includes(
+                secret,
+            ),
+            false,
+        );
+        assert.deepEqual(
+            Array.from(
+                required(globals.bifroestLoginControlDiagnostics).events,
+                (event) => event.event,
+            ),
+            ['start', 'headers', 'get-reader', 'chunk', 'eof', 'release-lock'],
+        );
+    });
+}
+
+test('interleaved poll/reply requests have independent sequences for Playwright correlation', async () => {
+    const f = controlFixture();
+    for (const action of ['poll', 'reply', 'poll']) {
+        await f.globals.fetch(new URL(`/api/v1/login/${action}`, f.url), f.options);
+    }
     assert.deepEqual(
-        Array.from(required(globals.bifroestPollDiagnostics).events, (event) => event.event),
-        ['start', 'headers-200', 'get-reader', 'chunk', 'eof', 'release-lock'],
+        f
+            .events()
+            .filter((event) => event.event === 'start')
+            .map(({ action, sequence }) => [action, sequence]),
+        [
+            ['poll', 1],
+            ['reply', 1],
+            ['poll', 2],
+        ],
     );
 });
 

@@ -107,6 +107,53 @@ class InteractiveServer {
         return new BrowserClient(scope, this.fetch);
     }
 }
+
+// Controlled browser-stream fixture, not a reproduction of Windows HTTP/2.
+// Deliver the complete JSON receipt but retain EOF until the test releases it.
+function deferredReply(server: InteractiveServer) {
+    const reading = Promise.withResolvers<void>();
+    const cancelled = vi.fn();
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let stream: ReadableStream<Uint8Array> | undefined;
+    let signal: AbortSignal | undefined;
+    const transport: Transport = async (input, options) => {
+        const response = await server.fetch(input, options);
+        if (!new URL(String(input)).pathname.endsWith('/login/reply')) {
+            return response;
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        stream = new ReadableStream<Uint8Array>({
+            start(value) {
+                controller = value;
+                value.enqueue(bytes);
+            },
+            pull() {
+                reading.resolve();
+            },
+            cancel: cancelled,
+        });
+        signal = options?.signal ?? undefined;
+        signal?.addEventListener(
+            'abort',
+            () => controller?.error(new DOMException('fixture cancelled', 'AbortError')),
+            { once: true },
+        );
+        return new Response(stream, { status: response.status, headers: response.headers });
+    };
+    return {
+        client: new BrowserClient(scope, transport),
+        reading: reading.promise,
+        complete: () => required(controller).close(),
+        cancelled,
+        get signal() {
+            return signal;
+        },
+        get locked() {
+            return stream?.locked;
+        },
+    };
+}
+
 afterEach(() => vi.useRealTimers());
 
 describe('bounded interactive login and device-flow adapter', () => {
@@ -223,6 +270,47 @@ describe('bounded interactive login and device-flow adapter', () => {
             expect(server.requests.some((request) => request.action === 'logout')).toBe(false);
             expect(kind === 'reply' ? server.replies : server.polls).toBe(1);
         }
+    });
+
+    it('waits for login/reply EOF before claiming and does not abort the receipt after successful retirement', async () => {
+        const server = new InteractiveServer();
+        server.steps = [{ ...info, kind: 'prompt', echo: false }];
+        const receipt = deferredReply(server);
+        const lifetime = new AbortController();
+        const login = receipt.client.interactive('alice', async () => 'secret', lifetime.signal);
+        await receipt.reading;
+        expect(server.replies).toBe(1);
+        expect(server.polls).toBe(0);
+        expect(server.claimed).toBe(false);
+        expect(receipt.signal?.aborted).toBe(false);
+
+        receipt.complete();
+        expect((await login).snapshot().principal).toBe('verified-principal');
+        lifetime.abort();
+        expect(receipt.signal?.aborted).toBe(false);
+        expect(receipt.cancelled).not.toHaveBeenCalled();
+        expect(receipt.locked).toBe(false);
+        expect(server.replies).toBe(1);
+        expect(server.polls).toBe(1);
+        expect(server.cancelled).toBe(0);
+    });
+
+    it('rejects cancellation before login/reply EOF without replaying the reply or claiming access', async () => {
+        const server = new InteractiveServer();
+        server.steps = [{ ...info, kind: 'prompt', echo: false }];
+        const receipt = deferredReply(server);
+        const lifetime = new AbortController();
+        const login = receipt.client.interactive('alice', async () => 'secret', lifetime.signal);
+        const rejected = expect(login).rejects.toMatchObject({ code: 'cancelled' });
+        await receipt.reading;
+        lifetime.abort();
+        await rejected;
+        expect(receipt.signal?.aborted).toBe(true);
+        expect(receipt.locked).toBe(false);
+        expect(server.replies).toBe(1);
+        expect(server.polls).toBe(0);
+        expect(server.claimed).toBe(false);
+        expect(server.cancelled).toBe(1);
     });
 
     it('rejects bad sequence/kind/echo/message fields before asking for a credential', async () => {

@@ -2,12 +2,12 @@ import type { WebglAddon as XtermWebglAddon } from '@xterm/addon-webgl';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { WebAccess } from '../src/remember';
 import type { DrawerDiagnostics } from './drawer-diagnostics.ts';
-import type { PollDiagnostics } from './poll-diagnostics.ts';
+import type { LoginControlDiagnostics } from './login-control-diagnostics.ts';
 
 // Browser-only fixture observations, initialized by the owning addInitScript.
 // The owning fixture initializes each observation before use.
 declare global {
-    var bifroestPollDiagnostics: PollDiagnostics | undefined;
+    var bifroestLoginControlDiagnostics: LoginControlDiagnostics | undefined;
     var bifroestDrawerDiagnostics: DrawerDiagnostics | undefined;
     var testPreparationReceipt:
         | { status: number; target?: { flow: string; id: string }; error?: string }
