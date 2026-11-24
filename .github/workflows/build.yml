@@ -68,7 +68,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - &checkout-workflow-cache
         name: Checkout workflow cache action
@@ -150,7 +150,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - *checkout-workflow-cache
 
@@ -209,7 +209,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - *checkout-workflow-cache
 
@@ -242,7 +242,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install pinned formatter
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install_args: stylua
 
@@ -286,7 +286,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE and pinned Go
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install_args: go
 
@@ -335,7 +335,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE and pinned Go/Docker client
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install_args: go docker-cli
 
@@ -386,7 +386,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - *checkout-workflow-cache
 
@@ -444,7 +444,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - *checkout-workflow-cache
 
@@ -488,7 +488,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - *checkout-workflow-cache
 
@@ -524,7 +524,7 @@ jobs:
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - *checkout-workflow-cache
 
@@ -596,7 +596,7 @@ jobs:
           fi
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - *checkout-workflow-cache
 
@@ -699,7 +699,7 @@ jobs:
           restore-keys: images-dependencies
 
       - name: Install MISE
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - *checkout-workflow-cache
 
