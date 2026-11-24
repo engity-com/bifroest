@@ -36,8 +36,15 @@ func (r *LocalNativeRecordingRepository) VerifyCatalog(ctx context.Context, cons
 }
 
 func (r *LocalNativeRecordingRepository) walkCatalog(ctx context.Context, load func(context.Context, string, Id, int64, int64) (nativeCatalogEntry, error), consume func(NativeRecordingSummary) error, progress func(NativeCatalogProgress) error) (resultErr error) {
+	return r.walkCatalogWithLimits(ctx, CatalogVerifyLimits{MaximumContainerBytes: MaximumNativeCatalogBytes, MaximumCastBytes: MaximumNativeCatalogBytes}, load, consume, progress)
+}
+
+func (r *LocalNativeRecordingRepository) walkCatalogWithLimits(ctx context.Context, limits CatalogVerifyLimits, load func(context.Context, string, Id, int64, int64) (nativeCatalogEntry, error), consume func(NativeRecordingSummary) error, progress func(NativeCatalogProgress) error) (resultErr error) {
 	if r == nil || r.repository == nil || consume == nil {
 		return fmt.Errorf("invalid recording catalog scan")
+	}
+	if err := limits.validate(); err != nil {
+		return err
 	}
 	if err := r.catalog.mutex.LockContext(ctx); err != nil {
 		return err
@@ -52,7 +59,8 @@ func (r *LocalNativeRecordingRepository) walkCatalog(ctx context.Context, load f
 	}()
 	entries := make(map[Id]nativeCatalogEntry)
 	err := r.walkInventory(ctx, "verifying", func(path string, id Id) error {
-		item, err := load(ctx, path, id, MaximumNativeCatalogBytes, MaximumNativeCatalogBytes)
+		// Reset both allowances for each recording, never for the whole archive.
+		item, err := load(ctx, path, id, int64(limits.MaximumContainerBytes), int64(limits.MaximumCastBytes))
 		if err != nil {
 			return fmt.Errorf("recording catalog verification failed for %s: %w", id.String(), err)
 		}

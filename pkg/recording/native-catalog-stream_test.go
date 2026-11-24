@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/engity-com/bifroest/pkg/recording/cast"
 )
 
 func catalogScanTemp(t *testing.T) string {
@@ -48,24 +50,35 @@ func TestNativeCatalogStreamInventoriesBeyondCacheCapacityInBoundedBatches(t *te
 
 func TestNativeCatalogStreamVerifiesMoreThan1024RealSignedRecordings(t *testing.T) {
 	catalogScanTemp(t)
-	repo, _ := newCatalogWarmupFixture(t, false)
-	_, header, metadata := castTestValues(t, true)
-	for number := uint64(3); number <= MaximumNativeCatalogEntries+1; number++ {
+	identity, header, metadata := castTestValues(t, true)
+	root := t.TempDir()
+	repo, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, repo.Close()) })
+	var fixtureBytes uint64
+	for number := 1; number <= MaximumNativeCatalogEntries+1; number++ {
 		current := metadata
 		// Adjacent tiny UUIDs can differ only by Base58 letter case. Use full
 		// UUIDs so this inventory also works on case-insensitive filesystems.
 		id, err := NewId()
 		require.NoError(t, err)
 		current.RecordingId = id
-		active, err := repo.CreateActive(t.Context(), header, current, 0)
+		// The reader boundary needs genuine, separately signed containers, not
+		// 1,025 durable active/head/publication lifecycles. Service integration
+		// covers that lifecycle separately in management-streaming_test.go.
+		var container bytes.Buffer
+		writer, err := NewNativeRecordingWriter(&container, identity, nil, header, current, 0, NativeRecordingWriterLimits{})
 		require.NoError(t, err)
-		_, err = active.Seal(time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(time.Second)}, sealedArtifactUint32(0))
+		_, err = writer.Seal(time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(time.Second)}, sealedArtifactUint32(0))
 		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(root, localSealedDirectory, id.String()+".bcast"), container.Bytes(), 0600))
+		fixtureBytes += uint64(container.Len())
 	}
+	t.Logf("fixture: %d genuine signed containers, %d bytes", MaximumNativeCatalogEntries+1, fixtureBytes)
 	var count int64
 	var final NativeCatalogProgress
 	deadline, hasDeadline := t.Context().Deadline()
-	err := repo.walkCatalog(t.Context(), func(ctx context.Context, path string, id Id, container, cast int64) (nativeCatalogEntry, error) {
+	err = repo.walkCatalog(t.Context(), func(ctx context.Context, path string, id Id, container, cast int64) (nativeCatalogEntry, error) {
 		actual, actualDeadline := ctx.Deadline()
 		require.Equal(t, hasDeadline, actualDeadline)
 		require.Equal(t, deadline, actual, "the scanner must not install an aggregate deadline")
@@ -87,24 +100,65 @@ func TestNativeCatalogStreamUsesPerRecordingRatherThanAggregateByteBudget(t *tes
 	catalogScanTemp(t)
 	repo, _ := newCatalogWarmupFixture(t, false)
 	_, header, metadata := castTestValues(t, true)
-	output := bytes.Repeat([]byte("x"), 256<<10)
+	output := bytes.Repeat([]byte("x"), 256)
 	for number := uint64(3); number <= 5; number++ {
 		current := metadata
 		current.RecordingId = sealedPageTestID(number)
 		active, err := repo.CreateActive(t.Context(), header, current, 0)
 		require.NoError(t, err)
-		for index := 1; index <= 180; index++ {
-			require.NoError(t, active.WriteOutput(time.Duration(index)*time.Millisecond, OutputStreamTerminal, output))
-		}
+		require.NoError(t, active.WriteOutput(time.Millisecond, OutputStreamTerminal, output))
 		_, err = active.Seal(time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(time.Second)}, sealedArtifactUint32(0))
 		require.NoError(t, err)
 	}
-	var castBytes uint64
-	count := 0
-	err := repo.WalkCatalog(t.Context(), func(row NativeRecordingSummary) error { count++; castBytes += row.CastBytes; return nil }, nil)
+	// Discover exact per-recording verification costs using genuine artifacts.
+	// No process-global limit or production default is changed.
+	var limits CatalogVerifyLimits
+	var containerBytes, castBytes uint64
+	load := func(ctx context.Context, path string, id Id, container, cast int64) (nativeCatalogEntry, error) {
+		return repo.readCatalogEntry(ctx, path, id, container, cast, false)
+	}
+	err := repo.walkCatalog(t.Context(), func(ctx context.Context, path string, id Id, container, cast int64) (nativeCatalogEntry, error) {
+		entry, err := load(ctx, path, id, container, cast)
+		limits.MaximumContainerBytes = max(limits.MaximumContainerBytes, entry.summary.Bytes)
+		limits.MaximumCastBytes = max(limits.MaximumCastBytes, entry.castVerificationBytes)
+		containerBytes += entry.summary.Bytes
+		castBytes += entry.castVerificationBytes
+		return entry, err
+	}, func(NativeRecordingSummary) error { return nil }, nil)
 	require.NoError(t, err)
-	require.Equal(t, 5, count)
-	require.Greater(t, castBytes, uint64(MaximumNativeCatalogBytes))
+	require.Greater(t, containerBytes, limits.MaximumContainerBytes)
+	require.Greater(t, castBytes, limits.MaximumCastBytes)
+	t.Logf("fixture: %d container bytes, %d verification Cast bytes; per-recording limits %+v", containerBytes, castBytes, limits)
+	for _, mode := range []string{"exact", "container-minus-one", "cast-minus-one"} {
+		t.Run(mode, func(t *testing.T) {
+			current := limits
+			switch mode {
+			case "container-minus-one":
+				current.MaximumContainerBytes--
+			case "cast-minus-one":
+				current.MaximumCastBytes--
+			}
+			count := 0
+			err := repo.walkCatalogWithLimits(t.Context(), current, load, func(row NativeRecordingSummary) error {
+				require.LessOrEqual(t, row.Bytes, current.MaximumContainerBytes)
+				require.LessOrEqual(t, row.CastBytes, current.MaximumCastBytes)
+				count++
+				return nil
+			}, nil)
+			if mode == "exact" {
+				require.NoError(t, err)
+				require.Equal(t, 5, count, "aggregate bytes exceed both limits, but each recording fits exactly")
+			} else {
+				if mode == "cast-minus-one" {
+					require.ErrorIs(t, err, cast.ErrNativeCatalogCastBudget)
+				} else {
+					require.ErrorContains(t, err, "bounded verification budget")
+				}
+				require.Less(t, count, 5)
+				require.Empty(t, repo.catalog.entries, "failed scans must discard provisional cache entries")
+			}
+		})
+	}
 }
 
 func TestNativeCatalogStreamFixesInventoryBeforeVerificationAndRetainsNoPrivateContext(t *testing.T) {

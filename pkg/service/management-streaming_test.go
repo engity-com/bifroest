@@ -1,11 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -152,38 +155,84 @@ func TestManagementStreamingProgressIsProvisionalAndCancellationKeepsAdmission(t
 }
 
 func TestManagementRecordingStreamingSelectsAuthoritativePagesBeyond1024Entries(t *testing.T) {
+	// Keep the real 1,025-entry service/metadata/page boundary, but construct
+	// signed reader fixtures without replaying 1,025 durable lifecycles.
+	testManagementRecordingStreamingPages(t, recording.MaximumNativeCatalogEntries+1, false)
+}
+
+func TestManagementRecordingStreamingSelectsAuditedPublishedPages(t *testing.T) {
+	// Two full pages plus a tail exercise actual intent, audit, preparation,
+	// sealing, publication and replay before the same authoritative reader.
+	testManagementRecordingStreamingPages(t, 41, true)
+}
+
+func testManagementRecordingStreamingPages(t *testing.T, count int, audited bool) {
+	t.Helper()
 	svc, _, _, token := managementWebFixture(t)
 	started := time.Date(2026, time.September, 13, 12, 34, 56, 123456789, time.UTC)
 	repository := svc.recordingRepositories["default"]
 	svc.flowAuditRecorders["historical"] = svc.flowAuditRecorders[svc.Configuration.Flows[0].Name]
+	if audited {
+		svc.flowAuditRecorders["historical"] = svc.auditRecorders["default"]
+	}
 	svc.flowAuditlogs["historical"] = "default"
-	for index := 1; index <= recording.MaximumNativeCatalogEntries+1; index++ {
-		// Build real audited recordings, including their signed lifecycle intent,
-		// preparation and publication. Complete the outbox in one native replay
-		// below instead of repeatedly enumerating the growing receipt directory.
+	var fixtureBytes uint64
+	digests := make(map[string]string)
+	for index := 1; index <= count; index++ {
 		var id recording.Id
 		require.NoError(t, id.UnmarshalText([]byte(fmt.Sprintf("%08x-0000-4000-8000-000000000000", index))))
 		metadata := recording.CastMetadata{RecordingId: id, ConnectionId: bfconnection.MustNewId(), SessionId: session.MustNewId(), OperationId: uuid.New(), Flow: "historical", Task: audit.SessionTaskExec, ProducerId: repository.producerId, StartedAt: started}
+		header := recording.CastHeader{Version: 3, Terminal: recording.CastTerminal{Columns: 80, Rows: 24}, Timestamp: started.Unix()}
+		exit := uint32(0)
+		result := recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: started.Add(time.Second)}
+		if !audited {
+			var container bytes.Buffer
+			writer, err := recording.NewNativeRecordingWriter(&container, svc.auditIdentities["default"], nil, header, metadata, 0, recording.NativeRecordingWriterLimits{})
+			require.NoError(t, err)
+			_, err = writer.Seal(time.Second, result, &exit)
+			require.NoError(t, err)
+			path := filepath.Join(svc.Configuration.Auditlogs[0].Recording.Directory, "sealed", id.String()+".bcast")
+			require.NoError(t, os.WriteFile(path, container.Bytes(), 0600))
+			fixtureBytes += uint64(container.Len())
+			continue
+		}
 		artifact, err := repository.artifactName(id)
 		require.NoError(t, err)
 		startEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)
 		require.NoError(t, repository.receipts.BeginLifecycle(t.Context(), artifact, started, startEvent))
-		active, err := repository.native.CreateActive(t.Context(), recording.CastHeader{Version: 3, Terminal: recording.CastTerminal{Columns: 80, Rows: 24}, Timestamp: started.Unix()}, metadata, 300)
+		active, err := repository.native.CreateActive(t.Context(), header, metadata, 300)
 		require.NoError(t, err)
-		exit := uint32(0)
-		result := recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: started.Add(time.Second)}
 		require.NoError(t, svc.recordSessionRecordingEvent(t.Context(), metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil))
 		require.NoError(t, repository.stageLifecycle(t.Context(), id, sessionRecordingTerminalAuditEvent(metadata, result, nil, nil, nil, sessionRecordingFailurePhaseNone, time.Second, &exit)))
-		_, err = active.Seal(time.Second, result, &exit)
+		summary, err := active.Seal(time.Second, result, &exit)
 		require.NoError(t, err)
+		digests[id.String()] = summary.Digest.String()
 	}
-	pending, err := repository.receipts.PendingLifecycle(t.Context())
-	require.NoError(t, err)
-	require.Len(t, pending, recording.MaximumNativeCatalogEntries+1)
-	require.NoError(t, svc.replaySessionRecordingLifecycles(t.Context()))
-	pending, err = repository.receipts.PendingLifecycle(t.Context())
-	require.NoError(t, err)
-	require.Empty(t, pending, "all lifecycle evidence must be durably completed before the reader test")
+	if audited {
+		pending, err := repository.receipts.PendingLifecycle(t.Context())
+		require.NoError(t, err)
+		require.Len(t, pending, count)
+		require.NoError(t, svc.replaySessionRecordingLifecycles(t.Context()))
+		pending, err = repository.receipts.PendingLifecycle(t.Context())
+		require.NoError(t, err)
+		require.Empty(t, pending, "all lifecycle evidence must be durably completed before the reader test")
+		verified, err := audit.VerifyJournals(t.Context(), []audit.JournalSource{{
+			Name: "default", Directory: svc.Configuration.Auditlogs[0].Directory, ExpectedProducerId: repository.producerId, WithSensitive: true,
+		}})
+		require.NoError(t, err)
+		var events []audit.Event
+		for _, record := range verified.Records() {
+			events = append(events, record.Event)
+			if record.Event.Name == audit.EventNameSessionRecordingCompleted {
+				require.Contains(t, digests, record.Event.RecordingId)
+				require.Equal(t, digests[record.Event.RecordingId], record.Event.RecordingDigest)
+			}
+		}
+		require.Len(t, auditEventsNamed(events, audit.EventNameSessionRecordingStarted), count)
+		require.Len(t, auditEventsNamed(events, audit.EventNameSessionRecordingCompleted), count)
+	} else {
+		t.Logf("reader fixture: %d genuine signed containers, %d bytes", count, fixtureBytes)
+	}
 	request, err := (protocol.ReadRequest{Operation: protocol.ListRecordings, Auditlog: "default", Flow: "historical", Limit: 20, Status: "all"}).Normalize()
 	require.NoError(t, err)
 	actor := webTestAccess(t, svc, token, "Work").auth
@@ -201,10 +250,10 @@ func TestManagementRecordingStreamingSelectsAuthoritativePagesBeyond1024Entries(
 	ctx = recording.WithCatalogReadStats(ctx, stats)
 	page, err := svc.managementRecordingPage(ctx, request, actor)
 	require.NoError(t, err)
-	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, scanned)
-	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, matched)
+	require.EqualValues(t, count, scanned)
+	require.EqualValues(t, count, matched)
 	require.Len(t, page.Items, 20)
-	require.EqualValues(t, 20, stats.ContentReads.Load(), "listing must not fully verify the 1,025-recording archive")
+	require.EqualValues(t, 20, stats.ContentReads.Load(), "listing must fully verify only the selected page, not the archive")
 	require.NotEmpty(t, page.Next)
 	for index, row := range page.Items {
 		require.Equal(t, base58TestUUID(t, fmt.Sprintf("%08x-0000-4000-8000-000000000000", index+1)), row.ID)
@@ -216,11 +265,21 @@ func TestManagementRecordingStreamingSelectsAuthoritativePagesBeyond1024Entries(
 	require.Len(t, next.Items, 20)
 	require.NotEmpty(t, next.Next)
 	require.Equal(t, base58TestUUID(t, "00000015-0000-4000-8000-000000000000"), next.Items[0].ID)
-	require.EqualValues(t, recording.MaximumNativeCatalogEntries+1, matched, "cursor position must not turn the full matching total into a remaining-row count")
+	require.EqualValues(t, count, matched, "cursor position must not turn the full matching total into a remaining-row count")
 	require.EqualValues(t, 40, stats.ContentReads.Load())
-	expectedMetadata := recording.MaximumNativeCatalogEntries + 1
+	expectedMetadata := count
 	if !metadatacache.FileStampReuse {
 		expectedMetadata *= 2
 	}
 	require.EqualValues(t, expectedMetadata, stats.MetadataReads.Load(), "only supported file-version observations may reuse the index; content reads remain page-bound on every platform")
+	if audited {
+		request.After = next.Next
+		tail, err := svc.managementRecordingPage(ctx, request, actor)
+		require.NoError(t, err)
+		require.Len(t, tail.Items, 1)
+		require.Equal(t, base58TestUUID(t, "00000029-0000-4000-8000-000000000000"), tail.Items[0].ID)
+		require.Empty(t, tail.Next)
+		require.EqualValues(t, count, matched)
+		require.EqualValues(t, count, stats.ContentReads.Load())
+	}
 }
