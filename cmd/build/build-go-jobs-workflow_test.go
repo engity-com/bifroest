@@ -3,6 +3,7 @@ package main
 import (
 	gos "os"
 	goexec "os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -260,7 +261,10 @@ func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testi
 				}
 			}
 		}
-		command := goexec.Command(bash, "-e", "-o", "pipefail", "-c", script.String())
+		// Keep the full matrix out of Windows' native command-line quoting and length limits.
+		scriptPath := filepath.Join(t.TempDir(), "package-gate.sh")
+		require.NoError(t, gos.WriteFile(scriptPath, []byte(script.String()), 0o600))
+		command := goexec.Command(bash, "--noprofile", "--norc", "-e", "-o", "pipefail", filepath.ToSlash(scriptPath))
 		output, err := command.CombinedOutput()
 		require.NoError(t, err, string(output))
 		t.Logf("checked %d gate cases in one Bash invocation", cases)

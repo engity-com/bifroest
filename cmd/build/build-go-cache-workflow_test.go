@@ -89,7 +89,8 @@ func runGoCacheDetection(t *testing.T, goEnv, scope, context, status string) (ma
 	if err != nil {
 		t.Skip("bash is required to exercise the composite action's detection step")
 	}
-	output := filepath.Join(t.TempDir(), "github.output")
+	directory := t.TempDir()
+	output := filepath.Join(directory, "github.output")
 	require.NoError(t, gos.WriteFile(output, nil, 0o600))
 	// Stub only MISE/Go; run the actual action shell code and checksum utility.
 	script := `mise() {
@@ -98,7 +99,10 @@ func runGoCacheDetection(t *testing.T, goEnv, scope, context, status string) (ma
   return "$GO_CACHE_TEST_STATUS"
 }
 ` + readGoCacheAction(t).Runs.Steps[0].Run
-	cmd := osexec.CommandContext(t.Context(), bash, "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script)
+	// Like the Actions runner, use a file so Windows command-line quoting cannot alter Bash escapes.
+	scriptPath := filepath.Join(directory, "cache-detection.sh")
+	require.NoError(t, gos.WriteFile(scriptPath, []byte(script), 0o600))
+	cmd := osexec.CommandContext(t.Context(), bash, "--noprofile", "--norc", "-e", "-o", "pipefail", filepath.ToSlash(scriptPath))
 	cmd.Env = append(gos.Environ(),
 		"GITHUB_OUTPUT="+filepath.ToSlash(output),
 		"CACHE_SCOPE="+scope, "CACHE_CONTEXT="+context,
