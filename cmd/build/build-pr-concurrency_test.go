@@ -41,6 +41,7 @@ func TestPRWorkflowConcurrencyCancelsOnlySamePRAndWorkflow(t *testing.T) {
 		events []string
 	}{
 		{"ci.yml", []string{"pull_request"}},
+		{"codeql.yml", []string{"push", "pull_request", "schedule"}},
 		{"e2e.yml", []string{"pull_request", "schedule", "workflow_dispatch"}},
 		{"nanoserver.yml", []string{"pull_request", "workflow_dispatch"}},
 	} {
@@ -57,7 +58,11 @@ func TestPRWorkflowConcurrencyCancelsOnlySamePRAndWorkflow(t *testing.T) {
 				Types []string `yaml:"types"`
 			}
 			require.NoError(t, pullRequest.Decode(&trigger))
-			require.Contains(t, trigger.Types, "synchronize", "new PR commits must supersede older runs")
+			if test.file == "codeql.yml" {
+				require.Empty(t, trigger.Types, "CodeQL keeps the default PR events, including synchronize")
+			} else {
+				require.Contains(t, trigger.Types, "synchronize", "new PR commits must supersede older runs")
+			}
 			require.NotNil(t, workflow.Concurrency, "cancel the entire stale run, not individual matrix jobs")
 			require.Equal(t,
 				"${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}",
