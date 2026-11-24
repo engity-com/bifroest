@@ -524,27 +524,56 @@ it('does not retry a queued projection after explicit cancellation', async () =>
 async function click(node: HTMLElement) {
     await act(async () => node.click());
 }
+function visibleDialogs() {
+    return [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((node) =>
+        node.checkVisibility({ visibilityProperty: true }),
+    );
+}
+async function dialog(title: string) {
+    return vi.waitFor(() => {
+        const node = visibleDialogs().find((node) => !node.closest('[aria-hidden="true"]'));
+        if (!node) {
+            throw new Error(`Missing active dialog ${title}`);
+        }
+        expect(node.textContent).toContain(title);
+        return node;
+    });
+}
 async function options(parent: ParentNode = document) {
-    await vi.waitFor(() =>
+    const readyButton = (name: string, scope: ParentNode) =>
+        vi.waitFor(() => {
+            const node = button(name, scope);
+            expect(node.disabled).toBe(false);
+            expect(node.closest('[aria-hidden="true"]')).toBeNull();
+            return node;
+        });
+    await vi.waitFor(() => {
+        expect(
+            parent.querySelector('[data-evidence-phase]')?.getAttribute('data-evidence-phase'),
+        ).toBe('idle');
         expect(
             parent.querySelector('[data-verification-result]') || button(t('verifyOpen'), parent),
-        ).toBeTruthy(),
+        ).toBeTruthy();
+    });
+    const decrypt = visibleDialogs().find(
+        (node) =>
+            !node.closest('[aria-hidden="true"]') &&
+            node.textContent?.includes(t('recordingDecrypt')),
     );
-    if (parent.querySelector('[data-verification-result]')) {
-        await click(button(t('recordingVerificationDetails'), parent));
-        await click(button(t('recordingChangeVerification')));
-    } else {
-        await click(button(t('verifyOpen'), parent));
+    if (decrypt) {
+        await click(await readyButton('Close', decrypt));
     }
-    await vi.waitFor(() =>
-        expect(
-            [...document.querySelectorAll('[role="dialog"]')].find(
-                (node) =>
-                    node.checkVisibility({ visibilityProperty: true }) &&
-                    !node.closest('[aria-hidden="true"]'),
-            )?.textContent,
-        ).toContain(t('artifactVerificationOptions')),
-    );
+    // A result can commit before MUI finishes retiring the previous portal.
+    // Do not click through that modal, or reuse its still-visible hidden controls.
+    await vi.waitFor(() => expect(visibleDialogs()).toHaveLength(0));
+    if (parent.querySelector('[data-verification-result]')) {
+        await click(await readyButton(t('recordingVerificationDetails'), parent));
+        const details = await dialog(t('recordingVerificationDetails'));
+        await click(await readyButton(t('recordingChangeVerification'), details));
+    } else {
+        await click(await readyButton(t('verifyOpen'), parent));
+    }
+    return dialog(t('artifactVerificationOptions'));
 }
 async function fill(input: HTMLInputElement, value: string) {
     await act(async () => {
@@ -840,6 +869,37 @@ describe('usable local evidence without manual protection guesses', () => {
     });
 });
 
+it('waits for the closing verification portal before changing settings after a failed check', async () => {
+    const app = await mount();
+    await click(button('Open fixture recording', app.container));
+    await options(app.container);
+    vi.mocked(verifyArtifact).mockRejectedValueOnce(new EvidenceError('key'));
+    await click(button(t('verifyStart')));
+    await vi.waitFor(() =>
+        expect(app.container.querySelector('[data-verification-result="failure"]')).not.toBeNull(),
+    );
+
+    // Native HTMLElement.click() ignores the modal's accessibility boundary.
+    // Reject such test-only clicks instead of letting a closing portal race a new one.
+    const nativeClick = HTMLButtonElement.prototype.click;
+    vi.spyOn(HTMLButtonElement.prototype, 'click').mockImplementation(function (
+        this: HTMLButtonElement,
+    ) {
+        expect(this.closest('[aria-hidden="true"]'), this.outerHTML).toBeNull();
+        expect(this.disabled, this.outerHTML).toBe(false);
+        nativeClick.call(this);
+    });
+    await options(app.container);
+    expect(verifyArtifact).toHaveBeenCalledOnce();
+    expect(
+        [...document.querySelectorAll('[role="dialog"]')].find(
+            (node) =>
+                node.checkVisibility({ visibilityProperty: true }) &&
+                !node.closest('[aria-hidden="true"]'),
+        )?.textContent,
+    ).toContain(t('artifactVerificationOptions'));
+});
+
 function SessionHarness({
     owner,
     signal,
@@ -925,11 +985,7 @@ it('remembers only a successfully decrypted key across Recording/Audit pages, ho
     expect(audit.querySelector('input[type="file"]')?.getClientRects().length ?? 0).toBe(0);
     expect(vi.mocked(verifyArtifact).mock.calls.at(-1)?.[2]?.passphrase).toBe('tab secret');
     await render('recordings');
-    await options(recordings);
-    const optionsDialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    if (!optionsDialog) {
-        throw new Error('Missing verification dialog');
-    }
+    const optionsDialog = await options(recordings);
     await click(button(t('artifactReplaceKey'), optionsDialog));
     await selectKey(optionsDialog, 'WRONG-KEY', 'wrong');
     await click(button(t('verifyStart'), optionsDialog));
