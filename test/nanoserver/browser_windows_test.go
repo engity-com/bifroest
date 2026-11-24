@@ -102,8 +102,11 @@ func requireNativeIdentity(t *testing.T, fixture browserfixture.Fixture, probe b
 	canonicalNativeID(t, probe.Execution)
 }
 
+const nativeSSHKeepAliveInterval = 10 * time.Second
+
 type nativeSSHProbe struct {
 	connection net.Conn
+	client     *ssh.Client
 	session    *ssh.Session
 	input      io.WriteCloser
 	scanner    *bufio.Scanner
@@ -137,7 +140,7 @@ func startNativeSSH(t *testing.T, ctx context.Context, address string, fixture b
 		require.NoError(t, current.RequestPty("xterm", 25, 4096, ssh.TerminalModes{}))
 	}
 	require.NoError(t, current.Start(fixture.Probe+" "+command))
-	return &nativeSSHProbe{connection: connection, session: current, input: input, scanner: bufio.NewScanner(output)}
+	return &nativeSSHProbe{connection: connection, client: client, session: current, input: input, scanner: bufio.NewScanner(output)}
 }
 
 func (this *nativeSSHProbe) observe(t *testing.T, marker string) browserfixture.Probe {
@@ -290,6 +293,15 @@ func exerciseServerCoreBrowserVariant(t *testing.T, parent context.Context, root
 	first := held.observe(t, "ssh-initial")
 	requireNativeIdentity(t, fixture, first, false)
 	require.Equal(t, "ssh-owned", first.Content)
+	// Browser startup/actions can outlast the fixture's 30s SSH idle policy.
+	// Keep this existing transport active, without touching its held execution.
+	keepAlive := startNativeSSHKeepAlive(ctx, held.client, nativeSSHKeepAliveInterval)
+	defer func() {
+		if err := keepAlive.failure(); err != nil {
+			t.Errorf("held SSH keepalive: %v", err)
+		}
+		keepAlive.abort()
+	}()
 	// Exercise the real executable's ConPTY relay through SSH too. The existing
 	// environment.test.exe relay oracle alone does not cover CLI registration.
 	reference := startNativeSSH(t, ctx, address, fixture, keyFile, "browser-probe ssh-pty", true)
@@ -340,6 +352,7 @@ func exerciseServerCoreBrowserVariant(t *testing.T, parent context.Context, root
 	checkpoints := []string{"after-close", "after-reload", "after-logout"}
 	scanner := bufio.NewScanner(output)
 	for scanner.Scan() {
+		require.NoError(t, keepAlive.failure(), "held SSH keepalive")
 		_, _ = trace.Write(scanner.Bytes())
 		_ = trace.WriteByte('\n')
 		var message struct {
@@ -381,6 +394,7 @@ func exerciseServerCoreBrowserVariant(t *testing.T, parent context.Context, root
 		require.False(t, exists, "no reattached connection")
 		expectations[execution.Connection] = nativeExecutionExpectation{task: audit.SessionTaskShell, pty: true, exit: execution.Exit}
 	}
+	require.NoError(t, keepAlive.stop(), "stop and join keepalive before the held SSH execution exits")
 	_, err = fmt.Fprintln(held.input, "exit")
 	require.NoError(t, err)
 	require.NoError(t, held.connection.SetDeadline(time.Now().Add(15*time.Second)))

@@ -253,13 +253,24 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, im
 	require.NoError(t, err)
 	defer func() { _ = stdin.Close() }()
 	require.NoError(t, cmd.Start())
+	started := time.Now()
 	result := make(chan error, 1)
 	go func() { result <- cmd.Wait() }()
 	waited := false
+	readyReceived := false
+	timeoutPhase := ""
+	var timeoutElapsed time.Duration
 	defer func() {
 		if !waited {
-			_ = cmd.Process.Kill()
-			<-result
+			killErr := cmd.Process.Kill()
+			waitErr := <-result
+			if timeoutPhase != "" {
+				// Wait has joined both output copiers. These buffers describe only
+				// post-cleanup capture, not native state at the timeout deadline.
+				t.Log(localConPTYTestTimeoutDiagnostic(timeoutPhase, cmd.Process.Pid,
+					timeoutElapsed, time.Since(started), readyReceived, killErr, waitErr,
+					stdout.String(), stderr.String()))
+			}
 		}
 	}()
 	timeout := time.NewTimer(20 * time.Second)
@@ -267,6 +278,7 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, im
 	if !immediateExit {
 		select {
 		case prefix := <-ready:
+			readyReceived = true
 			require.Contains(t, strings.ToUpper(prefix), strings.ToUpper(self.User.Sid.String()))
 			require.Contains(t, prefix, "native-console=80x25")
 			require.Contains(t, prefix, "native-console-child write-success=true ")
@@ -275,6 +287,7 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, im
 			waited = true
 			t.Fatalf("ConPTY relay exited before the roundtrip acknowledgement: %v; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 		case <-timeout.C:
+			timeoutPhase, timeoutElapsed = "readiness", time.Since(started)
 			t.Fatal("ConPTY relay did not produce readiness output within 20 seconds")
 		}
 	}
@@ -298,6 +311,7 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, im
 		require.Contains(t, stderr.String(), "released=true")
 		require.Contains(t, stderr.String(), "eofBeforeClose=true", "native EOF must precede ClosePseudoConsole")
 	case <-timeout.C:
+		timeoutPhase, timeoutElapsed = "exit", time.Since(started)
 		t.Fatal("ConPTY relay did not stop within 20 seconds")
 	}
 	require.Contains(t, strings.ToUpper(stdout.String()), strings.ToUpper(self.User.Sid.String()))

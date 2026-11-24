@@ -15,6 +15,11 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  # Keep non-PR runs independent, including while pending.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   files-changed:
     name: Detect file changes
@@ -73,16 +78,14 @@ jobs:
           sudo journalctl -k --since '-5 min' --no-pager | grep -E 'apparmor|pasta' || true
           exit 1
 
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Cache Go modules
+        uses: ./.github/actions/cache-go
+        with:
+          scope: e2e-runtime
+          context: ${{ matrix.suite }}
 
       - &install-go-dependencies
         name: Install dependencies
@@ -164,16 +167,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Cache Go modules
+        uses: ./.github/actions/cache-go
+        with:
+          scope: e2e-authorization
 
       - *install-go-dependencies
 
@@ -201,16 +201,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Cache Go modules
+        uses: ./.github/actions/cache-go
+        with:
+          scope: e2e-pam-browser
 
       - name: Prepare pinned browser toolchain
         run: |
@@ -240,16 +237,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Cache Go modules
+        uses: ./.github/actions/cache-go
+        with:
+          scope: e2e-darwin
 
       - *install-go-dependencies
 
@@ -283,16 +277,14 @@ jobs:
         shell: bash
         run: *prepare-browser-network
 
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Cache Go modules
+        uses: ./.github/actions/cache-go
+        with:
+          scope: e2e-kubernetes
+          context: docker
 
       - *install-go-dependencies
 
@@ -368,16 +360,14 @@ jobs:
         shell: bash
         run: *prepare-browser-network
 
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Cache Go modules
+        uses: ./.github/actions/cache-go
+        with:
+          scope: e2e-kubernetes
+          context: podman
 
       - *install-go-dependencies
 

@@ -24,19 +24,16 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
           version: 2026.9.5
           sha256: 32f644d8c291bb182f702c6d2b0dda9f8b01441e940d74d328aad5f08446b2fd
+
+      - name: Cache Go modules
+        uses: ./.github/actions/cache-go
+        with:
+          scope: build-tools
 
       - name: Install Go dependencies
         shell: bash

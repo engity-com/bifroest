@@ -29,7 +29,7 @@ func newACMETestSource(t *testing.T, ca *acmeTestCA, domains ...string) (*config
 	manager, err := newTLS(conf, source, ca.clock.now)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
-	ca.setProbe(startACMETestTLS(t, manager))
+	ca.setProbe(startACMETestTLS(t, manager, ca.trace))
 	return conf, source, manager
 }
 
@@ -238,7 +238,7 @@ func TestACMEExpiredCacheIsReissuedAfterRestartUsingTheSameAccount(t *testing.T)
 	newManager, err := newTLS(conf, restarted, clock.now)
 	require.NoError(t, err)
 	defer newManager.Close()
-	ca.setProbe(startACMETestTLS(t, newManager))
+	ca.setProbe(startACMETestTLS(t, newManager, ca.trace))
 	require.NoError(t, newManager.Prepare(context.Background()))
 	require.True(t, newManager.Ready())
 	storedAccount, err := restarted.store.read("account.pem")
@@ -253,7 +253,7 @@ func TestACMEChangedAccountKeyCannotSilentlyReplaceTheActiveAccount(t *testing.T
 	clock := newACMETestClock()
 	ca := newACMETestCA(t, clock)
 	_, source, manager := newACMETestSource(t, ca, "app.example.org")
-	require.NoError(t, manager.Prepare(context.Background()))
+	require.NoError(t, prepareACMETestTLS(context.Background(), ca, source, manager))
 	path := filepath.Join(source.store.path, "account.pem")
 	other, err := openACMEStore(filepath.Join(t.TempDir(), "other"), ca.server.URL+"/directory")
 	require.NoError(t, err)

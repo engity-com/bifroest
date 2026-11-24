@@ -67,16 +67,23 @@ jobs:
           fetch-depth: 0
           ref: ${{ steps.release-version.outputs.release_tag }}
 
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Checkout workflow cache action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: var/ci-workflow
+          sparse-checkout: .github/actions/cache-go
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Cache Go modules
+        uses: ./var/ci-workflow/.github/actions/cache-go
+        with:
+          scope: build-tools
 
       - name: Evaluate build environment
         id: refs

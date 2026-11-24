@@ -902,9 +902,13 @@ const dockerEnvironmentContainerfile = `FROM ` + alpineImage + ` AS fixture-shel
 RUN /bin/busybox bbconfig > /busybox.config \
 	&& apk add --no-cache build-base linux-headers curl
 WORKDIR /src
-RUN curl --fail --location --proto '=https' --tlsv1.2 https://busybox.net/downloads/busybox-1.37.0.tar.bz2 -o /busybox-1.37.0.tar.bz2 \
-	&& echo '3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4  /busybox-1.37.0.tar.bz2' | sha256sum -c - \
-	&& tar -xjf /busybox-1.37.0.tar.bz2
+RUN set -eu; \
+	if ! curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 https://busybox.net/downloads/busybox-1.37.0.tar.bz2 -o /busybox-1.37.0.tar.bz2; then \
+		echo 'BusyBox download failed; trying the Buildroot source mirror.' >&2; \
+		curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 https://sources.buildroot.net/busybox/busybox-1.37.0.tar.bz2 -o /busybox-1.37.0.tar.bz2; \
+	fi; \
+	echo '3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4  /busybox-1.37.0.tar.bz2' | sha256sum -c -; \
+	tar -xjf /busybox-1.37.0.tar.bz2
 COPY read-key-cursor.patch /read-key-cursor.patch
 WORKDIR /src/busybox-1.37.0
 RUN cp /busybox.config .config \
