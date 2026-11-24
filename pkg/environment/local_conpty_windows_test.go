@@ -170,6 +170,20 @@ func TestLocalConPTYRelayExitStatusFailsClosed(t *testing.T) {
 }
 
 func TestLocalConPTYRelayRoundTrip(t *testing.T) {
+	testLocalConPTYRelayRuns(t, false)
+}
+
+func TestLocalConPTYRelayImmediateExit(t *testing.T) {
+	// Nano Server 2022 intermittently loses all first-use output in this case.
+	// Keep that stricter stress case separate from the interactive smoke test.
+	if os.Getenv("BIFROEST_TEST_CONPTY_IMMEDIATE_EXIT") != "1" {
+		t.Skip("set BIFROEST_TEST_CONPTY_IMMEDIATE_EXIT=1 to stress first-use output from immediately exiting ConPTY clients")
+	}
+	testLocalConPTYRelayRuns(t, true)
+}
+
+func testLocalConPTYRelayRuns(t *testing.T, immediateExit bool) {
+	t.Helper()
 	if os.Getenv("BIFROEST_CONPTY_RELAY_TEST_CHILD") == "1" {
 		var observation localConPTYRelayObservation
 		argv := []string{os.Args[0], "local-windows-console-child"}
@@ -183,6 +197,12 @@ func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 			argv = append(argv, "7")
 		} else if os.Getenv("BIFROEST_CONPTY_TEST_EXPLICIT_ZERO_ARG") == "1" {
 			argv = append(argv, "0")
+		}
+		if !immediateExit {
+			if len(argv) == 2 {
+				argv = append(argv, "0")
+			}
+			argv = append(argv, "roundtrip")
 		}
 		code, err := runLocalConPTYRelay(80, 25, argv, &observation)
 		// This is observed only after the production relay has returned; it
@@ -201,35 +221,66 @@ func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	if os.Getenv("BIFROEST_CONPTY_TEST_NONZERO_FIRST") == "1" {
 		statuses[0], statuses[1] = statuses[1], statuses[0]
 	}
-	// Independent fresh-host executions, not retries: every first-use result
-	// must retain all output, including from children that immediately exit.
+	// Independent fresh-host executions, not retries. The smoke test exchanges
+	// input before exit; the opt-in stress test also demands output without it.
+	testName := t.Name()
 	for iteration := range 8 {
 		for _, status := range statuses {
 			t.Run(fmt.Sprintf("run=%d/exit=%d", iteration, status), func(t *testing.T) {
-				testLocalConPTYRelayRoundTrip(t, status)
+				testLocalConPTYRelayRoundTrip(t, testName, status, immediateExit)
 			})
 		}
 	}
 }
 
-func testLocalConPTYRelayRoundTrip(t *testing.T, status int) {
+func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, immediateExit bool) {
 	t.Helper()
 	self, err := windows.GetCurrentProcessToken().GetTokenUser()
 	require.NoError(t, err)
 	version := windows.RtlGetVersion()
 	t.Logf("ConPTY library=%s systemReleaseAvailable=%t runtimeOS=%d.%d.%d nativeConsoleWrite=%t rawFileWrite=%t nonzeroFirst=%t explicitZeroArg=%t nanoMarker=%t (child exit 2 means unexpected geometry)", conpty.Version, windows.NewLazySystemDLL("kernel32.dll").NewProc("ReleasePseudoConsole").Find() == nil, version.MajorVersion, version.MinorVersion, version.BuildNumber, os.Getenv("BIFROEST_CONPTY_TEST_NATIVE_CONSOLE_WRITE") == "1", os.Getenv("BIFROEST_CONPTY_TEST_RAW_FILE_WRITE") == "1", os.Getenv("BIFROEST_CONPTY_TEST_NONZERO_FIRST") == "1", os.Getenv("BIFROEST_CONPTY_TEST_EXPLICIT_ZERO_ARG") == "1", os.Getenv("BIFROEST_TEST_NANOSERVER_IN_CONTAINER") == "1")
-	cmd := exec.Command(os.Args[0], "-test.run=^TestLocalConPTYRelayRoundTrip$")
+	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$")
 	cmd.Env = append(os.Environ(), "BIFROEST_CONPTY_RELAY_TEST_CHILD=1", "BIFROEST_CONPTY_TEST_EXIT="+strconv.Itoa(status))
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	ready := make(chan string, 1)
+	stdout := &localConPTYTestOutput{}
+	if !immediateExit {
+		stdout.ready = ready
+	}
+	var stderr bytes.Buffer
+	cmd.Stdout = stdout
 	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
+	defer func() { _ = stdin.Close() }()
 	require.NoError(t, cmd.Start())
 	result := make(chan error, 1)
 	go func() { result <- cmd.Wait() }()
+	waited := false
+	defer func() {
+		if !waited {
+			_ = cmd.Process.Kill()
+			<-result
+		}
+	}()
+	timeout := time.NewTimer(20 * time.Second)
+	defer timeout.Stop()
+	if !immediateExit {
+		select {
+		case prefix := <-ready:
+			require.Contains(t, strings.ToUpper(prefix), strings.ToUpper(self.User.Sid.String()))
+			require.Contains(t, prefix, "native-console=80x25")
+			require.Contains(t, prefix, "native-console-child write-success=true ")
+			require.NoError(t, writeLocalConPTYFrame(stdin, localConPTYFrame{kind: 'D', data: []byte(localConPTYTestContinue + "\r")}))
+		case err := <-result:
+			waited = true
+			t.Fatalf("ConPTY relay exited before the roundtrip acknowledgement: %v; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+		case <-timeout.C:
+			t.Fatal("ConPTY relay did not produce readiness output within 20 seconds")
+		}
+	}
 	select {
 	case err := <-result:
+		waited = true
 		t.Logf("ConPTY test parent wait completed: error=%t relayReturnSuccessMarker=%t childWriteSuccessMarker=%t stdoutBytes=%d stderrBytes=%d",
 			err != nil,
 			strings.HasPrefix(stderr.String(), fmt.Sprintf("conpty-test relay-returned exit=%d error=false ", status)),
@@ -246,15 +297,15 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, status int) {
 		require.Contains(t, stderr.String(), fmt.Sprintf("conpty-test relay-returned exit=%d error=false ", status))
 		require.Contains(t, stderr.String(), "released=true")
 		require.Contains(t, stderr.String(), "eofBeforeClose=true", "native EOF must precede ClosePseudoConsole")
-	case <-time.After(20 * time.Second):
-		_ = cmd.Process.Kill()
-		<-result
+	case <-timeout.C:
 		t.Fatal("ConPTY relay did not stop within 20 seconds")
 	}
-	_ = stdin.Close()
 	require.Contains(t, strings.ToUpper(stdout.String()), strings.ToUpper(self.User.Sid.String()))
 	require.Contains(t, stdout.String(), "native-console=80x25")
 	require.Contains(t, stdout.String(), "native-console-child write-success=true ")
+	if !immediateExit {
+		require.Contains(t, stdout.String(), localConPTYTestFinished, "the unacknowledged final output must survive immediate child exit")
+	}
 }
 
 func TestLocalConPTYChildStandardHandlesAreClearedAndRestored(t *testing.T) {
