@@ -113,7 +113,8 @@ func TestLocalWindowsUnmanagedCleanupSnapshot(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	if (len(os.Args) == 2 || len(os.Args) == 3 && (os.Args[2] == "0" || os.Args[2] == "7")) && (os.Args[1] == "local-windows-console-child" || os.Args[1] == "local-windows-native-console-child" || os.Args[1] == "local-windows-file-console-child") {
+	consoleChildArgs := len(os.Args) == 2 || (len(os.Args) == 3 || len(os.Args) == 4 && os.Args[3] == "roundtrip") && (os.Args[2] == "0" || os.Args[2] == "7")
+	if consoleChildArgs && (os.Args[1] == "local-windows-console-child" || os.Args[1] == "local-windows-native-console-child" || os.Args[1] == "local-windows-file-console-child") {
 		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) || !term.IsTerminal(int(os.Stderr.Fd())) {
 			fmt.Fprintln(os.Stderr, "native child standard handles are not attached to its console")
 			os.Exit(1)
@@ -161,7 +162,12 @@ func TestMain(m *testing.M) {
 		if !complete || diagnosticErr != nil || diagnosticWritten != len(diagnostic) {
 			os.Exit(1)
 		}
-		if len(os.Args) == 3 && os.Args[2] == "7" {
+		if len(os.Args) == 4 {
+			if err := runLocalConPTYTestHandshake(os.Stdin, os.Stdout); err != nil {
+				os.Exit(1)
+			}
+		}
+		if len(os.Args) >= 3 && os.Args[2] == "7" {
 			os.Exit(7)
 		}
 		os.Exit(0)
