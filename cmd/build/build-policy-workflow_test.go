@@ -62,7 +62,10 @@ func TestPolicyWorkflowRunsNativeCLIOnAllThreePlatformsAndKeepsFailedReports(t *
 		for _, value := range step.Env {
 			require.NotContains(t, value, "secrets.")
 		}
-		if step.Uses != "" {
+		if step.Uses == "./.github/actions/cache-go" {
+			require.Equal(t, "test-policy", step.With["scope"])
+			require.Equal(t, "cgo0", step.With["context"])
+		} else if step.Uses != "" {
 			require.Regexp(t, `@[a-f0-9]{40}$`, step.Uses)
 		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {

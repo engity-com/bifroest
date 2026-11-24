@@ -38,7 +38,10 @@ func TestPolicyOCIWorkflowUsesReadOnlyPermissionsAndKeepsOnlyReports(t *testing.
 	checked, uploaded := false, false
 	for _, step := range job.Steps {
 		require.False(t, step.ContinueOnError)
-		if step.Uses != "" {
+		if step.Uses == "./.github/actions/cache-go" {
+			require.Equal(t, "test-policy-oci", step.With["scope"])
+			require.Equal(t, "cgo0", step.With["context"])
+		} else if step.Uses != "" {
 			require.Regexp(t, `@[a-f0-9]{40}$`, step.Uses)
 		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
