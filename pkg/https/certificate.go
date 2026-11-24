@@ -110,7 +110,7 @@ func readCertificateChain(path string) ([][]byte, error) {
 	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maximumCertificateFileBytes {
 		return nil, fmt.Errorf("certificate must be a bounded regular file")
 	}
-	file, err := os.Open(canonical)
+	file, err := sys.OpenFileForRotation(canonical)
 	if err != nil {
 		return nil, err
 	}

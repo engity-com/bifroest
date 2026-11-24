@@ -3,6 +3,7 @@
 package crypto
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func TestGeneratedPrivateKeyHasProtectedDACL(t *testing.T) {
@@ -28,6 +31,81 @@ func TestBootstrapFileHasProtectedDACL(t *testing.T) {
 
 	require.NoError(t, WriteBootstrapFile(path, []byte("replacement\n"), true))
 	requireProtectedDACL(t, path)
+}
+
+func TestBootstrapFileRotationWithOpenReaderPreservesBothGenerationsAndDACL(t *testing.T) {
+	for _, name := range []string{"key.pem", "cl\u00e9-\U0001f512.pem", "long-path"} {
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			filename := name
+			if name == "long-path" {
+				for len(directory) < 280 {
+					directory = filepath.Join(directory, strings.Repeat("a", 40))
+				}
+				filename = "key.pem"
+			}
+			path := filepath.Join(directory, filename)
+			require.NoError(t, WriteBootstrapFile(path, []byte("original"), false))
+			reader, err := sys.OpenFileForRotation(path)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reader.Close()) })
+			originalInfo, err := reader.Stat()
+			require.NoError(t, err)
+
+			require.Error(t, WriteBootstrapFile(path, []byte("must not overwrite"), false))
+			unchanged, err := ReadSecurePrivateFile(path, 1024)
+			require.NoError(t, err)
+			require.Equal(t, []byte("original"), unchanged)
+
+			require.NoError(t, WriteBootstrapFile(path, []byte("replacement"), true))
+			requireProtectedDACL(t, path)
+			current, err := ReadSecurePrivateFile(path, 1024)
+			require.NoError(t, err)
+			require.Equal(t, []byte("replacement"), current)
+			previous, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			require.Equal(t, []byte("original"), previous)
+			currentInfo, err := os.Stat(path)
+			require.NoError(t, err)
+			require.False(t, os.SameFile(originalInfo, currentInfo), "rotation must replace the name, not mutate the open file")
+			leftovers, err := filepath.Glob(filepath.Join(directory, ".bifroest-bootstrap-*"))
+			require.NoError(t, err)
+			require.Empty(t, leftovers)
+		})
+	}
+}
+
+func TestBootstrapFileRotationDoesNotInheritUnsafeTargetDACL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "identity")
+	require.NoError(t, WriteBootstrapFile(path, []byte("original"), false))
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;OW)(A;;FR;;;WD)")
+	require.NoError(t, err)
+	dacl, _, err := descriptor.DACL()
+	require.NoError(t, err)
+	require.NoError(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil))
+	_, err = ReadSecurePrivateFile(path, 1024)
+	require.ErrorContains(t, err, "identity other than")
+
+	require.NoError(t, WriteBootstrapFile(path, []byte("replacement"), true))
+	requireProtectedDACL(t, path)
+	raw, err := ReadSecurePrivateFile(path, 1024)
+	require.NoError(t, err)
+	require.Equal(t, []byte("replacement"), raw)
+}
+
+func TestBootstrapFileReplacementRejectsDifferentDirectories(t *testing.T) {
+	temporary := filepath.Join(t.TempDir(), "temporary")
+	target := filepath.Join(t.TempDir(), "identity")
+	require.NoError(t, WriteBootstrapFile(temporary, []byte("replacement"), false))
+	require.NoError(t, WriteBootstrapFile(target, []byte("original"), false))
+	require.ErrorContains(t, installBootstrapFile(temporary, target, true), "same directory")
+	for path, expected := range map[string]string{temporary: "replacement", target: "original"} {
+		raw, err := ReadSecurePrivateFile(path, 1024)
+		require.NoError(t, err)
+		require.Equal(t, []byte(expected), raw)
+	}
 }
 
 func TestProtectedTempFileHasProtectedDACLWhileOpen(t *testing.T) {

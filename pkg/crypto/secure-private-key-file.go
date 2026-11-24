@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 // LoadSecurePrivateKeyFile loads an existing private key without creating or
@@ -38,7 +40,7 @@ func ReadSecurePrivateFile(path string, maximumSize int64) ([]byte, error) {
 	if pathInfo.Size() < 0 || pathInfo.Size() > maximumSize {
 		return nil, fmt.Errorf("private key %q exceeds %d bytes", path, maximumSize)
 	}
-	file, err := os.Open(path)
+	file, err := sys.OpenFileForRotation(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open private key %q: %w", path, err)
 	}

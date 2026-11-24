@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,6 +19,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func copyReloadPair(t *testing.T, source, target configuration.HttpCertificate) {
@@ -40,6 +42,57 @@ func TestTLSReloadCopiesKeepPrivateKeysProtected(t *testing.T) {
 		pair, err := loadCertificate(target, time.Now())
 		require.NoError(t, err)
 		require.Equal(t, source.certificate.Certificate, pair.value.Certificate)
+	}
+}
+
+func TestTLSReloadRotatesWhilePreviousFilesRemainOpen(t *testing.T) {
+	first := newTlsTestCertificate(t, []string{"app.example.org"}, false, nil)
+	second := newTlsTestCertificate(t, []string{"app.example.org"}, false, nil)
+	conf := newTlsTestConfiguration(t, "app.example.org")
+	conf.Tls.Acme.Enabled = false
+	conf.Tls.Certificates = []configuration.HttpCertificate{first.configured}
+	manager, err := NewTLS(conf, nil)
+	require.NoError(t, err)
+	defer manager.Close()
+	require.NoError(t, manager.Prepare(t.Context()))
+	original, err := manager.Config().GetConfigForClient(testClientHello("app.example.org"))
+	require.NoError(t, err)
+
+	type heldFile struct {
+		reader *os.File
+		raw    []byte
+	}
+	var previous []heldFile
+	for _, path := range []string{first.configured.CertificateFile, first.configured.PrivateKeyFile} {
+		reader, err := sys.OpenFileForRotation(path)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, reader.Close()) })
+		raw, err := os.ReadFile(path)
+		require.NoError(t, err)
+		previous = append(previous, heldFile{reader, raw})
+	}
+
+	chain, err := os.ReadFile(second.configured.CertificateFile)
+	require.NoError(t, err)
+	require.NoError(t, bfcrypto.WriteBootstrapFile(first.configured.CertificateFile, chain, true))
+	require.Error(t, manager.ReloadFiles(t.Context()), "an incomplete rotation must retain the previous pair")
+	retained, err := manager.Config().GetConfigForClient(testClientHello("app.example.org"))
+	require.NoError(t, err)
+	require.Equal(t, original.Certificates[0].Certificate, retained.Certificates[0].Certificate)
+	require.True(t, manager.Ready())
+
+	key, err := os.ReadFile(second.configured.PrivateKeyFile)
+	require.NoError(t, err)
+	require.NoError(t, bfcrypto.WriteBootstrapFile(first.configured.PrivateKeyFile, key, true))
+	require.NoError(t, manager.ReloadFiles(t.Context()))
+	updated, err := manager.Config().GetConfigForClient(testClientHello("app.example.org"))
+	require.NoError(t, err)
+	require.Equal(t, second.certificate.Certificate, updated.Certificates[0].Certificate)
+	require.Equal(t, first.certificate.Certificate, original.Certificates[0].Certificate)
+	for _, file := range previous {
+		raw, err := io.ReadAll(file.reader)
+		require.NoError(t, err)
+		require.Equal(t, file.raw, raw, "existing read handles must keep reading the old file generation")
 	}
 }
 
