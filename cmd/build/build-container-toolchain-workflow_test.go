@@ -1,7 +1,9 @@
 package main
 
 import (
+	gos "os"
 	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,7 +60,9 @@ apt-get() {
   if [ "$1" = install ]; then return "$INSTALL_STATUS"; fi
 }
 ` + "PACKAGE_STATUS=" + tt.status + "\nINSTALL_STATUS=" + tt.installStatus + "\n" + prepare
-			command := osexec.CommandContext(t.Context(), bash, "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script)
+			scriptPath := filepath.Join(t.TempDir(), "container-toolchain.sh")
+			require.NoError(t, gos.WriteFile(scriptPath, []byte(script), 0o600))
+			command := osexec.CommandContext(t.Context(), bash, "--noprofile", "--norc", "-e", "-o", "pipefail", filepath.ToSlash(scriptPath))
 			output, err := command.CombinedOutput()
 			if tt.installStatus == "0" {
 				require.NoError(t, err, string(output))
