@@ -18,20 +18,21 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 		{
 			name: "test:go",
 			commands: []string{
-				`'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -v -covermode atomic -coverprofile=var/profile.cov ./...'`,
-				`'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -v -tags=local_build,local_kind ./pkg/alternatives'`,
+				`'go run ./cmd/testreport run --output var/test-report/core -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json ./...'`,
+				`'go run ./cmd/testreport run --output var/test-report/alternatives -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json -tags=local_build,local_kind ./pkg/alternatives'`,
+			},
+		},
+		{
+			name: "test:go:coverage",
+			commands: []string{
+				`'go run ./cmd/testreport run --output var/test-report/core -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json -covermode atomic -coverprofile=var/profile.cov ./...'`,
+				`'go run ./cmd/testreport run --output var/test-report/alternatives -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json -tags=local_build,local_kind ./pkg/alternatives'`,
 			},
 		},
 		{
 			name: "test:go:race",
 			commands: []string{
-				`'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -race ./...'`,
-			},
-		},
-		{
-			name: "test:go:browser",
-			commands: []string{
-				`"go test -p={{env.GO_TEST_PARALLELISM | default(value=\"2\")}} -v -count=1 -covermode atomic -coverprofile=var/browser-profile.cov -timeout=20m -run '^TestBrowser' ./pkg/service"`,
+				`'go run ./cmd/testreport run --output var/test-report/race -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json -race ./...'`,
 			},
 		},
 	} {
@@ -51,7 +52,7 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 func TestGoWorkflowKeepsWindowsTestsSerialWithoutNarrowingTheSuite(t *testing.T) {
 	jobs := readGoJobsWorkflow(t)
 	require.Equal(t, "${{ matrix.os == 'windows' && '1' || '2' }}", jobs["test-host"].Env["GO_TEST_PARALLELISM"])
-	for _, job := range []string{"test-container", "test-race", "browser"} {
+	for _, job := range []string{"test-container", "test-race", "test-static", "test-browser"} {
 		configuration, found := jobs[job]
 		require.True(t, found)
 		require.Empty(t, configuration.Env["GO_TEST_PARALLELISM"], "%s must retain the bounded default", job)

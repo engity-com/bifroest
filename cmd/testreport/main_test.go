@@ -178,7 +178,7 @@ func TestCancellationCleansDescendants(t *testing.T) {
 		t.Fatal("cancel did not release child output pipes")
 	}
 	r := loadReport(t, filepath.Join(dir, "report"))
-	if !r.Cancelled || r.Status == "pass" || r.Complete {
+	if !r.Canceled || r.Status == "pass" || r.Complete {
 		t.Fatalf("cancel was green: %+v", r)
 	}
 	time.Sleep(1100 * time.Millisecond)

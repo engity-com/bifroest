@@ -87,8 +87,8 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		code, runErr = run(ctx, flags.Args(), *output, raw, a, stderr, &r)
 	} else {
 		runErr = analyzeInput(ctx, source, io.MultiWriter(raw, a))
-		r.Cancelled = ctx.Err() != nil
-		if r.Cancelled {
+		r.Canceled = ctx.Err() != nil
+		if r.Canceled {
 			code = 130
 		}
 	}
@@ -183,7 +183,7 @@ func run(ctx context.Context, args []string, output string, raw io.Writer, a *an
 	a.commandEnd = end
 	r.WallSeconds = seconds(end.Sub(start).Seconds())
 	r.Resources = measureResources(cmd.ProcessState)
-	r.Cancelled = ctx.Err() != nil
+	r.Canceled = ctx.Err() != nil
 	code := 0
 	if err != nil {
 		code = 1
@@ -200,7 +200,7 @@ func run(ctx context.Context, args []string, output string, raw io.Writer, a *an
 		r.ExitCode = new(int)
 		*r.ExitCode = code
 	}
-	if r.Cancelled {
+	if r.Canceled {
 		code = 130
 	}
 	return code, errors.Join(err, childOut.err(), childErr.err(), log.Close())

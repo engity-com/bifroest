@@ -132,7 +132,9 @@ func TestOversizedRecordIsBoundedAndRawDiagnosticsSurvive(t *testing.T) {
 			t.Fatalf("unbounded line buffer: %d", cap(a.line))
 		}
 	}
-	io.WriteString(a, "\n{\"Action\":\"start\",\"Package\":\"p\"}\r\n{\"Action\":\"pass\",\"Package\":\"p\"}")
+	if _, err := io.WriteString(a, "\n{\"Action\":\"start\",\"Package\":\"p\"}\r\n{\"Action\":\"pass\",\"Package\":\"p\"}"); err != nil {
+		t.Fatal(err)
+	}
 	a.finish()
 	if a.invalid != 1 || len(a.packages) != 1 {
 		t.Fatalf("did not recover: %+v", a)

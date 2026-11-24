@@ -10,7 +10,7 @@ inputs:
     required: false
     default: ""
   build-cache:
-    description: Restore and save Go build results for expensive test jobs.
+    description: "Go build results: false (disabled), true (restore and save), or restore-only (no new snapshots)."
     required: false
     default: "false"
 
@@ -85,10 +85,15 @@ runs:
     - name: Cache Go build results
       if: ${{ inputs.build-cache == 'true' }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-      with:
+      with: &go-build-cache
         path: ${{ steps.go.outputs.gocache }}
         # Each commit extends the cache; reruns and parallel callers reuse the same snapshot.
         key: go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
         restore-keys: |
           go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-${{ hashFiles('**/go.sum') }}-
           go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.goversion }}-${{ steps.go.outputs.goos }}-${{ steps.go.outputs.goarch }}-cgo${{ steps.go.outputs.cgo-enabled }}-${{ steps.go.outputs.context-hash }}-
+
+    - name: Restore Go build results without saving a shard snapshot
+      if: ${{ inputs.build-cache == 'restore-only' }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with: *go-build-cache

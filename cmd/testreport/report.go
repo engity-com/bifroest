@@ -70,7 +70,7 @@ type report struct {
 	Status          string     `json:"status"`
 	StartedAt       *time.Time `json:"started_at,omitempty"`
 	ExitCode        *int       `json:"exit_code,omitempty"`
-	Cancelled       bool       `json:"cancelled"`
+	Canceled        bool       `json:"canceled"`
 	Complete        bool       `json:"complete"`
 	CollectionError bool       `json:"collection_error"`
 	WallSeconds     *float64   `json:"wall_seconds,omitempty"`
@@ -353,7 +353,7 @@ func (a *analyzer) fill(r *report, baseline *report) {
 		}
 	}
 	r.Status = "pass"
-	if !r.Complete || r.Cancelled {
+	if !r.Complete || r.Canceled {
 		r.Status = "incomplete"
 	}
 	if failed {

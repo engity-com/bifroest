@@ -13,6 +13,7 @@ import (
 )
 
 type goJobsWorkflowStep struct {
+	Name            string            `yaml:"name"`
 	Uses            string            `yaml:"uses"`
 	Run             string            `yaml:"run"`
 	If              string            `yaml:"if"`
@@ -64,7 +65,7 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 		lint, native    bool
 	}{
 		"test-host":         {"mise -C web exec -- node scripts/native-go-tests.ts", "test_host_matrix", false, false},
-		"test-container":    {"mise run test:go", "test_container_matrix", false, true},
+		"test-container":    {"mise run test:go:coverage", "test_container_matrix", false, true},
 		"test-race":         {"mise run test:go:race", "test_container_matrix", false, true},
 		"lint-go-host":      {"mise run lint:go", "test_host_matrix", true, false},
 		"lint-go-container": {"mise run lint:go", "test_container_matrix", true, true},
@@ -97,7 +98,15 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 			checkout, dependencies, command, node := -1, -1, -1, -1
 			for i, step := range job.Steps {
 				require.False(t, step.ContinueOnError)
-				require.Empty(t, step.If, "a scheduled check must not silently skip preparation or execution")
+				if step.If != "" {
+					require.Equal(t, "always()", step.If, "only failure diagnostics may have a conditional")
+					if step.Uses != "" {
+						require.True(t, strings.HasPrefix(step.Uses, "actions/upload-artifact@"))
+						require.Contains(t, step.With["path"], "var/test-report/")
+					} else {
+						require.Contains(t, step.Run, "GITHUB_STEP_SUMMARY")
+					}
+				}
 				if check.native {
 					require.NotEqual(t, "0", step.Env["CGO_ENABLED"])
 				}
@@ -113,8 +122,9 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 				if step.Run == "mise -C web install node" {
 					node = i
 				}
-				if step.Run == check.command {
+				if step.Run == check.command || (name == "test-container" && strings.Contains(step.Run, check.command)) {
 					require.Equal(t, -1, command, "run each check once")
+					require.Empty(t, step.If, "test execution must remain mandatory")
 					command = i
 				} else {
 					require.NotContains(t, step.Run, "mise run lint:go")
@@ -161,6 +171,10 @@ func TestGoWorkflowRaceRetainsPreparedContainerAndAsciinema(t *testing.T) {
 func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testing.T) {
 	job := readGoJobsWorkflow(t)["package"]
 	mandatory := map[string]string{
+		"browser":          "BROWSER_RESULT",
+		"test-static":      "TEST_STATIC_RESULT",
+		"test-web":         "TEST_WEB_RESULT",
+		"test-browser":     "TEST_BROWSER_RESULT",
 		"test-host":        "TEST_HOST_RESULT",
 		"test-container":   "TEST_CONTAINER_RESULT",
 		"test-race":        "TEST_RACE_RESULT",
@@ -305,6 +319,9 @@ func TestGoWorkflowCachesFollowMiseAndIsolateBuildContexts(t *testing.T) {
 	jobs := readGoJobsWorkflow(t)
 	contexts := map[string]string{
 		"browser":           "cgo0",
+		"test-static":       "cgo0",
+		"test-web":          "cgo0",
+		"test-browser":      "cgo0",
 		"test-host":         "cgo0",
 		"lint-go-host":      "cgo0",
 		"test-policy":       "cgo0",
@@ -318,7 +335,14 @@ func TestGoWorkflowCachesFollowMiseAndIsolateBuildContexts(t *testing.T) {
 	}
 	for name, context := range contexts {
 		t.Run(name, func(t *testing.T) {
-			requireGoWorkflowCacheRevision(t, jobs[name], "${{ inputs.commit || inputs.ref }}", name, context)
+			scope := name
+			switch name {
+			case "browser":
+				scope = "browser-assets"
+			case "test-static", "test-browser":
+				scope = "browser"
+			}
+			requireGoWorkflowCacheRevision(t, jobs[name], "${{ inputs.commit || inputs.ref }}", scope, context)
 		})
 	}
 }

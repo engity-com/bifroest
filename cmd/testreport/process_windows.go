@@ -36,18 +36,18 @@ func configureCommand(cmd *exec.Cmd) (func() error, func(), error) {
 		return nil, nil, err
 	}
 	var mu sync.Mutex
-	cancelled := false
+	canceled := false
 	cmd.Cancel = func() error {
 		mu.Lock()
 		defer mu.Unlock()
-		cancelled = true
+		canceled = true
 		_, _, _ = terminateJobObject.Call(h, 1)
 		return cmd.Process.Kill()
 	}
 	attach := func() error {
 		mu.Lock()
 		defer mu.Unlock()
-		if cancelled {
+		if canceled {
 			_ = cmd.Process.Kill()
 			return os.ErrProcessDone
 		}

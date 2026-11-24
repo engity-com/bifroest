@@ -43,10 +43,37 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 		}
 	}
 	joined := strings.Join(commands, "\n")
-	for _, command := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run lint:web", "mise -C web run build:web", "bun run test:release", "mise -C web run test:web", "mise -C web run test:go"} {
+	for _, command := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run build:web", "bun run test:release"} {
 		require.Contains(t, joined, command)
 	}
+	for _, command := range []string{"run test:web", "run test:go", "run lint:web", "install:web:browser"} {
+		require.NotContains(t, joined, command, "asset production must not wait for test execution")
+	}
 	require.Less(t, strings.Index(joined, "run build:web"), strings.Index(joined, "bun run test:release"))
+	for _, name := range []string{"test-static", "test-browser"} {
+		test := workflow.Jobs[name]
+		require.Equal(t, "browser", test.Needs)
+		require.Equal(t, "0", test.Env["CGO_ENABLED"])
+		downloads := 0
+		for _, step := range test.Steps {
+			if with, ok := step["with"].(map[string]any); ok && with["name"] == "browser-assets" {
+				downloads++
+				require.Equal(t, "pkg/webui/assets", with["path"], "tests and binaries must consume the same artifact")
+			}
+		}
+		require.Equal(t, 1, downloads)
+	}
+	web := workflow.Jobs["test-web"]
+	require.Empty(t, web.Needs, "source validation need not wait for release assets")
+	var webCommands []string
+	for _, step := range web.Steps {
+		if command, ok := step["run"].(string); ok {
+			webCommands = append(webCommands, command)
+		}
+	}
+	for _, command := range []string{"run install:web", "run install:web:browser", "run lint:web", "run test:web"} {
+		require.Contains(t, strings.Join(webCommands, "\n"), command)
+	}
 	for _, name := range []string{"binary-host", "binary-container"} {
 		binary := workflow.Jobs[name]
 		require.Equal(t, "browser", binary.Needs)
@@ -102,34 +129,44 @@ func TestBrowserIntegrationHasSeparateBudgetWithoutExtendingCoreTests(t *testing
 		} `yaml:"jobs"`
 	}
 	require.NoError(t, yaml.Unmarshal(raw, &workflow))
-	job := workflow.Jobs["browser"]
+	job := workflow.Jobs["test-static"]
 	for _, flag := range []string{"BIFROEST_TEST_BROWSER_UI", "BIFROEST_TEST_BROWSER_CLIENT"} {
 		require.Empty(t, job.Env[flag])
 	}
-	core, browser := -1, -1
+	core := -1
 	for index, step := range job.Steps {
-		if strings.Contains(step.Run, "mise -C web run test:go\n") || step.Run == "mise -C web run test:go" {
+		if step.Run == "mise -C web exec -- node scripts/native-go-tests.ts" {
 			core = index
 			for _, flag := range []string{"BIFROEST_TEST_BROWSER_UI", "BIFROEST_TEST_BROWSER_CLIENT"} {
 				require.Empty(t, step.Env[flag], "browser tests must not consume the core package timeout")
 			}
 		}
-		if strings.Contains(step.Run, "mise -C web run test:go:browser") {
-			browser = index
-			require.Contains(t, step.Run, "mise -C web which node")
-		}
+		require.NotContains(t, step.Run, "run test:go:browser")
 	}
 	require.NotEqual(t, -1, core)
-	require.Greater(t, browser, core)
+	browser := workflow.Jobs["test-browser"]
+	found := false
+	for _, step := range browser.Steps {
+		if strings.Contains(step.Run, "mise -C web run test:go:browser") {
+			found = true
+			require.Contains(t, step.Run, "mise -C web which node")
+			require.Contains(t, step.Run, `-- --shard "$SHARD"`)
+			require.Contains(t, step.Run, `if [ -f web/scripts/browser-go-tests.ts ]; then`)
+			require.Contains(t, step.Run, `elif [ "$SHARD" = 1/3 ]; then`, "older source refs must run the full suite exactly once")
+		}
+		require.NotContains(t, step.Run, "scripts/native-go-tests.ts", "shards must not repeat the full core suite")
+	}
+	require.True(t, found)
 
 	raw, err = gos.ReadFile("../../mise.toml")
 	require.NoError(t, err)
 	_, rest, found := strings.Cut(string(raw), `[tasks."test:go:browser"]`)
 	require.True(t, found)
 	body, _, _ := strings.Cut(rest, "\n[tasks.")
-	for _, value := range []string{`BIFROEST_TEST_BROWSER_UI = "1"`, `BIFROEST_TEST_BROWSER_CLIENT = "1"`, "-count=1", "-covermode atomic", "-coverprofile=var/browser-profile.cov", "-timeout=20m", "-run '^TestBrowser' ./pkg/service"} {
+	for _, value := range []string{`BIFROEST_TEST_BROWSER_UI = "1"`, `BIFROEST_TEST_BROWSER_CLIENT = "1"`, `dir = "web"`, "node scripts/browser-go-tests.ts"} {
 		require.Contains(t, body, value)
 	}
+	require.NotContains(t, body, "-cover", "unused browser coverage must not trigger another instrumented build")
 	_, rest, found = strings.Cut(string(raw), `[tasks."test:go"]`)
 	require.True(t, found)
 	body, _, _ = strings.Cut(rest, "\n[tasks.")
