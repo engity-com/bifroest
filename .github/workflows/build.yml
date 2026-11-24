@@ -70,8 +70,19 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - &checkout-workflow-cache
+        name: Checkout workflow cache action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: var/ci-workflow
+          sparse-checkout: .github/actions/cache-go
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: browser
           context: cgo0
@@ -138,8 +149,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: test-host
           context: cgo0
@@ -194,8 +207,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: lint-go-host
           context: cgo0
@@ -271,8 +286,10 @@ jobs:
         with:
           install_args: go
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: test-policy
           context: cgo0
@@ -318,8 +335,10 @@ jobs:
         with:
           install_args: go docker-cli
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: test-policy-oci
           context: cgo0
@@ -365,8 +384,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: test-container
           context: native-${{ matrix.image }}
@@ -420,8 +441,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: test-race
           context: native-${{ matrix.image }}
@@ -461,8 +484,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: lint-go-container
           context: native-${{ matrix.image }}
@@ -495,8 +520,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: binary-host
           context: ${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
@@ -556,8 +583,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: binary-container
           context: ${{ matrix.image }}-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
@@ -657,8 +686,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - *checkout-workflow-cache
+
       - name: Cache Go
-        uses: ./.github/actions/cache-go
+        uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: package
           context: *package-image

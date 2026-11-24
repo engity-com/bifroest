@@ -67,7 +67,12 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 		for _, step := range job.Steps {
 			if uses, ok := step["uses"].(string); ok && strings.HasPrefix(uses, "actions/checkout@") {
 				with := step["with"].(map[string]any)
-				require.Equal(t, "${{ inputs.commit || inputs.ref }}", with["ref"])
+				if path, _ := with["path"].(string); path == "" {
+					require.Equal(t, "${{ inputs.commit || inputs.ref }}", with["ref"])
+				} else {
+					require.Equal(t, "var/ci-workflow", path)
+					require.Equal(t, "${{ github.workflow_sha }}", with["ref"])
+				}
 			}
 		}
 	}

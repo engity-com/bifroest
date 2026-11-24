@@ -38,14 +38,19 @@ func TestPolicyOCIWorkflowUsesReadOnlyPermissionsAndKeepsOnlyReports(t *testing.
 	checked, uploaded := false, false
 	for _, step := range job.Steps {
 		require.False(t, step.ContinueOnError)
-		if step.Uses == "./.github/actions/cache-go" {
+		if step.Uses == "./var/ci-workflow/.github/actions/cache-go" {
 			require.Equal(t, "test-policy-oci", step.With["scope"])
 			require.Equal(t, "cgo0", step.With["context"])
 		} else if step.Uses != "" {
 			require.Regexp(t, `@[a-f0-9]{40}$`, step.Uses)
 		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
-			require.Equal(t, "${{ inputs.commit || inputs.ref }}", step.With["ref"])
+			if path, _ := step.With["path"].(string); path == "" {
+				require.Equal(t, "${{ inputs.commit || inputs.ref }}", step.With["ref"])
+			} else {
+				require.Equal(t, "var/ci-workflow", path)
+				require.Equal(t, "${{ github.workflow_sha }}", step.With["ref"])
+			}
 			require.Equal(t, false, step.With["persist-credentials"])
 		}
 		if step.Run == "mise run test:policy:oci" {
