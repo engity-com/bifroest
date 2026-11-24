@@ -331,11 +331,27 @@ func darwinRequireLifecycleAccount(t *testing.T, actual *bfuser.User, requiremen
 
 func TestDarwinLaunchDaemon(t *testing.T) {
 	if os.Geteuid() != 0 {
-		f, err := newFixture(t)
+		repoRoot, err := findRepoRoot()
 		if err != nil {
 			t.Fatal(err)
 		}
-		runDarwinServiceTestAsRoot(t, f.bifroest)
+		goTool, err := findGoTool(repoRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The service test needs only the native binary, not SSH keys, helper
+		// programs or Linux container binaries from the general E2E fixture.
+		binary := filepath.Join(t.TempDir(), "bifroest")
+		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+		build := runCommand(ctx, repoRoot,
+			[]string{"CGO_ENABLED=0", "GOOS=" + runtime.GOOS, "GOARCH=" + runtime.GOARCH},
+			goTool, "build", "-tags", "local_build,local_kind", "-trimpath",
+			"-ldflags=-s -w -X main.version=e2e-darwin-service", "-o", binary, "./cmd/bifroest")
+		cancel()
+		if build.err != nil {
+			t.Fatalf("build native Bifroest (%s/%s): %v\n%s", runtime.GOOS, runtime.GOARCH, build.err, build.stderr)
+		}
+		runDarwinServiceTestAsRoot(t, binary)
 		return
 	}
 	sourceBinary := os.Getenv(darwinServiceTestBinary)
