@@ -61,6 +61,12 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
+      - name: Cache Go modules and build
+        uses: ./.github/actions/cache-go
+        with:
+          scope: nanoserver
+          context: ${{ matrix.windows }}
+
       - name: Install dependencies
         shell: bash
         run: |
