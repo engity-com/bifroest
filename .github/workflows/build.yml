@@ -586,19 +586,18 @@ jobs:
 
   package:
     name: Package
-    needs: [test-host, test-container, test-race, lint-go-host, lint-go-container, binary-host, binary-container]
-    # Release skips Go lint by default. Do not let that skip packaging, but
-    # require every mandatory check and both lint jobs whenever lint is enabled.
-    if: >-
-      ${{ !cancelled() &&
-          needs.test-host.result == 'success' &&
-          needs.test-container.result == 'success' &&
-          needs.test-race.result == 'success' &&
-          needs.binary-host.result == 'success' &&
-          needs.binary-container.result == 'success' &&
-          (!inputs.lint_go ||
-           (needs.lint-go-host.result == 'success' &&
-            needs.lint-go-container.result == 'success')) }}
+    needs:
+      [
+        test-host,
+        test-container,
+        test-race,
+        lint-go-host,
+        lint-go-container,
+        binary-host,
+        binary-container,
+      ]
+    # This required check must fail, not skip, when a dependency fails.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -609,6 +608,36 @@ jobs:
       GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
       GITHUB_SHA: ${{ inputs.commit || github.sha }}
     steps:
+      - name: Require successful tests, race, binaries and enabled Go lint
+        shell: bash
+        env:
+          TEST_HOST_RESULT: ${{ needs.test-host.result }}
+          TEST_CONTAINER_RESULT: ${{ needs.test-container.result }}
+          TEST_RACE_RESULT: ${{ needs.test-race.result }}
+          BINARY_HOST_RESULT: ${{ needs.binary-host.result }}
+          BINARY_CONTAINER_RESULT: ${{ needs.binary-container.result }}
+          LINT_GO: ${{ inputs.lint_go }}
+          LINT_GO_HOST_RESULT: ${{ needs.lint-go-host.result }}
+          LINT_GO_CONTAINER_RESULT: ${{ needs.lint-go-container.result }}
+        run: |
+          failed=0
+          require_success() {
+            if [ "$2" != success ]; then
+              echo "::error::Required job $1 did not succeed (result: $2)."
+              failed=1
+            fi
+          }
+          require_success test-host "$TEST_HOST_RESULT"
+          require_success test-container "$TEST_CONTAINER_RESULT"
+          require_success test-race "$TEST_RACE_RESULT"
+          require_success binary-host "$BINARY_HOST_RESULT"
+          require_success binary-container "$BINARY_CONTAINER_RESULT"
+          if [ "$LINT_GO" = true ]; then
+            require_success lint-go-host "$LINT_GO_HOST_RESULT"
+            require_success lint-go-container "$LINT_GO_CONTAINER_RESULT"
+          fi
+          exit "$failed"
+
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

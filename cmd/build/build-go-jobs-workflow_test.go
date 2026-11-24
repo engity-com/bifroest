@@ -1,11 +1,8 @@
 package main
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	gos "os"
-	"regexp"
+	goexec "os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,6 +22,7 @@ type goJobsWorkflowStep struct {
 }
 
 type goJobsWorkflowJob struct {
+	Name            string            `yaml:"name"`
 	Needs           yaml.Node         `yaml:"needs"`
 	If              string            `yaml:"if"`
 	RunsOn          string            `yaml:"runs-on"`
@@ -156,50 +154,99 @@ func TestGoWorkflowRaceRetainsPreparedContainerAndAsciinema(t *testing.T) {
 
 func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testing.T) {
 	job := readGoJobsWorkflow(t)["package"]
-	mandatory := []string{"test-host", "test-container", "test-race", "binary-host", "binary-container"}
-	lint := []string{"lint-go-host", "lint-go-container"}
+	mandatory := map[string]string{
+		"test-host":        "TEST_HOST_RESULT",
+		"test-container":   "TEST_CONTAINER_RESULT",
+		"test-race":        "TEST_RACE_RESULT",
+		"binary-host":      "BINARY_HOST_RESULT",
+		"binary-container": "BINARY_CONTAINER_RESULT",
+	}
+	lint := map[string]string{
+		"lint-go-host":      "LINT_GO_HOST_RESULT",
+		"lint-go-container": "LINT_GO_CONTAINER_RESULT",
+	}
 	var needs []string
 	require.NoError(t, job.Needs.Decode(&needs))
-	require.ElementsMatch(t, append(append([]string{}, mandatory...), lint...), needs)
-	require.Contains(t, job.If, "cancelled()", "an explicit status function prevents Actions' implicit success() from skipping release packaging") //nolint:misspell // GitHub Actions status function.
-
-	// Parse the small boolean gate rather than snapshotting its formatting.
-	expression := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(job.If), "${{"), "}}"))
-	expression = regexp.MustCompile(`needs\.([a-z0-9-]+)\.result`).ReplaceAllString(expression, `needs["$1"]`)
-	expression = strings.ReplaceAll(expression, "inputs.lint_go", "lintGo")
-	expression = regexp.MustCompile(`'([^']*)'`).ReplaceAllString(expression, `"$1"`)
-	gate, err := parser.ParseExpr(expression)
-	require.NoError(t, err)
-	for _, enabled := range []bool{false, true} {
-		label := "release"
-		if enabled {
-			label = "ci"
+	expectedEnv := map[string]string{"LINT_GO": "${{ inputs.lint_go }}"}
+	var expectedNeeds []string
+	for _, group := range []map[string]string{mandatory, lint} {
+		for name, key := range group {
+			expectedNeeds = append(expectedNeeds, name)
+			expectedEnv[key] = "${{ needs." + name + ".result }}"
 		}
-		t.Run(label, func(t *testing.T) {
-			results := make(map[string]string, len(needs))
-			for _, name := range needs {
-				results[name] = "success"
-			}
-			if !enabled {
-				for _, name := range lint {
-					results[name] = "skipped"
-				}
-			}
-			require.Equal(t, true, evalGoJobsGate(t, gate, results, enabled, false))
-			require.Equal(t, false, evalGoJobsGate(t, gate, results, enabled, true), "canceled runs must not package")
-			required := mandatory
-			if enabled {
-				required = append(append([]string{}, mandatory...), lint...)
-			}
-			for _, name := range required {
-				for _, status := range []string{"failure", "cancelled", "skipped"} { //nolint:misspell // GitHub Actions job result.
-					results[name] = status
-					require.Equal(t, false, evalGoJobsGate(t, gate, results, enabled, false), "%s=%s must block packaging", name, status)
-				}
-				results[name] = "success"
-			}
-		})
 	}
+	require.ElementsMatch(t, expectedNeeds, needs)
+	require.Equal(t, "Package", job.Name, "preserve the ruleset's required check name")
+	require.Equal(t, "${{ !cancelled() }}", job.If, "dependency failures must run and fail Package, not skip it") //nolint:misspell // GitHub Actions status function.
+	require.False(t, job.ContinueOnError)
+	require.NotEmpty(t, job.Steps)
+	gate := job.Steps[0]
+	require.Empty(t, gate.Uses, "the gate runs before checkout or any other action")
+	require.Empty(t, gate.If)
+	require.False(t, gate.ContinueOnError)
+	require.Equal(t, "bash", gate.Shell)
+	require.Equal(t, expectedEnv, gate.Env)
+	for _, step := range job.Steps[1:] {
+		require.False(t, step.ContinueOnError)
+		for _, bypass := range []string{"always(", "failure(", "cancelled("} { //nolint:misspell // GitHub Actions status function.
+			require.NotContains(t, step.If, bypass, "later steps must not bypass a failed gate")
+		}
+	}
+
+	// Execute the actual first step, not a second implementation of its logic.
+	t.Run("bash", func(t *testing.T) {
+		bash, err := goexec.LookPath("bash")
+		if err != nil {
+			t.Skip("Bash is unavailable; structural gate guards still run")
+		}
+		run := func(t *testing.T, values map[string]string) (string, error) {
+			t.Helper()
+			command := goexec.Command(bash, "-e", "-o", "pipefail", "-c", gate.Run)
+			command.Env = gos.Environ()
+			for key, value := range values {
+				command.Env = append(command.Env, key+"="+value)
+			}
+			output, err := command.CombinedOutput()
+			return string(output), err
+		}
+		for _, enabled := range []bool{false, true} {
+			t.Run("lint="+strconv.FormatBool(enabled), func(t *testing.T) {
+				values := map[string]string{"LINT_GO": strconv.FormatBool(enabled)}
+				for _, key := range mandatory {
+					values[key] = "success"
+				}
+				for _, key := range lint {
+					values[key] = "success"
+				}
+				output, err := run(t, values)
+				require.NoError(t, err, output)
+				if !enabled {
+					for _, key := range lint {
+						values[key] = "skipped"
+					}
+					output, err = run(t, values)
+					require.NoError(t, err, "release must allow skipped lint: %s", output)
+				}
+				required := []map[string]string{mandatory}
+				if enabled {
+					required = append(required, lint)
+				}
+				for _, group := range required {
+					for name, key := range group {
+						for _, status := range []string{"failure", "cancelled", "skipped", ""} { //nolint:misspell // GitHub Actions job result.
+							values[key] = status
+							output, err = run(t, values)
+							var exit *goexec.ExitError
+							require.ErrorAs(t, err, &exit, "%s=%s must fail Package", name, status)
+							require.Equal(t, 1, exit.ExitCode())
+							require.Contains(t, output, "::error::Required job "+name+" did not succeed")
+						}
+						values[key] = "success"
+					}
+				}
+			})
+		}
+	})
 
 	var workflow struct {
 		On struct {
@@ -214,7 +261,10 @@ func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testi
 	require.Equal(t, false, workflow.On.Call.Inputs["lint_go"].Default)
 	for path, enabled := range map[string]bool{"release.yml": false, "ci.yml": true} {
 		var caller struct {
-			Jobs map[string]struct{ With map[string]any } `yaml:"jobs"`
+			Jobs map[string]struct {
+				Name string
+				With map[string]any
+			} `yaml:"jobs"`
 		}
 		raw, err = gos.ReadFile("../../.github/workflows/" + path)
 		require.NoError(t, err)
@@ -222,6 +272,9 @@ func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testi
 		value, exists := caller.Jobs["build"].With["lint_go"]
 		if enabled || exists {
 			require.Equal(t, enabled, value, path)
+		}
+		if path == "ci.yml" {
+			require.Equal(t, "Build packages", caller.Jobs["build"].Name)
 		}
 	}
 }
@@ -275,51 +328,4 @@ func goJobsStepContaining(t *testing.T, job goJobsWorkflowJob, fragment string) 
 	}
 	t.Fatalf("missing workflow command containing %q", fragment)
 	return -1
-}
-
-// Evaluate only the boolean/string subset used by the package job's condition.
-func evalGoJobsGate(t *testing.T, expression ast.Expr, results map[string]string, lint, canceled bool) any {
-	t.Helper()
-	eval := func(child ast.Expr) any { return evalGoJobsGate(t, child, results, lint, canceled) }
-	switch expression := expression.(type) {
-	case *ast.ParenExpr:
-		return eval(expression.X)
-	case *ast.UnaryExpr:
-		require.Equal(t, token.NOT, expression.Op)
-		return !eval(expression.X).(bool)
-	case *ast.BinaryExpr:
-		left, right := eval(expression.X), eval(expression.Y)
-		switch expression.Op {
-		case token.LAND:
-			return left.(bool) && right.(bool)
-		case token.LOR:
-			return left.(bool) || right.(bool)
-		case token.EQL:
-			return left == right
-		}
-	case *ast.Ident:
-		require.Equal(t, "lintGo", expression.Name)
-		return lint
-	case *ast.CallExpr:
-		require.Empty(t, expression.Args)
-		name, ok := expression.Fun.(*ast.Ident)
-		require.True(t, ok)
-		require.Equal(t, "cancelled", name.Name) //nolint:misspell // GitHub Actions status function.
-		return canceled
-	case *ast.IndexExpr:
-		name, ok := expression.X.(*ast.Ident)
-		require.True(t, ok)
-		require.Equal(t, "needs", name.Name)
-		key := eval(expression.Index).(string)
-		value, exists := results[key]
-		require.True(t, exists, "gate references undeclared need %q", key)
-		return value
-	case *ast.BasicLit:
-		require.Equal(t, token.STRING, expression.Kind)
-		value, err := strconv.Unquote(expression.Value)
-		require.NoError(t, err)
-		return value
-	}
-	t.Fatalf("unsupported package gate expression: %#v", expression)
-	return nil
 }
