@@ -3,13 +3,14 @@ package keydata
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/rsa"
 	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/internal/testkeys"
 	bferrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
@@ -72,9 +73,9 @@ func TestAgeSshAcceptsPointerEd25519AndRsaIdentities(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("ed25519"), decryptAgeSshTestMessage(t, ed25519Identities, encryptAgeSshTestMessage(t, ed25519Recipient, []byte("ed25519"))))
 
-	rsaSdkKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	rsaSdkKey, err := ssh.ParseRawPrivateKey([]byte(testkeys.RSA2048))
 	require.NoError(t, err)
-	rsaKey, err := PrivateKeyFromSdk(rsaSdkKey)
+	rsaKey, err := PrivateKeyFromSdk(rsaSdkKey.(*rsa.PrivateKey))
 	require.NoError(t, err)
 	rsaRecipient, err := NewAgeSshRecipient(rsaKey.PublicKey().ToSsh())
 	require.NoError(t, err)

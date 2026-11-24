@@ -1,11 +1,6 @@
 package crypto
 
 import (
-	"crypto/dsa"
-	"crypto/rand"
-	"encoding/asn1"
-	"encoding/pem"
-	"math/big"
 	goos "os"
 	"path/filepath"
 	"sync"
@@ -13,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/internal/testkeys"
 )
 
 func TestEnsureKeyFileCreatesOneCompleteKeyConcurrently(t *testing.T) {
@@ -54,16 +51,8 @@ func TestEnsureKeyFileCreatesOneCompleteKeyConcurrently(t *testing.T) {
 
 func TestEnsureKeyFileRejectsUnsupportedDsaWithoutPanic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity")
-	private := &dsa.PrivateKey{}
-	require.NoError(t, dsa.GenerateParameters(&private.Parameters, rand.Reader, dsa.L1024N160))
-	require.NoError(t, dsa.GenerateKey(private, rand.Reader))
-	der, err := asn1.Marshal(struct {
-		Version       int
-		P, Q, G, Y, X *big.Int
-	}{0, private.P, private.Q, private.G, private.Y, private.X})
-	require.NoError(t, err)
-	require.NoError(t, goos.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "DSA PRIVATE KEY", Bytes: der}), 0400))
+	require.NoError(t, goos.WriteFile(path, []byte(testkeys.DSA1024), 0400))
 
-	_, err = EnsureKeyFile(path, nil, nil)
+	_, err := EnsureKeyFile(path, nil, nil)
 	require.ErrorContains(t, err, "unsupported key type")
 }
