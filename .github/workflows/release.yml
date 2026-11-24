@@ -184,3 +184,27 @@ jobs:
           git tag -a "docs/v${VERSION}" -m "Release v${VERSION}"
           git push origin "docs/v${VERSION}"
           echo "Documentation is available at https://bifroest.engity.org/v${VERSION}/" >> "$GITHUB_STEP_SUMMARY"
+
+  description:
+    name: Update release description
+    needs: [evaluate, build, documentation]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-description-${{ github.repository }}-${{ needs.evaluate.outputs.release_tag }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.evaluate.outputs.release_tag }}
+
+      - name: Install MISE
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Update managed release artifacts
+        env:
+          RELEASE_TAG: ${{ needs.evaluate.outputs.release_tag }}
+        run: mise run release:update -- "$RELEASE_TAG"
