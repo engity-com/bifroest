@@ -13,8 +13,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -55,6 +57,7 @@ func (this *acmeTestCA) counts() acmeTestCounts {
 
 type acmeTestCA struct {
 	server                                  *httptest.Server
+	trace                                   *acmeTestTrace
 	clock                                   *acmeTestClock
 	root                                    *x509.Certificate
 	rootDER                                 []byte
@@ -74,11 +77,12 @@ type acmeTestCA struct {
 	orderStarted                            chan struct{}
 	hangChallenge                           bool
 	challengeStarted                        chan struct{}
-	probe                                   func(string, string, *ecdsa.PublicKey) error
+	probe                                   func(context.Context, string, string, *ecdsa.PublicKey) error
 }
 
-func newACMETestCA(t *testing.T, clock *acmeTestClock) *acmeTestCA {
+func newACMETestCA(t *testing.T, clock *acmeTestClock, configure ...func(*http.Server)) *acmeTestCA {
 	t.Helper()
+	trace := newACMETestTrace()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	root := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "local ACME test CA"}, NotBefore: clock.now().Add(-24 * time.Hour), NotAfter: clock.now().Add(4 * 365 * 24 * time.Hour), KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true}
@@ -86,15 +90,36 @@ func newACMETestCA(t *testing.T, clock *acmeTestClock) *acmeTestCA {
 	require.NoError(t, err)
 	root, err = x509.ParseCertificate(der)
 	require.NoError(t, err)
-	ca := &acmeTestCA{clock: clock, root: root, rootDER: der, key: key, nonces: make(map[string]bool), accounts: make(map[string]*ecdsa.PublicKey), orders: make(map[int]*acmeTestOrder)}
-	ca.server = httptest.NewTLSServer(http.HandlerFunc(ca.serveHTTP))
+	ca := &acmeTestCA{trace: trace, clock: clock, root: root, rootDER: der, key: key, nonces: make(map[string]bool), accounts: make(map[string]*ecdsa.PublicKey), orders: make(map[int]*acmeTestOrder)}
+	ca.server = httptest.NewUnstartedServer(http.HandlerFunc(ca.serveHTTP))
+	ca.server.Config.ErrorLog = log.New(trace, "CA server: ", 0)
+	ca.server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			trace.record("CA connection accepted")
+		}
+	}
+	for _, configure := range configure {
+		configure(ca.server.Config)
+	}
+	ca.server.StartTLS()
+	trace.record("CA listener bound; TLS configuration and client trust ready")
 	t.Cleanup(ca.server.Close)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("ACME fixture phases:\n%s", trace.String())
+		}
+	})
 	return ca
 }
 
 func (this *acmeTestCA) serveHTTP(response http.ResponseWriter, request *http.Request) {
+	started := time.Now()
+	this.trace.record("CA %s %s started", request.Method, request.URL.Path)
 	this.mutex.Lock()
-	defer this.mutex.Unlock()
+	defer func() {
+		this.trace.record("CA %s %s finished in %s; requests=%d registrations=%d proofs=%d issues=%d", request.Method, request.URL.Path, time.Since(started), this.requests, this.registrations, this.proofs, this.issues)
+		this.mutex.Unlock()
+	}()
 	this.requests++
 	var nonce [16]byte
 	_, _ = rand.Read(nonce[:])
@@ -208,7 +233,7 @@ func (this *acmeTestCA) serveHTTP(response http.ResponseWriter, request *http.Re
 			this.problem(response, 400, "unauthorized", "TLS probe is not configured")
 			return
 		}
-		if err := this.probe(order.domain, order.token, key); err != nil {
+		if err := this.probe(request.Context(), order.domain, order.token, key); err != nil {
 			this.problem(response, 400, "unauthorized", err.Error())
 			return
 		}
@@ -332,42 +357,59 @@ func testJWKThumbprint(key *ecdsa.PublicKey) string {
 	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
-func startACMETestTLS(t *testing.T, manager *TLS) string {
+func startACMETestTLS(t *testing.T, manager *TLS, trace *acmeTestTrace) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	var connections sync.WaitGroup
-	go func() {
-		defer close(done)
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			connections.Add(1)
-			go func() {
-				defer connections.Done()
-				defer connection.Close()
-				handshake, stop := context.WithTimeout(ctx, 5*time.Second)
-				defer stop()
-				_ = tls.Server(connection, manager.Config()).HandshakeContext(handshake)
-			}()
-		}
-	}()
-	t.Cleanup(func() { cancel(); _ = listener.Close(); <-done; connections.Wait() })
+	done := make(chan error, 1)
+	go func() { done <- serveACMETestTLS(ctx, listener, manager.Config(), trace) }()
+	trace.record("TLS probe listener bound")
+	t.Cleanup(func() {
+		cancel()
+		_ = listener.Close()
+		require.NoError(t, <-done, "TLS probe serve loop must not exit silently")
+	})
 	return listener.Addr().String()
+}
+
+func serveACMETestTLS(ctx context.Context, listener net.Listener, config *tls.Config, trace *acmeTestTrace) error {
+	var connections sync.WaitGroup
+	defer connections.Wait()
+	trace.record("TLS probe serve loop entered")
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil && errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			trace.record("TLS probe accept failed: %v", err)
+			return fmt.Errorf("TLS probe accept failed: %w", err)
+		}
+		trace.record("TLS probe connection accepted")
+		connections.Add(1)
+		go func() {
+			defer connections.Done()
+			defer connection.Close()
+			handshake, stop := context.WithTimeout(ctx, 5*time.Second)
+			defer stop()
+			err := tls.Server(connection, config).HandshakeContext(handshake)
+			trace.record("TLS probe server handshake finished: %v", err)
+		}()
+	}
 }
 
 func (this *acmeTestCA) setProbe(address string) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
-	this.probe = func(domain, token string, accountKey *ecdsa.PublicKey) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	this.probe = func(ctx context.Context, domain, token string, accountKey *ecdsa.PublicKey) error {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
+		started := time.Now()
+		this.trace.record("TLS probe client handshake started")
 		client := &tls.Dialer{Config: &tls.Config{ServerName: domain, NextProtos: []string{acme.ALPNProto}, MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}} //nolint:gosec // RFC 8737 uses a self-signed proof, verified explicitly below.
 		connection, err := client.DialContext(ctx, "tcp", address)
+		this.trace.record("TLS probe client handshake finished in %s: %v", time.Since(started), err)
 		if err != nil {
 			return err
 		}
