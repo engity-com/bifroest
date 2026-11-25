@@ -90,14 +90,14 @@ func TestOidcDevicePollingIntervalAndSlowDown(t *testing.T) {
 					synctest.Sleep(time.Nanosecond)
 					elapsed += gap
 					require.Len(t, polls, i+1)
-					require.Equal(t, start.Add(elapsed), polls[i])
+					require.True(t, start.Add(elapsed).Equal(polls[i]), "poll %d: want instant %s, got %s", i, start.Add(elapsed), polls[i])
 				}
 				got := <-done
 				require.NoError(t, got.err)
 				require.Equal(t, "access", got.token.AccessToken)
 				require.Equal(t, "refresh", got.token.RefreshToken)
 				require.Equal(t, "Bearer", got.token.TokenType)
-				require.Equal(t, time.Now().Add(time.Hour), got.token.Expiry)
+				require.True(t, time.Now().Add(time.Hour).Equal(got.token.Expiry), "token expiry: want instant %s, got %s", time.Now().Add(time.Hour), got.token.Expiry)
 				synctest.Sleep(time.Minute)
 				require.Len(t, polls, len(tc.gaps), "successful polling must terminate, not continue in the background")
 			})

@@ -99,7 +99,7 @@ func TestOidcCodeLoginDeadlineAndCancellation(t *testing.T) {
 						if tc.cancelCaller {
 							wantWait = 3 * time.Minute
 						}
-						require.Equal(t, start.Add(wantWait), deadline)
+						require.True(t, start.Add(wantWait).Equal(deadline), "browser deadline: want instant %s, got %s", start.Add(wantWait), deadline)
 						wantError := context.DeadlineExceeded
 						if tc.cancelCaller {
 							synctest.Wait()

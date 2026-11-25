@@ -756,7 +756,7 @@ func TestOidcLostAccessRefreshCapsNetworkAtVerificationDeadline(t *testing.T) {
 				requestCtx := <-requested
 				deadline, bounded := requestCtx.Deadline()
 				require.True(t, bounded)
-				require.Equal(t, start.Add(tc.wait), deadline)
+				require.True(t, start.Add(tc.wait).Equal(deadline), "request deadline: want instant %s, got %s", start.Add(tc.wait), deadline)
 				synctest.Sleep(tc.wait - time.Nanosecond)
 				require.NoError(t, requestCtx.Err())
 				require.Empty(t, done, "refresh must remain in flight until its deadline")
