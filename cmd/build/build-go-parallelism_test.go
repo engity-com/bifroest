@@ -53,7 +53,7 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 func TestGoTestReporterIsPinnedThroughMise(t *testing.T) {
 	versions, err := os.ReadFile("../../.tool-versions")
 	require.NoError(t, err)
-	require.Contains(t, string(versions), "gotestsum     1.13.0\n")
+	require.Contains(t, strings.Split(strings.ReplaceAll(string(versions), "\r\n", "\n"), "\n"), "gotestsum     1.13.0")
 	configuration, err := os.ReadFile("../../mise.toml")
 	require.NoError(t, err)
 	require.Contains(t, string(configuration), `gotestsum = "aqua:gotestyourself/gotestsum"`)
