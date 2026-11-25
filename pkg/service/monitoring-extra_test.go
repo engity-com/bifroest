@@ -205,6 +205,9 @@ func TestMonitoringTunnelPreservesFullDuplexAndHTTP2(t *testing.T) {
 			require.NoError(t, err)
 			client := gossh.NewClient(secure, channels, requests)
 			require.Equal(t, 1.0, testutil.ToFloat64(f.svc.monitoring.http.channelActive.WithLabelValues("ssh_tunnel")))
+			ok, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+			require.NoError(t, err, "the monitored tunnel must remain usable until client shutdown")
+			require.True(t, ok)
 			require.NoError(t, client.Close())
 			_ = conn.Close()
 			require.Eventually(t, func() bool {

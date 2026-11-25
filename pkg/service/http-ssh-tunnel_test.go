@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,8 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -141,7 +144,9 @@ type httpTunnelTestConn struct {
 	net.Conn
 	io.Reader
 	io.Writer
-	close func() error
+	close     func() error
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (*httpTunnelTestConn) LocalAddr() net.Addr  { return tunnelAddr("test local") }
@@ -149,7 +154,51 @@ func (*httpTunnelTestConn) RemoteAddr() net.Addr { return tunnelAddr("test remot
 
 func (c *httpTunnelTestConn) Read(data []byte) (int, error)  { return c.Reader.Read(data) }
 func (c *httpTunnelTestConn) Write(data []byte) (int, error) { return c.Writer.Write(data) }
-func (c *httpTunnelTestConn) Close() error                   { return c.close() }
+func (c *httpTunnelTestConn) Close() error {
+	// Closing the WSS pipe wakes SSH's reader, which also closes this connection.
+	// Serialize cleanup so the resulting second TLS close cannot mask its result.
+	c.closeOnce.Do(func() { c.closeErr = c.close() })
+	return c.closeErr
+}
+
+func TestHTTPTunnelTestConnConcurrentCloseRunsCleanupOnceAndPreservesErrors(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		closeErr error
+	}{
+		{"success", nil},
+		{"failure", errors.New("tunnel cleanup failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls atomic.Int32
+			conn := &httpTunnelTestConn{close: func() error {
+				if calls.Add(1) > 1 {
+					return net.ErrClosed
+				}
+				return test.closeErr
+			}}
+			const callers = 32
+			start := make(chan struct{})
+			results := make(chan error, callers)
+			var workers sync.WaitGroup
+			for range callers {
+				workers.Go(func() {
+					<-start
+					results <- conn.Close()
+				})
+			}
+			close(start)
+			workers.Wait()
+			close(results)
+			for err := range results {
+				require.Equal(t, test.closeErr, err, "concurrent SSH and fixture cleanup must share the first close result")
+			}
+			require.Equal(t, int32(1), calls.Load())
+			require.Equal(t, test.closeErr, conn.Close(), "later fixture cleanup must preserve the original close result")
+			require.Equal(t, int32(1), calls.Load())
+		})
+	}
+}
 
 func (f *sshTunnelFixture) transportConn(t *testing.T, mode string) net.Conn {
 	t.Helper()
