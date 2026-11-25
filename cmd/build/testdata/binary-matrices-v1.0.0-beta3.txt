@@ -1,0 +1,14 @@
+commit=historical
+version=ci-inventory-development
+ref=ci-inventory
+pr=0
+stage-binary=true
+stage-archive=false
+stage-image=false
+stage-sbom=false
+stage-digest=false
+stage-publish=false
+test-host-matrix={"include":[{"os":"windows","runner":"windows-latest","image":""},{"os":"darwin","runner":"macos-15","image":""}]}
+test-container-matrix={"include":[{"os":"linux","runner":"ubuntu-latest","image":"ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:983cf2ba65a5809b8d7f2e4e70830dedee3163c2d75e9d4c9c828463b7a86c27"}]}
+binary-host-matrix={"include":[{"os":"linux","arch":"386","edition":"generic","runner":"ubuntu-latest","image":""},{"os":"linux","arch":"amd64","edition":"generic","runner":"ubuntu-latest","image":""},{"os":"linux","arch":"arm64","edition":"generic","runner":"ubuntu-latest","image":""},{"os":"linux","arch":"armv6","edition":"generic","runner":"ubuntu-latest","image":""},{"os":"linux","arch":"armv7","edition":"generic","runner":"ubuntu-latest","image":""},{"os":"linux","arch":"riscv64","edition":"generic","runner":"ubuntu-latest","image":""},{"os":"windows","arch":"amd64","edition":"generic","runner":"windows-latest","image":""},{"os":"windows","arch":"arm64","edition":"generic","runner":"windows-latest","image":""},{"os":"darwin","arch":"amd64","edition":"generic","runner":"macos-15-intel","image":""},{"os":"darwin","arch":"arm64","edition":"generic","runner":"macos-15","image":""}]}
+binary-container-matrix={"include":[{"os":"linux","arch":"386","edition":"extended","runner":"ubuntu-latest","image":"ghcr.io/engity-com/build-images/build:debian12-386@sha256:fd6f834c532cc870ead0f002621cf63f994c74a19ba4eb7efc4d8e9846b60663"},{"os":"linux","arch":"amd64","edition":"extended","runner":"ubuntu-latest","image":"ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:983cf2ba65a5809b8d7f2e4e70830dedee3163c2d75e9d4c9c828463b7a86c27"},{"os":"linux","arch":"arm64","edition":"extended","runner":"ubuntu-latest","image":"ghcr.io/engity-com/build-images/build:debian12-arm64@sha256:87b9775c71b4a5a4ade706386bd450e1e0758f06e47da5ddd3bb70de25094cd0"},{"os":"linux","arch":"armv7","edition":"extended","runner":"ubuntu-latest","image":"ghcr.io/engity-com/build-images/build:debian12-armv7@sha256:4748d5ac4172194585a3f0e559e7c743672563ec6fcc0aab3b9894e839076c61"}]}

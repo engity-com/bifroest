@@ -12,7 +12,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
+func TestBuildMatricesAssignEveryBinaryPlatformToSourceInventory(t *testing.T) {
 	build := newBuild(&base{})
 	matrices, err := build.buildMatrices()
 	require.NoError(t, err)

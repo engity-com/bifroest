@@ -25,6 +25,8 @@ type buildTestMatrixEntry struct {
 	Image  string `json:"image"`
 }
 
+// Preserve the source CLI's per-edition inventory. Workflows group it by OS/arch
+// after evaluating the selected source ref, including historical release tags.
 type buildBinaryMatrixEntry struct {
 	Os      string `json:"os"`
 	Arch    string `json:"arch"`

@@ -69,7 +69,10 @@ jobs:
       - name: Execute
         id: refs
         run: |
-          mise run ci:evaluate-environment
+          environment="$RUNNER_TEMP/bifroest-build-environment"
+          : > "$environment"
+          GITHUB_OUTPUT="$environment" mise run ci:evaluate-environment
+          mise exec node@26.9.0 -- node .github/scripts/group-binary-matrices.mjs "$environment" >> "$GITHUB_OUTPUT"
 
   biome:
     name: Biome
@@ -111,7 +114,7 @@ jobs:
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
       - name: Git configure
-        run: git config --global --add safe.directory $(pwd)
+        run: git config --global --add safe.directory "$(pwd)"
 
       - name: Lint licenses
         run: mise run lint:reuse
