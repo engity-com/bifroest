@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	gos "os"
 	goexec "os/exec"
 	"path/filepath"
@@ -9,6 +10,46 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestBrowserShardsReceiveTheSeparatelyBuiltClientFixture(t *testing.T) {
+	jobs := readGoJobsWorkflow(t)
+	producer := jobs["browser"]
+	build := goJobsStepContaining(t, producer, "mise -C web run build:web")
+	uploads := 0
+	for i, step := range producer.Steps {
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["name"] == "browser-test-core" {
+			uploads++
+			require.Greater(t, i, build)
+			require.Equal(t, "var/webui-client-build", step.With["path"])
+			require.Equal(t, "error", step.With["if-no-files-found"])
+			require.Empty(t, step.If)
+		}
+	}
+	require.Equal(t, 1, uploads, "build the fixture once, not in each shard")
+	for name, job := range jobs {
+		downloads := 0
+		for i, step := range job.Steps {
+			if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "browser-test-core" {
+				downloads++
+				require.Equal(t, "test-browser", name, "test-only fixture must not enter release binaries")
+				require.Equal(t, "var/webui-client-build", step.With["path"])
+				require.Empty(t, step.If)
+				require.Less(t, i, goJobsStepContaining(t, job, "-- --shard"))
+			}
+		}
+		if name == "test-browser" {
+			require.Equal(t, 1, downloads)
+		}
+	}
+	raw, err := gos.ReadFile("../../web/package.json")
+	require.NoError(t, err)
+	var web struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &web))
+	require.Contains(t, web.Scripts["build"], "bun run build:core")
+	require.Contains(t, web.Scripts["build"], "bun run build:app")
+}
 
 func TestBrowserShardMatrixIsCompleteAndRetainsIndependentRunners(t *testing.T) {
 	jobs := readGoJobsWorkflow(t)

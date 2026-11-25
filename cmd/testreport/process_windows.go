@@ -55,7 +55,7 @@ func configureCommand(cmd *exec.Cmd) (func() error, func(), error) {
 		if err != nil {
 			return fmt.Errorf("open child for job assignment: %w", err)
 		}
-		defer syscall.CloseHandle(process)
+		defer func() { _ = syscall.CloseHandle(process) }()
 		ok, _, assignErr := assignProcessToJobObject.Call(h, uintptr(process))
 		if ok == 0 {
 			return fmt.Errorf("assign child job: %w", assignErr)
@@ -103,7 +103,7 @@ func resumeChild(pid uint32) error {
 	if snapshot == ^uintptr(0) {
 		return fmt.Errorf("snapshot child thread: %w", err)
 	}
-	defer syscall.CloseHandle(syscall.Handle(snapshot))
+	defer func() { _ = syscall.CloseHandle(syscall.Handle(snapshot)) }()
 	entry := threadEntry32{}
 	entry.Size = uint32(unsafe.Sizeof(entry))
 	ok, _, _ := thread32First.Call(snapshot, uintptr(unsafe.Pointer(&entry)))
@@ -113,7 +113,7 @@ func resumeChild(pid uint32) error {
 			if thread == 0 {
 				return fmt.Errorf("open child thread: %w", err)
 			}
-			defer syscall.CloseHandle(syscall.Handle(thread))
+			defer func() { _ = syscall.CloseHandle(syscall.Handle(thread)) }()
 			count, _, err := resumeThread.Call(thread)
 			if uint32(count) == ^uint32(0) {
 				return fmt.Errorf("resume child thread: %w", err)
