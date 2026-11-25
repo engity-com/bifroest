@@ -18,6 +18,7 @@ type goJobsWorkflowStep struct {
 	Run             string            `yaml:"run"`
 	If              string            `yaml:"if"`
 	Shell           string            `yaml:"shell"`
+	TimeoutMinutes  int               `yaml:"timeout-minutes"`
 	ContinueOnError bool              `yaml:"continue-on-error"`
 	With            map[string]string `yaml:"with"`
 	Env             map[string]string `yaml:"env"`
@@ -98,7 +99,9 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 			checkout, dependencies, command, node := -1, -1, -1, -1
 			for i, step := range job.Steps {
 				require.False(t, step.ContinueOnError)
-				if step.If != "" {
+				if name == "test-host" && step.Name == "Stress management channel completion on Windows" {
+					require.Equal(t, "runner.os == 'Windows'", step.If)
+				} else if step.If != "" {
 					require.Equal(t, "always()", step.If, "only failure diagnostics may have a conditional")
 					if step.Uses != "" {
 						require.True(t, strings.HasPrefix(step.Uses, "actions/upload-artifact@"))
@@ -141,6 +144,23 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGoWorkflowStressChecksManagementCompletionOnWindows(t *testing.T) {
+	job := readGoJobsWorkflow(t)["test-host"]
+	index := goJobsStepContaining(t, job, "management-channel-stress.jsonl")
+	step := job.Steps[index]
+	require.Equal(t, "Stress management channel completion on Windows", step.Name)
+	require.Equal(t, "runner.os == 'Windows'", step.If)
+	require.Equal(t, 5, step.TimeoutMinutes)
+	require.False(t, step.ContinueOnError)
+	require.Contains(t, step.Run, "mise exec -- gotestsum --format standard-verbose")
+	require.Contains(t, step.Run, "--junitfile var/test-report/management-channel-stress.xml")
+	require.Contains(t, step.Run, "-p=1 -count=25 -timeout=4m")
+	require.Contains(t, step.Run, "-run '^TestManagement(StreamingProgressIsProvisionalAndCancellationKeepsAdmission|ChannelCancellationDoesNotCloseOrReplaceItsAdmission)$' ./pkg/service")
+	require.NotContains(t, step.Run, "--rerun-fails", "repeat every test, never hide a failed iteration")
+	require.Greater(t, index, goJobsStepContaining(t, job, "scripts/native-go-tests.ts"))
+	require.Less(t, index, goJobsStepContaining(t, job, "GITHUB_STEP_SUMMARY"))
 }
 
 func TestGoWorkflowRaceRetainsPreparedContainerAndAsciinema(t *testing.T) {

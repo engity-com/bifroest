@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,7 +40,8 @@ func TestManagementProgressNeverLeaksArchiveCountsThroughForcedReadCeilings(t *t
 
 type streamingManagementRepository struct {
 	environment.CloseableRepository
-	release chan struct{}
+	release  chan struct{}
+	canceled chan struct{}
 }
 
 func TestManagementStreamingDoesNotSendUnnegotiatedProgressToLegacyClients(t *testing.T) {
@@ -62,12 +64,13 @@ func (r *streamingManagementRepository) Ensure(request environment.Request) (env
 	if err != nil {
 		return nil, err
 	}
-	return &streamingManagementEnvironment{Environment: value, release: r.release}, nil
+	return &streamingManagementEnvironment{Environment: value, release: r.release, canceled: r.canceled}, nil
 }
 
 type streamingManagementEnvironment struct {
 	environment.Environment
-	release chan struct{}
+	release  chan struct{}
+	canceled chan struct{}
 }
 
 func (e *streamingManagementEnvironment) ReadManagement(task environment.TaskContext, request protocol.ReadRequest, output io.Writer) (int, error) {
@@ -77,6 +80,9 @@ func (e *streamingManagementEnvironment) ReadManagement(task environment.TaskCon
 		}
 		select {
 		case <-task.Context().Done():
+			close(e.canceled)
+			// Let the test observe cancellation before allowing finalization.
+			<-e.release
 			return -1, task.Context().Err()
 		case <-e.release:
 		}
@@ -91,7 +97,10 @@ func TestManagementStreamingProgressIsProvisionalAndCancellationKeepsAdmission(t
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 			})
 			release := make(chan struct{})
-			fixture.svc.environments = &streamingManagementRepository{CloseableRepository: fixture.svc.environments, release: release}
+			releaseRead := sync.OnceFunc(func() { close(release) })
+			t.Cleanup(releaseRead)
+			canceled := make(chan struct{})
+			fixture.svc.environments = &streamingManagementRepository{CloseableRepository: fixture.svc.environments, release: release, canceled: canceled}
 			socket := managementChannelDial(t, fixture, fixture.login(t))
 			requireWebSocketReady(t, socket)
 			require.NoError(t, socket.WriteJSON(map[string]any{"type": "request", "requestId": "1", "action": "management/auditlogs/list", "fields": map[string]string{}}))
@@ -103,17 +112,20 @@ func TestManagementStreamingProgressIsProvisionalAndCancellationKeepsAdmission(t
 			require.Equal(t, "0", string(progress["completed"]))
 			require.Equal(t, "1", string(progress["total"]))
 			require.Empty(t, auditEventsNamed(fixture.recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted), "progress must not acknowledge a successful task or release a result")
+			// Deterministically model an expired progress-read deadline without a sleep.
+			require.NoError(t, socket.SetReadDeadline(time.Now().Add(-time.Second)))
+			completion := newManagementChannelTestCompletion(t, socket)
 			if cancel {
 				require.NoError(t, socket.WriteJSON(map[string]string{"type": "cancel", "requestId": "1"}))
-			} else {
-				close(release)
+				completion.waitFor(t, canceled, "backend cancellation")
+				require.Empty(t, auditEventsNamed(fixture.recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted), "receiving cancellation must not acknowledge finalization")
 			}
+			releaseRead()
 			var body []byte
 			response := false
 			finished := false
 			for !finished {
-				kind, data, err := socket.ReadMessage()
-				require.NoError(t, err)
+				kind, data := completion.read(t)
 				if kind == websocket.BinaryMessage {
 					require.True(t, response)
 					require.Greater(t, len(data), 8)
@@ -146,6 +158,13 @@ func TestManagementStreamingProgressIsProvisionalAndCancellationKeepsAdmission(t
 				default:
 					t.Fatalf("unexpected management status %s", data)
 				}
+			}
+			completed := auditEventsNamed(fixture.recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)
+			require.Len(t, completed, 1, "the terminal frame must follow task finalization")
+			if cancel {
+				require.Equal(t, audit.EventOutcomeCanceled, completed[0].Outcome)
+			} else {
+				require.Equal(t, audit.EventOutcomeSuccess, completed[0].Outcome)
 			}
 			code, data := managementChannelRead(t, socket, "2", "version/show", map[string]string{"long": "false"})
 			require.Equal(t, 200, code, string(data))
