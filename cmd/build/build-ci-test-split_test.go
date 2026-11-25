@@ -64,7 +64,6 @@ func TestBrowserShardMatrixIsCompleteAndRetainsIndependentRunners(t *testing.T) 
 	require.Equal(t, "${{ matrix.shard }}", test.Env["SHARD"])
 	require.Empty(t, test.If)
 	require.False(t, test.ContinueOnError)
-	require.Contains(t, test.Run, "export BIFROEST_TEST_REPORT=var/test-report/browser")
 	for _, name := range []string{"browser", "test-static", "test-web", "test-browser"} {
 		for _, step := range jobs[name].Steps {
 			require.False(t, step.ContinueOnError)
@@ -168,7 +167,9 @@ func TestCoverageIsCollectedOnceWithoutNarrowingOtherSuites(t *testing.T) {
 		job := jobs[name]
 		summary := job.Steps[goJobsStepContaining(t, job, "GITHUB_STEP_SUMMARY")]
 		require.Equal(t, "always()", summary.If)
-		require.Contains(t, summary.Run, "var/test-report/*/report.md", "use the reporter's actual Markdown filename")
+		require.Contains(t, summary.Run, "var/test-report/*.jsonl")
+		require.Contains(t, summary.Run, "mise exec -- gotestsum tool slowest --num 15 --threshold 0s --jsonfile")
+		require.NotContains(t, summary.Run, "--skip-stmt", "duration reports must never rewrite tests")
 		found := false
 		for _, step := range job.Steps {
 			if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && strings.Contains(step.With["path"], "var/test-report/") {

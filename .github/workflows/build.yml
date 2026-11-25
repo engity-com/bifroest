@@ -164,9 +164,13 @@ jobs:
         if: always()
         shell: bash
         run: |
-          for report in var/test-report/*/report.md; do
+          for report in var/test-report/*.jsonl; do
             if [ -f "$report" ]; then
-              cat "$report" >> "$GITHUB_STEP_SUMMARY"
+              {
+                printf '### Slowest Go tests: %s\n\n```text\n' "$(basename "$report" .jsonl)"
+                mise exec -- gotestsum tool slowest --num 15 --threshold 0s --jsonfile "$report"
+                printf '```\n\nCached test durations may come from a previous run.\n\n'
+              } >> "$GITHUB_STEP_SUMMARY"
             fi
           done
 
@@ -279,9 +283,6 @@ jobs:
           BIFROEST_TEST_NODE="$(mise -C web which node)"
           export BIFROEST_TEST_NODE
           if [ -f web/scripts/browser-go-tests.ts ]; then
-            if [ -d cmd/testreport ]; then
-              export BIFROEST_TEST_REPORT=var/test-report/browser
-            fi
             mise -C web run test:go:browser -- --shard "$SHARD"
           elif [ "$SHARD" = 1/3 ]; then
             # Old release refs have no shard runner: run their full task once.

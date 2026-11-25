@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
@@ -166,7 +165,7 @@ test('runner discovers dynamically, forces both browser opt-ins and preserves th
                     BIFROEST_TEST_NODE: '/wrong/node',
                 },
                 log: (message) => messages.push(message),
-                runGo: (argv, options) => {
+                run: (command, argv, options) => {
                     calls++;
                     assert.equal(options.cwd, fileURLToPath(new URL('../../', import.meta.url)));
                     assert.equal(options.env?.BIFROEST_TEST_BROWSER_UI, '1');
@@ -175,6 +174,7 @@ test('runner discovers dynamically, forces both browser opt-ins and preserves th
                     assert.equal(options.env?.GOMAXPROCS, '2');
                     assert.equal(options.env?.CGO_ENABLED, '0');
                     if (calls === 1) {
+                        assert.equal(command, 'go');
                         assert.deepEqual(argv, [
                             'test',
                             '-p=1',
@@ -188,10 +188,16 @@ test('runner discovers dynamically, forces both browser opt-ins and preserves th
                     const expected = required(
                         planBrowserTests(measuredTests, shard.total)[shard.index - 1],
                     );
+                    assert.equal(command, 'gotestsum');
                     assert.deepEqual(argv, [
-                        'test',
+                        '--format',
+                        'standard-verbose',
+                        '--jsonfile',
+                        'var/test-report/browser.jsonl',
+                        '--junitfile',
+                        'var/test-report/browser.xml',
+                        '--',
                         '-p=1',
-                        '-v',
                         '-count=1',
                         '-timeout=20m',
                         '-run',
@@ -216,9 +222,9 @@ test('default parallelism stays two and unprofiled tests are visibly modeled', (
         runBrowserGoTests([], {
             env: {},
             log: (message) => messages.push(message),
-            runGo: (argv) => {
+            run: (_command, argv) => {
                 calls++;
-                assert.equal(argv[1], '-p=2');
+                assert(argv.includes('-p=2'));
                 return result(0, 'TestBrowserNew');
             },
         }),
@@ -228,16 +234,17 @@ test('default parallelism stays two and unprofiled tests are visibly modeled', (
     assert(messages.includes('Unprofiled tests (modeled 10s each): TestBrowserNew'));
 });
 
-test('optional JSON reporting preserves discovery, scope, opt-ins, deadline and failing exits', () => {
+test('gotestsum reports preserve discovery, scope, opt-ins, deadline and failing exits without retries', () => {
     for (const status of [0, 1, 23, null]) {
         let calls = 0;
         assert.equal(
             runBrowserGoTests(['--shard', '2/3'], {
-                env: { BIFROEST_TEST_REPORT: 'var/test-report/browser', GO_TEST_PARALLELISM: '1' },
+                env: { GO_TEST_PARALLELISM: '1' },
                 log: () => {},
-                runGo: (argv, options) => {
+                run: (command, argv, options) => {
                     calls++;
                     if (calls === 1) {
+                        assert.equal(command, 'go');
                         assert.deepEqual(argv, [
                             'test',
                             '-p=1',
@@ -247,18 +254,16 @@ test('optional JSON reporting preserves discovery, scope, opt-ins, deadline and 
                         ]);
                         return result();
                     }
+                    assert.equal(command, 'gotestsum');
                     assert.deepEqual(argv, [
-                        'run',
-                        '-p=1',
-                        './cmd/testreport',
-                        'run',
-                        '--output',
-                        'var/test-report/browser',
+                        '--format',
+                        'standard-verbose',
+                        '--jsonfile',
+                        'var/test-report/browser.jsonl',
+                        '--junitfile',
+                        'var/test-report/browser.xml',
                         '--',
-                        'go',
-                        'test',
                         '-p=1',
-                        '-json',
                         '-count=1',
                         '-timeout=20m',
                         '-run',
@@ -286,7 +291,7 @@ test('list/test exits, signals and spawn failures cannot become a green browser 
                 runBrowserGoTests([], {
                     env: {},
                     log: () => {},
-                    runGo: () => result(++calls === failedCall ? status : 0),
+                    run: () => result(++calls === failedCall ? status : 0),
                 }),
                 status ?? 1,
             );
@@ -299,7 +304,7 @@ test('list/test exits, signals and spawn failures cannot become a green browser 
             runBrowserGoTests([], {
                 env: {},
                 log: () => {},
-                runGo: () =>
+                run: () =>
                     ++calls === failedCall ? { ...result(null), signal: 'SIGTERM' } : result(),
             }),
             1,
@@ -310,7 +315,7 @@ test('list/test exits, signals and spawn failures cannot become a green browser 
                 runBrowserGoTests([], {
                     env: {},
                     log: () => {},
-                    runGo: () =>
+                    run: () =>
                         ++calls === failedCall
                             ? { ...result(null), error: new Error('spawn failed') }
                             : result(),
@@ -322,42 +327,26 @@ test('list/test exits, signals and spawn failures cannot become a green browser 
 
 test('invalid arguments, parallelism, listing or empty shards stop before test execution', () => {
     let calls = 0;
-    const runGo = () => {
+    const run = () => {
         calls++;
         return result(0, 'TestBrowserOne');
     };
-    assert.throws(() => runBrowserGoTests(['--shard', '0/3'], { runGo }));
+    assert.throws(() => runBrowserGoTests(['--shard', '0/3'], { run }));
     for (const value of ['', '0', '-1', '1x', '1.5', '9007199254740992']) {
         assert.throws(() =>
             runBrowserGoTests([], {
-                runGo,
+                run,
                 env: { GO_TEST_PARALLELISM: value },
             }),
         );
     }
-    for (const report of [
-        '',
-        ' ',
-        '.',
-        '..',
-        '../outside',
-        'var/../../outside',
-        resolve('absolute'),
-    ]) {
-        assert.throws(() =>
-            runBrowserGoTests([], {
-                runGo,
-                env: { BIFROEST_TEST_REPORT: report },
-            }),
-        );
-    }
     assert.equal(calls, 0);
-    assert.throws(() => runBrowserGoTests(['--shard', '2/3'], { runGo }));
+    assert.throws(() => runBrowserGoTests(['--shard', '2/3'], { run }));
     assert.equal(calls, 1);
     for (const stdout of ['', 'TestBrowserOne\nTestBrowserOne']) {
         assert.throws(() =>
             runBrowserGoTests([], {
-                runGo: () => result(0, stdout),
+                run: () => result(0, stdout),
             }),
         );
     }

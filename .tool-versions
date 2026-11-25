@@ -1,5 +1,6 @@
 golang        1.27.4
 golangci-lint v2.14.0
+gotestsum     1.13.0
 go-licenses   2.0.1
 syft          1.51.1
 python        3.14

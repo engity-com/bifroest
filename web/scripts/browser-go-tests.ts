@@ -3,7 +3,6 @@ import {
     type SpawnSyncReturns,
     spawnSync,
 } from 'node:child_process';
-import { isAbsolute, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Successful Phase 1 run 45472956311, Browser assets and inventory job
@@ -168,7 +167,11 @@ export function browserTestPattern(tests: readonly string[]): string {
 }
 
 type GoResult = Pick<SpawnSyncReturns<string>, 'status' | 'signal' | 'error' | 'stdout'>;
-type GoRunner = (args: string[], options: SpawnSyncOptionsWithStringEncoding) => GoResult;
+type CommandRunner = (
+    command: string,
+    args: string[],
+    options: SpawnSyncOptionsWithStringEncoding,
+) => GoResult;
 
 function goExitCode(result: GoResult): number {
     if (result.error !== undefined) {
@@ -180,10 +183,10 @@ function goExitCode(result: GoResult): number {
 export function runBrowserGoTests(
     args: readonly string[],
     {
-        runGo = (argv, options) => spawnSync('go', argv, options),
+        run = (command, argv, options) => spawnSync(command, argv, options),
         env = process.env,
         log = console.log,
-    }: { runGo?: GoRunner; env?: NodeJS.ProcessEnv; log?: (message: string) => void } = {},
+    }: { run?: CommandRunner; env?: NodeJS.ProcessEnv; log?: (message: string) => void } = {},
 ): number {
     const shard = parseBrowserShard(args);
     if (process.versions.node !== '26.9.0') {
@@ -192,19 +195,6 @@ export function runBrowserGoTests(
     const parallelism = env.GO_TEST_PARALLELISM ?? '2';
     if (!/^[1-9][0-9]*$/u.test(parallelism) || !Number.isSafeInteger(Number(parallelism))) {
         throw new Error('GO_TEST_PARALLELISM must be a positive safe integer');
-    }
-    const report = env.BIFROEST_TEST_REPORT;
-    if (
-        report !== undefined &&
-        (report.trim().length === 0 ||
-            isAbsolute(report) ||
-            normalize(report) === '.' ||
-            normalize(report) === '..' ||
-            normalize(report).startsWith(`..${sep}`))
-    ) {
-        throw new Error(
-            'BIFROEST_TEST_REPORT must name an output directory relative to the repository',
-        );
     }
     const options: SpawnSyncOptionsWithStringEncoding = {
         cwd: fileURLToPath(new URL('../../', import.meta.url)),
@@ -217,7 +207,8 @@ export function runBrowserGoTests(
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'inherit'],
     };
-    const listed = runGo(
+    const listed = run(
+        'go',
         ['test', `-p=${parallelism}`, '-list', '^TestBrowser', './pkg/service'],
         options,
     );
@@ -244,30 +235,21 @@ export function runBrowserGoTests(
     }
     log(`Running browser Go shard ${shard.index}/${shard.total}: ${selected.tests.join(', ')}`);
     const testArgs = [
-        'test',
+        '--format',
+        'standard-verbose',
+        '--jsonfile',
+        'var/test-report/browser.jsonl',
+        '--junitfile',
+        'var/test-report/browser.xml',
+        '--',
         `-p=${parallelism}`,
-        report === undefined ? '-v' : '-json',
         '-count=1',
         '-timeout=20m',
         '-run',
         browserTestPattern(selected.tests),
         './pkg/service',
     ];
-    const runArgs =
-        report === undefined
-            ? testArgs
-            : [
-                  'run',
-                  `-p=${parallelism}`,
-                  './cmd/testreport',
-                  'run',
-                  '--output',
-                  report,
-                  '--',
-                  'go',
-                  ...testArgs,
-              ];
-    return goExitCode(runGo(runArgs, { ...options, stdio: 'inherit' }));
+    return goExitCode(run('gotestsum', testArgs, { ...options, stdio: 'inherit' }));
 }
 
 if (import.meta.main) {

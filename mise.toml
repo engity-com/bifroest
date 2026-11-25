@@ -77,21 +77,21 @@ run = [
 depends = ["build:var"]
 # GO_TEST_PARALLELISM=1 restores serial compilation/testing on smaller runners.
 run = [
-    'go run ./cmd/testreport run --output var/test-report/core -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json ./...',
-    'go run ./cmd/testreport run --output var/test-report/alternatives -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json -tags=local_build,local_kind ./pkg/alternatives'
+    'gotestsum --format standard-verbose --jsonfile var/test-report/core.jsonl --junitfile var/test-report/core.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} ./...',
+    'gotestsum --format standard-verbose --jsonfile var/test-report/alternatives.jsonl --junitfile var/test-report/alternatives.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -tags=local_build,local_kind ./pkg/alternatives'
 ]
 
 [tasks."test:go:coverage"]
 description = "Collect coverage once on native Linux; other test configurations remain uninstrumented."
 depends = ["build:var"]
 run = [
-    'go run ./cmd/testreport run --output var/test-report/core -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json -covermode atomic -coverprofile=var/profile.cov ./...',
-    'go run ./cmd/testreport run --output var/test-report/alternatives -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json -tags=local_build,local_kind ./pkg/alternatives'
+    'gotestsum --format standard-verbose --jsonfile var/test-report/core.jsonl --junitfile var/test-report/core.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -covermode atomic -coverprofile=var/profile.cov ./...',
+    'gotestsum --format standard-verbose --jsonfile var/test-report/alternatives.jsonl --junitfile var/test-report/alternatives.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -tags=local_build,local_kind ./pkg/alternatives'
 ]
 
 [tasks."test:go:race"]
 depends = ["build:var"]
-run = 'go run ./cmd/testreport run --output var/test-report/race -- go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -json -race ./...'
+run = 'gotestsum --format standard-verbose --jsonfile var/test-report/race.jsonl --junitfile var/test-report/race.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -race ./...'
 
 [tasks."test:policy"]
 description = "Build and check the native offline policy CLI; var/policy-ci must not exist."
@@ -272,6 +272,7 @@ env_file = ".env"
 [tool_alias]
 biome = "aqua:biomejs/biome"
 golangci-lint = "aqua:golangci/golangci-lint"
+gotestsum = "aqua:gotestyourself/gotestsum"
 go-licenses = "go:github.com/google/go-licenses/v2"
 stylua = "aqua:JohnnyMorganz/StyLua"
 syft = "aqua:anchore/syft"
