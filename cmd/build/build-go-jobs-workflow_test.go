@@ -174,6 +174,7 @@ func TestGoWorkflowRaceRetainsPreparedContainerAndAsciinema(t *testing.T) {
 func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testing.T) {
 	job := readGoJobsWorkflow(t)["package"]
 	mandatory := map[string]string{
+		"assemble":         "ASSEMBLE_RESULT",
 		"browser":          "BROWSER_RESULT",
 		"test-static":      "TEST_STATIC_RESULT",
 		"test-web":         "TEST_WEB_RESULT",
@@ -335,6 +336,7 @@ func TestGoWorkflowCachesFollowMiseAndIsolateBuildContexts(t *testing.T) {
 		"binary-host":       "${{ matrix.os }}-${{ matrix.arch }}",
 		"binary-container":  "${{ matrix.image }}-${{ matrix.os }}-${{ matrix.arch }}",
 		"package":           jobs["package"].Container.Image,
+		"assemble":          jobs["assemble"].Container.Image,
 	}
 	for name, context := range contexts {
 		t.Run(name, func(t *testing.T) {
@@ -344,6 +346,8 @@ func TestGoWorkflowCachesFollowMiseAndIsolateBuildContexts(t *testing.T) {
 				scope = "browser-assets"
 			case "test-static", "test-browser":
 				scope = "browser"
+			case "assemble":
+				scope = "package"
 			}
 			requireGoWorkflowCacheRevision(t, jobs[name], "${{ inputs.commit || inputs.ref }}", scope, context)
 		})
@@ -367,6 +371,13 @@ func TestGoWorkflowReleaseCacheUsesWorkflowRevisionInsteadOfReleaseTag(t *testin
 
 func requireGoWorkflowCacheRevision(t *testing.T, job goJobsWorkflowJob, sourceRef, scope, context string) {
 	t.Helper()
+	condition := ""
+	switch job.Name {
+	case "Assemble packages":
+		condition = "steps.mode.outputs.prepared == 'true'"
+	case "Package":
+		condition = "needs.assemble.outputs.prepared != 'true' || needs.assemble.outputs.publish == 'true' || inputs.upload_dist"
+	}
 	source, mise, workflow, cache := -1, -1, -1, -1
 	for i, step := range job.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
@@ -391,11 +402,12 @@ func requireGoWorkflowCacheRevision(t *testing.T, job goJobsWorkflowJob, sourceR
 					"sparse-checkout-cone-mode": "false",
 					"persist-credentials":       "false",
 				}, step.With, "old source refs need cache infrastructure from the workflow without replacing their MISE pins")
-				require.Empty(t, step.If)
+				require.Equal(t, condition, step.If)
 				require.False(t, step.ContinueOnError)
 			}
 		}
 		if strings.HasPrefix(step.Uses, "jdx/mise-action@") {
+			require.Equal(t, condition, step.If)
 			mise = i
 		}
 		require.NotEqual(t, "./.github/actions/cache-go", step.Uses, "the source ref need not contain the cache action")
@@ -404,7 +416,7 @@ func requireGoWorkflowCacheRevision(t *testing.T, job goJobsWorkflowJob, sourceR
 			cache = i
 			require.Equal(t, scope, step.With["scope"])
 			require.Equal(t, context, step.With["context"])
-			require.Empty(t, step.If)
+			require.Equal(t, condition, step.If)
 			require.False(t, step.ContinueOnError)
 		}
 		if step.Uses != "" && step.With["path"] != "" {

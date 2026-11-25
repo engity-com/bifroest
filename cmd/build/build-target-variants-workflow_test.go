@@ -219,7 +219,7 @@ func TestBinaryTargetJobsPrepareOnceAndUploadAllVariantsWithoutBypassingFailures
 		}
 		require.Equal(t, map[string]int{"checkout": 1, "mise": 1, "dependencies": 1, "epoch": 1, "assets": 1, "build": 1, "upload": 1}, counts)
 	}
-	packageJob := jobs["package"]
+	packageJob := jobs["assemble"]
 	var download goJobsWorkflowStep
 	for _, step := range packageJob.Steps {
 		if strings.HasPrefix(step.Uses, "actions/download-artifact@") {
