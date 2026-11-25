@@ -22,6 +22,23 @@ const (
 	journalSegmentRunRecordSize = 8 + sha256.Size + 1
 )
 
+// Zero values retain the production bounds. Overrides belong to one operation,
+// never to package-wide state or the public audit configuration.
+type journalSegmentSortOptions struct {
+	readBatchSize int
+	chunkSize     int
+}
+
+func (this journalSegmentSortOptions) defaults() journalSegmentSortOptions {
+	if this.readBatchSize <= 0 {
+		this.readBatchSize = journalDirectoryReadBatch
+	}
+	if this.chunkSize <= 0 {
+		this.chunkSize = journalSegmentSortChunkSize
+	}
+	return this
+}
+
 type sortedJournalSegmentIterator struct {
 	directory string
 	memory    []journalSegmentFile
@@ -42,27 +59,30 @@ type journalSegmentSorter struct {
 	cleanupPaths  []string
 	workspace     *journalSegmentWorkspace
 	newWorkspace  func() (*journalSegmentWorkspace, error)
+	options       journalSegmentSortOptions
 }
 
 func newSortedJournalSegmentIterator(ctx context.Context, directory, tempDirectory string, classify func(os.DirEntry) (*journalSegmentFile, error)) (*sortedJournalSegmentIterator, error) {
 	if tempDirectory == "" {
 		return nil, errors.System.Newf("private audit segment workspace is empty")
 	}
-	return buildSortedJournalSegmentIterator(ctx, directory, tempDirectory, nil, classify)
+	return buildSortedJournalSegmentIterator(ctx, directory, tempDirectory, nil, journalSegmentSortOptions{}, classify)
 }
 
 func newSortedJournalSegmentIteratorWithWorkspace(ctx context.Context, directory string, workspace func() (*journalSegmentWorkspace, error), classify func(os.DirEntry) (*journalSegmentFile, error)) (*sortedJournalSegmentIterator, error) {
-	return buildSortedJournalSegmentIterator(ctx, directory, "", workspace, classify)
+	return buildSortedJournalSegmentIterator(ctx, directory, "", workspace, journalSegmentSortOptions{}, classify)
 }
 
-func buildSortedJournalSegmentIterator(ctx context.Context, directory, tempDirectory string, workspace func() (*journalSegmentWorkspace, error), classify func(os.DirEntry) (*journalSegmentFile, error)) (*sortedJournalSegmentIterator, error) {
+func buildSortedJournalSegmentIterator(ctx context.Context, directory, tempDirectory string, workspace func() (*journalSegmentWorkspace, error), options journalSegmentSortOptions, classify func(os.DirEntry) (*journalSegmentFile, error)) (*sortedJournalSegmentIterator, error) {
+	options = options.defaults()
 	sorter := &journalSegmentSorter{
 		directory:     directory,
 		tempDirectory: tempDirectory,
-		chunk:         make([]journalSegmentFile, 0, journalSegmentSortChunkSize),
+		chunk:         make([]journalSegmentFile, 0, options.chunkSize),
 		newWorkspace:  workspace,
+		options:       options,
 	}
-	err := forEachJournalDirectoryEntry(ctx, directory, func(entry os.DirEntry) error {
+	err := forEachJournalDirectoryEntryWithBatch(ctx, directory, options.readBatchSize, func(entry os.DirEntry) error {
 		segment, err := classify(entry)
 		if err != nil || segment == nil {
 			return err
@@ -81,6 +101,10 @@ func buildSortedJournalSegmentIterator(ctx context.Context, directory, tempDirec
 }
 
 func forEachJournalDirectoryEntry(ctx context.Context, directory string, consumer func(os.DirEntry) error) error {
+	return forEachJournalDirectoryEntryWithBatch(ctx, directory, journalDirectoryReadBatch, consumer)
+}
+
+func forEachJournalDirectoryEntryWithBatch(ctx context.Context, directory string, batchSize int, consumer func(os.DirEntry) error) error {
 	file, err := openVerifierPath(directory)
 	if err != nil {
 		return errors.System.Newf("cannot inspect audit directory %q: %w", directory, err)
@@ -90,7 +114,7 @@ func forEachJournalDirectoryEntry(ctx context.Context, directory string, consume
 			_ = file.Close()
 			return errors.System.Newf("audit directory iteration canceled: %w", err)
 		}
-		entries, readErr := file.ReadDir(journalDirectoryReadBatch)
+		entries, readErr := file.ReadDir(batchSize)
 		for _, entry := range entries {
 			if err := ctx.Err(); err != nil {
 				_ = file.Close()
@@ -132,7 +156,7 @@ func journalDirectoryHasEntry(ctx context.Context, directory string, include fun
 
 func (this *journalSegmentSorter) add(ctx context.Context, segment journalSegmentFile) error {
 	this.chunk = append(this.chunk, segment)
-	if len(this.chunk) <= journalSegmentSortChunkSize {
+	if len(this.chunk) <= this.options.defaults().chunkSize {
 		return nil
 	}
 	return this.flush(ctx)
@@ -166,7 +190,7 @@ func (this *journalSegmentSorter) resume(ctx context.Context) error {
 	if err := this.resumePendingRun(ctx); err != nil {
 		return err
 	}
-	if len(this.chunk) > journalSegmentSortChunkSize {
+	if len(this.chunk) > this.options.defaults().chunkSize {
 		return this.flush(ctx)
 	}
 	return nil

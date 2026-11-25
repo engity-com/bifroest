@@ -1,6 +1,7 @@
 package cast
 
 import (
+	"math"
 	"unicode"
 	"unicode/utf16"
 )
@@ -8,7 +9,7 @@ import (
 const lowerHex = "0123456789abcdef"
 
 func marshalCastEventString(value string) []byte {
-	result := make([]byte, 0, len(value))
+	result := make([]byte, 0, castEventStringCapacity(len(value)))
 	result = append(result, '"')
 	for _, character := range value {
 		switch character {
@@ -39,6 +40,15 @@ func marshalCastEventString(value string) []byte {
 		}
 	}
 	return append(result, '"')
+}
+
+func castEventStringCapacity(length int) int {
+	// The quotes are only a capacity hint. Fall back to the original length
+	// when adding them would exceed this platform's int range.
+	if length >= 0 && length <= math.MaxInt-2 {
+		return length + 2
+	}
+	return length
 }
 
 func mustEscapeCastCodePoint(value rune) bool {

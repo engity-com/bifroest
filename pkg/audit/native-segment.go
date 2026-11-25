@@ -113,8 +113,12 @@ type nativeSegmentInventory struct {
 }
 
 func newNativeSegmentInventory(ctx context.Context, directory, activeName string, encrypted bool, temps map[string]struct{}, workspace func() (*journalSegmentWorkspace, error)) (*nativeSegmentInventory, error) {
+	return newNativeSegmentInventoryWithOptions(ctx, directory, activeName, encrypted, temps, workspace, journalSegmentSortOptions{})
+}
+
+func newNativeSegmentInventoryWithOptions(ctx context.Context, directory, activeName string, encrypted bool, temps map[string]struct{}, workspace func() (*journalSegmentWorkspace, error), options journalSegmentSortOptions) (*nativeSegmentInventory, error) {
 	inventory := &nativeSegmentInventory{}
-	segments, err := newSortedJournalSegmentIteratorWithWorkspace(ctx, directory, workspace, func(entry os.DirEntry) (*journalSegmentFile, error) {
+	segments, err := buildSortedJournalSegmentIterator(ctx, directory, "", workspace, options, func(entry os.DirEntry) (*journalSegmentFile, error) {
 		name := entry.Name()
 		if _, ok := temps[name]; ok {
 			return nil, nil

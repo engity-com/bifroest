@@ -39,6 +39,7 @@ type nativeAuditProducerSnapshot struct {
 	headLease    os.FileInfo
 	headIdentity [16]byte
 	reserved     []os.FileInfo
+	sortOptions  journalSegmentSortOptions
 }
 
 func newNativeAuditProducerSnapshot(source JournalSource, directory string, id ProducerId, selected []string, live bool) *nativeAuditProducerSnapshot {
@@ -172,9 +173,9 @@ func (this *nativeAuditProducerSnapshot) initialize(ctx context.Context) error {
 	}
 	encrypted := this.source.ExpectedEncryptionRecipient != ""
 	activeName := this.activeName()
-	this.inventory, err = newNativeSegmentInventory(ctx, this.directory, activeName, encrypted, temps, func() (*journalSegmentWorkspace, error) {
+	this.inventory, err = newNativeSegmentInventoryWithOptions(ctx, this.directory, activeName, encrypted, temps, func() (*journalSegmentWorkspace, error) {
 		return newNativeVerifierWorkspace(this.selected)
-	})
+	}, this.sortOptions)
 	if err != nil {
 		return errors.System.Newf("invalid native audit inventory %q: %w", this.directory, err)
 	}

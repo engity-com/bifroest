@@ -12,6 +12,10 @@ import (
 )
 
 func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect bool, selection *verifiedRecordSelection) (*Verification, error) {
+	return verifyNativeJournalsWithSortOptions(ctx, sources, collect, selection, journalSegmentSortOptions{})
+}
+
+func verifyNativeJournalsWithSortOptions(ctx context.Context, sources []JournalSource, collect bool, selection *verifiedRecordSelection, sortOptions journalSegmentSortOptions) (*Verification, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -59,7 +63,7 @@ func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect 
 	}
 	for _, source := range prepared {
 		result.withSensitive = result.withSensitive && source.WithSensitive
-		journal, records, err := verifyNativeJournal(ctx, source, collect, budget, selectedDirectories)
+		journal, records, err := verifyNativeJournal(ctx, source, collect, budget, selectedDirectories, sortOptions)
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +76,7 @@ func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect 
 	return result, nil
 }
 
-func verifyNativeJournal(ctx context.Context, source JournalSource, collect bool, budget *verifierBudget, selectedDirectories []string) (VerifiedJournal, []VerifiedRecord, error) {
+func verifyNativeJournal(ctx context.Context, source JournalSource, collect bool, budget *verifierBudget, selectedDirectories []string, sortOptions journalSegmentSortOptions) (VerifiedJournal, []VerifiedRecord, error) {
 	rootBefore, err := snapshotVerifierDirectory(ctx, source.Directory)
 	if err != nil {
 		return VerifiedJournal{}, nil, err
@@ -99,7 +103,7 @@ func verifyNativeJournal(ctx context.Context, source JournalSource, collect bool
 			return errors.System.Newf("audit journal %q contains producer %s instead of expected producer %s", source.Name, id, source.ExpectedProducerId)
 		}
 		before := budget.records
-		found, count, snapshot, err := verifyNativeProducer(ctx, source, filepath.Join(source.Directory, name), id, collect, budget, selectedDirectories)
+		found, count, snapshot, err := verifyNativeProducer(ctx, source, filepath.Join(source.Directory, name), id, collect, budget, selectedDirectories, sortOptions)
 		if err != nil {
 			return err
 		}
@@ -133,12 +137,13 @@ func verifyNativeJournal(ctx context.Context, source JournalSource, collect bool
 	return journal, records, nil
 }
 
-func verifyNativeProducer(ctx context.Context, source JournalSource, directory string, id ProducerId, collect bool, budget *verifierBudget, selectedDirectories []string) ([]VerifiedRecord, uint64, verifierDirectorySnapshot, error) {
+func verifyNativeProducer(ctx context.Context, source JournalSource, directory string, id ProducerId, collect bool, budget *verifierBudget, selectedDirectories []string, sortOptions journalSegmentSortOptions) ([]VerifiedRecord, uint64, verifierDirectorySnapshot, error) {
 	options, err := nativeAuditSnapshotOptions(source, evidence.AuditProducerComplete)
 	if err != nil {
 		return nil, 0, verifierDirectorySnapshot{}, err
 	}
 	capture := newNativeAuditProducerSnapshot(source, directory, id, selectedDirectories, false)
+	capture.sortOptions = sortOptions
 	var records []VerifiedRecord
 	verified, err := evidence.InspectAuditProducerSnapshot(ctx, capture, options, nativeAuditRecordVisitor(budget, collect, &records))
 	if err != nil {
