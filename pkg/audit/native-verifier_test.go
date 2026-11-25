@@ -209,6 +209,8 @@ func TestNativeVerifierRejectsTempDirectoriesInsideSelectedJournals(t *testing.T
 	nativeTestWriteSealedChain(t, r, options.chunkSize+1)
 	otherConf, otherId := nativeRecorderTestConfig(t, false)
 	other := nativeTestOpen(t, &otherConf, otherId)
+	// Keep the second journal live for the checks, but close it before TempDir cleanup.
+	t.Cleanup(func() { require.NoError(t, other.Close()) })
 	require.NoError(t, other.Record(context.Background(), Event{Name: "test.other"}))
 	type testCase struct {
 		name      string
