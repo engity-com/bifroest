@@ -18,6 +18,7 @@ type goJobsWorkflowStep struct {
 	Run             string            `yaml:"run"`
 	If              string            `yaml:"if"`
 	Shell           string            `yaml:"shell"`
+	TimeoutMinutes  int               `yaml:"timeout-minutes"`
 	ContinueOnError bool              `yaml:"continue-on-error"`
 	With            map[string]string `yaml:"with"`
 	Env             map[string]string `yaml:"env"`
@@ -98,7 +99,9 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 			checkout, dependencies, command, node := -1, -1, -1, -1
 			for i, step := range job.Steps {
 				require.False(t, step.ContinueOnError)
-				if step.If != "" {
+				if name == "test-host" && step.Name == "Stress management channel completion on Windows" {
+					require.Equal(t, "runner.os == 'Windows'", step.If)
+				} else if step.If != "" {
 					require.Equal(t, "always()", step.If, "only failure diagnostics may have a conditional")
 					if step.Uses != "" {
 						require.True(t, strings.HasPrefix(step.Uses, "actions/upload-artifact@"))

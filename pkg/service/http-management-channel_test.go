@@ -3,8 +3,10 @@ package service
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +24,8 @@ import (
 
 type cancelManagementChannelRepository struct {
 	environment.CloseableRepository
-	entered chan struct{}
+	entered  chan struct{}
+	canceled chan struct{}
 }
 
 func (this *cancelManagementChannelRepository) ResolveSessionTarget(ctx environment.Context) (session.Target, error) {
@@ -34,12 +37,13 @@ func (this *cancelManagementChannelRepository) Ensure(request environment.Reques
 	if err != nil {
 		return nil, err
 	}
-	return &cancelManagementChannelEnvironment{Environment: value, entered: this.entered}, nil
+	return &cancelManagementChannelEnvironment{Environment: value, entered: this.entered, canceled: this.canceled}, nil
 }
 
 type cancelManagementChannelEnvironment struct {
 	environment.Environment
-	entered chan struct{}
+	entered  chan struct{}
+	canceled chan struct{}
 }
 
 func (this *cancelManagementChannelEnvironment) ReadManagement(task environment.TaskContext, request protocol.ReadRequest, output io.Writer) (int, error) {
@@ -48,6 +52,7 @@ func (this *cancelManagementChannelEnvironment) ReadManagement(task environment.
 	}
 	close(this.entered)
 	<-task.Context().Done()
+	close(this.canceled)
 	return -1, task.Context().Err()
 }
 
@@ -55,7 +60,7 @@ func TestManagementChannelCancellationDoesNotCloseOrReplaceItsAdmission(t *testi
 	fixture := newWebSocketFixture(t, nil, func(conf *configuration.Configuration) {
 		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 	})
-	blocked := &cancelManagementChannelRepository{CloseableRepository: fixture.svc.environments, entered: make(chan struct{})}
+	blocked := &cancelManagementChannelRepository{CloseableRepository: fixture.svc.environments, entered: make(chan struct{}), canceled: make(chan struct{})}
 	fixture.svc.environments = blocked
 	socket := managementChannelDial(t, fixture, fixture.login(t))
 	requireWebSocketReady(t, socket)
@@ -65,9 +70,14 @@ func TestManagementChannelCancellationDoesNotCloseOrReplaceItsAdmission(t *testi
 	case <-time.After(2 * time.Second):
 		t.Fatal("management read did not start")
 	}
+	completion := newManagementChannelTestCompletion(t, socket)
 	require.NoError(t, socket.WriteJSON(map[string]string{"type": "cancel", "requestId": "1"}))
+	completion.waitFor(t, blocked.canceled, "backend cancellation")
 	for {
-		status := webSocketStatus(t, socket)
+		kind, data := completion.read(t)
+		require.Equal(t, websocket.TextMessage, kind)
+		var status map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &status))
 		require.Equal(t, `"1"`, string(status["requestId"]))
 		if string(status["type"]) == `"canceled"` {
 			break
@@ -77,6 +87,63 @@ func TestManagementChannelCancellationDoesNotCloseOrReplaceItsAdmission(t *testi
 	code, data := managementChannelRead(t, socket, "2", "version/show", map[string]string{"long": "false"})
 	require.Equal(t, 200, code, string(data))
 	require.Contains(t, string(data), `"detail":"short"`)
+}
+
+type managementChannelTestCompletion struct {
+	socket   *websocket.Conn
+	deadline time.Time
+	frames   []string
+}
+
+func newManagementChannelTestCompletion(t *testing.T, socket *websocket.Conn) *managementChannelTestCompletion {
+	t.Helper()
+	result := &managementChannelTestCompletion{socket: socket, deadline: time.Now().Add(15 * time.Second)}
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("management completion frames (last 16, metadata only): %v", result.frames)
+			stack := make([]byte, 256<<10)
+			stack = stack[:runtime.Stack(stack, true)]
+			t.Logf("management completion goroutines:\n%s", stack)
+		}
+	})
+	// Bound the entire cancellation/finalization phase independently of prior
+	// status reads. Progress frames must not extend this overall deadline.
+	require.NoError(t, socket.SetReadDeadline(result.deadline))
+	return result
+}
+
+func (this *managementChannelTestCompletion) waitFor(t *testing.T, done <-chan struct{}, phase string) {
+	t.Helper()
+	timer := time.NewTimer(time.Until(this.deadline))
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		t.Fatalf("management completion timed out waiting for %s", phase)
+	}
+}
+
+func (this *managementChannelTestCompletion) read(t *testing.T) (int, []byte) {
+	t.Helper()
+	kind, data, err := this.socket.ReadMessage()
+	require.NoError(t, err, "waiting for management finalization")
+	description := fmt.Sprintf("kind=%d bytes=%d", kind, len(data))
+	if kind == websocket.TextMessage {
+		var status struct {
+			Type      string `json:"type"`
+			RequestID string `json:"requestId"`
+			Phase     string `json:"phase"`
+			Status    int    `json:"status"`
+		}
+		if json.Unmarshal(data, &status) == nil {
+			description += fmt.Sprintf(" type=%q requestId=%q phase=%q status=%d", status.Type, status.RequestID, status.Phase, status.Status)
+		}
+	}
+	this.frames = append(this.frames, description)
+	if len(this.frames) > 16 {
+		this.frames = this.frames[len(this.frames)-16:]
+	}
+	return kind, data
 }
 
 func managementChannelDial(t *testing.T, fixture *webSocketFixture, token string, progress ...bool) *websocket.Conn {
