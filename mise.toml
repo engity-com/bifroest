@@ -77,13 +77,21 @@ run = [
 depends = ["build:var"]
 # GO_TEST_PARALLELISM=1 restores serial compilation/testing on smaller runners.
 run = [
-    'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -v -covermode atomic -coverprofile=var/profile.cov ./...',
-    'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -v -tags=local_build,local_kind ./pkg/alternatives'
+    'gotestsum --format standard-verbose --jsonfile var/test-report/core.jsonl --junitfile var/test-report/core.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} ./...',
+    'gotestsum --format standard-verbose --jsonfile var/test-report/alternatives.jsonl --junitfile var/test-report/alternatives.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -tags=local_build,local_kind ./pkg/alternatives'
+]
+
+[tasks."test:go:coverage"]
+description = "Collect coverage once on native Linux; other test configurations remain uninstrumented."
+depends = ["build:var"]
+run = [
+    'gotestsum --format standard-verbose --jsonfile var/test-report/core.jsonl --junitfile var/test-report/core.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -covermode atomic -coverprofile=var/profile.cov ./...',
+    'gotestsum --format standard-verbose --jsonfile var/test-report/alternatives.jsonl --junitfile var/test-report/alternatives.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -tags=local_build,local_kind ./pkg/alternatives'
 ]
 
 [tasks."test:go:race"]
 depends = ["build:var"]
-run = 'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -race ./...'
+run = 'gotestsum --format standard-verbose --jsonfile var/test-report/race.jsonl --junitfile var/test-report/race.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -race ./...'
 
 [tasks."test:policy"]
 description = "Build and check the native offline policy CLI; var/policy-ci must not exist."
@@ -96,8 +104,9 @@ run = "go run ./test/policyci --oci --runtime docker --output var/policy-oci"
 [tasks."test:go:browser"]
 description = "Run built HTTPS browser integration separately from the core package deadline."
 depends = ["build:var"]
+dir = "web"
 env = { BIFROEST_TEST_BROWSER_UI = "1", BIFROEST_TEST_BROWSER_CLIENT = "1" }
-run = "go test -p={{env.GO_TEST_PARALLELISM | default(value=\"2\")}} -v -count=1 -covermode atomic -coverprofile=var/browser-profile.cov -timeout=20m -run '^TestBrowser' ./pkg/service"
+run = "node scripts/browser-go-tests.ts"
 
 [tasks."test:web"]
 dir = "web"
@@ -263,6 +272,7 @@ env_file = ".env"
 [tool_alias]
 biome = "aqua:biomejs/biome"
 golangci-lint = "aqua:golangci/golangci-lint"
+gotestsum = "aqua:gotestyourself/gotestsum"
 go-licenses = "go:github.com/google/go-licenses/v2"
 stylua = "aqua:JohnnyMorganz/StyLua"
 syft = "aqua:anchore/syft"

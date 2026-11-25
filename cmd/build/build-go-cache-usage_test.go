@@ -57,9 +57,12 @@ func TestGoWorkflowCachesFollowPinnedToolchain(t *testing.T) {
 						}
 						require.NotEmpty(t, step.With["scope"], "%s must select a build-cache scope", jobName)
 						cached++
-						if name == "build.yml" && (jobName == "browser" || jobName == "test-host" || jobName == "test-container" || jobName == "test-race") {
+						if name == "build.yml" && (jobName == "test-static" || jobName == "test-host" || jobName == "test-container" || jobName == "test-race") {
 							require.Equal(t, "true", step.With["build-cache"], "%s must persist expensive test builds", jobName)
 							buildCached++
+						} else if name == "build.yml" && jobName == "test-browser" {
+							require.Equal(t, "restore-only", step.With["build-cache"], "browser shards must not multiply persistent build snapshots")
+							require.Equal(t, "browser", step.With["scope"], "reuse the static core writer's cache identity")
 						} else {
 							require.Empty(t, step.With["build-cache"], "%s must keep the module-only default instead of crowding out expensive test caches", jobName)
 						}

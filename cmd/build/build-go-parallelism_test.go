@@ -18,20 +18,21 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 		{
 			name: "test:go",
 			commands: []string{
-				`'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -v -covermode atomic -coverprofile=var/profile.cov ./...'`,
-				`'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -v -tags=local_build,local_kind ./pkg/alternatives'`,
+				`'gotestsum --format standard-verbose --jsonfile var/test-report/core.jsonl --junitfile var/test-report/core.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} ./...'`,
+				`'gotestsum --format standard-verbose --jsonfile var/test-report/alternatives.jsonl --junitfile var/test-report/alternatives.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -tags=local_build,local_kind ./pkg/alternatives'`,
+			},
+		},
+		{
+			name: "test:go:coverage",
+			commands: []string{
+				`'gotestsum --format standard-verbose --jsonfile var/test-report/core.jsonl --junitfile var/test-report/core.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -covermode atomic -coverprofile=var/profile.cov ./...'`,
+				`'gotestsum --format standard-verbose --jsonfile var/test-report/alternatives.jsonl --junitfile var/test-report/alternatives.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -tags=local_build,local_kind ./pkg/alternatives'`,
 			},
 		},
 		{
 			name: "test:go:race",
 			commands: []string{
-				`'go test -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -race ./...'`,
-			},
-		},
-		{
-			name: "test:go:browser",
-			commands: []string{
-				`"go test -p={{env.GO_TEST_PARALLELISM | default(value=\"2\")}} -v -count=1 -covermode atomic -coverprofile=var/browser-profile.cov -timeout=20m -run '^TestBrowser' ./pkg/service"`,
+				`'gotestsum --format standard-verbose --jsonfile var/test-report/race.jsonl --junitfile var/test-report/race.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -race ./...'`,
 			},
 		},
 	} {
@@ -40,7 +41,8 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 			require.True(t, found, "required MISE task %s", tt.name)
 			body, _, _ := strings.Cut(rest, "\n[tasks.")
 			require.Contains(t, body, `depends = ["build:var"]`)
-			require.Equal(t, len(tt.commands), strings.Count(body, "go test "), "guard every Go test invocation, including the local_build/local_kind variant")
+			require.Equal(t, len(tt.commands), strings.Count(body, "gotestsum "), "guard every Go test invocation, including the local_build/local_kind variant")
+			require.NotContains(t, body, "--rerun-fails", "test failures must not be retried")
 			for _, command := range tt.commands {
 				require.Contains(t, body, command, "keep the bounded, overridable default and existing test scope/options")
 			}
@@ -48,10 +50,19 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 	}
 }
 
+func TestGoTestReporterIsPinnedThroughMise(t *testing.T) {
+	versions, err := os.ReadFile("../../.tool-versions")
+	require.NoError(t, err)
+	require.Contains(t, strings.Split(strings.ReplaceAll(string(versions), "\r\n", "\n"), "\n"), "gotestsum     1.13.0")
+	configuration, err := os.ReadFile("../../mise.toml")
+	require.NoError(t, err)
+	require.Contains(t, string(configuration), `gotestsum = "aqua:gotestyourself/gotestsum"`)
+}
+
 func TestGoWorkflowKeepsWindowsTestsSerialWithoutNarrowingTheSuite(t *testing.T) {
 	jobs := readGoJobsWorkflow(t)
 	require.Equal(t, "${{ matrix.os == 'windows' && '1' || '2' }}", jobs["test-host"].Env["GO_TEST_PARALLELISM"])
-	for _, job := range []string{"test-container", "test-race", "browser"} {
+	for _, job := range []string{"test-container", "test-race", "test-static", "test-browser"} {
 		configuration, found := jobs[job]
 		require.True(t, found)
 		require.Empty(t, configuration.Env["GO_TEST_PARALLELISM"], "%s must retain the bounded default", job)

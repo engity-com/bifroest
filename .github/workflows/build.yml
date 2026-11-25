@@ -56,8 +56,8 @@ jobs:
       contents: read
     env:
       GITHUB_TOKEN: ""
-      # Browser integration uses the static build, like test-host. Native PAM
-      # compilation remains covered by test-container's prepared build image.
+      # WASM helpers and browser integration use static builds. Native PAM
+      # remains covered by test-container's prepared build image.
       CGO_ENABLED: "0"
     steps:
       - name: Checkout code
@@ -84,9 +84,130 @@ jobs:
       - name: Cache Go
         uses: ./var/ci-workflow/.github/actions/cache-go
         with:
+          scope: browser-assets
+          context: cgo0
+
+      - name: Install pinned browser toolchain
+        run: mise -C web install
+
+      - name: Install frozen dependencies without lifecycle scripts
+        run: mise -C web run install:web
+
+      - name: Build browser before any release binary
+        run: mise -C web run build:web
+
+      - name: Check browser build inventory
+        run: mise -C web exec -- bun run test:release
+
+      - name: Upload exact browser assets for every binary host
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: browser-assets
+          path: pkg/webui/assets
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload browser client fixture for HTTPS scenarios
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: browser-test-core
+          path: var/webui-client-build
+          retention-days: 1
+          if-no-files-found: error
+
+  test-static:
+    name: Static Linux core tests
+    needs: browser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ""
+      CGO_ENABLED: "0"
+      GOFLAGS: "-p=2"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.commit || inputs.ref }}
+
+      - name: Install MISE
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - *checkout-workflow-cache
+
+      - name: Cache Go
+        uses: ./var/ci-workflow/.github/actions/cache-go
+        with:
+          # Retain the previous combined job's static-core cache identity.
           scope: browser
           context: cgo0
           build-cache: "true"
+
+      - name: Install pinned WebCrypto test runtime
+        run: mise -C web install node
+
+      - &download-browser-assets
+        name: Download verified browser assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: browser-assets
+          path: pkg/webui/assets
+
+      - name: Test full static Linux core with pinned WebCrypto runtime
+        run: mise -C web exec -- node scripts/native-go-tests.ts
+
+      - &summarize-go-tests
+        name: Summarize Go tests even after failure
+        if: always()
+        shell: bash
+        run: |
+          for report in var/test-report/*.jsonl; do
+            if [ -f "$report" ]; then
+              {
+                printf '### Slowest Go tests: %s\n\n```text\n' "$(basename "$report" .jsonl)"
+                mise exec -- gotestsum tool slowest --num 15 --threshold 0s --jsonfile "$report"
+                printf '```\n\nCached test durations may come from a previous run.\n\n'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - name: Upload static Linux test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-reports-static-linux
+          path: var/test-report/
+          retention-days: 7
+          if-no-files-found: warn
+
+  test-web:
+    name: Browser source tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ""
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.commit || inputs.ref }}
+
+      - name: Install MISE
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - *checkout-workflow-cache
+
+      - name: Cache Go modules for browser proof helpers
+        uses: ./var/ci-workflow/.github/actions/cache-go
+        with:
+          scope: test-web
+          context: cgo0
 
       - name: Install pinned browser toolchain
         run: mise -C web install
@@ -97,35 +218,89 @@ jobs:
       - name: Check browser sources
         run: mise -C web run lint:web
 
-      - name: Build browser before any release binary
-        run: mise -C web run build:web
+      - name: Install Chromium
+        run: mise -C web run install:web:browser
 
-      - name: Check browser build inventory
-        run: mise -C web exec -- bun run test:release
+      - name: Test browser sources and real profile restart
+        run: mise -C web run test:web
+
+  test-browser:
+    name: Built HTTPS browser ${{ matrix.shard }}
+    needs: browser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/3", "2/3", "3/3"]
+    env:
+      GITHUB_TOKEN: ""
+      CGO_ENABLED: "0"
+      GOFLAGS: "-p=2"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.commit || inputs.ref }}
+
+      - name: Install MISE
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - *checkout-workflow-cache
+
+      - name: Reuse static core Go builds without new shard snapshots
+        uses: ./var/ci-workflow/.github/actions/cache-go
+        with:
+          scope: browser
+          context: cgo0
+          build-cache: restore-only
+
+      - name: Install pinned browser toolchain
+        run: mise -C web install
+
+      - name: Install frozen dependencies without lifecycle scripts
+        run: mise -C web run install:web
 
       - name: Install Chromium
         run: mise -C web run install:web:browser
 
-      - name: Test browser
-        run: mise -C web run test:web
+      - *download-browser-assets
 
-      - name: Test shared Go core
+      - name: Download browser client fixture before HTTPS scenarios
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: browser-test-core
+          path: var/webui-client-build
+
+      - name: Test isolated built HTTPS browser scenarios
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
-          export BIFROEST_TEST_NODE="$(mise -C web which node)"
-          mise -C web run test:go
+          BIFROEST_TEST_NODE="$(mise -C web which node)"
+          export BIFROEST_TEST_NODE
+          if [ -f web/scripts/browser-go-tests.ts ]; then
+            mise -C web run test:go:browser -- --shard "$SHARD"
+          elif [ "$SHARD" = 1/3 ]; then
+            # Old release refs have no shard runner: run their full task once.
+            mise -C web run test:go:browser
+          else
+            echo "Old source ref: the complete browser suite runs on shard 1/3."
+          fi
 
-      - name: Test built HTTPS browser
-        run: |
-          export BIFROEST_TEST_NODE="$(mise -C web which node)"
-          mise -C web run test:go:browser
+      - *summarize-go-tests
 
-      - name: Upload exact browser assets for every binary host
+      - name: Upload browser shard test reports
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: browser-assets
-          path: pkg/webui/assets
-          retention-days: 1
-          if-no-files-found: error
+          name: test-reports-browser-${{ strategy.job-index }}
+          path: var/test-report/
+          retention-days: 7
+          if-no-files-found: warn
 
   test-host:
     name: Tests ${{ matrix.os }}
@@ -186,6 +361,17 @@ jobs:
         env:
           MISE_GITHUB_TOKEN: ""
         run: mise -C web exec -- node scripts/native-go-tests.ts
+
+      - *summarize-go-tests
+
+      - name: Upload host test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: var/test-report/
+          retention-days: 7
+          if-no-files-found: warn
 
   lint-go-host:
     name: Go lint ${{ matrix.os }}
@@ -421,7 +607,26 @@ jobs:
       - name: Test
         env:
           MISE_GITHUB_TOKEN: ""
-        run: mise run test:go
+        run: |
+          if grep -Fq '[tasks."test:go:coverage"]' mise.toml; then
+            mise run test:go:coverage
+          else
+            # Keep older release refs' own test tasks and toolchain pins.
+            mise run test:go
+          fi
+
+      - *summarize-go-tests
+
+      - name: Upload native Linux test reports and coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-reports-native-${{ matrix.os }}
+          path: |
+            var/test-report/
+            var/profile.cov
+          retention-days: 7
+          if-no-files-found: warn
 
   test-race:
     name: Race tests ${{ matrix.os }}
@@ -465,6 +670,17 @@ jobs:
         env:
           MISE_GITHUB_TOKEN: ""
         run: mise run test:go:race
+
+      - *summarize-go-tests
+
+      - name: Upload race test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-reports-race-${{ matrix.os }}
+          path: var/test-report/
+          retention-days: 7
+          if-no-files-found: warn
 
   lint-go-container:
     name: Go lint ${{ matrix.os }}
@@ -635,6 +851,10 @@ jobs:
         test-host,
         test-container,
         test-race,
+        browser,
+        test-static,
+        test-web,
+        test-browser,
         lint-go-host,
         lint-go-container,
         binary-host,
@@ -658,6 +878,10 @@ jobs:
           TEST_HOST_RESULT: ${{ needs.test-host.result }}
           TEST_CONTAINER_RESULT: ${{ needs.test-container.result }}
           TEST_RACE_RESULT: ${{ needs.test-race.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+          TEST_STATIC_RESULT: ${{ needs.test-static.result }}
+          TEST_WEB_RESULT: ${{ needs.test-web.result }}
+          TEST_BROWSER_RESULT: ${{ needs.test-browser.result }}
           BINARY_HOST_RESULT: ${{ needs.binary-host.result }}
           BINARY_CONTAINER_RESULT: ${{ needs.binary-container.result }}
           LINT_GO: ${{ inputs.lint_go }}
@@ -674,6 +898,10 @@ jobs:
           require_success test-host "$TEST_HOST_RESULT"
           require_success test-container "$TEST_CONTAINER_RESULT"
           require_success test-race "$TEST_RACE_RESULT"
+          require_success browser "$BROWSER_RESULT"
+          require_success test-static "$TEST_STATIC_RESULT"
+          require_success test-web "$TEST_WEB_RESULT"
+          require_success test-browser "$TEST_BROWSER_RESULT"
           require_success binary-host "$BINARY_HOST_RESULT"
           require_success binary-container "$BINARY_CONTAINER_RESULT"
           if [ "$LINT_GO" = true ]; then

@@ -56,7 +56,7 @@ func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T
 	require.False(t, buildCache.Required)
 	require.Equal(t, "false", buildCache.Default, "build caching must default to the string false, not a YAML boolean")
 	require.Equal(t, "composite", action.Runs.Using)
-	require.Len(t, action.Runs.Steps, 3)
+	require.Len(t, action.Runs.Steps, 4)
 	for _, step := range action.Runs.Steps {
 		require.False(t, step.ContinueOnError)
 	}
@@ -73,7 +73,7 @@ func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T
 	modules, build := action.Runs.Steps[1], action.Runs.Steps[2]
 	require.Empty(t, modules.If, "module caching remains enabled without the build-cache opt-in")
 	require.Equal(t, "${{ inputs.build-cache == 'true' }}", build.If, "only an explicit true may restore and save build results")
-	for _, step := range action.Runs.Steps[1:] {
+	for _, step := range action.Runs.Steps[1:3] {
 		require.Equal(t, "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", step.Uses)
 		require.Empty(t, step.Run)
 	}
@@ -87,6 +87,27 @@ func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T
 	dependencyPrefix := buildPrefix + "${{ hashFiles('**/go.sum') }}-"
 	require.Equal(t, dependencyPrefix+"${{ github.sha }}", build.With["key"], "reruns and parallel callers must reuse the same immutable snapshot per commit")
 	require.Equal(t, dependencyPrefix+"\n"+buildPrefix+"\n", build.With["restore-keys"], "fallbacks must not cross toolchain, platform, CGO or scope/context boundaries")
+	restore := action.Runs.Steps[3]
+	require.Equal(t, "${{ inputs.build-cache == 'restore-only' }}", restore.If)
+	require.Equal(t, "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", restore.Uses)
+	require.Equal(t, build.With, restore.With, "readers must use the writer's exact cache identity and paths")
+	require.Empty(t, restore.Run)
+}
+
+func TestGoCacheCompositeActionDoesNotUseYAMLAnchors(t *testing.T) {
+	raw, err := gos.ReadFile("../../.github/actions/cache-go/action.yml")
+	require.NoError(t, err)
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal(raw, &root))
+	var visit func(*yaml.Node)
+	visit = func(node *yaml.Node) {
+		require.Empty(t, node.Anchor, "GitHub supports anchors in workflows, not composite action manifests")
+		require.NotEqual(t, yaml.AliasNode, node.Kind)
+		for _, child := range node.Content {
+			visit(child)
+		}
+	}
+	visit(&root)
 }
 
 func runGoCacheDetection(t *testing.T, goEnv, scope, context, status string) (map[string]string, string, error) {
