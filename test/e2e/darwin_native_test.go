@@ -59,7 +59,7 @@ func TestOpenSSHLocalNative(t *testing.T) {
 		t.Fatal("native Darwin SSH test target must not be root")
 	}
 
-	f, err := newFixture(t)
+	f, err := newFixtureWithBuildMode(t, fixtureBuildNative)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestDarwinLocalAccountLifecycle(t *testing.T) {
 	}
 	darwinRequireLifecycleAccount(t, account, requirement)
 
-	f, err := newFixture(t)
+	f, err := newFixtureWithBuildMode(t, fixtureBuildNative)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -168,7 +168,7 @@ env = {
 # Create the shared log directory as the runner before tests re-execute via sudo.
 run = [
     "mkdir -p var/e2e",
-    "go test -v -count=1 -tags=e2e -timeout=30m -run '^Test(OpenSSHLocalNative|DarwinLocalAccountLifecycle|DarwinLaunchDaemon)$' ./test/e2e"
+    "go test -v -count=1 -tags=e2e -timeout=30m -run '^Test(FixtureBinarySelection|FixtureBuildFailure|FixtureRejectsUnknownBuildMode|OpenSSHLocalNative|DarwinLocalAccountLifecycle|DarwinLaunchDaemon)$' ./test/e2e"
 ]
 
 [tasks."test:e2e"]

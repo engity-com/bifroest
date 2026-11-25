@@ -80,7 +80,19 @@ type commandResult struct {
 	err    error
 }
 
+type fixtureBuildMode uint8
+
+const (
+	fixtureBuildAll fixtureBuildMode = iota
+	fixtureBuildNative
+)
+
 func newFixture(t *testing.T) (*fixture, error) {
+	t.Helper()
+	return newFixtureWithBuildMode(t, fixtureBuildAll)
+}
+
+func newFixtureWithBuildMode(t *testing.T, mode fixtureBuildMode) (*fixture, error) {
 	t.Helper()
 	targetGOOS, targetGOARCH, targetPlatform, err := e2eTargetForHost(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -126,7 +138,7 @@ func newFixture(t *testing.T) (*fixture, error) {
 		tools:           tools,
 	}
 	t.Cleanup(f.cleanup)
-	if err := f.prepareCommon(); err != nil {
+	if err := f.prepareCommon(mode); err != nil {
 		return f, err
 	}
 	return f, nil
@@ -270,7 +282,7 @@ func probeRuntime(ctx context.Context, name string) commandResult {
 	return result
 }
 
-func (f *fixture) prepareCommon() error {
+func (f *fixture) prepareCommon(mode fixtureBuildMode) error {
 	for _, key := range []string{f.clientKey, f.wrongKey, f.agentKey, f.hostKey} {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		result := runCommand(ctx, f.repoRoot, nil, f.tools["ssh-keygen"], "-q", "-t", "ed25519", "-N", "", "-f", key)
@@ -292,6 +304,13 @@ func (f *fixture) prepareCommon() error {
 		}
 	}
 
+	return f.prepareBinaries(mode)
+}
+
+func (f *fixture) prepareBinaries(mode fixtureBuildMode) error {
+	if mode != fixtureBuildAll && mode != fixtureBuildNative {
+		return fmt.Errorf("unknown fixture build mode %d", mode)
+	}
 	binDir := filepath.Join(f.tempDir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		return err
@@ -300,7 +319,7 @@ func (f *fixture) prepareCommon() error {
 	f.bifroest = filepath.Join(binDir, "bifroest")
 	f.targetHelper = filepath.Join(binDir, "e2e-helper-target")
 	f.targetBifroest = filepath.Join(binDir, "bifroest-target")
-	for _, build := range []struct {
+	builds := []struct {
 		output      string
 		packagePath string
 		tags        string
@@ -311,7 +330,12 @@ func (f *fixture) prepareCommon() error {
 		{f.helper, "./test/e2e/helper", "e2e", "-s -w", []string{"CGO_ENABLED=0", "GOOS=" + runtime.GOOS, "GOARCH=" + runtime.GOARCH}},
 		{f.targetBifroest, "./cmd/bifroest", "local_build,local_kind", "-s -w -X main.version=" + f.bifroestVersion, []string{"CGO_ENABLED=0", "GOOS=" + f.targetGOOS, "GOARCH=" + f.targetGOARCH}},
 		{f.targetHelper, "./test/e2e/helper", "e2e", "-s -w", []string{"CGO_ENABLED=0", "GOOS=" + f.targetGOOS, "GOARCH=" + f.targetGOARCH}},
-	} {
+	}
+	if mode == fixtureBuildNative {
+		// Native Darwin integrations do not use helpers or Linux target binaries.
+		builds = builds[:1]
+	}
+	for _, build := range builds {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 		args := []string{"build", "-tags", build.tags, "-trimpath", "-ldflags=" + build.ldflags, "-o", build.output, build.packagePath}
 		result := runCommand(ctx, f.repoRoot, build.environment, f.goTool, args...)
