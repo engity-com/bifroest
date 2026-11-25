@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
@@ -570,31 +571,59 @@ func TestOidcVerificationDeadline(t *testing.T) {
 }
 
 func TestOidcSessionLockRespectsCancellation(t *testing.T) {
-	a := &OidcDeviceAuthAuthorizer{flow: "flow", conf: &configuration.AuthorizationOidcDeviceAuth{ForceDisposeSessionOn: "lostAccess"}}
-	sess := oidcRefreshTestSession(t, oidcToken{Token: &oauth2.Token{AccessToken: "access"}})
-	unlock, err := a.lockSession(context.Background(), sess)
-	require.NoError(t, err)
-	defer unlock()
 	for _, tc := range []struct {
 		name string
-		call func(context.Context) error
+		call func(context.Context, *OidcDeviceAuthAuthorizer, session.Session) error
 	}{
-		{"next refresh", func(ctx context.Context) error { _, err := a.NextRefreshAt(ctx, sess); return err }},
-		{"refresh", func(ctx context.Context) error { _, _, err := a.RefreshSession(ctx, sess); return err }},
-		{"deadline", func(ctx context.Context) error { _, err := a.VerificationDeadline(ctx, sess); return err }},
-		{"restore", func(ctx context.Context) error { _, err := a.RestoreFromSession(ctx, sess, &RestoreOpts{}); return err }},
-		{"public key candidate", func(ctx context.Context) error { _, err := a.lockSession(ctx, sess); return err }},
+		{"next refresh", func(ctx context.Context, a *OidcDeviceAuthAuthorizer, sess session.Session) error {
+			_, err := a.NextRefreshAt(ctx, sess)
+			return err
+		}},
+		{"refresh", func(ctx context.Context, a *OidcDeviceAuthAuthorizer, sess session.Session) error {
+			_, _, err := a.RefreshSession(ctx, sess)
+			return err
+		}},
+		{"deadline", func(ctx context.Context, a *OidcDeviceAuthAuthorizer, sess session.Session) error {
+			_, err := a.VerificationDeadline(ctx, sess)
+			return err
+		}},
+		{"restore", func(ctx context.Context, a *OidcDeviceAuthAuthorizer, sess session.Session) error {
+			_, err := a.RestoreFromSession(ctx, sess, &RestoreOpts{})
+			return err
+		}},
+		{"public key candidate", func(ctx context.Context, a *OidcDeviceAuthAuthorizer, sess session.Session) error {
+			_, err := a.lockSession(ctx, sess)
+			return err
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-			defer cancel()
-			result := make(chan error, 1)
-			go func() { result <- tc.call(ctx) }()
-			select {
-			case err := <-result:
-				require.ErrorIs(t, err, context.DeadlineExceeded)
-			case <-time.After(time.Second):
-				t.Fatal("session lock did not stop waiting after context cancellation")
+			for _, mode := range []string{"deadline", "cancel"} {
+				t.Run(mode, func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						a := &OidcDeviceAuthAuthorizer{flow: "flow", conf: &configuration.AuthorizationOidcDeviceAuth{ForceDisposeSessionOn: "lostAccess"}}
+						sess := oidcRefreshTestSession(t, oidcToken{Token: &oauth2.Token{AccessToken: "access"}})
+						unlock, err := a.lockSession(t.Context(), sess)
+						require.NoError(t, err)
+						defer unlock()
+						ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+						defer cancel()
+						result := make(chan error, 1)
+						go func() { result <- tc.call(ctx, a, sess) }()
+						synctest.Wait()
+						require.Empty(t, result, "operation must wait while the session lock is held")
+						want := context.Canceled
+						if mode == "deadline" {
+							synctest.Sleep(time.Minute - time.Nanosecond)
+							require.Empty(t, result)
+							synctest.Sleep(time.Nanosecond)
+							want = context.DeadlineExceeded
+						} else {
+							cancel()
+						}
+						require.ErrorIs(t, <-result, want)
+						// The bubble also waits for the waiting goroutine to exit.
+					})
+				})
 			}
 		})
 	}
@@ -682,32 +711,67 @@ func TestOidcRefreshWithNewIdTokenSchedulesItsExpiry(t *testing.T) {
 }
 
 func TestOidcLostAccessRefreshCapsNetworkAtVerificationDeadline(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-r.Context().Done():
-		case <-time.After(time.Second):
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"access_token":"late","token_type":"Bearer"}`))
-		}
-	}))
-	defer server.Close()
-	a := &OidcDeviceAuthAuthorizer{
-		flow: "flow", conf: &configuration.AuthorizationOidcDeviceAuth{
-			ForceDisposeSessionOn: "lostAccess", RefreshToken: configuration.AuthorizationOidcRefreshToken{MaxUnverifiedFor: common.DurationOf(time.Minute)},
-		},
-		oauth2Config: oauth2.Config{ClientID: "client", Endpoint: oauth2.Endpoint{TokenURL: server.URL}},
+	for _, tc := range []struct {
+		name       string
+		parentWait time.Duration
+		wait       time.Duration
+		lost       bool
+		message    string
+	}{
+		{"verification deadline", time.Hour, time.Minute, true, "deadline"},
+		{"earlier parent deadline", 30 * time.Second, 30 * time.Second, false, "token refresh failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				requested := make(chan context.Context, 1)
+				stopped := make(chan struct{})
+				ctx := oidcTimingTestContext(t, func(_ http.ResponseWriter, req *http.Request) {
+					requested <- req.Context()
+					<-req.Context().Done()
+					close(stopped)
+				})
+				ctx, cancel := context.WithTimeout(ctx, tc.parentWait)
+				defer cancel()
+				a := &OidcDeviceAuthAuthorizer{
+					flow: "flow", conf: &configuration.AuthorizationOidcDeviceAuth{
+						ForceDisposeSessionOn: "lostAccess", RefreshToken: configuration.AuthorizationOidcRefreshToken{MaxUnverifiedFor: common.DurationOf(time.Minute)},
+					},
+					oauth2Config: oauth2.Config{ClientID: "client", Endpoint: oauth2.Endpoint{TokenURL: "https://issuer.example/token", AuthStyle: oauth2.AuthStyleInHeader}},
+				}
+				sess := oidcRefreshTestSession(t, oidcToken{
+					Token:   &oauth2.Token{AccessToken: "old", RefreshToken: "refresh", Expiry: time.Now().Add(-time.Minute)},
+					Subject: "subject", Issuer: "issuer", LastVerifiedAt: time.Now(),
+				})
+				before := append([]byte(nil), sess.token...)
+				start := time.Now()
+				type result struct {
+					lost bool
+					err  error
+				}
+				done := make(chan result, 1)
+				go func() {
+					_, lost, err := a.RefreshSession(ctx, sess)
+					done <- result{lost, err}
+				}()
+				requestCtx := <-requested
+				deadline, bounded := requestCtx.Deadline()
+				require.True(t, bounded)
+				require.True(t, start.Add(tc.wait).Equal(deadline), "request deadline: want instant %s, got %s", start.Add(tc.wait), deadline)
+				synctest.Sleep(tc.wait - time.Nanosecond)
+				require.NoError(t, requestCtx.Err())
+				require.Empty(t, done, "refresh must remain in flight until its deadline")
+				synctest.Sleep(time.Nanosecond)
+				got := <-done
+				require.Equal(t, tc.lost, got.lost)
+				require.ErrorContains(t, got.err, tc.message)
+				require.ErrorIs(t, requestCtx.Err(), context.DeadlineExceeded)
+				<-stopped
+				require.Equal(t, tc.wait, time.Since(start))
+				require.Zero(t, sess.setTokenCalls)
+				require.Equal(t, before, sess.token)
+			})
+		})
 	}
-	sess := oidcRefreshTestSession(t, oidcToken{
-		Token:   &oauth2.Token{AccessToken: "old", RefreshToken: "refresh", Expiry: time.Now().Add(-time.Minute)},
-		Subject: "subject", Issuer: "issuer", LastVerifiedAt: time.Now().Add(-time.Minute + 150*time.Millisecond),
-	})
-	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, server.Client())
-	start := time.Now()
-	_, lost, err := a.RefreshSession(ctx, sess)
-	require.True(t, lost)
-	require.ErrorContains(t, err, "deadline")
-	require.Less(t, time.Since(start), 800*time.Millisecond)
-	require.Zero(t, sess.setTokenCalls)
 }
 
 func TestOidcRefreshOnVerifiedOnlyAfterPersistence(t *testing.T) {

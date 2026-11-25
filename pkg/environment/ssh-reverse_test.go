@@ -530,7 +530,26 @@ func TestSshReverseForwardingCloseUnresponsiveTarget(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			target, _ := newReverseSshTarget(t, false, test.mode)
 			t.Cleanup(target.Close)
+			requestsFinished := make(chan struct{}, 2)
+			handleRequests := target.globalRequests
+			target.globalRequests = func(conn *gossh.ServerConn, requests <-chan *gossh.Request) {
+				defer func() { requestsFinished <- struct{}{} }()
+				handleRequests(conn, requests)
+			}
 			env, repository, _ := newReverseSshEnvironment(t, target, true, true)
+			joinRequests := sync.OnceFunc(func() {
+				for range target.connections.Load() {
+					select {
+					case <-requestsFinished:
+					case <-time.After(3 * time.Second):
+						t.Error("target request handler retained a reverse listener after transport cleanup")
+					}
+				}
+			})
+			t.Cleanup(func() {
+				require.NoError(t, repository.Close())
+				joinRequests()
+			})
 			listener, err := env.ListenReverseTCP(context.Background(), "127.0.0.1", 0)
 			require.NoError(t, err)
 			transport, err := repository.transportFor(env)
@@ -576,8 +595,11 @@ func TestSshReverseForwardingCloseUnresponsiveTarget(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, address, rebound.Addr().String())
 			require.Equal(t, int32(2), target.connections.Load())
-			// The new target deliberately mishandles cancel as well.
+			// Rebinding is the last assertion. Close its transport first so fixture
+			// cleanup does not exercise the same cancel timeout a second time.
+			require.NoError(t, repository.Close())
 			_ = rebound.Close()
+			joinRequests()
 		})
 	}
 }

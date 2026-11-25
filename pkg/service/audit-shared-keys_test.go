@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/internal/testkeys"
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfconnection "github.com/engity-com/bifroest/pkg/connection"
@@ -23,6 +24,7 @@ func TestPrepareSharedAuditKeys(t *testing.T) {
 		for _, encryption := range []string{"clear", "same recipient", "same recipient file"} {
 			t.Run(signing+"/"+encryption, func(t *testing.T) {
 				root := t.TempDir()
+				writeSharedAuditTestFixture(t, filepath.Join(root, "ssh", "host-key"), testkeys.Ed25519)
 				conf := sessionRecordingTestConfiguration(t, root)
 				enableSessionRecording(&conf.Auditlogs[0])
 				second := conf.Auditlogs[0]
@@ -30,8 +32,7 @@ func TestPrepareSharedAuditKeys(t *testing.T) {
 				second.Directory = filepath.Join(root, "second-journal")
 				second.Recording.Directory = filepath.Join(root, "second-recordings")
 				if signing != "generated shared key" {
-					_, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, conf.Auditlogs[0].IdentityFile)
-					require.NoError(t, err)
+					writeSharedAuditTestFixture(t, conf.Auditlogs[0].IdentityFile, testkeys.OtherEd25519)
 				}
 				if signing == "copied key" || signing == "distinct keys" {
 					second.IdentityFile = filepath.Join(root, "second-key")
@@ -112,9 +113,9 @@ func TestPrepareSharedAuditKeys(t *testing.T) {
 
 func TestPrepareSharedAuditIdentityThroughDirectoryAlias(t *testing.T) {
 	root := t.TempDir()
+	writeSharedAuditTestFixture(t, filepath.Join(root, "ssh", "host-key"), testkeys.Ed25519)
 	conf := sessionRecordingTestConfiguration(t, root)
-	_, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, conf.Auditlogs[0].IdentityFile)
-	require.NoError(t, err)
+	writeSharedAuditTestFixture(t, conf.Auditlogs[0].IdentityFile, testkeys.OtherEd25519)
 	alias := filepath.Join(root, "key-directory-alias")
 	if err := os.Symlink(filepath.Dir(conf.Auditlogs[0].IdentityFile), alias); err != nil {
 		t.Skipf("cannot create directory symlink: %v", err)
@@ -158,6 +159,14 @@ func TestPrepareMissingSharedAuditIdentityPreservesOtherHistory(t *testing.T) {
 			require.Equal(t, "original evidence", string(contents))
 		})
 	}
+}
+
+func writeSharedAuditTestFixture(t *testing.T, path, fixture string) {
+	t.Helper()
+	// Pre-existing keys use public test bytes; absent audit keys still go through
+	// real generation in Service.prepare. Keep the protected-file/ACL helper.
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+	writeCopiedAuditTestKey(t, path, []byte(fixture))
 }
 
 func verifySharedKeyRecording(t *testing.T, repository *sessionRecordingRepository, configured configuration.Auditlog, identity *audit.Identity, privateKeys []crypto.PrivateKey) {

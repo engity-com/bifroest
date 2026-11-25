@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	log "github.com/echocat/slf4g"
@@ -155,6 +156,34 @@ func oidcAssociationFixture(t *testing.T, configure ...func(*configuration.Autho
 	t.Helper()
 	p := newOidcAssociationProvider(t)
 	ctx := context.WithValue(t.Context(), oauth2.HTTPClient, p.server.Client())
+	return oidcAssociationFixtureWithProvider(t, p, ctx, configure...)
+}
+
+// Only the concurrent rotation test virtualizes device polling. The other
+// association tests retain the real TLS/JWKS/token provider above.
+func oidcAssociationTimingFixture(t *testing.T) (*service, *authorization.OidcDeviceAuthAuthorizer, *oidcAssociationProvider, context.Context) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	p := &oidcAssociationProvider{key: key, refreshStarted: make(chan struct{}, 1), releaseRefresh: make(chan struct{}), server: &httptest.Server{URL: "https://issuer.example"}}
+	t.Cleanup(p.release)
+	client := &http.Client{Transport: oidcRefreshTimingTransport(func(req *http.Request) (*http.Response, error) {
+		if req.Body != nil {
+			defer req.Body.Close()
+		}
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
+		w := httptest.NewRecorder()
+		p.serve(w, req)
+		return w.Result(), nil
+	})}
+	ctx := context.WithValue(t.Context(), oauth2.HTTPClient, client)
+	return oidcAssociationFixtureWithProvider(t, p, ctx)
+}
+
+func oidcAssociationFixtureWithProvider(t *testing.T, p *oidcAssociationProvider, ctx context.Context, configure ...func(*configuration.AuthorizationOidcDeviceAuth)) (*service, *authorization.OidcDeviceAuthAuthorizer, *oidcAssociationProvider, context.Context) {
+	t.Helper()
 	conf := &configuration.AuthorizationOidcDeviceAuth{}
 	require.NoError(t, conf.SetDefaults())
 	conf.Issuer = template.MustNewUrl(p.server.URL)
@@ -189,79 +218,70 @@ func oidcAssociationStoredToken(t *testing.T, sess session.Session) map[string]a
 }
 
 func TestOidcPrimaryAssociationSharesRotatingGrantWithoutOverwritingIt(t *testing.T) {
-	svc, authorizer, provider, ctx := oidcAssociationFixture(t)
-	first, err := authorizer.AuthorizeInteractive(&oidcAssociationRequest{svc: svc, ctx: ctx, remote: associationAdapterRemote("ssh-client")})
-	require.NoError(t, err)
-	sess := first.FindSession()
-	require.NotNil(t, sess)
-	stored := oidcAssociationStoredToken(t, sess)
-	stored["expiry"] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
-	raw, err := json.Marshal(stored)
-	require.NoError(t, err)
-	require.NoError(t, sess.SetAuthorizationToken(ctx, raw))
-	refreshed := make(chan error, 1)
-	go func() {
-		_, lost, err := authorizer.RefreshSession(ctx, sess)
-		if lost && err == nil {
-			err = fmt.Errorf("unexpected lost access")
+	synctest.Test(t, func(t *testing.T) {
+		svc, authorizer, provider, ctx := oidcAssociationTimingFixture(t)
+		first, err := authorizer.AuthorizeInteractive(&oidcAssociationRequest{svc: svc, ctx: ctx, remote: associationAdapterRemote("ssh-client")})
+		require.NoError(t, err)
+		sess := first.FindSession()
+		require.NotNil(t, sess)
+		stored := oidcAssociationStoredToken(t, sess)
+		stored["expiry"] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+		raw, err := json.Marshal(stored)
+		require.NoError(t, err)
+		require.NoError(t, sess.SetAuthorizationToken(ctx, raw))
+		refreshed := make(chan error, 1)
+		go func() {
+			_, lost, err := authorizer.RefreshSession(ctx, sess)
+			if lost && err == nil {
+				err = fmt.Errorf("unexpected lost access")
+			}
+			refreshed <- err
+		}()
+		<-provider.refreshStarted
+		request := &oidcAssociationRequest{svc: svc, ctx: ctx, remote: associationAdapterRemote(""), reuseEntered: make(chan struct{}, 1)}
+		type result struct {
+			auth authorization.Authorization
+			err  error
 		}
-		refreshed <- err
-	}()
-	select {
-	case <-provider.refreshStarted:
-	case <-time.After(5 * time.Second):
-		t.Fatal("refresh did not start")
-	}
-	request := &oidcAssociationRequest{svc: svc, ctx: ctx, remote: associationAdapterRemote(""), reuseEntered: make(chan struct{}, 1)}
-	type result struct {
-		auth authorization.Authorization
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() { auth, err := authorizer.AuthorizeInteractive(request); done <- result{auth, err} }()
-	select {
-	case <-request.reuseEntered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("fresh device login did not reach reuse")
-	}
-	select {
-	case got := <-done:
-		t.Fatalf("login did not wait for rotating grant: %v", got.err)
-	default:
-	}
-	require.Equal(t, "login-refresh-1", oidcAssociationStoredToken(t, sess)["refresh_token"])
-	provider.release()
-	require.NoError(t, <-refreshed)
-	var second authorization.Authorization
-	select {
-	case got := <-done:
+		done := make(chan result, 1)
+		go func() { auth, err := authorizer.AuthorizeInteractive(request); done <- result{auth, err} }()
+		<-request.reuseEntered
+		synctest.Wait()
+		select {
+		case got := <-done:
+			t.Fatalf("login did not wait for rotating grant: %v", got.err)
+		default:
+		}
+		require.Equal(t, "login-refresh-1", oidcAssociationStoredToken(t, sess)["refresh_token"])
+		provider.release()
+		require.NoError(t, <-refreshed)
+		var second authorization.Authorization
+		got := <-done
 		require.NoError(t, got.err)
 		second = got.auth
-	case <-time.After(5 * time.Second):
-		t.Fatal("fresh login did not finish")
-	}
-	require.Equal(t, sess.Id(), second.FindSession().Id())
-	require.Equal(t, "rotated-refresh-1", oidcAssociationStoredToken(t, sess)["refresh_token"])
-	require.EqualValues(t, 1, provider.refreshes.Load())
-	require.EqualValues(t, 2, provider.logins.Load())
-	identity, err := authorization.AuthenticationOf(second)
-	require.NoError(t, err)
-	require.Equal(t, "verified-subject", identity.Subject)
-	fields, ok := second.(interface {
-		GetField(string, authorization.ContextEnabled) (any, bool, error)
+		require.Equal(t, sess.Id(), second.FindSession().Id())
+		require.Equal(t, "rotated-refresh-1", oidcAssociationStoredToken(t, sess)["refresh_token"])
+		require.EqualValues(t, 1, provider.refreshes.Load())
+		require.EqualValues(t, 2, provider.logins.Load())
+		identity, err := authorization.AuthenticationOf(second)
+		require.NoError(t, err)
+		require.Equal(t, "verified-subject", identity.Subject)
+		fields, ok := second.(interface {
+			GetField(string, authorization.ContextEnabled) (any, bool, error)
+		})
+		require.True(t, ok)
+		idToken, found, err := fields.GetField("idToken", request)
+		require.NoError(t, err)
+		require.True(t, found)
+		login, found, err := idToken.(*authorization.OidcIdToken).GetField("login")
+		require.NoError(t, err)
+		require.True(t, found)
+		require.EqualValues(t, 2, login, "new connection uses its newly verified claims, not the retained grant's old claims")
+		third, err := authorizer.AuthorizeInteractive(&oidcAssociationRequest{svc: svc, ctx: ctx, remote: associationAdapterRemote("different-client")})
+		require.NoError(t, err)
+		require.Equal(t, sess.Id(), third.FindSession().Id())
+		require.Equal(t, "rotated-refresh-1", oidcAssociationStoredToken(t, sess)["refresh_token"])
 	})
-	require.True(t, ok)
-	idToken, found, err := fields.GetField("idToken", request)
-	require.NoError(t, err)
-	require.True(t, found)
-	login, found, err := idToken.(*authorization.OidcIdToken).GetField("login")
-	require.NoError(t, err)
-	require.True(t, found)
-	require.EqualValues(t, 2, login, "new connection uses its newly verified claims, not the retained grant's old claims")
-	third, err := authorizer.AuthorizeInteractive(&oidcAssociationRequest{svc: svc, ctx: ctx, remote: associationAdapterRemote("different-client")})
-	require.NoError(t, err)
-	require.Equal(t, sess.Id(), third.FindSession().Id())
-	require.Equal(t, "rotated-refresh-1", oidcAssociationStoredToken(t, sess)["refresh_token"])
 }
 
 func TestOidcPrimaryAssociationCannotReviveGrantWithLostAccess(t *testing.T) {
