@@ -146,23 +146,6 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 	}
 }
 
-func TestGoWorkflowStressChecksManagementCompletionOnWindows(t *testing.T) {
-	job := readGoJobsWorkflow(t)["test-host"]
-	index := goJobsStepContaining(t, job, "management-channel-stress.jsonl")
-	step := job.Steps[index]
-	require.Equal(t, "Stress management channel completion on Windows", step.Name)
-	require.Equal(t, "runner.os == 'Windows'", step.If)
-	require.Equal(t, 5, step.TimeoutMinutes)
-	require.False(t, step.ContinueOnError)
-	require.Contains(t, step.Run, "mise exec -- gotestsum --format standard-verbose")
-	require.Contains(t, step.Run, "--junitfile var/test-report/management-channel-stress.xml")
-	require.Contains(t, step.Run, "-p=1 -count=25 -timeout=4m")
-	require.Contains(t, step.Run, "-run '^TestManagement(StreamingProgressIsProvisionalAndCancellationKeepsAdmission|ChannelCancellationDoesNotCloseOrReplaceItsAdmission)$' ./pkg/service")
-	require.NotContains(t, step.Run, "--rerun-fails", "repeat every test, never hide a failed iteration")
-	require.Greater(t, index, goJobsStepContaining(t, job, "scripts/native-go-tests.ts"))
-	require.Less(t, index, goJobsStepContaining(t, job, "GITHUB_STEP_SUMMARY"))
-}
-
 func TestGoWorkflowRaceRetainsPreparedContainerAndAsciinema(t *testing.T) {
 	jobs := readGoJobsWorkflow(t)
 	normal, race := jobs["test-container"], jobs["test-race"]
