@@ -2,11 +2,34 @@ package cast
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestCastEventStringCapacity(t *testing.T) {
+	// Test integer arithmetic only; no boundary-sized strings or allocations.
+	for _, test := range []struct {
+		name             string
+		length, expected int
+	}{
+		{"empty", 0, 2},
+		{"ascii", 64, 66},
+		{"before-last-safe", math.MaxInt - 3, math.MaxInt - 1},
+		{"last-safe", math.MaxInt - 2, math.MaxInt},
+		{"first-fallback", math.MaxInt - 1, math.MaxInt - 1},
+		{"maximum", math.MaxInt, math.MaxInt},
+		{"negative-one", -1, -1},
+		{"negative-two", -2, -2},
+		{"minimum", math.MinInt, math.MinInt},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.expected, castEventStringCapacity(test.length))
+		})
+	}
+}
 
 func TestMarshalCastEventStringCanonicalEscaping(t *testing.T) {
 	for _, test := range []struct{ input, expected string }{
