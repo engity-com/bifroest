@@ -342,7 +342,7 @@ jobs:
       - &install-go-dependencies
         name: Install dependencies
         shell: bash
-        run: |
+        run: &install-go-script |
           for attempt in 1 2 3; do
             if mise run install:go; then
               exit 0
@@ -844,6 +844,109 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  assemble:
+    name: Assemble packages
+    needs: [browser, binary-host, binary-container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      prepared: ${{ steps.mode.outputs.prepared }}
+      publish: ${{ steps.prepare.outputs.publish }}
+    container:
+      image: &package-image ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:983cf2ba65a5809b8d7f2e4e70830dedee3163c2d75e9d4c9c828463b7a86c27
+    env:
+      GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
+      GITHUB_SHA: ${{ inputs.commit || github.sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.commit || inputs.ref }}
+
+      - name: Detect deferred packaging support
+        id: mode
+        shell: bash
+        run: |
+          if [ -f cmd/build/build-package-transfer.go ]; then
+            echo 'prepared=true' >> "$GITHUB_OUTPUT"
+          else
+            # Older release CLIs retain their original test-gated packaging path.
+            echo 'prepared=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Git configure
+        if: &prepare-packages steps.mode.outputs.prepared == 'true'
+        run: git config --global --add safe.directory "$(pwd)"
+
+      - name: Cache images dependencies
+        if: *prepare-packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .cache/dependencies/images
+          key: images-dependencies
+          restore-keys: images-dependencies
+
+      - name: Install MISE
+        if: *prepare-packages
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Checkout workflow cache action
+        if: *prepare-packages
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: var/ci-workflow
+          sparse-checkout: .github/actions/cache-go
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Cache Go
+        if: *prepare-packages
+        uses: ./var/ci-workflow/.github/actions/cache-go
+        with:
+          scope: package
+          context: *package-image
+
+      - name: Lint licenses
+        if: steps.mode.outputs.prepared == 'true' && inputs.lint_reuse
+        run: mise run lint:reuse
+
+      - name: Download binaries
+        if: *prepare-packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: var/dist
+
+      - name: Install dependencies
+        if: *prepare-packages
+        shell: bash
+        run: *install-go-script
+
+      - name: Set reproducible build time
+        if: *prepare-packages
+        run: mise run ci:write-build-epoch
+
+      - name: Prepare packages without publishing
+        id: prepare
+        if: *prepare-packages
+        run: mise exec -- go run ./cmd/build prepare-packages --log.colorMode=always
+
+      - name: Transfer prepared packages for gated publication
+        if: steps.mode.outputs.prepared == 'true' && (steps.prepare.outputs.publish == 'true' || inputs.upload_dist)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: prepared-packages
+          path: var/dist
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
   package:
     name: Package
     needs:
@@ -859,6 +962,7 @@ jobs:
         lint-go-container,
         binary-host,
         binary-container,
+        assemble,
       ]
     # This required check must fail, not skip, when a dependency fails.
     if: ${{ !cancelled() }}
@@ -867,7 +971,7 @@ jobs:
       contents: write
       packages: write
     container:
-      image: &package-image ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:983cf2ba65a5809b8d7f2e4e70830dedee3163c2d75e9d4c9c828463b7a86c27
+      image: *package-image
     env:
       GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
       GITHUB_SHA: ${{ inputs.commit || github.sha }}
@@ -884,6 +988,7 @@ jobs:
           TEST_BROWSER_RESULT: ${{ needs.test-browser.result }}
           BINARY_HOST_RESULT: ${{ needs.binary-host.result }}
           BINARY_CONTAINER_RESULT: ${{ needs.binary-container.result }}
+          ASSEMBLE_RESULT: ${{ needs.assemble.result }}
           LINT_GO: ${{ inputs.lint_go }}
           LINT_GO_HOST_RESULT: ${{ needs.lint-go-host.result }}
           LINT_GO_CONTAINER_RESULT: ${{ needs.lint-go-container.result }}
@@ -904,6 +1009,7 @@ jobs:
           require_success test-browser "$TEST_BROWSER_RESULT"
           require_success binary-host "$BINARY_HOST_RESULT"
           require_success binary-container "$BINARY_CONTAINER_RESULT"
+          require_success assemble "$ASSEMBLE_RESULT"
           if [ "$LINT_GO" = true ]; then
             require_success lint-go-host "$LINT_GO_HOST_RESULT"
             require_success lint-go-container "$LINT_GO_CONTAINER_RESULT"
@@ -911,15 +1017,18 @@ jobs:
           exit "$failed"
 
       - name: Checkout code
+        if: &finalize-packages needs.assemble.outputs.prepared != 'true' || needs.assemble.outputs.publish == 'true' || inputs.upload_dist
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Git configure
+        if: *finalize-packages
         run: git config --global --add safe.directory "$(pwd)"
 
       - name: Cache images dependencies
+        if: needs.assemble.outputs.prepared != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .cache/dependencies/images
@@ -927,34 +1036,62 @@ jobs:
           restore-keys: images-dependencies
 
       - name: Install MISE
+        if: *finalize-packages
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
 
-      - *checkout-workflow-cache
+      - name: Checkout workflow cache action
+        if: *finalize-packages
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: var/ci-workflow
+          sparse-checkout: .github/actions/cache-go
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Cache Go
+        if: *finalize-packages
         uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: package
           context: *package-image
 
       - name: Lint licenses
-        if: inputs.lint_reuse
+        if: needs.assemble.outputs.prepared != 'true' && inputs.lint_reuse
         run: mise run lint:reuse
 
       - name: Download binaries
+        if: needs.assemble.outputs.prepared != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: binary-*
           merge-multiple: true
           path: var/dist
 
-      - *install-go-dependencies
+      - name: Download prepared packages
+        if: needs.assemble.outputs.prepared == 'true' && (needs.assemble.outputs.publish == 'true' || inputs.upload_dist)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: prepared-packages
+          path: var/dist
+
+      - name: Install dependencies
+        if: *finalize-packages
+        shell: bash
+        run: *install-go-script
 
       - name: Set reproducible build time
+        if: *finalize-packages
         run: mise run ci:write-build-epoch
 
       - name: Package
+        if: needs.assemble.outputs.prepared != 'true'
         run: mise run build:go:package
+
+      - name: Verify and publish prepared packages without rebuilding
+        if: needs.assemble.outputs.prepared == 'true' && (needs.assemble.outputs.publish == 'true' || inputs.upload_dist)
+        run: mise exec -- go run ./cmd/build publish-packages --log.colorMode=always
 
       - name: Archive package results
         if: inputs.upload_dist
@@ -964,3 +1101,5 @@ jobs:
           name: dist
           path: |
             var/dist/**/*
+            !var/dist/prepared-packages.json
+            !var/dist/prepared-images/**

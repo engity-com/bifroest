@@ -68,6 +68,7 @@ type build struct {
 	testing              bool
 	wslBuildDistribution string
 	binaryMode           binaryBuildMode
+	preparePackages      bool
 
 	timeP         atomic.Pointer[time.Time]
 	buildContextP atomic.Pointer[buildContext]
@@ -149,6 +150,18 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 		Action(func(*kingpin.ParseContext) error {
 			this.binaryMode = binaryUseExisting
 			return this.runBuild(ctx)
+		}))
+
+	attach(app.Command("prepare-packages", "Package existing binaries without publishing").
+		Action(func(*kingpin.ParseContext) error {
+			this.binaryMode = binaryUseExisting
+			this.preparePackages = true
+			return this.runBuild(ctx)
+		}))
+
+	attach(app.Command("publish-packages", "Verify and publish previously prepared packages without rebuilding").
+		Action(func(*kingpin.ParseContext) error {
+			return this.publishPreparedPackages(ctx)
 		}))
 }
 
@@ -391,7 +404,11 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (_ buildArtifa
 		artifacts = updated
 	}
 
-	if stages.contains(buildStagePublish) {
+	if this.preparePackages {
+		if err := this.savePreparedPackages(ctx, artifacts); err != nil {
+			return nil, err
+		}
+	} else if stages.contains(buildStagePublish) {
 		if err := this.publish(ctx, artifacts); err != nil {
 			return nil, err
 		}
