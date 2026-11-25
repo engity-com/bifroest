@@ -734,9 +734,11 @@ func TestOidcRefreshWorkerDisposesPersistedSessionWithoutRefreshToken(t *testing
 		})
 		require.NoError(t, err)
 		manager, _, sess, conn, recorder := oidcRefreshWatchdogFixture(t, ctx, conf, nil, token)
+		// Detach the original association before selecting deterministic jitter.
+		manager.service.sessionConnections.untrack(conn)
 		sess.id = session.Id{15: 1}
-		// The connection registry was populated before assigning the fixed ID.
 		manager.service.sessionConnections.track(conn, sess)
+		require.Len(t, manager.service.sessionConnections.sessions, 1)
 		repository := manager.service.sessions.(*oidcRefreshTestRepository)
 		findBy := repository.findBy
 		repository.findBy = func(ctx context.Context, flow configuration.FlowName, id session.Id, opts *session.FindOpts) (session.Session, error) {
