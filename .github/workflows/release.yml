@@ -76,7 +76,9 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ github.workflow_sha }}
           path: var/ci-workflow
-          sparse-checkout: .github/actions/cache-go
+          sparse-checkout: |
+            .github/actions/cache-go
+            .github/scripts/group-binary-matrices.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -90,8 +92,13 @@ jobs:
         env:
           GITHUB_REF_NAME: ${{ steps.release-version.outputs.release_tag }}
         run: |
-          export GITHUB_SHA="$(git rev-parse HEAD)"
-          mise run ci:evaluate-environment
+          GITHUB_SHA="$(git rev-parse HEAD)"
+          export GITHUB_SHA
+          environment="$RUNNER_TEMP/bifroest-build-environment"
+          : > "$environment"
+          GITHUB_OUTPUT="$environment" mise run ci:evaluate-environment
+          # The grouping runtime belongs to the workflow, not the release's MISE pins.
+          mise exec node@26.9.0 -- node var/ci-workflow/.github/scripts/group-binary-matrices.ts "$environment" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build and release packages

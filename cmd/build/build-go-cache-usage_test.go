@@ -40,7 +40,11 @@ func TestGoWorkflowCachesFollowPinnedToolchain(t *testing.T) {
 						require.True(t, checkout, "%s must keep its selected source checkout", jobName)
 						require.Equal(t, "${{ github.workflow_sha }}", step.With["ref"])
 						require.Equal(t, "${{ github.repository }}", step.With["repository"])
-						require.Equal(t, ".github/actions/cache-go", step.With["sparse-checkout"])
+						sparse := ".github/actions/cache-go"
+						if name == "release.yml" {
+							sparse += "\n.github/scripts/group-binary-matrices.ts\n"
+						}
+						require.Equal(t, sparse, step.With["sparse-checkout"])
 						require.Equal(t, "false", step.With["sparse-checkout-cone-mode"])
 						require.Equal(t, "false", step.With["persist-credentials"])
 						helper = true

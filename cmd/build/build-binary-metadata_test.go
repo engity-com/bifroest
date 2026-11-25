@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	gos "os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -100,4 +101,47 @@ func TestBinaryOnlyRejectsEmptyPlatformSelection(t *testing.T) {
 	build.editions = sys.Editions{sys.EditionExtended}
 	_, err := build.buildAll(t.Context(), false)
 	require.ErrorContains(t, err, "no binary platforms match")
+}
+
+func TestPackageRequiresEveryVariantAndEveryGroupedArtifact(t *testing.T) {
+	build, bc := testReleaseManifestBuild(t)
+	build.buildContextP.Store(bc)
+	build.binaryMode = binaryUseExisting
+	build.rawStages = buildStages{buildStageBinary}
+	type savedArtifact struct {
+		platform, filename string
+		data               []byte
+	}
+	var saved []savedArtifact
+	for p := range build.distributablePlatforms(false) {
+		prefix := p.FilenamePrefix(build.prefix)
+		binary := testReleaseManifestFile(t, bc, p, buildArtifactTypeBinary, p.Os.AppendExtToFilename(prefix), p.String(), nil)
+		notice := testReleaseManifestFile(t, bc, p, buildArtifactTypeNotice, prefix+".third-party-notices.txt", "notice "+p.String(), nil)
+		binary.thirdPartyNoticesFilepath, binary.thirdPartyLicenseInventory = notice.filepath, testThirdPartyLicenseInventory()
+		testBrowserManifest(t, binary)
+		require.NoError(t, build.binary.save(binary, notice))
+		loaded, loadedNotice, err := build.binary.load(t.Context(), p)
+		require.NoError(t, err)
+		require.Equal(t, binary.thirdPartyLicenseInventory, loaded.thirdPartyLicenseInventory)
+		require.Equal(t, binary.browserManifestRaw, loaded.browserManifestRaw)
+		require.Equal(t, notice.filepath, loadedNotice.filepath)
+		for _, filename := range []string{binary.filepath, notice.filepath, browserBuildPath(binary), build.binary.metadataFilepath(binary)} {
+			data, err := gos.ReadFile(filename)
+			require.NoError(t, err)
+			saved = append(saved, savedArtifact{p.String(), filename, data})
+		}
+	}
+	require.Len(t, saved, 14*4)
+	artifacts, err := build.buildAll(t.Context(), false)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 14*2)
+	require.NoError(t, artifacts.Close())
+	for _, file := range saved {
+		t.Run(filepath.Base(file.filename), func(t *testing.T) {
+			require.NoError(t, gos.Remove(file.filename))
+			_, err := build.buildAll(t.Context(), false)
+			require.ErrorContains(t, err, "cannot build "+file.platform)
+			require.NoError(t, gos.WriteFile(file.filename, file.data, 0o644))
+		})
+	}
 }

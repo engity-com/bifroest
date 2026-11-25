@@ -31,7 +31,13 @@ test('application, scripts and tests share the same strict TypeScript project', 
             `${option} applies to every source file`,
         );
     }
-    for (const directory of ['src', 'scripts', 'test', '../test/pam/run.ts']) {
+    for (const directory of [
+        'src',
+        'scripts',
+        'test',
+        '../test/pam/run.ts',
+        '../.github/scripts',
+    ]) {
         assert(config.include.includes(directory), `${directory} belongs to the shared project`);
     }
     assert.deepEqual(config.exclude ?? [], []);
@@ -109,9 +115,13 @@ test('Node entry points need only native erasable TypeScript, not a runtime load
     const harness = files(join(web, 'test')).filter(
         (path) => !path.endsWith('.test.ts') || path.endsWith('.native.test.ts'),
     );
-    for (const path of [...scripts, ...harness, join(web, '../test/pam/run.ts')].filter(
-        (path) => path.endsWith('.ts') && !path.endsWith('.d.ts'),
-    )) {
+    const workflowScripts = files(join(web, '../.github/scripts'));
+    for (const path of [
+        ...scripts,
+        ...harness,
+        ...workflowScripts,
+        join(web, '../test/pam/run.ts'),
+    ].filter((path) => path.endsWith('.ts') && !path.endsWith('.d.ts'))) {
         assert.doesNotThrow(
             () => stripTypeScriptTypes(readFileSync(path, 'utf8'), { mode: 'strip' }),
             `Node must execute ${relative(web, path)} without TypeScript transforms`,

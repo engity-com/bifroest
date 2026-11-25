@@ -329,8 +329,8 @@ func TestGoWorkflowCachesFollowMiseAndIsolateBuildContexts(t *testing.T) {
 		"test-container":    "native-${{ matrix.image }}",
 		"test-race":         "native-${{ matrix.image }}",
 		"lint-go-container": "native-${{ matrix.image }}",
-		"binary-host":       "${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}",
-		"binary-container":  "${{ matrix.image }}-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}",
+		"binary-host":       "${{ matrix.os }}-${{ matrix.arch }}",
+		"binary-container":  "${{ matrix.image }}-${{ matrix.os }}-${{ matrix.arch }}",
 		"package":           jobs["package"].Container.Image,
 	}
 	for name, context := range contexts {
@@ -355,7 +355,8 @@ func TestGoWorkflowReleaseCacheUsesWorkflowRevisionInsteadOfReleaseTag(t *testin
 		if strings.Contains(step.Run, "mise run ci:evaluate-environment") {
 			evaluated = true
 			require.Equal(t, "${{ steps.release-version.outputs.release_tag }}", step.Env["GITHUB_REF_NAME"])
-			require.Contains(t, step.Run, `export GITHUB_SHA="$(git rev-parse HEAD)"`, "evaluate the source checkout, not the workflow helper")
+			require.Contains(t, step.Run, `GITHUB_SHA="$(git rev-parse HEAD)"`, "evaluate the source checkout, not the workflow helper")
+			require.Contains(t, step.Run, "export GITHUB_SHA")
 		}
 	}
 	require.True(t, evaluated)
@@ -375,11 +376,15 @@ func requireGoWorkflowCacheRevision(t *testing.T, job goJobsWorkflowJob, sourceR
 			} else {
 				require.Equal(t, -1, workflow)
 				workflow = i
+				sparse := ".github/actions/cache-go"
+				if sourceRef == "${{ steps.release-version.outputs.release_tag }}" {
+					sparse += "\n.github/scripts/group-binary-matrices.ts\n"
+				}
 				require.Equal(t, map[string]string{
 					"repository":                "${{ github.repository }}",
 					"ref":                       "${{ github.workflow_sha }}",
 					"path":                      "var/ci-workflow",
-					"sparse-checkout":           ".github/actions/cache-go",
+					"sparse-checkout":           sparse,
 					"sparse-checkout-cone-mode": "false",
 					"persist-credentials":       "false",
 				}, step.With, "old source refs need cache infrastructure from the workflow without replacing their MISE pins")

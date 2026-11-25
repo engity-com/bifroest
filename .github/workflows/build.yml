@@ -722,7 +722,7 @@ jobs:
         run: mise run lint:go
 
   binary-host:
-    name: Binary ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.edition }}
+    name: Binary ${{ matrix.os }}/${{ matrix.arch }}
     needs: browser
     permissions:
       contents: read
@@ -748,7 +748,7 @@ jobs:
         uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: binary-host
-          context: ${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
+          context: ${{ matrix.os }}-${{ matrix.arch }}
 
       - *install-go-dependencies
 
@@ -761,8 +761,8 @@ jobs:
           name: browser-assets
           path: pkg/webui/assets
 
-      - name: Build binary
-        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
+      - name: Build all target variants
+        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }}
         env:
           BIFROEST_DARWIN_CERTIFICATE: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE || '' }}
           BIFROEST_DARWIN_CERTIFICATE_PASSWORD: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD || '' }}
@@ -771,16 +771,16 @@ jobs:
           BIFROEST_DARWIN_NOTARY_KEY_ID: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_KEY_ID || '' }}
           BIFROEST_DARWIN_NOTARY_ISSUER_ID: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_ISSUER_ID || '' }}
 
-      - name: Upload binary
+      - name: Upload all target variants and metadata
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: binary-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}
           path: var/dist
           retention-days: 1
           if-no-files-found: error
 
   binary-container:
-    name: Binary ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.edition }}
+    name: Binary ${{ matrix.os }}/${{ matrix.arch }}
     needs: browser
     permissions:
       contents: read
@@ -820,7 +820,7 @@ jobs:
         uses: ./var/ci-workflow/.github/actions/cache-go
         with:
           scope: binary-container
-          context: ${{ matrix.image }}-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
+          context: ${{ matrix.image }}-${{ matrix.os }}-${{ matrix.arch }}
 
       - *install-go-dependencies
 
@@ -833,13 +833,13 @@ jobs:
           name: browser-assets
           path: pkg/webui/assets
 
-      - name: Build binary
-        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
+      - name: Build all target variants
+        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }}
 
-      - name: Upload binary
+      - name: Upload all target variants and metadata
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: binary-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}
           path: var/dist
           retention-days: 1
           if-no-files-found: error
