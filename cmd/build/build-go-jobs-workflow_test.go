@@ -378,7 +378,7 @@ func requireGoWorkflowCacheRevision(t *testing.T, job goJobsWorkflowJob, sourceR
 				workflow = i
 				sparse := ".github/actions/cache-go"
 				if sourceRef == "${{ steps.release-version.outputs.release_tag }}" {
-					sparse += "\n.github/scripts/group-binary-matrices.mjs\n"
+					sparse += "\n.github/scripts/group-binary-matrices.ts\n"
 				}
 				require.Equal(t, map[string]string{
 					"repository":                "${{ github.repository }}",

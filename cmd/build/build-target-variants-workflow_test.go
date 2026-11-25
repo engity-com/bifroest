@@ -34,7 +34,7 @@ func runBinaryMatrixGrouping(t *testing.T, input []byte) ([]byte, string, error)
 	}
 	file := filepath.Join(t.TempDir(), "environment")
 	require.NoError(t, gos.WriteFile(file, input, 0o600))
-	command := goexec.CommandContext(t.Context(), node, "../../.github/scripts/group-binary-matrices.mjs", file)
+	command := goexec.CommandContext(t.Context(), node, "../../.github/scripts/group-binary-matrices.ts", file)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err = command.Run()
@@ -237,7 +237,7 @@ func TestBinaryTargetEvaluationUsesWorkflowHelperWithOldSourceTasks(t *testing.T
 	if _, err := goexec.LookPath("node"); err != nil {
 		t.Skip("Node is required to exercise the grouping helper")
 	}
-	helper, err := gos.ReadFile("../../.github/scripts/group-binary-matrices.mjs")
+	helper, err := gos.ReadFile("../../.github/scripts/group-binary-matrices.ts")
 	require.NoError(t, err)
 	fixture, err := gos.ReadFile("testdata/binary-matrices-v1.0.0-beta2.txt")
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestBinaryTargetEvaluationUsesWorkflowHelperWithOldSourceTasks(t *testing.T
 		require.Contains(t, step.Run, "mise exec node@26.9.0 -- node", "old source refs need no Node pin or new MISE task")
 		for _, status := range []string{"0", "23"} {
 			directory := t.TempDir()
-			scriptPath := ".github/scripts/group-binary-matrices.mjs"
+			scriptPath := ".github/scripts/group-binary-matrices.ts"
 			if file == "release.yml" {
 				scriptPath = "var/ci-workflow/" + scriptPath
 			}

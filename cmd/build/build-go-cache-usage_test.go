@@ -42,7 +42,7 @@ func TestGoWorkflowCachesFollowPinnedToolchain(t *testing.T) {
 						require.Equal(t, "${{ github.repository }}", step.With["repository"])
 						sparse := ".github/actions/cache-go"
 						if name == "release.yml" {
-							sparse += "\n.github/scripts/group-binary-matrices.mjs\n"
+							sparse += "\n.github/scripts/group-binary-matrices.ts\n"
 						}
 						require.Equal(t, sparse, step.With["sparse-checkout"])
 						require.Equal(t, "false", step.With["sparse-checkout-cone-mode"])

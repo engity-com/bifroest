@@ -23,5 +23,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "scripts", "test", "*.config.ts", "../test/pam/run.ts"]
+  "include": ["src", "scripts", "test", "*.config.ts", "../test/pam/run.ts", "../.github/scripts"]
 }

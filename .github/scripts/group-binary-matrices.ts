@@ -1,17 +1,31 @@
 import { readFileSync } from 'node:fs';
 
+type BinarySourceEntry = {
+    os: string;
+    arch: string;
+    edition: string;
+    runner: string;
+    image: string;
+};
+type BinaryTarget = Omit<BinarySourceEntry, 'edition'> & { editions: string[] };
+
 // Use the selected source ref's inventory, not the workflow ref's platform list.
 // Historical release CLIs emit one entry per edition with the same output names.
-const lines = readFileSync(process.argv[2], 'utf8').trimEnd().split(/\r?\n/);
+const filename = process.argv[2];
+if (!filename) {
+    throw new Error('Usage: node group-binary-matrices.ts OUTPUT');
+}
+const lines = readFileSync(filename, 'utf8').trimEnd().split(/\r?\n/);
 const names = ['binary-host-matrix', 'binary-container-matrix'];
-const targets = new Map();
+const targets = new Map<string, BinaryTarget>();
 const variants = new Set();
 for (const name of names) {
     const matching = lines.filter((line) => line.startsWith(`${name}=`));
-    if (matching.length !== 1) {
+    const raw = matching[0];
+    if (matching.length !== 1 || raw === undefined) {
         throw new Error(`Expected exactly one ${name}`);
     }
-    const matrix = JSON.parse(matching[0].slice(name.length + 1));
+    const matrix = JSON.parse(raw.slice(name.length + 1)) as { include: BinarySourceEntry[] };
     if (Object.keys(matrix).join() !== 'include' || !Array.isArray(matrix.include)) {
         throw new Error(`Invalid ${name}`);
     }
@@ -35,7 +49,7 @@ for (const name of names) {
             throw new Error(`Duplicate binary variant ${variant}`);
         }
         variants.add(variant);
-        const target = targets.get(key) ?? { os, arch, runner, image, editions: [] };
+        const target: BinaryTarget = targets.get(key) ?? { os, arch, runner, image, editions: [] };
         if (target.runner !== runner || (target.image && image && target.image !== image)) {
             throw new Error(`Incompatible build environments for ${key}`);
         }
