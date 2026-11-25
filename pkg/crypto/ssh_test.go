@@ -29,3 +29,16 @@ func TestDoWithEachAuthorizedKeyProvidesOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, called)
 }
+
+func TestDoWithEachAuthorizedKeyRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "authorized_keys")
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	require.NoError(t, file.Truncate(maxAuthorizedKeysFileSize+1))
+	require.NoError(t, file.Close())
+	_, err = DoWithEachAuthorizedKey[bool](true, func(ssh.PublicKey, []AuthorizedKeyOption) (bool, bool, error) {
+		t.Fatal("oversized file must not be parsed")
+		return false, false, nil
+	}, path)
+	require.ErrorContains(t, err, "exceed")
+}

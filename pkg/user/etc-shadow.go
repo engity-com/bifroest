@@ -64,17 +64,14 @@ func (this *etcShadowEntry) validatePassword(pass string) (bool, error) {
 		return false, err
 	}
 
-	today := uint32(time.Now().Unix() / 60 / 60 / 24)
-
-	if this.hasInactiveAge {
-		expireAt := this.maximumAgeInDays + this.lastChangedAtInDays + this.inactiveAgeInDays
-		if expireAt <= today {
-			return false, nil
-		}
+	today := time.Now().Unix() / (24 * 60 * 60)
+	if today < 0 || this.lastChangedAtInDays == 0 || uint64(this.lastChangedAtInDays) > uint64(today) ||
+		uint64(this.lastChangedAtInDays)+uint64(this.maximumAgeInDays) <= uint64(today) {
+		return false, nil
 	}
 
 	if this.hasExpire {
-		if this.expireAtTsInDays <= today {
+		if uint64(this.expireAtTsInDays) <= uint64(today) {
 			return false, nil
 		}
 	}
