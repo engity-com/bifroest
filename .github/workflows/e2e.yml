@@ -38,11 +38,12 @@ jobs:
           filters: .github/filters.yml
 
   runtime:
-    name: ${{ matrix.suite }} with ${{ matrix.runtime }}
+    name: ${{ matrix.suite }} with docker and podman
     needs: files-changed
     if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Both runtimes retain their existing execution budget.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -50,15 +51,10 @@ jobs:
           - local
           - docker
           - ssh
-        runtime:
-          - docker
-          - podman
     env:
-      BIFROEST_E2E_RUNTIME: ${{ matrix.runtime }}
       CGO_ENABLED: "0"
     steps:
       - name: Install Podman
-        if: matrix.runtime == 'podman'
         run: sudo apt-get update && sudo apt-get install --yes podman
 
       - name: Checkout code
@@ -105,9 +101,6 @@ jobs:
             sleep "$delay"
           done
 
-      - name: Run end-to-end suite
-        run: mise run test:e2e:${{ matrix.suite }}
-
       - name: Prepare actual Docker browser E2E
         if: matrix.suite == 'docker'
         run: |
@@ -116,41 +109,77 @@ jobs:
           mise -C web run build:web
           mise -C web run install:web:browser
 
-      - name: Verify shared Docker workload through browser and OpenSSH
-        if: matrix.suite == 'docker'
+      - name: Run Docker end-to-end suite
+        id: docker-suite
+        env:
+          BIFROEST_E2E_RUNTIME: docker
+        run: mise run test:e2e:${{ matrix.suite }}
+
+      - name: Verify shared Docker workload through browser and OpenSSH with Docker
+        if: ${{ !cancelled() && matrix.suite == 'docker' && steps.docker-suite.outcome != 'skipped' }}
         shell: bash
         env:
+          BIFROEST_E2E_RUNTIME: docker
           BIFROEST_TEST_BROWSER_UI: "1"
-        run: |
+        run: &verify-docker-browser |
           set -euo pipefail
-          export BIFROEST_TEST_NODE="$(mise -C web which node)"
-          mkdir -p var/e2e
-          mise x -- go test -json -count=1 -tags=e2e -timeout=15m -run '^Test(SharedBrowserNetworkArguments|SharedBrowserNetworkIsolation|OpenSSHDockerBrowserSharedWorkload)$' ./test/e2e | tee var/e2e/docker-browser.json
+          BIFROEST_TEST_NODE="$(mise -C web which node)"
+          export BIFROEST_TEST_NODE
+          mkdir -p "var/e2e/${BIFROEST_E2E_RUNTIME}"
+          mise x -- go test -json -count=1 -tags=e2e -timeout=15m -run '^Test(SharedBrowserNetworkArguments|SharedBrowserNetworkIsolation|OpenSSHDockerBrowserSharedWorkload)$' ./test/e2e | tee "var/e2e/${BIFROEST_E2E_RUNTIME}/docker-browser.json"
           mise x -- python - <<'PY'
-          import json, pathlib
-          events = [json.loads(line) for line in pathlib.Path('var/e2e/docker-browser.json').read_text().splitlines() if line.startswith('{')]
+          import json, os, pathlib
+          log = pathlib.Path('var/e2e') / os.environ['BIFROEST_E2E_RUNTIME'] / 'docker-browser.json'
+          events = [json.loads(line) for line in log.read_text().splitlines() if line.startswith('{')]
           required = {'TestSharedBrowserNetworkArguments', 'TestSharedBrowserNetworkIsolation', 'TestOpenSSHDockerBrowserSharedWorkload'}
           passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}
           assert required <= passed, f'Docker browser E2E did not execute successfully: {required - passed}'
           assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Docker browser E2E was skipped or failed'
           PY
 
-      - name: Collect runtime diagnostics
-        if: failure()
+      - name: Collect Docker runtime diagnostics
+        if: failure() && steps.docker-suite.outcome != 'skipped'
         shell: bash
-        run: |
-          mkdir -p var/e2e/runtime-containers
-          timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
+        env:
+          BIFROEST_E2E_RUNTIME: docker
+        run: &collect-runtime-diagnostics |
+          log_dir="var/e2e/${BIFROEST_E2E_RUNTIME}/runtime-containers"
+          mkdir -p "${log_dir}"
+          timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all >"${log_dir}/list.txt" 2>&1 || true
           while IFS= read -r id; do
             [ -n "${id}" ] || continue
-            timeout 30s "${BIFROEST_E2E_RUNTIME}" logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
+            timeout 30s "${BIFROEST_E2E_RUNTIME}" logs "${id}" >"${log_dir}/${id}.log" 2>&1 || true
           done < <(timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all --quiet 2>/dev/null)
+
+      # An earlier Docker failure must not hide the independent Podman result.
+      # No continue-on-error: either runtime failing still fails the job.
+      - name: Run Podman end-to-end suite
+        id: podman-suite
+        if: ${{ !cancelled() && steps.docker-suite.outcome != 'skipped' }}
+        env:
+          BIFROEST_E2E_RUNTIME: podman
+        run: mise run test:e2e:${{ matrix.suite }}
+
+      - name: Verify shared Docker workload through browser and OpenSSH with Podman
+        if: ${{ !cancelled() && matrix.suite == 'docker' && steps.podman-suite.outcome != 'skipped' }}
+        shell: bash
+        env:
+          BIFROEST_E2E_RUNTIME: podman
+          BIFROEST_TEST_BROWSER_UI: "1"
+        run: *verify-docker-browser
+
+      - name: Collect Podman runtime diagnostics
+        if: failure() && steps.podman-suite.outcome != 'skipped'
+        shell: bash
+        env:
+          BIFROEST_E2E_RUNTIME: podman
+        run: *collect-runtime-diagnostics
 
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: e2e-${{ matrix.suite }}-${{ matrix.runtime }}
+          name: e2e-${{ matrix.suite }}-docker-and-podman
           path: var/e2e/**/*
           if-no-files-found: ignore
           retention-days: 7
@@ -259,98 +288,19 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  kind-docker:
-    name: kubernetes with kind and docker
+  kind:
+    name: kubernetes with kind
     needs: files-changed
     if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       BIFROEST_E2E_RUNTIME: docker
       KIND_EXPERIMENTAL_PROVIDER: docker
       CGO_ENABLED: "0"
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Prepare and check browser network isolation
-        shell: bash
-        run: *prepare-browser-network
-
-      - name: Install MISE
-        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-
-      - name: Cache Go modules
-        uses: ./.github/actions/cache-go
-        with:
-          scope: e2e-kubernetes
-          context: docker
-
-      - *install-go-dependencies
-
-      - name: Run Kubernetes end-to-end suite
-        run: mise run test:e2e:kubernetes
-
-      - name: Prepare actual Kubernetes browser E2E
-        run: |
-          mise -C web install
-          mise -C web run install:web
-          mise -C web run build:web
-          mise -C web run install:web:browser
-
-      - name: Verify shared Kubernetes workload through browser and OpenSSH
-        shell: bash
-        env:
-          BIFROEST_TEST_BROWSER_UI: "1"
-        run: &verify-kubernetes-browser |
-          set -euo pipefail
-          export BIFROEST_TEST_NODE="$(mise -C web which node)"
-          mkdir -p var/e2e
-          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^Test(SharedBrowserNetworkArguments|SharedBrowserNetworkIsolation|OpenSSHKubernetesBrowserSharedWorkload)$' ./test/e2e | tee var/e2e/kubernetes-browser.json
-          mise x -- python - <<'PY'
-          import json, pathlib
-          events = [json.loads(line) for line in pathlib.Path('var/e2e/kubernetes-browser.json').read_text().splitlines() if line.startswith('{')]
-          required = {'TestSharedBrowserNetworkArguments', 'TestSharedBrowserNetworkIsolation', 'TestOpenSSHKubernetesBrowserSharedWorkload'}
-          passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}
-          assert required <= passed, f'Kubernetes browser E2E did not execute successfully: {required - passed}'
-          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Kubernetes browser E2E was skipped or failed'
-          PY
-
-      - name: Collect Kubernetes diagnostics
-        if: failure()
-        shell: bash
-        run: |
-          mkdir -p var/e2e/runtime-containers
-          timeout 30s docker ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
-          while IFS= read -r id; do
-            [ -n "${id}" ] || continue
-            timeout 30s docker logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
-          done < <(timeout 30s docker ps --all --quiet 2>/dev/null)
-          if [ -s var/e2e/kind-cluster ]; then
-            cluster="$(<var/e2e/kind-cluster)"
-            timeout 5m kind export logs "var/e2e/${cluster}-kind" --name "${cluster}" || true
-          fi
-
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: e2e-kubernetes-docker
-          path: var/e2e/**/*
-          if-no-files-found: ignore
-          retention-days: 7
-
-  kind-podman:
-    name: kubernetes with kind and podman
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      BIFROEST_E2E_RUNTIME: podman
-      KIND_EXPERIMENTAL_PROVIDER: podman
-      CGO_ENABLED: "0"
-    steps:
       - name: Install Podman
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: sudo apt-get update && sudo apt-get install --yes podman
 
       - name: Checkout code
@@ -367,12 +317,9 @@ jobs:
         uses: ./.github/actions/cache-go
         with:
           scope: e2e-kubernetes
-          context: podman
+          context: docker-and-podman
 
       - *install-go-dependencies
-
-      - name: Run Kubernetes end-to-end suite
-        run: mise run test:e2e:kubernetes
 
       - name: Prepare actual Kubernetes browser E2E
         run: |
@@ -381,32 +328,77 @@ jobs:
           mise -C web run build:web
           mise -C web run install:web:browser
 
-      - name: Verify shared Kubernetes workload through browser and OpenSSH
+      - name: Run Kubernetes end-to-end suite with Docker
+        id: docker-suite
+        run: mise run test:e2e:kubernetes
+
+      - name: Verify shared Kubernetes workload through browser and OpenSSH with Docker
+        if: ${{ !cancelled() && steps.docker-suite.outcome != 'skipped' }}
         shell: bash
         env:
           BIFROEST_TEST_BROWSER_UI: "1"
-        run: *verify-kubernetes-browser
+        run: &verify-kubernetes-browser |
+          set -euo pipefail
+          BIFROEST_TEST_NODE="$(mise -C web which node)"
+          export BIFROEST_TEST_NODE
+          mkdir -p "var/e2e/${BIFROEST_E2E_RUNTIME}"
+          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^Test(SharedBrowserNetworkArguments|SharedBrowserNetworkIsolation|OpenSSHKubernetesBrowserSharedWorkload)$' ./test/e2e | tee "var/e2e/${BIFROEST_E2E_RUNTIME}/kubernetes-browser.json"
+          mise x -- python - <<'PY'
+          import json, os, pathlib
+          log = pathlib.Path('var/e2e') / os.environ['BIFROEST_E2E_RUNTIME'] / 'kubernetes-browser.json'
+          events = [json.loads(line) for line in log.read_text().splitlines() if line.startswith('{')]
+          required = {'TestSharedBrowserNetworkArguments', 'TestSharedBrowserNetworkIsolation', 'TestOpenSSHKubernetesBrowserSharedWorkload'}
+          passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}
+          assert required <= passed, f'Kubernetes browser E2E did not execute successfully: {required - passed}'
+          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Kubernetes browser E2E was skipped or failed'
+          PY
 
-      - name: Collect Kubernetes diagnostics
-        if: failure()
+      - name: Collect Kubernetes Docker diagnostics
+        if: failure() && steps.docker-suite.outcome != 'skipped'
         shell: bash
-        run: |
-          mkdir -p var/e2e/runtime-containers
-          timeout 30s podman ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
+        run: &collect-kubernetes-diagnostics |
+          log_dir="var/e2e/${BIFROEST_E2E_RUNTIME}"
+          mkdir -p "${log_dir}/runtime-containers"
+          timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all >"${log_dir}/runtime-containers/list.txt" 2>&1 || true
           while IFS= read -r id; do
             [ -n "${id}" ] || continue
-            timeout 30s podman logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
-          done < <(timeout 30s podman ps --all --quiet 2>/dev/null)
+            timeout 30s "${BIFROEST_E2E_RUNTIME}" logs "${id}" >"${log_dir}/runtime-containers/${id}.log" 2>&1 || true
+          done < <(timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all --quiet 2>/dev/null)
           if [ -s var/e2e/kind-cluster ]; then
             cluster="$(<var/e2e/kind-cluster)"
-            timeout 5m kind export logs "var/e2e/${cluster}-kind" --name "${cluster}" || true
+            timeout 5m kind export logs "${log_dir}/${cluster}-kind" --name "${cluster}" || true
           fi
+
+      - name: Run Kubernetes end-to-end suite with Podman
+        id: podman-suite
+        if: ${{ !cancelled() && steps.docker-suite.outcome != 'skipped' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        env:
+          BIFROEST_E2E_RUNTIME: podman
+          KIND_EXPERIMENTAL_PROVIDER: podman
+        run: mise run test:e2e:kubernetes
+
+      - name: Verify shared Kubernetes workload through browser and OpenSSH with Podman
+        if: ${{ !cancelled() && steps.podman-suite.outcome != 'skipped' }}
+        shell: bash
+        env:
+          BIFROEST_E2E_RUNTIME: podman
+          KIND_EXPERIMENTAL_PROVIDER: podman
+          BIFROEST_TEST_BROWSER_UI: "1"
+        run: *verify-kubernetes-browser
+
+      - name: Collect Kubernetes Podman diagnostics
+        if: failure() && steps.podman-suite.outcome != 'skipped'
+        shell: bash
+        env:
+          BIFROEST_E2E_RUNTIME: podman
+          KIND_EXPERIMENTAL_PROVIDER: podman
+        run: *collect-kubernetes-diagnostics
 
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: e2e-kubernetes-podman
+          name: e2e-kubernetes
           path: var/e2e/**/*
           if-no-files-found: ignore
           retention-days: 7
