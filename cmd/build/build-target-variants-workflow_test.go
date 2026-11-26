@@ -375,7 +375,7 @@ func TestBinaryTargetJobsPrepareOnceAndUploadAllVariantsWithoutBypassingFailures
 	require.Equal(t, map[string]string{"pattern": "binary-*", "merge-multiple": "true", "path": "var/dist"}, download.With)
 }
 
-func TestBinaryTargetEvaluationUsesWorkflowHelperWithOldSourceTasks(t *testing.T) {
+func TestBinaryTargetEvaluationUsesSourceTaskAndPropagatesFailures(t *testing.T) {
 	bash, err := goexec.LookPath("bash")
 	if err != nil {
 		t.Skip("Bash is required to exercise the evaluation step")
@@ -390,21 +390,17 @@ func TestBinaryTargetEvaluationUsesWorkflowHelperWithOldSourceTasks(t *testing.T
 	for _, file := range []string{"ci.yml", "release.yml"} {
 		job := readGoJobsWorkflowFile(t, file)["evaluate"]
 		step := job.Steps[goJobsStepContaining(t, job, "mise run ci:evaluate-environment")]
-		require.Contains(t, step.Run, "run group-binary-matrices --", "the workflow-owned task works independently of old source tasks/pins")
+		require.Contains(t, step.Run, "mise run ci:group-binary-matrices --")
 		require.NotContains(t, step.Run, "node@", "the workflow must not maintain a second tool version")
 		for _, status := range []string{"0", "23"} {
 			directory := t.TempDir()
 			scriptPath := ".github/scripts/group-binary-matrices.ts"
-			if file == "release.yml" {
-				scriptPath = "var/ci-workflow/" + scriptPath
-			}
 			require.NoError(t, gos.MkdirAll(filepath.Dir(filepath.Join(directory, scriptPath)), 0o700))
 			require.NoError(t, gos.WriteFile(filepath.Join(directory, scriptPath), helper, 0o600))
 			require.NoError(t, gos.WriteFile(filepath.Join(directory, "source.environment"), fixture, 0o600))
 			outputPath := filepath.Join(directory, "github.output")
 			require.NoError(t, gos.WriteFile(outputPath, nil, 0o600))
-			// Only the old source CLI is stubbed. Run the workflow's shell and its
-			// actual helper; the release source checkout has no new helper/task.
+			// Stub task invocation, not the grouping algorithm or workflow shell.
 			script := `git() { [ "$*" = 'rev-parse HEAD' ] || return 42; printf source-revision; }
 mise() {
   case "$*" in
@@ -412,8 +408,8 @@ mise() {
       [ "$EVALUATE_EXIT" = 0 ] || return "$EVALUATE_EXIT"
       cat source.environment >> "$GITHUB_OUTPUT"
       ;;
-    '-C .github run group-binary-matrices -- '*|'-C var/ci-workflow/.github run group-binary-matrices -- '*)
-      node "$2/scripts/group-binary-matrices.ts" "$6"
+    'run ci:group-binary-matrices -- '*)
+      node .github/scripts/group-binary-matrices.ts "$4"
       ;;
     *) return 42 ;;
   esac

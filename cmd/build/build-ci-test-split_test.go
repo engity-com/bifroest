@@ -74,16 +74,12 @@ func TestBrowserShardMatrixIsCompleteAndRetainsIndependentRunners(t *testing.T) 
 				require.Equal(t, "always()", step.If)
 				continue
 			}
-			if step.Run == "mise -C web install" || step.Run == "mise -C web install node" {
-				require.Equal(t, "hashFiles('mise.tools.yaml') == ''", step.If, "only historical sources install global tools")
-				continue
-			}
 			require.Empty(t, step.If, "asset creation and all separated tests remain mandatory")
 		}
 	}
 }
 
-func TestSplitWorkflowRetainsOldSourceRefTestTasksAndPropagatesFailures(t *testing.T) {
+func TestSplitWorkflowInvokesTasksDirectlyAndPropagatesFailures(t *testing.T) {
 	bash, err := goexec.LookPath("bash")
 	if err != nil {
 		t.Skip("Bash is required to exercise the workflow's task selection")
@@ -95,60 +91,35 @@ func TestSplitWorkflowRetainsOldSourceRefTestTasksAndPropagatesFailures(t *testi
 			job, fragment = jobs["test-browser"], "-- --shard"
 		}
 		step := job.Steps[goJobsStepContaining(t, job, fragment)]
-		for _, modern := range []bool{false, true} {
-			for _, status := range []string{"0", "23"} {
-				shards := []string{"1/3"}
-				if browser {
-					shards = []string{"1/3", "2/3", "3/3"}
-				}
-				for _, shard := range shards {
-					directory := t.TempDir()
-					if modern {
-						require.NoError(t, gos.MkdirAll(filepath.Join(directory, "web", "scripts"), 0o700))
-						require.NoError(t, gos.WriteFile(filepath.Join(directory, "web", "scripts", "browser-go-tests.ts"), nil, 0o600))
-					}
-					config := ""
-					if modern {
-						config = `[tasks."test:go:coverage"]`
-					}
-					require.NoError(t, gos.WriteFile(filepath.Join(directory, "mise.toml"), []byte(config), 0o600))
-					script := `mise() {
-  if [ "$*" = "-C web which node" ]; then
-    printf '%s\n' '/pinned/node'
-    return 0
-  fi
+		for _, status := range []string{"0", "23"} {
+			shards := []string{"1/3"}
+			if browser {
+				shards = []string{"1/3", "2/3", "3/3"}
+			}
+			for _, shard := range shards {
+				directory := t.TempDir()
+				script := `mise() {
   printf 'EXEC %s\n' "$*"
   return "$TEST_EXIT"
 }
 ` + step.Run
-					path := filepath.Join(directory, "run.sh")
-					require.NoError(t, gos.WriteFile(path, []byte(script), 0o600))
-					command := goexec.Command(bash, "--noprofile", "--norc", "-e", "-o", "pipefail", filepath.ToSlash(path))
-					command.Dir = directory
-					command.Env = append(gos.Environ(), "SHARD="+shard, "TEST_EXIT="+status)
-					output, runErr := command.CombinedOutput()
-					expected := "run test:go"
-					if modern {
-						expected += ":coverage"
-					}
-					if browser {
-						expected = "-C web run test:go:browser"
-						if modern {
-							expected += " -- --shard " + shard
-						} else if shard != "1/3" {
-							require.NoError(t, runErr, string(output))
-							require.NotContains(t, string(output), "EXEC ")
-							continue
-						}
-					}
-					require.Equal(t, "EXEC "+expected+"\n", string(output))
-					if status == "0" {
-						require.NoError(t, runErr)
-					} else {
-						var exit *goexec.ExitError
-						require.ErrorAs(t, runErr, &exit)
-						require.Equal(t, 23, exit.ExitCode())
-					}
+				path := filepath.Join(directory, "run.sh")
+				require.NoError(t, gos.WriteFile(path, []byte(script), 0o600))
+				command := goexec.Command(bash, "--noprofile", "--norc", "-e", "-o", "pipefail", filepath.ToSlash(path))
+				command.Dir = directory
+				command.Env = append(gos.Environ(), "SHARD="+shard, "TEST_EXIT="+status)
+				output, runErr := command.CombinedOutput()
+				expected := "run test:go:coverage"
+				if browser {
+					expected = "-C web run test:go:browser -- --shard " + shard
+				}
+				require.Equal(t, "EXEC "+expected+"\n", string(output))
+				if status == "0" {
+					require.NoError(t, runErr)
+				} else {
+					var exit *goexec.ExitError
+					require.ErrorAs(t, runErr, &exit)
+					require.Equal(t, 23, exit.ExitCode())
 				}
 			}
 		}
@@ -172,7 +143,7 @@ func TestCoverageIsCollectedOnceWithoutNarrowingOtherSuites(t *testing.T) {
 		summary := job.Steps[goJobsStepContaining(t, job, "GITHUB_STEP_SUMMARY")]
 		require.Equal(t, "always()", summary.If)
 		require.Contains(t, summary.Run, "var/test-report/*.jsonl")
-		require.Contains(t, summary.Run, "mise exec -- gotestsum tool slowest --num 15 --threshold 0s --jsonfile")
+		require.Contains(t, summary.Run, "mise run ci:go:slowest -- --num 15 --threshold 0s --jsonfile")
 		require.NotContains(t, summary.Run, "--skip-stmt", "duration reports must never rewrite tests")
 		found := false
 		for _, step := range job.Steps {

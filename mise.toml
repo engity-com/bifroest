@@ -311,6 +311,12 @@ tools = { go = "{{ vars.tool_version_go }}" }
 hide = true
 run = "go run ./cmd/build evaluate-environment --log.colorMode=always"
 
+[tasks."ci:group-binary-matrices"]
+hide = true
+tools = { node = "{{ vars.tool_version_node }}" }
+dir = ".github"
+run = "node scripts/group-binary-matrices.ts"
+
 [tasks."ci:write-build-epoch"]
 tools = { go = "{{ vars.tool_version_go }}" }
 hide = true

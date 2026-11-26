@@ -72,24 +72,10 @@ jobs:
         with: &mise-options
           version: 2026.10.17
           cache_save_post: true
-          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}-${{ github.workflow_sha }}
-
-      - name: Checkout workflow cache action
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.workflow_sha }}
-          path: var/ci-workflow
-          sparse-checkout: |
-            .github/actions/cache-go
-            .github/scripts/group-binary-matrices.ts
-            .github/mise.toml
-            mise.tools.yaml
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
+          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
       - name: Cache Go modules
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: build-tools
 
@@ -103,8 +89,7 @@ jobs:
           environment="$RUNNER_TEMP/bifroest-build-environment"
           : > "$environment"
           GITHUB_OUTPUT="$environment" mise run ci:evaluate-environment
-          # The grouping runtime belongs to the workflow, not the release's MISE pins.
-          mise -C var/ci-workflow/.github run group-binary-matrices -- "$environment" >> "$GITHUB_OUTPUT"
+          mise run ci:group-binary-matrices -- "$environment" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build and release packages

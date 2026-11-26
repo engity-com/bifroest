@@ -11,6 +11,9 @@ is a quoted `tool_version_<tool>` string. Tasks reference those variables; backe
 aliases live in `[tool_alias]` in `mise.toml`. Add a tool there rather than adding
 versions or job-specific tool lists to workflows.
 
+Current workflows require these tasks and this catalog in the selected source
+revision. Rebuilding older tags without them is not supported.
+
 The existing daily dependency PR also checks this catalog. It generates a
 temporary MISE `[tools]` configuration and uses `mise outdated --bump --json`;
 MISE selects versions and preserves request precision without installing updates.

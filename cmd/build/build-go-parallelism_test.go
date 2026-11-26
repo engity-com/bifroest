@@ -69,9 +69,8 @@ func TestGoWorkflowKeepsWindowsTestsSerialWithoutNarrowingTheSuite(t *testing.T)
 		require.True(t, found)
 		require.Empty(t, configuration.Env["GO_TEST_PARALLELISM"], "%s must retain the bounded default", job)
 	}
-	step := jobs["test-host"].Steps[goJobsStepContaining(t, jobs["test-host"], "scripts/native-go-tests.ts")]
-	require.Contains(t, step.Run, "mise run test:go:native")
-	require.Contains(t, step.Run, "mise -C web exec -- node scripts/native-go-tests.ts", "keep historical source support")
+	step := jobs["test-host"].Steps[goJobsStepContaining(t, jobs["test-host"], "mise run test:go:native")]
+	require.Equal(t, "mise run test:go:native", step.Run)
 	require.Empty(t, step.If)
 	require.False(t, step.ContinueOnError)
 }

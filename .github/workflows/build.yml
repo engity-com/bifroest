@@ -76,26 +76,11 @@ jobs:
           cache_save_post: true
           cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
-      - &checkout-workflow-cache
-        name: Checkout workflow cache action
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.workflow_sha }}
-          path: var/ci-workflow
-          sparse-checkout: .github/actions/cache-go
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: browser-assets
           context: cgo0
-
-      - name: Install historical browser toolchain
-        if: hashFiles('mise.tools.yaml') == ''
-        run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
         run: mise -C web run install:web
@@ -104,13 +89,7 @@ jobs:
         run: mise -C web run build:web
 
       - name: Check browser build inventory
-        shell: bash
-        run: |
-          if [ -f mise.tools.yaml ]; then
-            mise run test:web:release
-          else
-            mise -C web exec -- bun run test:release
-          fi
+        run: mise run test:web:release
 
       - name: Upload exact browser assets for every binary host
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -150,19 +129,13 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           # Retain the previous combined job's static-core cache identity.
           scope: browser
           context: cgo0
           build-cache: "true"
-
-      - name: Install historical WebCrypto test runtime
-        if: hashFiles('mise.tools.yaml') == ''
-        run: mise -C web install node
 
       - &download-browser-assets
         name: Download verified browser assets
@@ -172,13 +145,7 @@ jobs:
           path: pkg/webui/assets
 
       - name: Test full static Linux core with pinned WebCrypto runtime
-        shell: bash
-        run: &native-go-tests |
-          if [ -f mise.tools.yaml ]; then
-            mise run test:go:native
-          else
-            mise -C web exec -- node scripts/native-go-tests.ts
-          fi
+        run: mise run test:go:native
 
       - &summarize-go-tests
         name: Summarize Go tests even after failure
@@ -189,11 +156,7 @@ jobs:
             if [ -f "$report" ]; then
               {
                 printf '### Slowest Go tests: %s\n\n```text\n' "$(basename "$report" .jsonl)"
-                if [ -f mise.tools.yaml ]; then
-                  mise run ci:go:slowest -- --num 15 --threshold 0s --jsonfile "$report"
-                else
-                  mise exec -- gotestsum tool slowest --num 15 --threshold 0s --jsonfile "$report"
-                fi
+                mise run ci:go:slowest -- --num 15 --threshold 0s --jsonfile "$report"
                 printf '```\n\nCached test durations may come from a previous run.\n\n'
               } >> "$GITHUB_STEP_SUMMARY"
             fi
@@ -227,17 +190,11 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go modules for browser proof helpers
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: test-web
           context: cgo0
-
-      - name: Install historical browser toolchain
-        if: hashFiles('mise.tools.yaml') == ''
-        run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
         run: mise -C web run install:web
@@ -277,18 +234,12 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Reuse static core Go builds without new shard snapshots
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: browser
           context: cgo0
           build-cache: restore-only
-
-      - name: Install historical browser toolchain
-        if: hashFiles('mise.tools.yaml') == ''
-        run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
         run: mise -C web run install:web
@@ -308,19 +259,7 @@ jobs:
         shell: bash
         env:
           SHARD: ${{ matrix.shard }}
-        run: |
-          if [ ! -f mise.tools.yaml ]; then
-            BIFROEST_TEST_NODE="$(mise -C web which node)"
-            export BIFROEST_TEST_NODE
-          fi
-          if [ -f web/scripts/browser-go-tests.ts ]; then
-            mise -C web run test:go:browser -- --shard "$SHARD"
-          elif [ "$SHARD" = 1/3 ]; then
-            # Old release refs have no shard runner: run their full task once.
-            mise -C web run test:go:browser
-          else
-            echo "Old source ref: the complete browser suite runs on shard 1/3."
-          fi
+        run: mise -C web run test:go:browser -- --shard "$SHARD"
 
       - *summarize-go-tests
 
@@ -359,18 +298,12 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: test-host
           context: cgo0
           build-cache: "true"
-
-      - name: Install historical WebCrypto test runtime
-        if: hashFiles('mise.tools.yaml') == ''
-        run: mise -C web install node
 
       - &install-go-dependencies
         name: Install dependencies
@@ -393,8 +326,7 @@ jobs:
       - name: Test
         env:
           MISE_GITHUB_TOKEN: ""
-        shell: bash
-        run: *native-go-tests
+        run: mise run test:go:native
 
       - *summarize-go-tests
 
@@ -432,10 +364,8 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: lint-go-host
           context: cgo0
@@ -509,10 +439,8 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: test-policy
           context: cgo0
@@ -557,10 +485,8 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: test-policy-oci
           context: cgo0
@@ -607,10 +533,8 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: test-container
           context: native-${{ matrix.image }}
@@ -640,13 +564,7 @@ jobs:
       - name: Test
         env:
           MISE_GITHUB_TOKEN: ""
-        run: |
-          if grep -Fq '[tasks."test:go:coverage"]' mise.toml; then
-            mise run test:go:coverage
-          else
-            # Keep older release refs' own test tasks and toolchain pins.
-            mise run test:go
-          fi
+        run: mise run test:go:coverage
 
       - *summarize-go-tests
 
@@ -685,10 +603,8 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: test-race
           context: native-${{ matrix.image }}
@@ -741,10 +657,8 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: lint-go-container
           context: native-${{ matrix.image }}
@@ -778,10 +692,8 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: binary-host
           context: ${{ matrix.os }}-${{ matrix.arch }}
@@ -860,10 +772,8 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - *checkout-workflow-cache
-
       - name: Cache Go
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: binary-container
           context: ${{ matrix.image }}-${{ matrix.os }}-${{ matrix.arch }}
@@ -898,7 +808,6 @@ jobs:
       contents: read
       packages: read
     outputs:
-      prepared: ${{ steps.mode.outputs.prepared }}
       publish: ${{ steps.prepare.outputs.publish }}
     container:
       image: &package-image ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:983cf2ba65a5809b8d7f2e4e70830dedee3163c2d75e9d4c9c828463b7a86c27
@@ -912,23 +821,10 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.commit || inputs.ref }}
 
-      - name: Detect deferred packaging support
-        id: mode
-        shell: bash
-        run: |
-          if [ -f cmd/build/build-package-transfer.go ]; then
-            echo 'prepared=true' >> "$GITHUB_OUTPUT"
-          else
-            # Older release CLIs retain their original test-gated packaging path.
-            echo 'prepared=false' >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Git configure
-        if: &prepare-packages steps.mode.outputs.prepared == 'true'
         run: git config --global --add safe.directory "$(pwd)"
 
       - name: Cache images dependencies
-        if: *prepare-packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .cache/dependencies/images
@@ -936,34 +832,20 @@ jobs:
           restore-keys: images-dependencies
 
       - name: Install MISE
-        if: *prepare-packages
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - name: Checkout workflow cache action
-        if: *prepare-packages
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.workflow_sha }}
-          path: var/ci-workflow
-          sparse-checkout: .github/actions/cache-go
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-
       - name: Cache Go
-        if: *prepare-packages
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: package
           context: *package-image
 
       - name: Lint licenses
-        if: steps.mode.outputs.prepared == 'true' && inputs.lint_reuse
+        if: inputs.lint_reuse
         run: mise run lint:reuse
 
       - name: Download binaries
-        if: *prepare-packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: binary-*
@@ -971,27 +853,18 @@ jobs:
           path: var/dist
 
       - name: Install dependencies
-        if: *prepare-packages
         shell: bash
         run: *install-go-script
 
       - name: Set reproducible build time
-        if: *prepare-packages
         run: mise run ci:write-build-epoch
 
       - name: Prepare packages without publishing
         id: prepare
-        if: *prepare-packages
-        shell: bash
-        run: |
-          if [ -f mise.tools.yaml ]; then
-            mise run build:go:prepare-packages
-          else
-            mise exec -- go run ./cmd/build prepare-packages --log.colorMode=always
-          fi
+        run: mise run build:go:prepare-packages
 
       - name: Transfer prepared packages for gated publication
-        if: steps.mode.outputs.prepared == 'true' && (steps.prepare.outputs.publish == 'true' || inputs.upload_dist)
+        if: steps.prepare.outputs.publish == 'true' || inputs.upload_dist
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: prepared-packages
@@ -1070,7 +943,7 @@ jobs:
           exit "$failed"
 
       - name: Checkout code
-        if: &finalize-packages needs.assemble.outputs.prepared != 'true' || needs.assemble.outputs.publish == 'true' || inputs.upload_dist
+        if: &finalize-packages needs.assemble.outputs.publish == 'true' || inputs.upload_dist
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
@@ -1080,51 +953,20 @@ jobs:
         if: *finalize-packages
         run: git config --global --add safe.directory "$(pwd)"
 
-      - name: Cache images dependencies
-        if: needs.assemble.outputs.prepared != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: .cache/dependencies/images
-          key: images-dependencies
-          restore-keys: images-dependencies
-
       - name: Install MISE
         if: *finalize-packages
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
 
-      - name: Checkout workflow cache action
-        if: *finalize-packages
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.workflow_sha }}
-          path: var/ci-workflow
-          sparse-checkout: .github/actions/cache-go
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-
       - name: Cache Go
         if: *finalize-packages
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: package
           context: *package-image
 
-      - name: Lint licenses
-        if: needs.assemble.outputs.prepared != 'true' && inputs.lint_reuse
-        run: mise run lint:reuse
-
-      - name: Download binaries
-        if: needs.assemble.outputs.prepared != 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: binary-*
-          merge-multiple: true
-          path: var/dist
-
       - name: Download prepared packages
-        if: needs.assemble.outputs.prepared == 'true' && (needs.assemble.outputs.publish == 'true' || inputs.upload_dist)
+        if: *finalize-packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: prepared-packages
@@ -1139,19 +981,9 @@ jobs:
         if: *finalize-packages
         run: mise run ci:write-build-epoch
 
-      - name: Package
-        if: needs.assemble.outputs.prepared != 'true'
-        run: mise run build:go:package
-
       - name: Verify and publish prepared packages without rebuilding
-        if: needs.assemble.outputs.prepared == 'true' && (needs.assemble.outputs.publish == 'true' || inputs.upload_dist)
-        shell: bash
-        run: |
-          if [ -f mise.tools.yaml ]; then
-            mise run build:go:publish-packages
-          else
-            mise exec -- go run ./cmd/build publish-packages --log.colorMode=always
-          fi
+        if: *finalize-packages
+        run: mise run build:go:publish-packages
 
       - name: Archive package results
         if: inputs.upload_dist

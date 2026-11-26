@@ -34,8 +34,7 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 		}
 	}
 	hostJoined := strings.Join(hostCommands, "\n")
-	require.Contains(t, hostJoined, "mise -C web install node")
-	require.Contains(t, hostJoined, "mise -C web exec -- node scripts/native-go-tests.ts")
+	require.Contains(t, hostJoined, "mise run test:go:native")
 	var commands []string
 	for _, step := range job.Steps {
 		if command, ok := step["run"].(string); ok {
@@ -43,14 +42,14 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 		}
 	}
 	joined := strings.Join(commands, "\n")
-	for _, command := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run build:web", "bun run test:release"} {
+	for _, command := range []string{"mise -C web run install:web", "mise -C web run build:web", "mise run test:web:release"} {
 		require.Contains(t, joined, command)
 	}
 	require.NotRegexp(t, `\brun test:web(\s|$)`, joined, "asset creation may only check the release inventory, not run the source suite")
 	for _, command := range []string{"run test:go", "run lint:web", "install:web:browser"} {
 		require.NotContains(t, joined, command, "asset production must not wait for test execution")
 	}
-	require.Less(t, strings.Index(joined, "run build:web"), strings.Index(joined, "bun run test:release"))
+	require.Less(t, strings.Index(joined, "run build:web"), strings.Index(joined, "run test:web:release"))
 	for _, name := range []string{"test-static", "test-browser"} {
 		test := workflow.Jobs[name]
 		require.Equal(t, "browser", test.Needs)
@@ -95,12 +94,8 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 		for _, step := range job.Steps {
 			if uses, ok := step["uses"].(string); ok && strings.HasPrefix(uses, "actions/checkout@") {
 				with := step["with"].(map[string]any)
-				if path, _ := with["path"].(string); path == "" {
-					require.Equal(t, "${{ inputs.commit || inputs.ref }}", with["ref"])
-				} else {
-					require.Equal(t, "var/ci-workflow", path)
-					require.Equal(t, "${{ github.workflow_sha }}", with["ref"])
-				}
+				require.Empty(t, with["path"])
+				require.Equal(t, "${{ inputs.commit || inputs.ref }}", with["ref"])
 			}
 		}
 	}
@@ -152,10 +147,7 @@ func TestBrowserIntegrationHasSeparateBudgetWithoutExtendingCoreTests(t *testing
 	for _, step := range browser.Steps {
 		if strings.Contains(step.Run, "mise -C web run test:go:browser") {
 			found = true
-			require.Contains(t, step.Run, "mise -C web which node")
-			require.Contains(t, step.Run, `-- --shard "$SHARD"`)
-			require.Contains(t, step.Run, `if [ -f web/scripts/browser-go-tests.ts ]; then`)
-			require.Contains(t, step.Run, `elif [ "$SHARD" = 1/3 ]; then`, "older source refs must run the full suite exactly once")
+			require.Equal(t, `mise -C web run test:go:browser -- --shard "$SHARD"`, step.Run, "every shard must invoke its task directly")
 		}
 		require.NotContains(t, step.Run, "scripts/native-go-tests.ts", "shards must not repeat the full core suite")
 	}

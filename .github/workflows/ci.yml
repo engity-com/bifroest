@@ -76,7 +76,7 @@ jobs:
           environment="$RUNNER_TEMP/bifroest-build-environment"
           : > "$environment"
           GITHUB_OUTPUT="$environment" mise run ci:evaluate-environment
-          mise -C .github run group-binary-matrices -- "$environment" >> "$GITHUB_OUTPUT"
+          mise run ci:group-binary-matrices -- "$environment" >> "$GITHUB_OUTPUT"
 
   biome:
     name: Biome

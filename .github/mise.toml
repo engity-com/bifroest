@@ -1,8 +1,0 @@
-# Workflow-owned helper. Release jobs use this from the workflow revision,
-# independently of the tools and tasks available in a historical release tag.
-[vars]
-_.file = "../mise.tools.yaml"
-
-[tasks.group-binary-matrices]
-tools = { node = "{{ vars.tool_version_node }}" }
-run = "node scripts/group-binary-matrices.ts"

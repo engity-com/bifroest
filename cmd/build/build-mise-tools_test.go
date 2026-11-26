@@ -18,57 +18,55 @@ func TestMiseTaskToolsUseTheSingleVersionCatalog(t *testing.T) {
 	catalog, err := parseDependencyToolCatalog(raw)
 	require.NoError(t, err)
 	referenced := map[string]bool{}
-	for _, name := range []string{"mise.toml", ".github/mise.toml"} {
-		t.Run(name, func(t *testing.T) {
-			raw, err := gos.ReadFile(filepath.Join("..", "..", filepath.FromSlash(name)))
-			require.NoError(t, err)
-			var configuration struct {
-				Vars struct {
-					Import struct {
-						File string `toml:"file"`
-					} `toml:"_"`
-				} `toml:"vars"`
+	t.Run("mise.toml", func(t *testing.T) {
+		raw, err := gos.ReadFile("../../mise.toml")
+		require.NoError(t, err)
+		var configuration struct {
+			Vars struct {
+				Import struct {
+					File string `toml:"file"`
+				} `toml:"_"`
+			} `toml:"vars"`
+			Tools map[string]any `toml:"tools"`
+			Tasks map[string]struct {
 				Tools map[string]any `toml:"tools"`
-				Tasks map[string]struct {
-					Tools map[string]any `toml:"tools"`
-					Run   any            `toml:"run"`
-				} `toml:"tasks"`
+				Run   any            `toml:"run"`
+			} `toml:"tasks"`
+		}
+		_, err = toml.Decode(string(raw), &configuration)
+		require.NoError(t, err)
+		require.Equal(t, dependencyToolsPath, configuration.Vars.Import.File)
+		require.Empty(t, configuration.Tools, "global tool selections are additive; tasks must own all tool requirements")
+		require.NotEmpty(t, configuration.Tasks)
+		for taskName, task := range configuration.Tasks {
+			for tool, options := range task.Tools {
+				t.Run(taskName+"/"+tool, func(t *testing.T) {
+					require.Contains(t, catalog.versions, tool)
+					version, ok := options.(string)
+					if !ok {
+						table, ok := options.(map[string]any)
+						require.True(t, ok)
+						version, ok = table["version"].(string)
+						require.True(t, ok)
+					}
+					require.Equal(t, "{{ vars."+toolVersionPrefix+tool+" }}", version)
+					referenced[tool] = true
+				})
 			}
-			_, err = toml.Decode(string(raw), &configuration)
-			require.NoError(t, err)
-			require.Equal(t, filepath.ToSlash(filepath.Join(filepath.Dir(name), configuration.Vars.Import.File)), dependencyToolsPath)
-			require.Empty(t, configuration.Tools, "global tool selections are additive; tasks must own all tool requirements")
-			require.NotEmpty(t, configuration.Tasks)
-			for taskName, task := range configuration.Tasks {
-				for tool, options := range task.Tools {
-					t.Run(taskName+"/"+tool, func(t *testing.T) {
-						require.Contains(t, catalog.versions, tool)
-						version, ok := options.(string)
-						if !ok {
-							table, ok := options.(map[string]any)
-							require.True(t, ok)
-							version, ok = table["version"].(string)
-							require.True(t, ok)
-						}
-						require.Equal(t, "{{ vars."+toolVersionPrefix+tool+" }}", version)
-						referenced[tool] = true
-					})
-				}
-				if len(task.Tools) != 0 || taskName == "build:var" {
-					continue
-				}
-				run, ok := task.Run.([]any)
-				require.True(t, ok, "%s must declare tools unless it only delegates to other tasks", taskName)
-				for _, entry := range run {
-					invocation, ok := entry.(map[string]any)
-					require.True(t, ok, "%s contains an executable command without tools", taskName)
-					require.NotEmpty(t, invocation["task"])
-				}
+			if len(task.Tools) != 0 || taskName == "build:var" {
+				continue
 			}
-		})
-	}
+			run, ok := task.Run.([]any)
+			require.True(t, ok, "%s must declare tools unless it only delegates to other tasks", taskName)
+			for _, entry := range run {
+				invocation, ok := entry.(map[string]any)
+				require.True(t, ok, "%s contains an executable command without tools", taskName)
+				require.NotEmpty(t, invocation["task"])
+			}
+		}
+	})
 	require.Len(t, referenced, len(catalog.versions), "every catalog tool must be used by a task")
-	for _, name := range []string{".tool-versions", "web/.tool-versions"} {
+	for _, name := range []string{".tool-versions", "web/.tool-versions", ".github/mise.toml"} {
 		_, err := gos.Stat(filepath.Join("..", "..", filepath.FromSlash(name)))
 		require.ErrorIs(t, err, gos.ErrNotExist, "do not reintroduce a duplicate version catalog")
 	}
@@ -78,6 +76,11 @@ func TestMiseWorkflowsHaveNoJobSpecificToolListsAndSaveTaskInstalls(t *testing.T
 	for _, name := range []string{"build.yml", "ci.yml", "release.yml", "e2e.yml", "nanoserver.yml", "pr-update.yml", "dependencies.yml"} {
 		for jobName, job := range readGoJobsWorkflowFile(t, name) {
 			for _, step := range job.Steps {
+				require.NotContains(t, step.Run, "mise exec", "invoke task-owned tools directly")
+				require.NotContains(t, step.Run, "mise -C web exec")
+				require.NotRegexp(t, `\bmise(?: -C \S+)? install(?:\s|$)`, step.Run, "no workflow-owned tool installation")
+				require.NotContains(t, step.Run, "mise.tools.yaml", "do not probe for legacy task support")
+				require.NotEqual(t, "var/ci-workflow", step.With["path"], "use helpers from the selected source")
 				if !strings.HasPrefix(step.Uses, "jdx/mise-action@") {
 					continue
 				}
@@ -122,9 +125,7 @@ func TestMiseNativeTaskParsingDoesNotInstallAnyTool(t *testing.T) {
 		}
 		require.Equal(t, "1.27.4", parsed["ci:go:env"]["go"])
 		require.Equal(t, "26.9.0", parsed["test:go:native"]["node"])
-		if directory != root {
-			require.Equal(t, map[string]any{"node": "26.9.0"}, parsed["group-binary-matrices"])
-		}
+		require.Equal(t, map[string]any{"node": "26.9.0"}, parsed["ci:group-binary-matrices"])
 	}
 	_, err = gos.Stat(filepath.Join(data, "installs"))
 	require.ErrorIs(t, err, gos.ErrNotExist)

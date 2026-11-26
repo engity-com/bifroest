@@ -68,7 +68,8 @@ func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T
 	require.Equal(t, map[string]string{
 		"CACHE_SCOPE": "${{ inputs.scope }}", "CACHE_CONTEXT": "${{ inputs.context }}",
 	}, detect.Env)
-	require.Contains(t, detect.Run, "mise exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED")
+	require.Contains(t, detect.Run, `go_env="$(mise run --quiet ci:go:env)"`)
+	require.NotContains(t, detect.Run, "mise exec")
 	require.NotContains(t, detect.Run, "${{", "inputs must be passed as data, not interpolated into shell commands")
 	modules, build := action.Runs.Steps[1], action.Runs.Steps[2]
 	require.Empty(t, modules.If, "module caching remains enabled without the build-cache opt-in")
@@ -112,28 +113,16 @@ func TestGoCacheCompositeActionDoesNotUseYAMLAnchors(t *testing.T) {
 
 func runGoCacheDetection(t *testing.T, goEnv, scope, context, status string) (map[string]string, string, error) {
 	t.Helper()
-	return runGoCacheDetectionForSource(t, goEnv, scope, context, status, false)
-}
-
-func runGoCacheDetectionForSource(t *testing.T, goEnv, scope, context, status string, modern bool) (map[string]string, string, error) {
-	t.Helper()
 	bash, err := osexec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is required to exercise the composite action's detection step")
 	}
 	directory := t.TempDir()
-	if modern {
-		require.NoError(t, gos.WriteFile(filepath.Join(directory, "mise.tools.yaml"), nil, 0o600))
-	}
 	output := filepath.Join(directory, "github.output")
 	require.NoError(t, gos.WriteFile(output, nil, 0o600))
 	// Stub only MISE/Go; run the actual action shell code and checksum utility.
 	script := `mise() {
-  if [ -f mise.tools.yaml ]; then
-    [ "$*" = "run --quiet ci:go:env" ] || return 42
-  else
-    [ "$*" = "exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED" ] || return 42
-  fi
+  [ "$*" = "run --quiet ci:go:env" ] || return 42
   printf '%s' "$GO_CACHE_TEST_ENV"
   return "$GO_CACHE_TEST_STATUS"
 }
@@ -167,20 +156,15 @@ func runGoCacheDetectionForSource(t *testing.T, goEnv, scope, context, status st
 func TestGoCacheActionUsesTaskGoAndNeverFallsBackAfterTaskFailure(t *testing.T) {
 	goEnv := "/cache/build\n/cache/mod\ngo1.27.4\nlinux\namd64\n0\n"
 	for _, status := range []string{"0", "23"} {
-		legacy, legacyLog, legacyErr := runGoCacheDetectionForSource(t, goEnv, "test", "", status, false)
-		modern, modernLog, modernErr := runGoCacheDetectionForSource(t, goEnv, "test", "", status, true)
-		require.Equal(t, legacy, modern)
+		values, output, err := runGoCacheDetection(t, goEnv, "test", "", status)
 		if status == "0" {
-			require.NoError(t, legacyErr, legacyLog)
-			require.NoError(t, modernErr, modernLog)
-			require.Equal(t, "go1.27.4", modern["goversion"])
+			require.NoError(t, err, output)
+			require.Equal(t, "go1.27.4", values["goversion"])
 		} else {
-			require.Empty(t, modern, "failed task provisioning must not publish cache paths")
-			for _, err := range []error{legacyErr, modernErr} {
-				var exit *osexec.ExitError
-				require.ErrorAs(t, err, &exit)
-				require.Equal(t, 23, exit.ExitCode())
-			}
+			require.Empty(t, values, "failed task provisioning must not publish cache paths")
+			var exit *osexec.ExitError
+			require.ErrorAs(t, err, &exit)
+			require.Equal(t, 23, exit.ExitCode())
 		}
 	}
 }
