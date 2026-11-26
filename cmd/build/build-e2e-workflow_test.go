@@ -63,10 +63,10 @@ func TestE2ERuntimesSharePreparationWithoutHidingFailures(t *testing.T) {
 					if step.ID == "docker-suite" {
 						require.Empty(t, step.If)
 					} else {
-						require.Contains(t, step.If, "!cancelled()", "explicit status check overrides implicit success()")
+						require.Contains(t, step.If, "!cancelled()", "explicit status check overrides implicit success()") //nolint:misspell // GitHub Actions status function.
 						require.Contains(t, step.If, "steps.docker-suite.outcome != 'skipped'", "do not run after failed shared setup")
 						if name == "runtime" {
-							require.Equal(t, "${{ !cancelled() && steps.docker-suite.outcome != 'skipped' }}", step.If)
+							require.Equal(t, "${{ !cancelled() && steps.docker-suite.outcome != 'skipped' }}", step.If) //nolint:misspell // GitHub Actions status function.
 						}
 					}
 					if name == "runtime" {

@@ -51,7 +51,7 @@ func TestDockerBrowserE2ERunsSequentiallyWithBothRuntimesWithoutSkip(t *testing.
 			env := step["env"].(map[string]any)
 			runtime := env["BIFROEST_E2E_RUNTIME"].(string)
 			require.True(t, baseline[runtime], "native SSH/recording baseline remains enabled")
-			require.Equal(t, "${{ !cancelled() && matrix.suite == 'docker' && steps."+runtime+"-suite.outcome != 'skipped' }}", step["if"])
+			require.Equal(t, "${{ !cancelled() && matrix.suite == 'docker' && steps."+runtime+"-suite.outcome != 'skipped' }}", step["if"]) //nolint:misspell // GitHub Actions status function.
 			require.Nil(t, step["continue-on-error"])
 			require.Equal(t, "bash", step["shell"])
 			require.Equal(t, "1", env["BIFROEST_TEST_BROWSER_UI"])
@@ -104,7 +104,7 @@ func TestKubernetesBrowserE2ERunsSequentiallyWithBothKindProvidersWithoutSkip(t 
 				if command == "mise run test:e2e:kubernetes" && step["id"] == runtime+"-suite" {
 					require.Nil(t, step["continue-on-error"])
 					if runtime == "podman" {
-						require.Equal(t, "${{ !cancelled() && steps.docker-suite.outcome != 'skipped' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}", step["if"])
+						require.Equal(t, "${{ !cancelled() && steps.docker-suite.outcome != 'skipped' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}", step["if"]) //nolint:misspell // GitHub Actions status function.
 						env := step["env"].(map[string]any)
 						require.Equal(t, runtime, env["BIFROEST_E2E_RUNTIME"])
 						require.Equal(t, runtime, env["KIND_EXPERIMENTAL_PROVIDER"])
@@ -122,7 +122,7 @@ func TestKubernetesBrowserE2ERunsSequentiallyWithBothKindProvidersWithoutSkip(t 
 				if step["name"] == "Verify shared Kubernetes workload through browser and OpenSSH with "+strings.ToUpper(runtime[:1])+runtime[1:] {
 					require.True(t, baseline, "native SSH/recording baseline remains enabled")
 					require.True(t, prepared, "frontend must precede fixture Go embedding")
-					require.Equal(t, "${{ !cancelled() && steps."+runtime+"-suite.outcome != 'skipped' }}", step["if"])
+					require.Equal(t, "${{ !cancelled() && steps."+runtime+"-suite.outcome != 'skipped' }}", step["if"]) //nolint:misspell // GitHub Actions status function.
 					require.Nil(t, step["continue-on-error"])
 					require.Equal(t, "bash", step["shell"])
 					env := step["env"].(map[string]any)
