@@ -1,0 +1,68 @@
+name: Windows durable I/O probe
+
+on:
+  push:
+    branches: [diag/windows-durable-io]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      MISE_AUTO_INSTALL: "false"
+      CGO_ENABLED: "0"
+      GOFLAGS: "-p=2"
+      GO_TEST_PARALLELISM: "1"
+      GITHUB_TOKEN: ""
+    steps:
+      - name: Checkout diagnostic branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install matching Windows host test tools
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with:
+          install_args: go gotestsum node helm
+
+      - name: Restore matching Windows host Go cache without saving
+        uses: ./.github/actions/cache-go
+        with:
+          scope: test-host
+          context: cgo0
+          build-cache: restore-only
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Compare fixed A-B-B-A sequence on one Windows runner
+        shell: pwsh
+        run: |
+          $defaultTmp = $env:TMP
+          $defaultTemp = $env:TEMP
+          $probeTemp = Join-Path $env:RUNNER_TEMP "durable-io-probe"
+          New-Item -ItemType Directory -Force -Path $probeTemp | Out-Null
+          $env:BIFROEST_TEST_NODE = (mise -C web which node).Trim()
+          $failed = $false
+          mise exec -- go version
+          foreach ($location in @("default", "runner-temp", "runner-temp", "default")) {
+            if ($location -eq "default") {
+              $env:TMP = $defaultTmp
+              $env:TEMP = $defaultTemp
+            } else {
+              $env:TMP = $probeTemp
+              $env:TEMP = $probeTemp
+            }
+            Write-Output "::group::Durable filesystem operations: $location"
+            mise exec -- go test -v -count=1 -p=1 -run '^TestWindowsDurableArtifactIOProbe$' ./pkg/audit
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+            Write-Output "::endgroup::"
+            Write-Output "::group::Unchanged management and lifetime tests: $location"
+            mise exec -- go test -v -count=3 -p=1 -run '^(TestHTTPSManagementMissingRecordingHasNoPartialTransfer|TestManagementChannelReadLogsCorrelatedFailureAndKeepsExpectedCancellationAtDebug|TestNeutralConnectionMaximumLifetimeIsNotExtendedByActivity)$' ./pkg/service
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+            Write-Output "::endgroup::"
+          }
+          if ($failed) { exit 1 }
