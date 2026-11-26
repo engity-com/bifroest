@@ -7,15 +7,15 @@ description: Use SSH clients or optional HTTPS browser access with configurable 
 
 ![Engity's Bifröst](assets/logo-with-text.svg){. class=bifroest-logo title="Logo of Engity's Bifröst with title"}
 
-## SSH and browser access with identity and session control
+## SSH access, your identities, your environments
 
-Bifröst lets platform teams combine authorization with the environment in which a session runs. Users connect with a standard SSH client or the optional [HTTPS browser interface](guides/browser-access.md). [OIDC authorization](reference/authorization/oidc/index.md) requires a browser login step and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
+Bifröst connects [standard SSH clients](reference/connection/ssh.md) or an optional [browser terminal](guides/browser-access.md) to [hosts](reference/environment/local.md), [containers](reference/environment/docker.md), [Kubernetes Pods](reference/environment/kubernetes.md) and [private SSH servers](guides/ssh-gateway.md).
 
-Bifröst was created for teams with [time-bound off-boarding requirements](usecases.md#offboard), whether the target is 15 minutes, 60 minutes or another defined limit. Meeting it depends on the IdP, bounded access and checks of existing connections.
+Use an [IdP](reference/authorization/oidc/index.md), [local accounts](reference/authorization/local.md) or [accounts defined in YAML](reference/authorization/simple.md).
 
-**Install it as a host service:** the [host guide](setup/on-host.md) starts Bifröst on port 22 with the privileges required to open a real shell as an existing local account. Linux uses systemd, Windows uses a Windows service, and macOS uses a LaunchDaemon.
+**Config-first, testable, simple to deploy** — [version rules, test changes and deploy with your existing tools](concept.md).
 
-Already operate Kubernetes? The [Helm guide](setup/in-kubernetes.md) installs Bifröst in your cluster and connects it to an existing SSH target.
+Start with a [host service](setup/on-host.md), [Docker](setup/in-docker.md) or [Kubernetes with Helm](setup/in-kubernetes.md).
 
 ## Choose your task
 
@@ -29,11 +29,11 @@ Already operate Kubernetes? The [Helm guide](setup/in-kubernetes.md) installs Bi
 
 ### SSH access with your identity
 
-Connect using OpenSSH, PuTTY or another standard SSH client. Authorize with local accounts, SSH keys or [OIDC](reference/authorization/oidc/index.md); OIDC adds a browser login step, not a separate SSH client.
+Connect using OpenSSH, PuTTY or another standard SSH client, with the identity source and credentials configured for your [flow](reference/flow.md).
 
 ### Choose where sessions run
 
-Open a shell on the [host](reference/environment/local.md), in a [Docker container](reference/environment/docker.md) or in a [Kubernetes Pod](reference/environment/kubernetes.md). Flows combine the authorization method and session environment; container isolation depends on the permissions you grant.
+Open a shell on the [host](reference/environment/local.md), in a [Docker container](reference/environment/docker.md) or in a [Kubernetes Pod](reference/environment/kubernetes.md). [Flows](reference/flow.md) combine the [authorization method](reference/authorization/index.md) and [session environment](reference/environment/index.md); container isolation depends on the permissions you grant.
 
 ### SSH gateway to private servers
 
@@ -45,12 +45,12 @@ Optionally sign [audit events](reference/auditlog/index.md) and [terminal record
 
 ### Bound access over time
 
-Set maximum [SSH connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) lifetimes, and optionally provision or clean up [local accounts](reference/environment/local.md#account-management). OIDC's default policy checks refresh grants even for sessions reused with a remembered public key and closes Bifröst connections after a grant is permanently rejected. [Time-bound off-boarding](usecases.md#offboard) still needs an end-to-end check.
+Set maximum [SSH connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) lifetimes, and optionally provision or clean up [local accounts](reference/environment/local.md#account-management). OIDC's default policy checks [refresh grants](reference/authorization/oidc/authorization-code.md#refresh-token) even for sessions reused with a [remembered public key](reference/data-type.md#rememberme) and closes Bifröst connections after a grant is permanently rejected. [Time-bound off-boarding](usecases.md#offboard) still needs an end-to-end check.
 
 ## More topics
 * [Getting started](setup/index.md)
 * [Use-Cases](usecases.md)
 * [Choosing Bifröst](choosing-bifroest.md)
 * [Security and trust](security.md)
-* [Operating model and availability](setup/operations.md)
+* [Operations and availability](setup/operations.md)
 * [Configuration](reference/configuration.md)

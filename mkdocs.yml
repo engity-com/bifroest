@@ -124,6 +124,7 @@ theme:
 nav:
   - Home:
       - Welcome: index.md
+      - Concept: concept.md
       - Use cases: usecases.md
       - Choosing Bifröst: choosing-bifroest.md
       - Guides:
@@ -146,7 +147,7 @@ nav:
           - In Kubernetes with Helm: setup/in-kubernetes.md
           - In GitHub Actions: setup/github-actions.md
       - setup/distribution.md
-      - Operating model and availability: setup/operations.md
+      - Operations and availability: setup/operations.md
       - Upgrade notes: setup/upgrade.md
       - Security and trust: security.md
       - License: legal/license.md

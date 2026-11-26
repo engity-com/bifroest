@@ -2,32 +2,34 @@
 
 ![Engity's Bifröst](docs/assets/logo-with-text.svg)
 
-Bifröst is a configurable SSH server and gateway for teams managing access to hosts and isolated work environments. Flows combine authorization with where a session runs. Users connect with a standard SSH client; OIDC Device Authorization also requires a browser and a suitable identity provider.
+Bifröst is a configurable SSH server and gateway for hosts and workspaces. Use an [IdP](https://bifroest.engity.org/reference/authorization/oidc/), [local accounts](https://bifroest.engity.org/reference/authorization/local/) or [accounts defined in YAML](https://bifroest.engity.org/reference/authorization/simple/).
+
+**Config-first, testable, simple to deploy** — [version rules, test changes and deploy with your existing tools](https://bifroest.engity.org/concept/).
 
 ## Features
 
 * **Standard SSH clients:** Connect using OpenSSH, PuTTY or another regular SSH client without installing a Bifröst-specific client.
-* **Flexible authorization:** Choose local accounts, SSH keys or [OIDC](docs/reference/authorization/oidc/index.md) through configurable access flows.
+* **Flexible authorization:** Combine identity sources and access rules through configurable flows.
 * **Host and container sessions:** Work as a local user, in a Docker container or in a Kubernetes Pod; optionally provision and clean up managed local accounts.
-* **SSH gateway:** Reach private SSH servers through a [separately authenticated connection](docs/guides/ssh-gateway.md) with target host-key verification.
-* **Audit and recording:** Optionally write signed audit events and verifiable [terminal recordings](docs/guides/recording.md).
-* **Time-bound access:** OIDC can close Bifröst connections after a refresh grant is rejected. Set connection and session lifetimes to support [off-boarding targets](docs/usecases.md#offboard) such as 15 or 60 minutes, and test the result against your IdP and requirements.
+* **SSH gateway:** Reach private SSH servers through a [separately authenticated connection](https://bifroest.engity.org/guides/ssh-gateway/) with target host-key verification.
+* **Audit and recording:** Optionally write signed audit events and verifiable [terminal recordings](https://bifroest.engity.org/guides/recording/).
+* **Time-bound access:** OIDC can close Bifröst connections after a refresh grant is rejected. Set connection and session lifetimes to support [off-boarding targets](https://bifroest.engity.org/usecases/#offboard) such as 15 or 60 minutes, and test the result against your IdP and requirements.
 
 ## Get started
 
-[Install Bifröst on Linux, Windows or macOS](docs/setup/on-host.md) as a host service, or choose [Docker](https://bifroest.engity.org/setup/in-docker/) or [Kubernetes with Helm](docs/setup/in-kubernetes.md). Then follow a task guide:
+[Install Bifröst on Linux, Windows or macOS](https://bifroest.engity.org/setup/on-host/) as a host service, or choose [Docker](https://bifroest.engity.org/setup/in-docker/) or [Kubernetes with Helm](https://bifroest.engity.org/setup/in-kubernetes/). Then follow a task guide:
 
-* [OIDC login with a standard SSH client](docs/guides/oidc.md)
-* [SSH gateway to an OpenSSH server](docs/guides/ssh-gateway.md)
-* [Verifiable session recording](docs/guides/recording.md)
+* [OIDC login with a standard SSH client](https://bifroest.engity.org/guides/oidc/)
+* [SSH gateway to an OpenSSH server](https://bifroest.engity.org/guides/ssh-gateway/)
+* [Verifiable session recording](https://bifroest.engity.org/guides/recording/)
 
-Install the CLI in a workflow with the [Setup Bifröst GitHub Action](docs/setup/github-actions.md), for example to run offline configuration tests before deployment.
+Install the CLI in a workflow with the [Setup Bifröst GitHub Action](https://bifroest.engity.org/setup/github-actions/), for example to run offline configuration tests before deployment.
 
-The links to files in this repository describe the current source. For an installation, choose a [published release](https://github.com/engity-com/bifroest/releases) and its **matching versioned documentation** at [bifroest.engity.org](https://bifroest.engity.org/); the site root describes the current stable release, which may differ from `main`. Alpha and beta container images use only full version tags such as `:1.0.0-beta1`; `:latest` and other moving tags are for stable releases.
+Documentation links target the current stable release, which may differ from `main`. Choose a [published release](https://github.com/engity-com/bifroest/releases) and its **[matching versioned documentation](https://bifroest.engity.org/)**. Alpha and beta container images use only full version tags such as `:1.0.0-beta1`; `:latest` and other moving tags are for stable releases.
 
 ## OpenSSH migration and security
 
-Replacing an OpenSSH `sshd`? Use the [host installation guide](docs/setup/on-host.md) to set up Bifröst, and the [configuration reference](docs/reference/configuration.md) to select your SSH access policies. For an evaluation, read [Choosing Bifröst](docs/choosing-bifroest.md), [Security and trust](docs/security.md) and the [operating model and availability limits](docs/setup/operations.md). Review the [upgrade guidance](docs/setup/upgrade.md) when updating Bifröst; report vulnerabilities through the [security policy](SECURITY.md).
+Replacing an OpenSSH `sshd`? Use the [host installation guide](https://bifroest.engity.org/setup/on-host/) to set up Bifröst, and the [configuration reference](https://bifroest.engity.org/reference/configuration/) to select your SSH access policies. For an evaluation, read [Choosing Bifröst](https://bifroest.engity.org/choosing-bifroest/), [Security and trust](https://bifroest.engity.org/security/) and the [operations and availability limits](https://bifroest.engity.org/setup/operations/). Review the [upgrade guidance](https://bifroest.engity.org/setup/upgrade/) when updating Bifröst; report vulnerabilities through the [security policy](SECURITY.md).
 
 ## Project
 

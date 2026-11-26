@@ -9,7 +9,7 @@ The management environment provides administrative commands over SSH and a struc
 
 Use a dedicated, explicitly authorized [flow](../flow.md), with management and workload logins matched separately. There is no implicit administrator role. Management connections create regular sessions and follow the flow's audit-logging configuration.
 
-Management acts on the connected instance and its repositories, not a cluster-wide inventory. It does not edit configuration or distribute policy to other instances. See the [operating model](../../setup/operations.md).
+Management acts on the connected instance and its repositories, not a cluster-wide inventory. It does not edit configuration or distribute policy to other instances. See [operations and availability](../../setup/operations.md).
 
 To keep management SSH-only when an HTTPS endpoint is enabled, set `http.enabled: false` on its flow.
 

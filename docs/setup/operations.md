@@ -2,7 +2,9 @@
 description: Operate Bifröst behind a load balancer or reverse proxy, manage instance-local state and plan restarts or recovery.
 ---
 
-# Operating model and availability
+# Operations and availability
+
+For the configuration and delivery workflow, see the [concept](../concept.md).
 
 * **Who operates it?** You run the [host service](on-host.md), [container](in-docker.md) or [Helm deployment](in-kubernetes.md), supply configuration and keys, and maintain the identity provider and workload dependencies. [Management](../reference/environment/management.md) acts on that instance; it does not provide fleet-wide or tenant-scoped administration.
 * **What survives a restart?** With durable storage, [sessions and saved-access registrations](../reference/session/fs.md) can survive. Preserve keys and complete evidence repositories too; use the [checklist below](#restart-and-recovery-checklist).
