@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	gos "os"
 	"strings"
 	"testing"
@@ -31,9 +32,9 @@ func TestCIBuildToolsetsAreExplicitWithoutChangingHistoricalReleases(t *testing.
 	require.Equal(t, false, input.Default, "historical release sources retain their own full toolchain")
 
 	expected := map[string]string{
-		"browser":           "go node bun",
+		"browser":           "go go-licenses node bun",
 		"test-static":       "go gotestsum node helm",
-		"test-web":          "go node bun",
+		"test-web":          "go node bun biome",
 		"test-browser":      "go gotestsum node bun",
 		"test-host":         "go gotestsum node helm",
 		"test-container":    "go gotestsum node helm",
@@ -94,11 +95,11 @@ func TestPRWorkflowToolsetsDoNotAutomaticallyInstallUnrelatedTools(t *testing.T)
 			"documentation": "python uv",
 		},
 		"e2e.yml": {
-			"runtime":       "${{ matrix.suite == 'docker' && 'go docker-cli node bun' || 'go docker-cli' }}",
+			"runtime":       "${{ matrix.suite == 'docker' && 'go go-licenses docker-cli node bun' || 'go docker-cli' }}",
 			"authorization": "go",
-			"pam":           "go docker-cli node bun",
+			"pam":           "go go-licenses docker-cli node bun",
 			"darwin":        "go",
-			"kind":          "go docker-cli kind kubectl node bun",
+			"kind":          "go go-licenses docker-cli kind kubectl node bun",
 		},
 		"nanoserver.yml": {
 			"windows-local": "go go-licenses docker-cli node bun",
@@ -128,5 +129,36 @@ func TestPRWorkflowToolsetsDoNotAutomaticallyInstallUnrelatedTools(t *testing.T)
 			require.Empty(t, job.Env["MISE_AUTO_INSTALL"])
 		}
 		require.Equal(t, jobs, seen)
+	}
+}
+
+func TestBrowserJobsRetainTransitiveLicenseAndLintTools(t *testing.T) {
+	// Vite's WASM build invokes cmd/build browser-licenses, including when
+	// build:web is a transitive dependency of the native PAM test task.
+	for file, names := range map[string][]string{
+		"build.yml":      {"browser"},
+		"e2e.yml":        {"runtime", "pam", "kind"},
+		"nanoserver.yml": {"windows-local"},
+	} {
+		jobs := readGoJobsWorkflowFile(t, file)
+		for _, name := range names {
+			for _, step := range jobs[name].Steps {
+				if strings.HasPrefix(step.Uses, "jdx/mise-action@") {
+					require.Contains(t, step.With["install_args"], "go-licenses", file+"/"+name+" builds browser or native binary license inventories")
+				}
+			}
+		}
+	}
+	raw, err := gos.ReadFile("../../web/package.json")
+	require.NoError(t, err)
+	var web struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &web))
+	require.Contains(t, web.Scripts["check"], "biome check")
+	for _, step := range readGoJobsWorkflow(t)["test-web"].Steps {
+		if strings.HasPrefix(step.Uses, "jdx/mise-action@") {
+			require.Contains(t, step.With["install_args"], "biome", "lint:web runs the package.json check script")
+		}
 	}
 }

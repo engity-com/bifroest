@@ -80,7 +80,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          install_args: ${{ matrix.suite == 'docker' && 'go docker-cli node bun' || 'go docker-cli' }}
+          install_args: ${{ matrix.suite == 'docker' && 'go go-licenses docker-cli node bun' || 'go docker-cli' }}
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -222,7 +222,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          install_args: go docker-cli node bun
+          install_args: go go-licenses docker-cli node bun
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -306,7 +306,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          install_args: go docker-cli kind kubectl node bun
+          install_args: go go-licenses docker-cli kind kubectl node bun
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go

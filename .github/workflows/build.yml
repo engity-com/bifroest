@@ -75,7 +75,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          install_args: ${{ inputs.minimal_tools && 'go node bun' || '' }}
+          install_args: ${{ inputs.minimal_tools && 'go go-licenses node bun' || '' }}
 
       - &checkout-workflow-cache
         name: Checkout workflow cache action
@@ -210,7 +210,7 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          install_args: ${{ inputs.minimal_tools && 'go node bun' || '' }}
+          install_args: ${{ inputs.minimal_tools && 'go node bun biome' || '' }}
 
       - *checkout-workflow-cache
 
