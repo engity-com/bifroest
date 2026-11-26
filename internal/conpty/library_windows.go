@@ -33,11 +33,26 @@ type Library struct {
 // Load loads only the embedded, digest-pinned interface library. In particular,
 // neither PATH/CWD overrides nor a fallback to kernel32's legacy close exist.
 // The caller must finish all console operations before closing the library.
-func Load() (_ *Library, resultErr error) {
+func Load() (*Library, error) {
+	return LoadWithObservation(nil)
+}
+
+// LoadWithObservation is Load with optional passive operation milestones. The
+// observer receives only fixed phase names, never paths, payloads or native data.
+// It must not block or panic. Normal production callers use Load.
+func LoadWithObservation(observe func(string)) (_ *Library, resultErr error) {
+	phase := func(name string) {
+		if observe != nil {
+			observe(name)
+		}
+	}
+	phase("library.begin")
 	library := &Library{}
 	defer func() {
 		if resultErr != nil {
+			phase("library.cleanup.begin")
 			resultErr = errors.Join(resultErr, library.Close())
+			phase("library.cleanup.returned")
 		}
 	}()
 	var selected *Payload
@@ -57,32 +72,43 @@ func Load() (_ *Library, resultErr error) {
 	if err := selected.Verify(raw); err != nil {
 		return nil, err
 	}
+	phase("library.payload.verified")
 	parent, err := sys.CanonicalPath(os.TempDir())
 	if err != nil {
 		return nil, err
 	}
+	phase("library.temp.ready")
+	phase("library.directory.begin")
 	library.directory, err = bfcrypto.CreateProtectedTempDirectory(parent, "bifroest-conpty-*")
 	if err != nil {
 		return nil, fmt.Errorf("create private ConPTY directory: %w", err)
 	}
+	phase("library.directory.created")
 	library.directoryFile, err = bfcrypto.EnsurePrivateDirectory(library.directory)
 	if err != nil {
 		return nil, err
 	}
+	phase("library.directory.locked")
 	path := filepath.Join(library.directory, "conpty.dll")
+	phase("library.bootstrap.begin")
 	if err := bfcrypto.WriteBootstrapFile(path, raw, false); err != nil {
 		return nil, err
 	}
+	phase("library.bootstrap.ready")
+	phase("library.payload-lock.begin")
 	library.payloadFile, err = lockPayload(path, *selected)
 	if err != nil {
 		return nil, err
 	}
+	phase("library.payload-lock.ready")
 	// OpenConsole is deliberately absent. Microsoft's library selects the inbox
 	// conhost by its System32 path, which also works without GUI DLLs on Nano.
+	phase("library.load.begin")
 	handle, err := windows.LoadLibraryEx(path, 0, windows.LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|windows.LOAD_LIBRARY_SEARCH_SYSTEM32)
 	if err != nil {
 		return nil, fmt.Errorf("load pinned ConPTY library: %w", err)
 	}
+	phase("library.load.ready")
 	library.dll = &windows.DLL{Name: path, Handle: handle}
 	for _, binding := range []struct {
 		name   string
@@ -98,6 +124,7 @@ func Load() (_ *Library, resultErr error) {
 			return nil, fmt.Errorf("resolve pinned ConPTY export %s: %w", binding.name, err)
 		}
 	}
+	phase("library.ready")
 	return library, nil
 }
 
