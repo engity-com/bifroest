@@ -71,8 +71,7 @@ jobs:
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: &mise-options
           version: 2026.10.17
-          # No global tools in modern sources; tasks install their own tools.
-          # This action only schedules post-cache saving when install is enabled.
+          # Go is the only global installer prerequisite; other tools are task-owned.
           cache_save_post: true
           cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 

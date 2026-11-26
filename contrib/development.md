@@ -2,9 +2,11 @@
 
 Use MISE 2026.10.17 or newer and invoke tasks, for example `mise run install:go`,
 `mise run install:web` and `mise run test:go:native`. Each executable task declares
-its own MISE tools; running it installs missing tools as needed. There is no global
-toolchain to install with `mise install`. System dependencies such as a container
-daemon, native compiler/PAM headers, OpenSSH and Luacheck remain host requirements.
+its own MISE tools; running it installs missing tools as needed. Go is the only
+global MISE prerequisite: Go-backed installers need it before task-local PATH
+activation. Its version still comes exclusively from the catalog. All other
+tools are task-local; `mise install` installs only Go. System dependencies such as
+a container daemon, native compiler/PAM headers, OpenSSH and Luacheck remain host requirements.
 
 `mise.tools.yaml` is the version catalog, imported into MISE's `vars`. Every entry
 is a quoted `tool_version_<tool>` string. Tasks reference those variables; backend

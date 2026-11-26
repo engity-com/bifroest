@@ -3,6 +3,10 @@ min_version = "2026.10.17"
 [vars]
 _.file = "mise.tools.yaml"
 
+[tools]
+# Go-backed installers need the compiler before task-local PATH activation.
+go = "{{ vars.tool_version_go }}"
+
 [tasks."bifroest"]
 tools = { go = "{{ vars.tool_version_go }}" }
 depends = ["build:web"]

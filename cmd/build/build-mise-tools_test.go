@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"debug/buildinfo"
 	"encoding/json"
 	gos "os"
 	goexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
@@ -36,7 +40,7 @@ func TestMiseTaskToolsUseTheSingleVersionCatalog(t *testing.T) {
 		_, err = toml.Decode(string(raw), &configuration)
 		require.NoError(t, err)
 		require.Equal(t, dependencyToolsPath, configuration.Vars.Import.File)
-		require.Empty(t, configuration.Tools, "global tool selections are additive; tasks must own all tool requirements")
+		require.Equal(t, map[string]any{"go": "{{ vars.tool_version_go }}"}, configuration.Tools, "only the Go installer prerequisite may be selected globally")
 		require.NotEmpty(t, configuration.Tasks)
 		for taskName, task := range configuration.Tasks {
 			for tool, options := range task.Tools {
@@ -87,7 +91,7 @@ func TestMiseWorkflowsHaveNoJobSpecificToolListsAndSaveTaskInstalls(t *testing.T
 				require.Empty(t, step.With["install_args"], name+"/"+jobName)
 				require.Empty(t, step.With["tool_versions"], name+"/"+jobName)
 				require.Empty(t, step.With["mise_toml"], name+"/"+jobName)
-				require.NotEqual(t, "false", step.With["install"], "this action only registers post saving when its (empty) initial install is enabled")
+				require.NotEqual(t, "false", step.With["install"], "install the global Go prerequisite and register post-cache saving")
 				require.Equal(t, "true", step.With["cache_save_post"], "include tools installed by later tasks")
 				require.Contains(t, step.With["cache_key"], "mise.tools.yaml", "a catalog bump must invalidate the tool cache")
 				require.NotContains(t, step.With["cache_key"], "install_args")
@@ -142,4 +146,83 @@ func TestMiseWindowsAuthorizationTaskPreservesScopeAndCmdQuoting(t *testing.T) {
 	_, err = toml.Decode(string(raw), &configuration)
 	require.NoError(t, err)
 	require.Equal(t, `go test ./pkg/configuration ./pkg/authorization ./pkg/windowslocal ./pkg/environment ./pkg/service -run "^(TestWindowsLocal.*|TestLocalWindowsAuthorizationAccountReplacement|TestLocalSAMIntegration|TestSIDMatching|TestMissingIdentity|TestNames|TestFieldsWithoutConfiguration|TestInvalidCredentials|TestAccountUnavailable|TestS4ULogonBuffer)$"`, configuration.Tasks["test:go:windows-local"].Run, "single quotes would be literal under cmd.exe and silently select no tests")
+}
+
+// Opt-in because this downloads a compiler and builds the licensing tool.
+// An unusable ambient Go must never be used, even when it is first on PATH.
+func TestMiseGoBackedInstallerUsesCatalogCompilerFromEmptyData(t *testing.T) {
+	if gos.Getenv("BIFROEST_TEST_MISE_INSTALLS") != "1" {
+		t.Skip("set BIFROEST_TEST_MISE_INSTALLS=1 for native installer integration")
+	}
+	mise, err := goexec.LookPath("mise")
+	require.NoError(t, err)
+	root := t.TempDir()
+	for _, name := range []string{"mise.toml", dependencyToolsPath} {
+		raw, err := gos.ReadFile(filepath.Join("..", "..", name))
+		require.NoError(t, err)
+		if name == "mise.toml" {
+			raw = append(raw, []byte(`
+[tasks.installer-probe]
+tools = { go = "{{ vars.tool_version_go }}", go_licenses = "{{ vars.tool_version_go_licenses }}" }
+run = "go-licenses --help"
+`)...)
+		}
+		require.NoError(t, gos.WriteFile(filepath.Join(root, name), raw, 0o600))
+	}
+	bin := filepath.Join(root, "ambient")
+	require.NoError(t, gos.Mkdir(bin, 0o700))
+	fakeGo, payload := "go", "#!/bin/sh\necho 'ambient Go must not be used' >&2\nexit 97\n"
+	if runtime.GOOS == "windows" {
+		fakeGo, payload = "go.exe", "not a Windows executable: ambient Go must not be used"
+	}
+	require.NoError(t, gos.WriteFile(filepath.Join(bin, fakeGo), []byte(payload), 0o700))
+	data := filepath.Join(root, "data")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	command := goexec.CommandContext(ctx, mise, "run", "--quiet", "installer-probe")
+	command.Dir = root
+	for _, entry := range gos.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(key)
+		if (strings.HasPrefix(upper, "MISE_") && upper != "MISE_GITHUB_TOKEN") ||
+			strings.HasPrefix(upper, "__MISE_") || upper == "PATH" || upper == "GOROOT" {
+			continue
+		}
+		command.Env = append(command.Env, entry)
+	}
+	command.Env = append(command.Env,
+		"PATH="+bin+string(filepath.ListSeparator)+gos.Getenv("PATH"),
+		"MISE_DATA_DIR="+data,
+		"MISE_CONFIG_DIR="+filepath.Join(root, "config"),
+		"MISE_GLOBAL_CONFIG_FILE="+filepath.Join(root, "global.toml"),
+		"MISE_SYSTEM_CONFIG_FILE="+filepath.Join(root, "system.toml"),
+		"MISE_STATE_DIR="+filepath.Join(root, "state"),
+		"MISE_CEILING_PATHS="+filepath.Dir(root),
+		"MISE_TRUSTED_CONFIG_PATHS="+root,
+	)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.NotContains(t, string(output), "ambient Go must not be used")
+	entries, err := gos.ReadDir(filepath.Join(data, "installs"))
+	require.NoError(t, err)
+	var installed []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			installed = append(installed, entry.Name())
+		}
+	}
+	require.ElementsMatch(t, []string{"go", "go-licenses"}, installed, "do not install unrelated task tools")
+	raw, err := gos.ReadFile(filepath.Join(root, dependencyToolsPath))
+	require.NoError(t, err)
+	catalog, err := parseDependencyToolCatalog(raw)
+	require.NoError(t, err)
+	name := "go-licenses"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	info, err := buildinfo.ReadFile(filepath.Join(data, "installs", "go-licenses", strings.TrimPrefix(catalog.versions["go_licenses"].Value, "v"), "bin", name))
+	require.NoError(t, err)
+	require.Equal(t, "github.com/google/go-licenses/v2", info.Main.Path)
+	require.Equal(t, "v"+strings.TrimPrefix(catalog.versions["go_licenses"].Value, "v"), info.Main.Version)
+	require.Equal(t, "go"+catalog.versions["go"].Value, info.GoVersion, "the installer must use the catalog compiler, not system Go")
 }
