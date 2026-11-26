@@ -1,8 +1,5 @@
 name: Nano Server Integration
 
-env:
-  MISE_AUTO_INSTALL: "false"
-
 on:
   pull_request:
     types:
@@ -63,8 +60,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: go go-licenses docker-cli node bun
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -90,7 +85,7 @@ jobs:
           done
 
       - name: Install pinned browser toolchain
-        run: mise -C web install node bun
+        run: mise -C web install
 
       - name: Install frozen browser dependencies
         run: mise -C web run install:web

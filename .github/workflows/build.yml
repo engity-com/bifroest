@@ -30,10 +30,6 @@ on:
       upload_dist:
         type: boolean
         default: false
-      minimal_tools:
-        description: Install explicit CI toolsets; historical release checkouts retain their own full toolchain.
-        type: boolean
-        default: false
     secrets:
       MACOS_DEVELOPER_ID_CERTIFICATE:
         required: false
@@ -51,7 +47,6 @@ on:
 env:
   GITHUB_TOKEN: ${{ github.token }}
   BIFROEST_VENDOR: "Engity GmbH"
-  MISE_AUTO_INSTALL: ${{ inputs.minimal_tools && 'false' || 'true' }}
 
 jobs:
   browser:
@@ -74,8 +69,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go go-licenses node bun' || '' }}
 
       - &checkout-workflow-cache
         name: Checkout workflow cache action
@@ -95,7 +88,7 @@ jobs:
           context: cgo0
 
       - name: Install pinned browser toolchain
-        run: mise -C web install ${{ inputs.minimal_tools && 'node bun' || '' }}
+        run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
         run: mise -C web run install:web
@@ -142,8 +135,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go gotestsum node helm' || '' }}
 
       - *checkout-workflow-cache
 
@@ -209,8 +200,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go node bun biome' || '' }}
 
       - *checkout-workflow-cache
 
@@ -221,7 +210,7 @@ jobs:
           context: cgo0
 
       - name: Install pinned browser toolchain
-        run: mise -C web install ${{ inputs.minimal_tools && 'node bun' || '' }}
+        run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
         run: mise -C web run install:web
@@ -259,8 +248,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go gotestsum node bun' || '' }}
 
       - *checkout-workflow-cache
 
@@ -272,7 +259,7 @@ jobs:
           build-cache: restore-only
 
       - name: Install pinned browser toolchain
-        run: mise -C web install ${{ inputs.minimal_tools && 'node bun' || '' }}
+        run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
         run: mise -C web run install:web
@@ -339,8 +326,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go gotestsum node helm' || '' }}
 
       - *checkout-workflow-cache
 
@@ -411,8 +396,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go golangci-lint' || '' }}
 
       - *checkout-workflow-cache
 
@@ -590,8 +573,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go gotestsum node helm' || '' }}
 
       - *checkout-workflow-cache
 
@@ -669,8 +650,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go gotestsum node helm' || '' }}
 
       - *checkout-workflow-cache
 
@@ -726,8 +705,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go golangci-lint' || '' }}
 
       - *checkout-workflow-cache
 
@@ -764,8 +741,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go go-licenses' || '' }}
 
       - *checkout-workflow-cache
 
@@ -847,8 +822,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && 'go go-licenses' || '' }}
 
       - *checkout-workflow-cache
 
@@ -928,8 +901,6 @@ jobs:
       - name: Install MISE
         if: *prepare-packages
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && (inputs.lint_reuse && 'go syft python uv pipx:reuse' || 'go syft') || '' }}
 
       - name: Checkout workflow cache action
         if: *prepare-packages
@@ -1076,8 +1047,6 @@ jobs:
       - name: Install MISE
         if: *finalize-packages
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: ${{ inputs.minimal_tools && (inputs.lint_reuse && 'go syft python uv pipx:reuse' || 'go syft') || '' }}
 
       - name: Checkout workflow cache action
         if: *finalize-packages

@@ -3,7 +3,6 @@ name: Continuous Integration
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   BIFROEST_VENDOR: "Engity GmbH"
-  MISE_AUTO_INSTALL: "false"
 
 on:
   pull_request:
@@ -61,8 +60,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: go node@26.9.0
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -115,8 +112,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: python uv pipx:reuse
 
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"
@@ -138,7 +133,6 @@ jobs:
       binary_host_matrix: ${{ needs.evaluate.outputs.binary-host-matrix }}
       binary_container_matrix: ${{ needs.evaluate.outputs.binary-container-matrix }}
       lint_go: true
-      minimal_tools: true
       upload_dist: ${{ needs.evaluate.outputs.stage-publish == 'true' }}
 
   documentation:
@@ -182,8 +176,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: python uv
 
       - name: Install dependencies
         run: mise run install:docs
