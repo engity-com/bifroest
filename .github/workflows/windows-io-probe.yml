@@ -57,11 +57,24 @@ jobs:
               $env:TEMP = $probeTemp
             }
             Write-Output "::group::Durable filesystem operations: $location"
-            mise exec -- go test -v -count=1 -p=1 -run '^TestWindowsDurableArtifactIOProbe$' ./pkg/audit
+            mise exec -- go test -v -tags=io_probe -count=1 -p=1 -run '^TestWindowsDurableArtifactIOProbe$' ./pkg/audit
             if ($LASTEXITCODE -ne 0) { $failed = $true }
             Write-Output "::endgroup::"
             Write-Output "::group::Unchanged management and lifetime tests: $location"
             mise exec -- go test -v -count=3 -p=1 -run '^(TestHTTPSManagementMissingRecordingHasNoPartialTransfer|TestManagementChannelReadLogsCorrelatedFailureAndKeepsExpectedCancellationAtDebug|TestNeutralConnectionMaximumLifetimeIsNotExtendedByActivity)$' ./pkg/service
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+            Write-Output "::endgroup::"
+          }
+          foreach ($location in @("default", "runner-temp")) {
+            if ($location -eq "default") {
+              $env:TMP = $defaultTmp
+              $env:TEMP = $defaultTemp
+            } else {
+              $env:TMP = $probeTemp
+              $env:TEMP = $probeTemp
+            }
+            Write-Output "::group::Full unchanged Windows host suite: $location"
+            mise -C web exec -- node scripts/native-go-tests.ts
             if ($LASTEXITCODE -ne 0) { $failed = $true }
             Write-Output "::endgroup::"
           }

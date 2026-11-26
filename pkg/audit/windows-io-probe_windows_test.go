@@ -1,3 +1,5 @@
+//go:build windows && io_probe
+
 package audit
 
 import (
