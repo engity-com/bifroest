@@ -26,7 +26,9 @@ func (verificationTestUsers) LookupByName(context.Context, string) (*user.User, 
 func TestLocalRawPublicKeyProbeAllocatesOnlyAfterProof(t *testing.T) {
 	repository := newVerificationTestRepository(t)
 	key := newUserCertificateTestSigner(t).PublicKey()
-	file := filepath.Join(t.TempDir(), "authorized_keys")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	file := filepath.Join(dir, "authorized_keys")
 	require.NoError(t, os.WriteFile(file, ssh.MarshalAuthorizedKey(key), 0600))
 	authorizer := &LocalAuthorizer{flow: "flow", conf: &configuration.AuthorizationLocal{AuthorizedKeys: template.MustNewStrings(file)}, userRepository: verificationTestUsers{}}
 	req := &verificationTestRequest{ctx: t.Context(), repository: repository, key: key}

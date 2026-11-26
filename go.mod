@@ -34,7 +34,7 @@ require (
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
-	github.com/johannesboyne/gofakes3 v1.2.0
+	github.com/johannesboyne/gofakes3 v1.3.0
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/klauspost/compress v1.20.5
 	github.com/mattn/go-zglob v0.0.8

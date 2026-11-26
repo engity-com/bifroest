@@ -108,7 +108,9 @@ func TestLocalRemoteNameResumeAndRememberedKeyCannotFollowMappingOrUidChanges(t 
 	auth, repo := mappedUnixAuthorizer(t)
 	base := newFacadeSelectionRequest(t, "alice@node-a")
 	key := newEvidenceTestSigner(t).PublicKey()
-	path := filepath.Join(t.TempDir(), "authorized_keys")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	path := filepath.Join(dir, "authorized_keys")
 	require.NoError(t, os.WriteFile(path, ssh.MarshalAuthorizedKey(key), 0600))
 	auth.conf.AuthorizedKeys = template.Strings{template.MustNewString(path)}
 	base.key = key

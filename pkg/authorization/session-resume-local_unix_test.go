@@ -39,7 +39,9 @@ func TestLocalSessionResumeUsesCurrentUidAndCurrentKeyPolicy(t *testing.T) {
 	conf := &configuration.AuthorizationLocal{}
 	require.NoError(t, conf.SetDefaults())
 	key := newEvidenceTestSigner(t).PublicKey()
-	path := filepath.Join(t.TempDir(), "authorized_keys")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	path := filepath.Join(dir, "authorized_keys")
 	require.NoError(t, os.WriteFile(path, ssh.MarshalAuthorizedKey(key), 0600))
 	conf.AuthorizedKeys = template.Strings{template.MustNewString(path)}
 	repo := &resumeLocalUserRepository{current: &user.User{Name: "alice", Uid: 1001}}

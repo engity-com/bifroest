@@ -115,7 +115,12 @@ func newFixtureWithBuildMode(t *testing.T, mode fixtureBuildMode) (*fixture, err
 		tools[tool] = path
 	}
 
-	tempDir := t.TempDir()
+	// macOS temporary roots contain system symlinks. Configuration paths for
+	// local authorized keys must use their symlink-free spelling.
+	tempDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve fixture directory: %w", err)
+	}
 	unique := fmt.Sprintf("bifroest-e2e-%d-%d", os.Getpid(), time.Now().UnixNano())
 	f := &fixture{
 		t:               t,
