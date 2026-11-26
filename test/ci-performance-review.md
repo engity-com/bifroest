@@ -1,10 +1,11 @@
 # CI performance review — 2026-11-26
 
-## Validated change: sequential container runtimes
+## Validated first experiment: sequential container runtimes per suite
 
-The implementation is in `.github/workflows/e2e.yml`. Keep one job per suite,
+The first experiment in `.github/workflows/e2e.yml` kept one job per suite,
 with Docker followed by Podman, instead of a suite/runtime Cartesian product.
-The combined kind job retains schedule/manual-only Podman coverage.
+This is the three-job baseline for the single-job follow-up below. The combined
+kind job retains schedule/manual-only Podman coverage.
 
 [Validation run 45779692282](https://github.com/engity-com/bifroest/actions/runs/45779692282)
 at `d8bb2a667cde1ccf1c2c227799bc4e0d5f8e0aaf` passed all seven executing jobs,
@@ -34,6 +35,28 @@ The complete manual workflow took 18:36. It includes kind/Podman coverage absent
 from the comparison PR runs, so comparing only complete workflow duration would
 be misleading. Queue relief is also not established by this single run: all
 seven jobs started about three seconds after dispatch.
+
+## Follow-up experiment: one runtime job for Local, Docker and SSH
+
+The current implementation removes the remaining suite matrix. One runner
+prepares the frontend before fixture compilation, then executes Local, Docker
+and SSH with Docker, followed by the same three suites with Podman. Browser
+verification still runs once with each runtime. Independent step conditions
+require successful shared setup but do not hide later suites after a test
+failure. Authorization, PAM, Darwin and kind remain separate.
+
+Browser result verification is now a Go tool, `test/e2erunner`, invoked through
+`test:e2e:docker:browser` and `test:e2e:kubernetes:browser`. Its unit/process tests
+cover missing, duplicate, skipped, failed, malformed and incomplete test results,
+nonzero exits, cancellation and separate runtime logs. Workflow YAML contains
+only the task invocation, not Python assertions.
+
+Compare the native GitHub run against both the first experiment above and
+[three-job PR run 45791273611](https://github.com/engity-com/bifroest/actions/runs/45791273611):
+Local 4:41, SSH 4:20 and Docker/browser 13:38, totaling 22:39 of runner occupancy.
+Native validation of the single-job follow-up is pending. Report runner-time
+savings separately from the longest-job and complete-workflow durations; fewer
+runner slots can reduce queue pressure without guaranteeing a faster workflow.
 
 ## Next candidates — investigated, not implemented
 
@@ -107,17 +130,18 @@ directories, all negative cases, restricted environments and platform coverage.
 Measure the extra critical-path time and align compatible build modes rather
 than assuming all 16:27 can be removed.
 
-### 4. Reuse preparation across Local, SSH and authorization E2E suites
+### 4. Evaluate sharing preparation with authorization E2E
 
 Locations: `.github/workflows/e2e.yml`, `mise.toml` and
 `test/e2e/harness_test.go`.
 
-These still start as separate Linux jobs and build overlapping Go packages.
-The successful combined runtime run shows how small the second runtime becomes
-after warming the compiler. A follow-up could group Local, SSH and authorization
-while keeping heavy Docker/browser, kind, PAM and Darwin work separate.
+The single-job follow-up above groups Local, Docker and SSH as requested, but
+authorization still starts separately and builds overlapping Go packages. The
+successful first experiment shows how small a later runtime becomes after
+warming the compiler. Adding authorization is a separate potential experiment,
+not part of the current suite grouping.
 
-This could remove two more jobs, but it trades parallel feedback for less cold
+This could remove one more job, but it trades parallel feedback for less cold
 compilation. Preserve every suite, authorization's pre-build/runtime budget
 separation, fresh fixture state and execution of later suites after earlier
 failures. Benchmark before choosing this over a shared compiler/test-build stage.

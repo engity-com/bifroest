@@ -23,10 +23,11 @@ do, select an owned working runtime explicitly, for example
 
 ## CI runtime grouping
 
-CI keeps one job per `local`, `docker` and `ssh` suite. Each job prepares the
-toolchain and dependencies once, then runs Docker followed by Podman. Browser
-assets and Chromium are also prepared once for the Docker environment suite.
-The second runtime reuses Go's on-runner compilation cache, not fixture binaries,
+CI runs the `local`, `docker` and `ssh` suites in one shared runtime job. It
+prepares the toolchain, dependencies, browser assets and Chromium once, then runs
+all three suites with Docker followed by all three with Podman. Every suite has
+its own CI step and result; a failure does not skip later suites. Later suites
+reuse Go's on-runner compilation cache, not fixture binaries,
 credentials, containers or runtime-specific image storage. Every fixture still
 builds from the checkout with its own version and isolated state.
 
@@ -35,9 +36,9 @@ and manual dispatches; Podman remains schedule/manual-only. A Docker test failur
 does not skip Podman, but either failure still fails the job. Browser JSON and
 runtime diagnostics use separate `var/e2e/docker` and `var/e2e/podman` paths.
 Individual Go test deadlines and test selections are unchanged; combined jobs
-allow the sum of the previous two job budgets.
+allow the sum of their previous job budgets.
 
-This reduces runtime jobs from six to three, plus two kind jobs to one on
+This reduces the original runtime jobs from six to one, plus two kind jobs to one on
 schedule/manual runs. It trades parallel runtime execution for less duplicated
 setup and fewer runner slots. Compare queue time, job duration and total runner
 minutes in CI; a longer combined job is not by itself a regression. The overall
@@ -54,6 +55,29 @@ the previous per-runtime checks, update that configuration before merging.
 
 The native GitHub runner validation and remaining optimization candidates are
 recorded in the [CI performance review](../ci-performance-review.md).
+
+### Mandatory browser tasks
+
+After preparing the pinned frontend, Chromium and Linux network-isolation tools,
+run the same commands locally as CI:
+
+```sh
+BIFROEST_E2E_RUNTIME=podman mise run test:e2e:docker:browser
+BIFROEST_E2E_RUNTIME=podman mise run test:e2e:kubernetes:browser
+```
+
+Select `docker` instead to use Docker. The tasks invoke the tested Go runner in
+`test/e2erunner`, which resolves the pinned Node executable and enables browser
+execution. It streams `go test -json`, retains separate runtime/suite logs, and
+requires every selected top-level test to pass exactly once. Any skipped test
+(including subtests), failed test/build, missing result, malformed JSON, process
+failure or incomplete package result fails the task. The actual E2E assertions
+remain in `test/e2e`; no test-result verification is embedded in workflow YAML.
+Test the runner without Chromium or a container runtime with:
+
+```sh
+go test ./test/e2erunner
+```
 
 ## Additional integration suites
 

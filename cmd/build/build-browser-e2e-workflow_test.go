@@ -14,19 +14,12 @@ func TestDockerBrowserE2ERunsSequentiallyWithBothRuntimesWithoutSkip(t *testing.
 	require.NoError(t, err)
 	var workflow struct {
 		Jobs map[string]struct {
-			Strategy struct {
-				Matrix struct {
-					Runtime []string `yaml:"runtime"`
-					Suite   []string `yaml:"suite"`
-				} `yaml:"matrix"`
-			} `yaml:"strategy"`
 			Steps []map[string]any `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	require.NoError(t, yaml.Unmarshal(raw, &workflow))
 	job := workflow.Jobs["runtime"]
-	require.Empty(t, job.Strategy.Matrix.Runtime, "runtime setup and compiler cache must be shared")
-	require.Contains(t, job.Strategy.Matrix.Suite, "docker")
+	require.NotContains(t, string(raw), "python -", "mandatory result verification belongs in a tested MISE task")
 	preparations := 0
 	var executed []string
 	baseline := make(map[string]bool)
@@ -36,13 +29,13 @@ func TestDockerBrowserE2ERunsSequentiallyWithBothRuntimesWithoutSkip(t *testing.
 			continue
 		}
 		if strings.Contains(command, "mise -C web run build:web") {
-			require.Equal(t, "matrix.suite == 'docker'", step["if"])
+			require.Nil(t, step["if"], "all runtime suites share one browser preparation")
 			for _, required := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run install:web:browser"} {
 				require.Contains(t, command, required)
 			}
 			preparations++
 		}
-		if command == "mise run test:e2e:${{ matrix.suite }}" {
+		if command == "mise run test:e2e:docker" {
 			env := step["env"].(map[string]any)
 			baseline[env["BIFROEST_E2E_RUNTIME"].(string)] = true
 		}
@@ -51,23 +44,9 @@ func TestDockerBrowserE2ERunsSequentiallyWithBothRuntimesWithoutSkip(t *testing.
 			env := step["env"].(map[string]any)
 			runtime := env["BIFROEST_E2E_RUNTIME"].(string)
 			require.True(t, baseline[runtime], "native SSH/recording baseline remains enabled")
-			require.Equal(t, "${{ !cancelled() && matrix.suite == 'docker' && steps."+runtime+"-suite.outcome != 'skipped' }}", step["if"]) //nolint:misspell // GitHub Actions status function.
+			require.Equal(t, "${{ !cancelled() && steps.prepare.outcome == 'success' }}", step["if"]) //nolint:misspell // GitHub Actions status function.
 			require.Nil(t, step["continue-on-error"])
-			require.Equal(t, "bash", step["shell"])
-			require.Equal(t, "1", env["BIFROEST_TEST_BROWSER_UI"])
-			for _, required := range []string{
-				"set -euo pipefail",
-				`mise -C web which node`,
-				"go test -json -count=1 -tags=e2e -timeout=15m -run '^Test(SharedBrowserNetworkArguments|SharedBrowserNetworkIsolation|OpenSSHDockerBrowserSharedWorkload)$' ./test/e2e",
-				`| tee "var/e2e/${BIFROEST_E2E_RUNTIME}/docker-browser.json"`,
-				"os.environ['BIFROEST_E2E_RUNTIME'] / 'docker-browser.json'",
-				"required = {'TestSharedBrowserNetworkArguments', 'TestSharedBrowserNetworkIsolation', 'TestOpenSSHDockerBrowserSharedWorkload'}",
-				"passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}",
-				"assert required <= passed",
-				"('skip', 'fail', 'build-fail')",
-			} {
-				require.Contains(t, command, required)
-			}
+			require.Equal(t, "mise run test:e2e:docker:browser", command)
 			executed = append(executed, runtime)
 		}
 	}
@@ -124,26 +103,12 @@ func TestKubernetesBrowserE2ERunsSequentiallyWithBothKindProvidersWithoutSkip(t 
 					require.True(t, prepared, "frontend must precede fixture Go embedding")
 					require.Equal(t, "${{ !cancelled() && steps."+runtime+"-suite.outcome != 'skipped' }}", step["if"]) //nolint:misspell // GitHub Actions status function.
 					require.Nil(t, step["continue-on-error"])
-					require.Equal(t, "bash", step["shell"])
-					env := step["env"].(map[string]any)
-					require.Equal(t, "1", env["BIFROEST_TEST_BROWSER_UI"])
+					env, _ := step["env"].(map[string]any)
 					if runtime == "podman" {
 						require.Equal(t, runtime, env["BIFROEST_E2E_RUNTIME"])
 						require.Equal(t, runtime, env["KIND_EXPERIMENTAL_PROVIDER"])
 					}
-					for _, required := range []string{
-						"set -euo pipefail",
-						`mise -C web which node`,
-						"go test -json -count=1 -tags=e2e -timeout=30m -run '^Test(SharedBrowserNetworkArguments|SharedBrowserNetworkIsolation|OpenSSHKubernetesBrowserSharedWorkload)$' ./test/e2e",
-						`| tee "var/e2e/${BIFROEST_E2E_RUNTIME}/kubernetes-browser.json"`,
-						"os.environ['BIFROEST_E2E_RUNTIME'] / 'kubernetes-browser.json'",
-						"required = {'TestSharedBrowserNetworkArguments', 'TestSharedBrowserNetworkIsolation', 'TestOpenSSHKubernetesBrowserSharedWorkload'}",
-						"passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}",
-						"assert required <= passed",
-						"('skip', 'fail', 'build-fail')",
-					} {
-						require.Contains(t, command, required)
-					}
+					require.Equal(t, "mise run test:e2e:kubernetes:browser", command)
 					executed = true
 				}
 			}
@@ -168,11 +133,7 @@ func TestWorkloadBrowserE2ENetworkIsolationIsMandatory(t *testing.T) {
 				if step["name"] == "Prepare and check browser network isolation" {
 					require.Nil(t, step["continue-on-error"])
 					require.Equal(t, "bash", step["shell"])
-					if name == "runtime" {
-						require.Equal(t, "matrix.suite == 'docker'", step["if"])
-					} else {
-						require.Nil(t, step["if"])
-					}
+					require.Nil(t, step["if"])
 					command := step["run"].(string)
 					for _, required := range []string{
 						"set -euo pipefail",
@@ -184,11 +145,24 @@ func TestWorkloadBrowserE2ENetworkIsolationIsMandatory(t *testing.T) {
 					}
 					prepared = true
 				}
-				if step["name"] == "Prepare actual Docker browser E2E" || step["name"] == "Prepare actual Kubernetes browser E2E" {
+				if step["name"] == "Prepare shared browser E2E" || step["name"] == "Prepare actual Kubernetes browser E2E" {
 					require.True(t, prepared, "network isolation must be checked before expensive browser setup")
 				}
 			}
 			require.True(t, prepared, "all Linux workload browser jobs require network isolation")
 		})
+	}
+}
+
+func TestMandatoryBrowserE2EIsAnExplicitGoBackedMiseTask(t *testing.T) {
+	raw, err := gos.ReadFile("../../mise.toml")
+	require.NoError(t, err)
+	for _, backend := range []string{"docker", "kubernetes"} {
+		_, body, found := strings.Cut(string(raw), `[tasks."test:e2e:`+backend+`:browser"]`)
+		require.True(t, found)
+		body, _, _ = strings.Cut(body, "\n[tasks.")
+		require.Contains(t, body, `depends = ["build:var"]`)
+		require.Contains(t, body, `run = "go run ./test/e2erunner --suite=`+backend+`-browser"`)
+		require.NotContains(t, body, "python")
 	}
 }
