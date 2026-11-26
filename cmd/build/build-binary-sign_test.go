@@ -132,20 +132,50 @@ func TestValidateGenericDarwinBinaryUsesDynamicPam(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses POSIX executables")
 	}
-	directory := t.TempDir()
-	t.Setenv("DARWIN_COMMAND_LOG", filepath.Join(directory, "commands.log"))
-	t.Setenv("PATH", directory+string(gos.PathListSeparator)+gos.Getenv("PATH"))
-	writeDarwinTestCommand(t, directory, "lipo", "echo arm64")
-	writeDarwinTestCommand(t, directory, "file", "echo 'Mach-O 64-bit executable arm64'")
-	writeDarwinTestCommand(t, directory, "vtool", "echo 'minos 13.0'")
-	writeDarwinTestCommand(t, directory, "otool", "printf '%s\\n' binary '/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)'")
-	writeDarwinTestCommand(t, directory, "strings", "echo /usr/lib/libpam.2.dylib")
+	for _, arch := range []sys.Arch{sys.ArchAmd64, sys.ArchArm64} {
+		t.Run(arch.String(), func(t *testing.T) {
+			directory := t.TempDir()
+			logFilename := filepath.Join(directory, "commands.log")
+			t.Setenv("DARWIN_COMMAND_LOG", logFilename)
+			t.Setenv("PATH", directory+string(gos.PathListSeparator)+gos.Getenv("PATH"))
+			machoArch := "arm64"
+			if arch == sys.ArchAmd64 {
+				machoArch = "x86_64"
+			}
+			writeDarwinTestCommand(t, directory, "lipo", "echo "+machoArch)
+			writeDarwinTestCommand(t, directory, "file", "echo 'Mach-O 64-bit executable "+machoArch+"'")
+			writeDarwinTestCommand(t, directory, "vtool", "echo 'minos 13.0'")
+			writeDarwinTestCommand(t, directory, "otool", "printf '%s\\n' binary '/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)'")
+			writeDarwinTestCommand(t, directory, "strings", "echo /usr/lib/libpam.2.dylib")
 
-	_, buildContext := testReleaseManifestBuild(t)
-	artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionGeneric}, buildArtifactTypeBinary, "bifroest", "#!/bin/sh\nexit 0\n", nil)
-	require.NoError(t, gos.Chmod(artifact.filepath, 0755))
+			_, buildContext := testReleaseManifestBuild(t)
+			executable := "#!/bin/sh\nprintf 'binary %s\\n' \"$*\" >> \"$DARWIN_COMMAND_LOG\"\n"
+			artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: arch, Edition: sys.EditionGeneric}, buildArtifactTypeBinary, "bifroest", executable, nil)
+			require.NoError(t, gos.Chmod(artifact.filepath, 0755))
 
-	require.NoError(t, validateDarwinBinary(t.Context(), artifact))
+			require.NoError(t, validateDarwinBinary(t.Context(), artifact))
+			raw, err := gos.ReadFile(logFilename)
+			require.NoError(t, err)
+			for _, command := range []string{"binary version --long=false", "lipo -archs", "file -b", "vtool -show-build", "otool -L", "strings "} {
+				require.Contains(t, string(raw), command)
+			}
+		})
+	}
+}
+
+func TestValidateDarwinBinaryRequiresSuccessfulExecutionForBothArchitectures(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses POSIX executables")
+	}
+	for _, arch := range []sys.Arch{sys.ArchAmd64, sys.ArchArm64} {
+		t.Run(arch.String(), func(t *testing.T) {
+			_, buildContext := testReleaseManifestBuild(t)
+			artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: arch, Edition: sys.EditionGeneric}, buildArtifactTypeBinary, "bifroest", "#!/bin/sh\nexit 23\n", nil)
+			require.NoError(t, gos.Chmod(artifact.filepath, 0755))
+
+			require.ErrorContains(t, validateDarwinBinary(t.Context(), artifact), "exit status 23")
+		})
+	}
 }
 
 func TestValidateDarwinBinaryRejectsExtendedEdition(t *testing.T) {

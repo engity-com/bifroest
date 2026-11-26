@@ -761,8 +761,17 @@ jobs:
           name: browser-assets
           path: pkg/webui/assets
 
+      - name: Ensure Intel execution under Rosetta
+        if: matrix.os == 'darwin' && contains(matrix.arch, 'amd64') && runner.arch == 'ARM64'
+        shell: bash
+        run: |
+          if ! /usr/bin/arch -x86_64 /usr/bin/true; then
+            sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true
+
       - name: Build all target variants
-        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch="${{ matrix.arch }}"
         env:
           BIFROEST_DARWIN_CERTIFICATE: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE || '' }}
           BIFROEST_DARWIN_CERTIFICATE_PASSWORD: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD || '' }}
@@ -834,7 +843,7 @@ jobs:
           path: pkg/webui/assets
 
       - name: Build all target variants
-        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch="${{ matrix.arch }}"
 
       - name: Upload all target variants and metadata
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

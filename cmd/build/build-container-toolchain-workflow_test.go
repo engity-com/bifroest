@@ -30,7 +30,7 @@ func TestBinaryContainerWorkflowPreparesHostNodeBeforeMise(t *testing.T) {
 		}
 	}
 	require.Greater(t, mise, prepare)
-	require.Equal(t, "mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }}", job.Steps[goJobsStepContaining(t, job, "mise run build:go:binary")].Run)
+	require.Equal(t, `mise run build:go:binary -- --os=${{ matrix.os }} --arch="${{ matrix.arch }}"`, job.Steps[goJobsStepContaining(t, job, "mise run build:go:binary")].Run)
 }
 
 func TestBinaryContainerHostRuntimeSetupSkipsInstalledPackageAndPropagatesFailure(t *testing.T) {
