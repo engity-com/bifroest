@@ -19,12 +19,20 @@ import (
 func TestLocalAuthorizationAcceptsUserCertificates(t *testing.T) {
 	username := prepareLocalUserCertificateTest(t)
 
+	// Exercise the symlinked temporary root used by macOS (/var and /tmp)
+	// on Linux too. Local authorized-key paths must not contain symlinks.
+	temporaryRoot := t.TempDir()
+	temporaryAlias := filepath.Join(t.TempDir(), "tmp")
+	require.NoError(t, os.Symlink(temporaryRoot, temporaryAlias))
+	t.Setenv("TMPDIR", temporaryAlias)
+
 	authority := newIncomingCertificateTestSigner(t)
 	plainAuthority := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(authority.PublicKey())))
 
 	for _, trustPath := range []string{"trusted-user-cas", "trusted-user-cas-file", "authorized-keys-cert-authority"} {
 		t.Run(trustPath, func(t *testing.T) {
-			directory := t.TempDir()
+			directory, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
 			caFile := filepath.Join(directory, "ca")
 			authorizedKeysFile := filepath.Join(directory, "authorized_keys")
 			require.NoError(t, os.WriteFile(caFile, []byte(plainAuthority+"\n"), 0600))

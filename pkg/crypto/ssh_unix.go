@@ -76,7 +76,7 @@ func checkUserAuthorizedKeysOwner(fd int, uid uint32, directory bool) error {
 		}
 		// Root-owned sticky directories such as /tmp protect their entries
 		// against replacement by unrelated local users.
-		if stat.Mode&0022 != 0 && !(stat.Uid == 0 && stat.Mode&unix.S_ISVTX != 0) {
+		if stat.Mode&0022 != 0 && (stat.Uid != 0 || stat.Mode&unix.S_ISVTX == 0) {
 			return fmt.Errorf("directory writable by other users")
 		}
 	} else {
