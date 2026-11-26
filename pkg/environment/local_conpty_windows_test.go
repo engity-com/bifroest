@@ -185,7 +185,8 @@ func TestLocalConPTYRelayImmediateExit(t *testing.T) {
 func testLocalConPTYRelayRuns(t *testing.T, immediateExit bool) {
 	t.Helper()
 	if os.Getenv("BIFROEST_CONPTY_RELAY_TEST_CHILD") == "1" {
-		var observation localConPTYRelayObservation
+		observation := localConPTYRelayObservation{phase: localConPTYTestPhaseObserver(os.Stderr)}
+		observation.observePhase("test.child.entered")
 		argv := []string{os.Args[0], "local-windows-console-child"}
 		if os.Getenv("BIFROEST_CONPTY_TEST_NATIVE_CONSOLE_WRITE") == "1" {
 			argv[1] = "local-windows-native-console-child"
@@ -296,7 +297,7 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, im
 		waited = true
 		t.Logf("ConPTY test parent wait completed: error=%t relayReturnSuccessMarker=%t childWriteSuccessMarker=%t stdoutBytes=%d stderrBytes=%d",
 			err != nil,
-			strings.HasPrefix(stderr.String(), fmt.Sprintf("conpty-test relay-returned exit=%d error=false ", status)),
+			strings.Contains(stderr.String(), fmt.Sprintf("conpty-test relay-returned exit=%d error=false ", status)),
 			strings.Contains(stdout.String(), "native-console-child write-success=true "),
 			stdout.Len(), stderr.Len())
 		t.Logf("bounded relay observation: %s", strings.TrimSpace(stderr.String()))
