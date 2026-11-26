@@ -26,7 +26,7 @@ func TestBinaryContainerWorkflowPreparesHostNodeBeforeMise(t *testing.T) {
 		require.Empty(t, candidate.Env["CGO_ENABLED"], "do not disable native compilation to work around tool setup")
 		if strings.HasPrefix(candidate.Uses, "jdx/mise-action@") {
 			mise = i
-			require.Equal(t, "jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d", candidate.Uses)
+			require.Equal(t, "jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78", candidate.Uses)
 		}
 	}
 	require.Greater(t, mise, prepare)
