@@ -38,29 +38,21 @@ func TestE2ERuntimesSharePreparationWithoutHidingFailures(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(raw, &workflow))
 	require.NotContains(t, workflow.Jobs, "kind-docker")
 	require.NotContains(t, workflow.Jobs, "kind-podman")
-	require.Empty(t, workflow.Jobs["runtime"].Strategy.Matrix, "all three suites must share a single runner")
+	require.Equal(t, map[string][]string{"suite": {"local", "docker", "ssh"}}, workflow.Jobs["runtime"].Strategy.Matrix)
+	require.NotNil(t, workflow.Jobs["runtime"].Strategy.FailFast)
+	require.False(t, *workflow.Jobs["runtime"].Strategy.FailFast)
 	for _, name := range []string{"runtime", "kind"} {
 		t.Run(name, func(t *testing.T) {
 			job := workflow.Jobs[name]
 			require.False(t, job.ContinueOnError)
-			budget := 120
-			if name == "runtime" {
-				budget = 360
-			}
-			require.Equal(t, budget, job.TimeoutMinutes, "combined job retains the previous total execution budget")
+			require.Equal(t, 120, job.TimeoutMinutes, "combined job retains both execution budgets")
 			counts := make(map[string]int)
 			var runtimes, diagnostics []string
-			prepared := false
 			for _, step := range job.Steps {
 				require.False(t, step.ContinueOnError, "a runtime failure must fail the combined job")
 				counts[step.Name]++
 				if step.Uses == "./.github/actions/cache-go" {
 					counts["cache"]++
-				}
-				if name == "runtime" && step.ID == "prepare" {
-					require.Equal(t, "Prepare shared browser E2E", step.Name)
-					require.Empty(t, step.If, "setup must be required before any suite")
-					prepared = true
 				}
 				nativeSuite := strings.HasPrefix(step.Run, "mise run test:e2e:") && !strings.HasSuffix(step.Run, ":browser")
 				if nativeSuite {
@@ -68,19 +60,19 @@ func TestE2ERuntimesSharePreparationWithoutHidingFailures(t *testing.T) {
 					if runtime == "" {
 						runtime = job.Env["BIFROEST_E2E_RUNTIME"]
 					}
-					suite := strings.TrimPrefix(step.Run, "mise run test:e2e:")
-					runtimes = append(runtimes, runtime+":"+suite)
-					if name == "runtime" {
-						require.True(t, prepared, "build the frontend once before fixture Go embedding")
-						require.Equal(t, runtime+"-"+suite, step.ID)
-						require.Equal(t, "${{ !cancelled() && steps.prepare.outcome == 'success' }}", step.If) //nolint:misspell // GitHub Actions status function.
-					} else if step.ID == "docker-suite" {
+					runtimes = append(runtimes, runtime)
+					if step.ID == "docker-suite" {
 						require.Empty(t, step.If)
 					} else {
 						require.Contains(t, step.If, "!cancelled()", "explicit status check overrides implicit success()") //nolint:misspell // GitHub Actions status function.
 						require.Contains(t, step.If, "steps.docker-suite.outcome != 'skipped'", "do not run after failed shared setup")
+						if name == "runtime" {
+							require.Equal(t, "${{ !cancelled() && steps.docker-suite.outcome != 'skipped' }}", step.If) //nolint:misspell // GitHub Actions status function.
+						}
 					}
-					if name == "kind" {
+					if name == "runtime" {
+						require.Equal(t, "mise run test:e2e:${{ matrix.suite }}", step.Run)
+					} else {
 						require.Equal(t, "mise run test:e2e:kubernetes", step.Run)
 					}
 				}
@@ -94,11 +86,7 @@ func TestE2ERuntimesSharePreparationWithoutHidingFailures(t *testing.T) {
 					diagnostics = append(diagnostics, runtime)
 				}
 			}
-			expected := []string{"docker:kubernetes", "podman:kubernetes"}
-			if name == "runtime" {
-				expected = []string{"docker:local", "docker:docker", "docker:ssh", "podman:local", "podman:docker", "podman:ssh"}
-			}
-			require.Equal(t, expected, runtimes, "all suites and runtimes must execute exactly once in order")
+			require.Equal(t, []string{"docker", "podman"}, runtimes, "both runtimes must execute exactly once in order")
 			require.Equal(t, []string{"docker", "podman"}, diagnostics, "runtime logs must not overwrite each other")
 			for _, setup := range []string{"Install Podman", "Checkout code", "Install MISE", "Install dependencies", "cache", "Upload failure diagnostics"} {
 				require.Equal(t, 1, counts[setup], "shared step: %s", setup)

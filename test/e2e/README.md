@@ -23,11 +23,10 @@ do, select an owned working runtime explicitly, for example
 
 ## CI runtime grouping
 
-CI runs the `local`, `docker` and `ssh` suites in one shared runtime job. It
-prepares the toolchain, dependencies, browser assets and Chromium once, then runs
-all three suites with Docker followed by all three with Podman. Every suite has
-its own CI step and result; a failure does not skip later suites. Later suites
-reuse Go's on-runner compilation cache, not fixture binaries,
+CI keeps separate parallel jobs for the `local`, `docker` and `ssh` suites.
+Each job prepares the toolchain and dependencies once, then runs Docker followed
+by Podman. Browser assets and Chromium are prepared once in the Docker suite.
+The second runtime reuses Go's on-runner compilation cache, not fixture binaries,
 credentials, containers or runtime-specific image storage. Every fixture still
 builds from the checkout with its own version and isolated state.
 
@@ -38,11 +37,11 @@ runtime diagnostics use separate `var/e2e/docker` and `var/e2e/podman` paths.
 Individual Go test deadlines and test selections are unchanged; combined jobs
 allow the sum of their previous job budgets.
 
-This reduces the original runtime jobs from six to one, plus two kind jobs to one on
-schedule/manual runs. It trades parallel runtime execution for less duplicated
-setup and fewer runner slots. Compare queue time, job duration and total runner
-minutes in CI; a longer combined job is not by itself a regression. The overall
-workflow need not finish faster if runner capacity is unconstrained.
+This reduces runtime jobs from six to three, plus two kind jobs to one on
+schedule/manual runs. Keeping suites parallel avoids serializing all their test
+execution just to share a compiler cache. The primary performance measure is
+time until the complete E2E workflow finishes, including queue time; track
+runner occupancy separately rather than treating it as workflow duration.
 
 Go's reported package/test duration includes fixture builds, image preparation
 and cleanup, but excludes compilation of the test executable before it starts.
@@ -52,9 +51,6 @@ The existing cross-job cache policy is unchanged.
 
 The combined jobs have new check names. If branch protection explicitly requires
 the previous per-runtime checks, update that configuration before merging.
-
-The native GitHub runner validation and remaining optimization candidates are
-recorded in the [CI performance review](../ci-performance-review.md).
 
 ### Mandatory browser tasks
 

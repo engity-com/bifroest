@@ -29,13 +29,13 @@ func TestDockerBrowserE2ERunsSequentiallyWithBothRuntimesWithoutSkip(t *testing.
 			continue
 		}
 		if strings.Contains(command, "mise -C web run build:web") {
-			require.Nil(t, step["if"], "all runtime suites share one browser preparation")
+			require.Equal(t, "matrix.suite == 'docker'", step["if"])
 			for _, required := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run install:web:browser"} {
 				require.Contains(t, command, required)
 			}
 			preparations++
 		}
-		if command == "mise run test:e2e:docker" {
+		if command == "mise run test:e2e:${{ matrix.suite }}" {
 			env := step["env"].(map[string]any)
 			baseline[env["BIFROEST_E2E_RUNTIME"].(string)] = true
 		}
@@ -44,7 +44,7 @@ func TestDockerBrowserE2ERunsSequentiallyWithBothRuntimesWithoutSkip(t *testing.
 			env := step["env"].(map[string]any)
 			runtime := env["BIFROEST_E2E_RUNTIME"].(string)
 			require.True(t, baseline[runtime], "native SSH/recording baseline remains enabled")
-			require.Equal(t, "${{ !cancelled() && steps.prepare.outcome == 'success' }}", step["if"]) //nolint:misspell // GitHub Actions status function.
+			require.Equal(t, "${{ !cancelled() && matrix.suite == 'docker' && steps."+runtime+"-suite.outcome != 'skipped' }}", step["if"]) //nolint:misspell // GitHub Actions status function.
 			require.Nil(t, step["continue-on-error"])
 			require.Equal(t, "mise run test:e2e:docker:browser", command)
 			executed = append(executed, runtime)
@@ -133,7 +133,11 @@ func TestWorkloadBrowserE2ENetworkIsolationIsMandatory(t *testing.T) {
 				if step["name"] == "Prepare and check browser network isolation" {
 					require.Nil(t, step["continue-on-error"])
 					require.Equal(t, "bash", step["shell"])
-					require.Nil(t, step["if"])
+					if name == "runtime" {
+						require.Equal(t, "matrix.suite == 'docker'", step["if"])
+					} else {
+						require.Nil(t, step["if"])
+					}
 					command := step["run"].(string)
 					for _, required := range []string{
 						"set -euo pipefail",

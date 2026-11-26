@@ -38,12 +38,19 @@ jobs:
           filters: .github/filters.yml
 
   runtime:
-    name: local, docker and ssh with docker and podman
+    name: ${{ matrix.suite }} with docker and podman
     needs: files-changed
     if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ubuntu-latest
-    # Retain the sum of the three previous combined-job budgets.
-    timeout-minutes: 360
+    # Both runtimes retain their existing execution budget.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - local
+          - docker
+          - ssh
     env:
       CGO_ENABLED: "0"
     steps:
@@ -54,6 +61,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Prepare and check browser network isolation
+        if: matrix.suite == 'docker'
         shell: bash
         run: &prepare-browser-network |
           set -euo pipefail
@@ -73,7 +81,7 @@ jobs:
         uses: ./.github/actions/cache-go
         with:
           scope: e2e-runtime
-          context: local-docker-ssh
+          context: ${{ matrix.suite }}
 
       - &install-go-dependencies
         name: Install dependencies
@@ -94,44 +102,27 @@ jobs:
           done
 
       - name: Prepare shared browser E2E
-        id: prepare
+        if: matrix.suite == 'docker'
         run: |
           mise -C web install
           mise -C web run install:web
           mise -C web run build:web
           mise -C web run install:web:browser
 
-      # Every suite depends on shared setup, not on the previous suite's result.
-      # A failed suite must neither hide later results nor be ignored by the job.
-      - name: Run local end-to-end suite with Docker
-        id: docker-local
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+      - name: Run Docker end-to-end suite
+        id: docker-suite
         env:
           BIFROEST_E2E_RUNTIME: docker
-        run: mise run test:e2e:local
-
-      - name: Run Docker environment end-to-end suite with Docker
-        id: docker-docker
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
-        env:
-          BIFROEST_E2E_RUNTIME: docker
-        run: mise run test:e2e:docker
-
-      - name: Run SSH environment end-to-end suite with Docker
-        id: docker-ssh
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
-        env:
-          BIFROEST_E2E_RUNTIME: docker
-        run: mise run test:e2e:ssh
+        run: mise run test:e2e:${{ matrix.suite }}
 
       - name: Verify shared Docker workload through browser and OpenSSH with Docker
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        if: ${{ !cancelled() && matrix.suite == 'docker' && steps.docker-suite.outcome != 'skipped' }}
         env:
           BIFROEST_E2E_RUNTIME: docker
         run: mise run test:e2e:docker:browser
 
       - name: Collect Docker runtime diagnostics
-        if: failure() && steps.prepare.outcome == 'success'
+        if: failure() && steps.docker-suite.outcome != 'skipped'
         shell: bash
         env:
           BIFROEST_E2E_RUNTIME: docker
@@ -144,35 +135,23 @@ jobs:
             timeout 30s "${BIFROEST_E2E_RUNTIME}" logs "${id}" >"${log_dir}/${id}.log" 2>&1 || true
           done < <(timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all --quiet 2>/dev/null)
 
-      - name: Run local end-to-end suite with Podman
-        id: podman-local
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+      # An earlier Docker failure must not hide the independent Podman result.
+      # No continue-on-error: either runtime failing still fails the job.
+      - name: Run Podman end-to-end suite
+        id: podman-suite
+        if: ${{ !cancelled() && steps.docker-suite.outcome != 'skipped' }}
         env:
           BIFROEST_E2E_RUNTIME: podman
-        run: mise run test:e2e:local
-
-      - name: Run Docker environment end-to-end suite with Podman
-        id: podman-docker
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
-        env:
-          BIFROEST_E2E_RUNTIME: podman
-        run: mise run test:e2e:docker
-
-      - name: Run SSH environment end-to-end suite with Podman
-        id: podman-ssh
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
-        env:
-          BIFROEST_E2E_RUNTIME: podman
-        run: mise run test:e2e:ssh
+        run: mise run test:e2e:${{ matrix.suite }}
 
       - name: Verify shared Docker workload through browser and OpenSSH with Podman
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        if: ${{ !cancelled() && matrix.suite == 'docker' && steps.podman-suite.outcome != 'skipped' }}
         env:
           BIFROEST_E2E_RUNTIME: podman
         run: mise run test:e2e:docker:browser
 
       - name: Collect Podman runtime diagnostics
-        if: failure() && steps.prepare.outcome == 'success'
+        if: failure() && steps.podman-suite.outcome != 'skipped'
         shell: bash
         env:
           BIFROEST_E2E_RUNTIME: podman
@@ -182,7 +161,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: e2e-runtime-docker-and-podman
+          name: e2e-${{ matrix.suite }}-docker-and-podman
           path: var/e2e/**/*
           if-no-files-found: ignore
           retention-days: 7
