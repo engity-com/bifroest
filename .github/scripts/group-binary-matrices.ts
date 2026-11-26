@@ -63,9 +63,34 @@ for (const name of names) {
 if (!targets.size) {
     throw new Error('Empty binary inventory');
 }
-const entries = [...targets.values()];
+let entries = [...targets.values()];
 for (const entry of entries) {
     entry.editions.sort();
+}
+// Bundle only these selected candidates, and only when the source inventory
+// explicitly assigns identical environments and editions to both architectures.
+// Historical Darwin CLIs select separate native runners and remain separate.
+for (const { os, archs } of [
+    { os: 'windows', archs: ['amd64', 'arm64'] },
+    { os: 'linux', archs: ['armv6', 'riscv64'] },
+    { os: 'darwin', archs: ['amd64', 'arm64'] },
+]) {
+    const first = targets.get(`${os}/${archs[0]}`);
+    const second = targets.get(`${os}/${archs[1]}`);
+    if (
+        !first ||
+        !second ||
+        first.image ||
+        second.image ||
+        first.runner !== second.runner ||
+        first.editions.join() !== 'generic' ||
+        second.editions.join() !== 'generic'
+    ) {
+        continue;
+    }
+    entries = entries.flatMap((entry) =>
+        entry === first ? [{ ...first, arch: archs.join(',') }] : entry === second ? [] : [entry],
+    );
 }
 // Emit only after validating both matrices, so failures cannot publish a partial inventory.
 for (const line of lines) {

@@ -51,7 +51,7 @@ func TestBuildMatricesAssignEveryBinaryPlatformToSourceInventory(t *testing.T) {
 	require.True(t, assigned["darwin/arm64/generic"])
 	require.False(t, assigned["darwin/amd64/extended"])
 	require.False(t, assigned["darwin/arm64/extended"])
-	require.Contains(t, matrices.Host.Include, buildBinaryMatrixEntry{Os: "darwin", Arch: "amd64", Edition: "generic", Runner: "macos-15-intel"})
+	require.Contains(t, matrices.Host.Include, buildBinaryMatrixEntry{Os: "darwin", Arch: "amd64", Edition: "generic", Runner: "macos-15"})
 	require.Contains(t, matrices.Host.Include, buildBinaryMatrixEntry{Os: "darwin", Arch: "arm64", Edition: "generic", Runner: "macos-15"})
 	require.True(t, assigned["linux/armv6/generic"])
 	require.True(t, assigned["linux/riscv64/generic"])
@@ -68,7 +68,7 @@ func TestBuildMatricesUsesOneDarwinTestForAmd64OnlyBuilds(t *testing.T) {
 	matrices, err := build.buildMatrices()
 	require.NoError(t, err)
 	require.Equal(t, []buildTestMatrixEntry{{Os: "darwin", Runner: "macos-15"}}, matrices.TestHost.Include)
-	require.Equal(t, []buildBinaryMatrixEntry{{Os: "darwin", Arch: "amd64", Edition: "generic", Runner: "macos-15-intel"}}, matrices.Host.Include)
+	require.Equal(t, []buildBinaryMatrixEntry{{Os: "darwin", Arch: "amd64", Edition: "generic", Runner: "macos-15"}}, matrices.Host.Include)
 }
 
 func TestEvaluateEnvironmentEmitsMatrices(t *testing.T) {

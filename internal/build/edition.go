@@ -17,7 +17,10 @@ func DoesEditionSupportBinaryFor(e sys.Edition, o sys.Os, a sys.Arch, assumedOs 
 	}
 
 	if o == sys.OsDarwin {
-		return e == sys.EditionGeneric && assumedOs == o && assumedArch == a
+		// Apple Silicon can also execute Intel binaries under Rosetta. The build
+		// still executes and validates each output; Intel cannot execute ARM.
+		return e == sys.EditionGeneric && assumedOs == o &&
+			(assumedArch == a || (assumedArch == sys.ArchArm64 && a == sys.ArchAmd64))
 	}
 
 	if e == sys.EditionGeneric {

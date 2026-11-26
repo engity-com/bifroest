@@ -25,8 +25,8 @@ type buildTestMatrixEntry struct {
 	Image  string `json:"image"`
 }
 
-// Preserve the source CLI's per-edition inventory. Workflows group it by OS/arch
-// after evaluating the selected source ref, including historical release tags.
+// Preserve the source CLI's per-edition inventory. Workflows group compatible
+// targets after evaluating the selected source ref, including historical tags.
 type buildBinaryMatrixEntry struct {
 	Os      string `json:"os"`
 	Arch    string `json:"arch"`
@@ -64,9 +64,8 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 			}
 		case sys.OsDarwin:
 			switch p.Arch {
-			case sys.ArchAmd64:
-				entry.Runner = "macos-15-intel"
-			case sys.ArchArm64:
+			case sys.ArchAmd64, sys.ArchArm64:
+				// Validate Intel under Rosetta and ARM natively on the same host.
 				entry.Runner = "macos-15"
 			default:
 				return result, fmt.Errorf("no Darwin runner configured for %s", p)

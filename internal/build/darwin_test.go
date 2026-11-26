@@ -13,6 +13,9 @@ func TestDarwinBuildMatrix(t *testing.T) {
 	require.True(t, IsOsAndArchSupported(sys.OsDarwin, sys.ArchAmd64))
 	require.True(t, DoesEditionSupportBinaryFor(sys.EditionGeneric, sys.OsDarwin, sys.ArchArm64, sys.OsDarwin, sys.ArchArm64))
 	require.True(t, DoesEditionSupportBinaryFor(sys.EditionGeneric, sys.OsDarwin, sys.ArchAmd64, sys.OsDarwin, sys.ArchAmd64))
+	require.True(t, DoesEditionSupportBinaryFor(sys.EditionGeneric, sys.OsDarwin, sys.ArchAmd64, sys.OsDarwin, sys.ArchArm64))
+	require.False(t, DoesEditionSupportBinaryFor(sys.EditionGeneric, sys.OsDarwin, sys.ArchArm64, sys.OsDarwin, sys.ArchAmd64))
+	require.False(t, DoesEditionSupportBinaryFor(sys.EditionGeneric, sys.OsDarwin, sys.ArchAmd64, sys.OsLinux, sys.ArchArm64))
 	require.False(t, DoesEditionSupportBinaryFor(sys.EditionGeneric, sys.OsDarwin, sys.ArchArm64, sys.OsLinux, sys.ArchAmd64))
 	require.False(t, DoesEditionSupportBinaryFor(sys.EditionExtended, sys.OsDarwin, sys.ArchArm64, sys.OsDarwin, sys.ArchArm64))
 	require.False(t, DoesEditionSupportBinaryFor(sys.EditionExtended, sys.OsDarwin, sys.ArchAmd64, sys.OsDarwin, sys.ArchAmd64))
@@ -38,4 +41,16 @@ func TestGenericDarwinBuildEnvironmentDisablesCgo(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGenericIntelDarwinBuildEnvironmentOnAppleSilicon(t *testing.T) {
+	env := sys.EnvVars{}
+	(Platform{Os: sys.OsDarwin, Arch: sys.ArchAmd64, Edition: sys.EditionGeneric}).SetToEnv(sys.OsDarwin, sys.ArchArm64, env)
+
+	require.Equal(t, "darwin", env["GOOS"])
+	require.Equal(t, "amd64", env["GOARCH"])
+	require.Equal(t, "v1", env["GOAMD64"])
+	require.Equal(t, "0", env["CGO_ENABLED"])
+	require.Equal(t, DefaultMacosDeploymentTarget, env["MACOSX_DEPLOYMENT_TARGET"])
+	require.Empty(t, env["CC"], "pure Go cross-build needs no C cross-compiler")
 }
