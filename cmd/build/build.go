@@ -362,6 +362,14 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (_ buildArtifa
 		return nil, errors.New("no binary platforms match the selected OS, architecture and edition")
 	}
 
+	if this.binaryMode == binaryUseExisting && stages.contains(buildStageArchive) {
+		updated, err := this.archive.createAll(ctx, artifacts)
+		if err != nil {
+			return nil, err
+		}
+		artifacts = updated
+	}
+
 	if stages.contains(buildStageChart) {
 		chart, err := this.chart.create(ctx, forTesting)
 		if err != nil {
@@ -460,11 +468,15 @@ func (this *build) buildSingle(ctx context.Context, p *bib.Platform) (_ buildArt
 	}
 
 	if ba != nil && stages.contains(buildStageArchive) {
-		aa, err := this.archive.create(ctx, ba)
-		if err != nil {
-			return fail(err)
+		// Packaging existing binaries defers compression to the bounded batch
+		// after loading binaries and creating images. Compilation stays serial.
+		if this.binaryMode != binaryUseExisting {
+			aa, err := this.archive.create(ctx, ba)
+			if err != nil {
+				return fail(err)
+			}
+			artifacts = append(artifacts, aa)
 		}
-		artifacts = append(artifacts, aa)
 	} else {
 		l.With("stage", buildStageArchive).Info("build archive skipped")
 	}

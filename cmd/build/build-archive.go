@@ -41,6 +41,21 @@ func (this *buildArchive) attach(cmd *kingpin.CmdClause) {
 		StringsVar(&this.includedResources)
 }
 
+func (this *buildArchive) createAll(ctx context.Context, artifacts buildArtifacts) (buildArtifacts, error) {
+	binaries := slices.Collect(artifacts.onlyOfType(buildArtifactTypeBinary))
+	created, err := createBuildArtifactsInParallel(ctx, binaries, func(ctx context.Context, binary *buildArtifact) (buildArtifacts, error) {
+		archive, err := this.create(ctx, binary)
+		if err != nil {
+			return nil, err
+		}
+		return buildArtifacts{archive}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append(artifacts, created...), nil
+}
+
 func (this *buildArchive) create(ctx context.Context, binary *buildArtifact) (_ *buildArtifact, rErr error) {
 	format := bib.ArchiveFormatFor(binary.Platform.Os)
 	fn := binary.Platform.FilenamePrefix(this.prefix) + format.Ext()
