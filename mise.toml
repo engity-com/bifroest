@@ -358,6 +358,11 @@ hide = true
 tools = { go = "{{ vars.tool_version_go }}" }
 run = "go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED"
 
+[tasks."diag:windows:conpty-startup"]
+hide = true
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
+run = 'go test -v -count=1 -tags=nanoserver_integration,conpty_probe -timeout=15m -run=^TestConPTYColdStartProbe$ ./test/nanoserver'
+
 [tasks."ci:go:slowest"]
 hide = true
 tools = { go = "{{ vars.tool_version_go }}", gotestsum = "{{ vars.tool_version_gotestsum }}" }

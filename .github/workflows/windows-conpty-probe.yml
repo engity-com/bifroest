@@ -1,0 +1,61 @@
+name: Windows ConPTY cold-start probe
+
+on:
+  push:
+    branches: [diag/windows-conpty-startup]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Cold ConPTY on Nano Server ${{ matrix.windows }}
+    strategy:
+      fail-fast: false
+      matrix:
+        windows: ["2022", "2025"]
+    runs-on: windows-${{ matrix.windows }}
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: "0"
+      GOFLAGS: "-p=2"
+      GITHUB_TOKEN: ""
+      BIFROEST_TEST_NANOSERVER_VERSION: ${{ matrix.windows }}
+    steps:
+      - name: Checkout diagnostic branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install MISE
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with:
+          version: 2026.10.17
+          cache_save_post: true
+          cache_key: mise-conpty-probe-v1-{{platform}}-{{version}}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
+
+      - name: Cache Go modules
+        uses: ./.github/actions/cache-go
+        with:
+          scope: conpty-probe
+          context: ${{ matrix.windows }}
+
+      - name: Start Windows Docker daemon
+        shell: pwsh
+        run: |
+          $service = Get-Service docker -ErrorAction SilentlyContinue
+          if ($service -and $service.Status -ne 'Running') {
+            Start-Service docker
+          }
+
+      - name: Compare fixed baseline and observed cold-start runs
+        run: mise run diag:windows:conpty-startup
+
+      - name: Upload every probe result, including failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: conpty-cold-start-${{ matrix.windows }}
+          path: var/e2e/conpty-probe-*.log
+          if-no-files-found: warn
+          retention-days: 7
