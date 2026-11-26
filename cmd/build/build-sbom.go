@@ -11,6 +11,7 @@ import (
 	"net/url"
 	gos "os"
 	osexec "os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,19 +49,15 @@ type buildArtifactSbom struct {
 
 func (this *buildSbom) attach(_ *kingpin.CmdClause) {}
 
-func (this *buildSbom) create(ctx context.Context, artifacts buildArtifacts) (_ buildArtifacts, rErr error) {
-	result := append(buildArtifacts(nil), artifacts...)
-	for _, artifact := range append(buildArtifacts(nil), artifacts...) {
-		if artifact.t != buildArtifactTypeArchive && artifact.t != buildArtifactTypeImage {
-			continue
-		}
-		created, err := this.createForArtifact(ctx, artifact)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, created...)
+func (this *buildSbom) create(ctx context.Context, artifacts buildArtifacts) (buildArtifacts, error) {
+	sources := slices.Collect(artifacts.filter(func(artifact *buildArtifact) bool {
+		return artifact.t == buildArtifactTypeArchive || artifact.t == buildArtifactTypeImage
+	}))
+	created, err := createBuildArtifactsInParallel(ctx, sources, this.createForArtifact)
+	if err != nil {
+		return nil, err
 	}
-	return result, nil
+	return append(artifacts, created...), nil
 }
 
 func (this *buildSbom) createForArtifact(ctx context.Context, source *buildArtifact) (_ buildArtifacts, rErr error) {

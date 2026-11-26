@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -100,13 +102,40 @@ func TestWebSocketKeepAliveShorteningRequiresRealPongWithoutExtendingOldDeadline
 	}
 }
 
+type keepAlivePreparationRepository struct {
+	*executionTestRepository
+	released <-chan struct{}
+}
+
+func (this *keepAlivePreparationRepository) Ensure(request environment.Request) (environment.Environment, error) {
+	select {
+	case <-this.released:
+		return this.executionTestRepository.Ensure(request)
+	case <-request.Context().Done():
+		return nil, request.Context().Err()
+	}
+}
+
 func TestWebSocketKeepAliveReevaluatesLockedFlowAndUsesNoNewExecution(t *testing.T) {
+	const started = "KEEPALIVE_EXECUTION_STARTED"
 	var executions atomic.Int32
 	fixture := newWebSocketFixture(t, func(task environment.TerminalTask) (int, error) {
 		executions.Add(1)
+		if _, err := task.Terminal().Write([]byte(started)); err != nil {
+			return -1, err
+		}
 		<-task.Context().Done()
 		return -1, task.Context().Err()
 	})
+	// ready and settings acknowledgements precede the execution driver's
+	// potentially slower audit/recording/environment preparation.
+	released := make(chan struct{})
+	release := sync.OnceFunc(func() { close(released) })
+	t.Cleanup(release)
+	fixture.svc.environments = &keepAlivePreparationRepository{
+		executionTestRepository: fixture.svc.environments.(*executionTestRepository),
+		released:                released,
+	}
 	token := fixture.login(t)
 	// Change after authentication: a historical editable UI policy is not an
 	// authority to override the current authenticated flow policy.
@@ -124,6 +153,28 @@ func TestWebSocketKeepAliveReevaluatesLockedFlowAndUsesNoNewExecution(t *testing
 	ack := webSocketStatus(t, conn)
 	require.Equal(t, `"keepalive"`, string(ack["type"]))
 	require.Equal(t, `"1"`, string(ack["requestId"]))
+	require.NoError(t, json.Unmarshal(ack["keepAlive"], &policy))
+	require.Equal(t, webKeepAlive{Interval: "10s", Locked: true}, policy)
+	require.Zero(t, executions.Load(), "ready and a keepalive acknowledgement are not proof of a started execution")
+	release()
+	// Read real backend output before counting executions. Keep the existing
+	// WebSocket read deadline and the final exact-count assertion unchanged.
+	var output strings.Builder
+	for !strings.Contains(output.String(), started) {
+		kind, data, err := conn.ReadMessage()
+		require.NoError(t, err)
+		require.Equal(t, websocket.BinaryMessage, kind, "%s", data)
+		require.Greater(t, len(data), 1)
+		require.LessOrEqual(t, data[0], byte(1))
+		if data[0] == 0 {
+			output.Write(data[1:])
+		}
+	}
+	// Updating settings on the now-running execution must not create another.
+	require.NoError(t, conn.WriteJSON(map[string]string{"type": "keepalive", "interval": "1s", "requestId": "2"}))
+	ack = webSocketStatus(t, conn)
+	require.Equal(t, `"keepalive"`, string(ack["type"]))
+	require.Equal(t, `"2"`, string(ack["requestId"]))
 	require.NoError(t, json.Unmarshal(ack["keepAlive"], &policy))
 	require.Equal(t, webKeepAlive{Interval: "10s", Locked: true}, policy)
 	access := webTestAccess(t, fixture.svc, token, "Work")
