@@ -14,10 +14,6 @@ func TestGoWorkflowCachesFollowPinnedToolchain(t *testing.T) {
 	for _, name := range []string{"build.yml", "ci.yml", "dependencies.yml", "e2e.yml", "nanoserver.yml", "pr-update.yml", "release.yml"} {
 		t.Run(name, func(t *testing.T) {
 			cacheAction := "./.github/actions/cache-go"
-			workflowRevision := name == "build.yml" || name == "release.yml"
-			if workflowRevision {
-				cacheAction = "./var/ci-workflow/.github/actions/cache-go"
-			}
 			raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
 			require.NoError(t, err)
 			var workflow struct {
@@ -31,24 +27,12 @@ func TestGoWorkflowCachesFollowPinnedToolchain(t *testing.T) {
 			require.NoError(t, yaml.Unmarshal(raw, &workflow))
 			cached, buildCached := 0, 0
 			for jobName, job := range workflow.Jobs {
-				checkout, toolchain, helper := false, false, false
+				checkout, toolchain := false, false
 				for _, step := range job.Steps {
 					if strings.HasPrefix(step.Uses, "actions/checkout@") && step.With["path"] == "" {
 						checkout = true
 					}
-					if strings.HasPrefix(step.Uses, "actions/checkout@") && step.With["path"] == "var/ci-workflow" {
-						require.True(t, checkout, "%s must keep its selected source checkout", jobName)
-						require.Equal(t, "${{ github.workflow_sha }}", step.With["ref"])
-						require.Equal(t, "${{ github.repository }}", step.With["repository"])
-						sparse := ".github/actions/cache-go"
-						if name == "release.yml" {
-							sparse += "\n.github/scripts/group-binary-matrices.ts\n"
-						}
-						require.Equal(t, sparse, step.With["sparse-checkout"])
-						require.Equal(t, "false", step.With["sparse-checkout-cone-mode"])
-						require.Equal(t, "false", step.With["persist-credentials"])
-						helper = true
-					}
+					require.NotEqual(t, "var/ci-workflow", step.With["path"], "do not substitute another revision's helpers for the selected source")
 					if strings.HasPrefix(step.Uses, "jdx/mise-action@") {
 						toolchain = true
 					}
@@ -56,9 +40,6 @@ func TestGoWorkflowCachesFollowPinnedToolchain(t *testing.T) {
 					if step.Uses == cacheAction {
 						require.True(t, checkout, "%s must check out the local action first", jobName)
 						require.True(t, toolchain, "%s must resolve its pinned Go before caching", jobName)
-						if workflowRevision {
-							require.True(t, helper, "%s must load cache infrastructure from its workflow revision, not an older source tag", jobName)
-						}
 						require.NotEmpty(t, step.With["scope"], "%s must select a build-cache scope", jobName)
 						cached++
 						if name == "build.yml" && (jobName == "test-static" || jobName == "test-host" || jobName == "test-container" || jobName == "test-race") {

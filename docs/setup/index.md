@@ -9,7 +9,7 @@ Bifröst is available as a host binary, an OCI/Docker image, or a Helm chart for
 
 For OIDC login, an SSH gateway or session recording, see the [task guides](../guides/index.md).
 
-For production and HA deployments, see the [operating model and availability guide](operations.md): TCP load balancing, instance-local state and recovery.
+For production and HA deployments, see the [operations and availability guide](operations.md): TCP load balancing, instance-local state and recovery.
 
 ## Installation
 

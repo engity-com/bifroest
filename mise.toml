@@ -1,7 +1,14 @@
+min_version = "2026.10.17"
+
+[vars]
+_.file = "mise.tools.yaml"
+
 [tools]
-"pipx:reuse" = { version = "6.2.0", extras = "chardet", uvx_args = "--python 3.14" }
+# Go-backed installers need the compiler before task-local PATH activation.
+go = "{{ vars.tool_version_go }}"
 
 [tasks."bifroest"]
+tools = { go = "{{ vars.tool_version_go }}" }
 depends = ["build:web"]
 raw = true
 raw_args = true
@@ -15,17 +22,22 @@ run = [
 ]
 
 [tasks."install:go"]
+tools = { go = "{{ vars.tool_version_go }}" }
 run = "go mod download"
 
 [tasks."install:web"]
+tools = { bun = "{{ vars.tool_version_bun }}" }
 dir = "web"
 run = "bun install --frozen-lockfile --ignore-scripts"
 
 [tasks."install:web:browser"]
+tools = { node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
 dir = "web"
 run = "bun run test:browser:install"
 
 [tasks."install:docs"]
+tools = { python = "{{ vars.tool_version_python }}", uv = "{{ vars.tool_version_uv }}" }
+env._.python.venv = { path = ".pyvenv", create = true, uv_create_args = ["--seed"] }
 run = "python -m pip install -r docs/requirements.txt"
 
 [tasks."lint"]
@@ -38,12 +50,14 @@ run = [
 ]
 
 [tasks."format"]
+tools = { biome = "{{ vars.tool_version_biome }}" }
 run = [
     "biome format --write .",
     { task = "format:lua" }
 ]
 
 [tasks."lint:lua"]
+tools = { stylua = "{{ vars.tool_version_stylua }}" }
 description = "Check repository Lua sources with Luacheck 1.2.0 and pinned StyLua; not a Bifröst command."
 run = [
     "luacheck --config .luacheckrc --no-default-config pkg/test",
@@ -51,19 +65,24 @@ run = [
 ]
 
 [tasks."format:lua"]
+tools = { stylua = "{{ vars.tool_version_stylua }}" }
 description = "Format repository Lua sources, verifying the parsed output."
 run = "stylua --config-path .stylua.toml --verify pkg/test"
 
 [tasks."lint:biome"]
+tools = { biome = "{{ vars.tool_version_biome }}" }
 run = "biome check --error-on-warnings ."
 
 [tasks."lint:go"]
+tools = { go = "{{ vars.tool_version_go }}", golangci_lint = "{{ vars.tool_version_golangci_lint }}" }
 run = "golangci-lint run --color=always"
 
 [tasks."lint:reuse"]
+tools = { python = "{{ vars.tool_version_python }}", uv = "{{ vars.tool_version_uv }}", reuse = { version = "{{ vars.tool_version_reuse }}", extras = "chardet", uvx_args = "--python {{ vars.tool_version_python }}" } }
 run = "reuse lint --lines"
 
 [tasks."lint:web"]
+tools = { node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}", biome = "{{ vars.tool_version_biome }}" }
 dir = "web"
 run = "bun run check"
 
@@ -74,6 +93,7 @@ run = [
 ]
 
 [tasks."test:go"]
+tools = { go = "{{ vars.tool_version_go }}", gotestsum = "{{ vars.tool_version_gotestsum }}", node = "{{ vars.tool_version_node }}", helm = "{{ vars.tool_version_helm }}" }
 depends = ["build:var"]
 # GO_TEST_PARALLELISM=1 restores serial compilation/testing on smaller runners.
 run = [
@@ -82,6 +102,7 @@ run = [
 ]
 
 [tasks."test:go:coverage"]
+tools = { go = "{{ vars.tool_version_go }}", gotestsum = "{{ vars.tool_version_gotestsum }}", node = "{{ vars.tool_version_node }}", helm = "{{ vars.tool_version_helm }}" }
 description = "Collect coverage once on native Linux; other test configurations remain uninstrumented."
 depends = ["build:var"]
 run = [
@@ -90,18 +111,22 @@ run = [
 ]
 
 [tasks."test:go:race"]
+tools = { go = "{{ vars.tool_version_go }}", gotestsum = "{{ vars.tool_version_gotestsum }}", node = "{{ vars.tool_version_node }}", helm = "{{ vars.tool_version_helm }}" }
 depends = ["build:var"]
 run = 'gotestsum --format standard-verbose --jsonfile var/test-report/race.jsonl --junitfile var/test-report/race.xml -- -p={{env.GO_TEST_PARALLELISM | default(value="2")}} -race ./...'
 
 [tasks."test:policy"]
+tools = { go = "{{ vars.tool_version_go }}" }
 description = "Build and check the native offline policy CLI; var/policy-ci must not exist."
 run = "go run ./test/policyci --output var/policy-ci"
 
 [tasks."test:policy:oci"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
 description = "Check native/OCI parity with a hardened regular Generic Linux image; var/policy-oci must be new."
 run = "go run ./test/policyci --oci --runtime docker --output var/policy-oci"
 
 [tasks."test:go:browser"]
+tools = { go = "{{ vars.tool_version_go }}", gotestsum = "{{ vars.tool_version_gotestsum }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
 description = "Run built HTTPS browser integration separately from the core package deadline."
 depends = ["build:var"]
 dir = "web"
@@ -109,49 +134,60 @@ env = { BIFROEST_TEST_BROWSER_UI = "1", BIFROEST_TEST_BROWSER_CLIENT = "1" }
 run = "node scripts/browser-go-tests.ts"
 
 [tasks."test:web"]
+tools = { go = "{{ vars.tool_version_go }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
 dir = "web"
 run = "bun run test"
 
 [tasks."test:e2e:local"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
 depends = ["build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocal(Backend|SessionRecording|EncryptedSessionRecordingPTY)$' ./test/e2e"
 
 [tasks."test:e2e:docker"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
 depends = ["build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHDockerEnvironment(SessionRecording)?$' ./test/e2e"
 
 [tasks."test:e2e:docker:browser"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
 description = "Run mandatory Docker browser/OpenSSH tests and verify that none are missing, skipped or failed."
 depends = ["build:var"]
 run = "go run ./test/e2erunner --suite=docker-browser"
 
 [tasks."test:e2e:ssh"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
 depends = ["build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHSSHEnvironment(SessionRecording|Subsystem|ReverseForwarding)$' ./test/e2e"
 
 [tasks."test:e2e:curl"]
+tools = { go = "{{ vars.tool_version_go }}" }
 description = "Probe installed curl HTTP and WebSocket binary streaming capabilities."
 run = "go test -v -count=1 -tags=e2e -timeout=2m ./test/curl"
 
 [tasks."test:e2e:tunnel"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}", node = "{{ vars.tool_version_node }}" }
 description = "Test the built SSH-over-HTTPS/WSS server with native OpenSSH, curl and SFTP."
 depends = ["build:web", "build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=10m -run '^TestOpenSSHTunnel$' ./test/e2e"
 
 [tasks."test:e2e:kubernetes"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}", kind = "{{ vars.tool_version_kind }}", kubectl = "{{ vars.tool_version_kubectl }}" }
 depends = ["build:var"]
 run = "go test -v -count=1 -failfast -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesEnvironment(SessionRecording)?$' ./test/e2e"
 
 [tasks."test:e2e:kubernetes:browser"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}", kind = "{{ vars.tool_version_kind }}", kubectl = "{{ vars.tool_version_kubectl }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
 description = "Run mandatory Kubernetes browser/OpenSSH tests and verify that none are missing, skipped or failed."
 depends = ["build:var"]
 run = "go run ./test/e2erunner --suite=kubernetes-browser"
 
 [tasks."test:e2e:authorization"]
+tools = { go = "{{ vars.tool_version_go }}" }
 depends = ["build:var", "build:e2e:authorization"]
 run = "go test -v -count=1 -tags=e2e -timeout=5m -run '^Test(HtpasswdAuthorization|OIDC.*|SimpleRememberMe)$' ./test/e2e"
 
 [tasks."build:e2e:authorization"]
+tools = { go = "{{ vars.tool_version_go }}" }
 description = "Warm fixture compilation before the unchanged authorization test deadline."
 depends = ["build:var"]
 env = { CGO_ENABLED = "0" }
@@ -164,13 +200,17 @@ run = [
 ]
 
 [tasks."test:e2e:pam"]
+tools = { go = "{{ vars.tool_version_go }}", go_licenses = "{{ vars.tool_version_go_licenses }}", docker_cli = "{{ vars.tool_version_docker_cli }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
 depends = ["install:go", "build:web"]
 run = "node test/pam/run.ts"
 
 [tasks."test:e2e:nanoserver"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
+env.BIFROEST_TEST_NODE = "node"
 run = "go test -v -count=1 -tags=nanoserver_integration -timeout=20m -run=TestPinnedNanoServerLocalEnvironment ./test/nanoserver"
 
 [tasks."test:e2e:darwin"]
+tools = { go = "{{ vars.tool_version_go }}" }
 depends = ["build:var"]
 env = {
     CGO_ENABLED = "0"
@@ -199,39 +239,49 @@ run = [
 ]
 
 [tasks."build:go"]
+tools = { go = "{{ vars.tool_version_go }}", go_licenses = "{{ vars.tool_version_go_licenses }}", syft = "{{ vars.tool_version_syft }}" }
 depends = ["build:web"]
 run = "go run ./cmd/build build --log.colorMode=always"
 
 [tasks."build:go:binary"]
+tools = { go = "{{ vars.tool_version_go }}", go_licenses = "{{ vars.tool_version_go_licenses }}" }
 run = "go run ./cmd/build build-binary --log.colorMode=always"
 
 [tasks."build:go:package"]
+tools = { go = "{{ vars.tool_version_go }}", syft = "{{ vars.tool_version_syft }}" }
 run = "go run ./cmd/build package-binaries --log.colorMode=always"
 
 [tasks."release:preview"]
+tools = { go = "{{ vars.tool_version_go }}" }
 description = "Preview release artifacts locally: <version> [--snapshot <directory>] [--body-file <file>]. Never edits GitHub."
 raw = true
 raw_args = true
 run = "go run ./cmd/build release-description preview"
 
 [tasks."release:update"]
+tools = { go = "{{ vars.tool_version_go }}" }
 description = "Update a published release description: <version>. Requires a write-capable GitHub token."
 raw = true
 raw_args = true
 run = "go run ./cmd/build release-description update"
 
 [tasks."build:web"]
+tools = { go = "{{ vars.tool_version_go }}", go_licenses = "{{ vars.tool_version_go_licenses }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
 dir = "web"
 run = "bun run build"
 sources = [
     "**/*",
-    "!node_modules"
+    "!node_modules",
+    "../mise.toml",
+    "../mise.tools.yaml"
 ]
 outputs = [
     "../pkg/webui/assets/**/*"
 ]
 
 [tasks."build:docs"]
+tools = { python = "{{ vars.tool_version_python }}", uv = "{{ vars.tool_version_uv }}" }
+env._.python.venv = { path = ".pyvenv", create = true, uv_create_args = ["--seed"] }
 run = [
     "python -m unittest discover -s test -p 'test_docs_*.py'",
     "mkdocs --color build -c",
@@ -244,6 +294,8 @@ run_windows = [
 ]
 
 [tasks."serve:docs"]
+tools = { python = "{{ vars.tool_version_python }}", uv = "{{ vars.tool_version_uv }}" }
+env._.python.venv = { path = ".pyvenv", create = true, uv_create_args = ["--seed"] }
 run = [
     "mkdocs --color serve -c",
     "rm -f var/doc/requirements.txt"
@@ -259,21 +311,32 @@ run = "mkdir -p var"
 run_windows = 'if not exist var mkdir var'
 
 [tasks."ci:evaluate-environment"]
+tools = { go = "{{ vars.tool_version_go }}" }
 hide = true
 run = "go run ./cmd/build evaluate-environment --log.colorMode=always"
 
+[tasks."ci:group-binary-matrices"]
+hide = true
+tools = { node = "{{ vars.tool_version_node }}" }
+dir = ".github"
+run = "node scripts/group-binary-matrices.ts"
+
 [tasks."ci:write-build-epoch"]
+tools = { go = "{{ vars.tool_version_go }}" }
 hide = true
 run = "go run ./cmd/build write-build-epoch"
 
 [tasks."ci:inspect-pr-action"]
+tools = { go = "{{ vars.tool_version_go }}" }
 hide = true
 run = "go run ./cmd/build inspect-pr-action --log.colorMode=always"
 
 [tasks."tools:kind:up"]
+tools = { kind = "{{ vars.tool_version_kind }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
 run = "kind create cluster --name bifroest --wait 5m"
 
 [tasks."tools:kind:down"]
+tools = { kind = "{{ vars.tool_version_kind }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
 run = "kind delete cluster --name bifroest"
 
 [settings]
@@ -281,12 +344,53 @@ env_file = ".env"
 
 [tool_alias]
 biome = "aqua:biomejs/biome"
-golangci-lint = "aqua:golangci/golangci-lint"
+golangci_lint = "aqua:golangci/golangci-lint"
 gotestsum = "aqua:gotestyourself/gotestsum"
-go-licenses = "go:github.com/google/go-licenses/v2"
+go_licenses = "go:github.com/google/go-licenses/v2"
+docker_cli = "docker-cli"
+reuse = "pipx:reuse"
 stylua = "aqua:JohnnyMorganz/StyLua"
 syft = "aqua:anchore/syft"
 helm = "aqua:helm/helm"
 
-[env]
-_.python.venv = { path = ".pyvenv", create = true, uv_create_args = ['--seed'] }
+[tasks."ci:go:env"]
+hide = true
+tools = { go = "{{ vars.tool_version_go }}" }
+run = "go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED"
+
+[tasks."ci:go:slowest"]
+hide = true
+tools = { go = "{{ vars.tool_version_go }}", gotestsum = "{{ vars.tool_version_gotestsum }}" }
+raw_args = true
+run = "gotestsum tool slowest"
+
+[tasks."test:go:native"]
+description = "Run the full core suite with the pinned WebCrypto runtime."
+tools = { go = "{{ vars.tool_version_go }}", gotestsum = "{{ vars.tool_version_gotestsum }}", node = "{{ vars.tool_version_node }}", helm = "{{ vars.tool_version_helm }}" }
+dir = "web"
+run = "node scripts/native-go-tests.ts"
+
+[tasks."test:go:windows-local"]
+tools = { go = "{{ vars.tool_version_go }}" }
+run = 'go test ./pkg/configuration ./pkg/authorization ./pkg/windowslocal ./pkg/environment ./pkg/service -run "^(TestWindowsLocal.*|TestLocalWindowsAuthorizationAccountReplacement|TestLocalSAMIntegration|TestSIDMatching|TestMissingIdentity|TestNames|TestFieldsWithoutConfiguration|TestInvalidCredentials|TestAccountUnavailable|TestS4ULogonBuffer)$"'
+
+[tasks."test:web:release"]
+tools = { go = "{{ vars.tool_version_go }}", go_licenses = "{{ vars.tool_version_go_licenses }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
+dir = "web"
+run = "bun run test:release"
+
+[tasks."build:go:prepare-packages"]
+tools = { go = "{{ vars.tool_version_go }}", syft = "{{ vars.tool_version_syft }}" }
+run = "go run ./cmd/build prepare-packages --log.colorMode=always"
+
+[tasks."build:go:publish-packages"]
+tools = { go = "{{ vars.tool_version_go }}" }
+run = "go run ./cmd/build publish-packages --log.colorMode=always"
+
+[tasks."dependencies:update"]
+tools = { go = "{{ vars.tool_version_go }}" }
+run = "go run ./cmd/build dependencies update-pr --log.colorMode=always"
+
+[tasks."dependencies:tools:check"]
+tools = { go = "{{ vars.tool_version_go }}" }
+run = "go run ./cmd/build dependencies tools check --log.colorMode=always"

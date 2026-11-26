@@ -27,8 +27,10 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          version: 2026.9.5
-          sha256: 32f644d8c291bb182f702c6d2b0dda9f8b01441e940d74d328aad5f08446b2fd
+          version: 2026.10.17
+          sha256: fe6dd17e68e09682b31d2e7bb7bb755d22636ac1af5d94621e300f2ca9e9fe8a
+          cache_save_post: true
+          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -62,8 +64,8 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      - name: Reconcile certificate, image and ConPTY update pull request
+      - name: Reconcile all managed dependencies in one update pull request
         env:
           DEPENDENCY_UPDATES_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: go run ./cmd/build dependencies update-pr --log.colorMode=always
+        run: mise run dependencies:update

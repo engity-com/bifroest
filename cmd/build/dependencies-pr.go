@@ -224,7 +224,7 @@ func (this *dependencies) updatePrInRepository(ctx context.Context, actor string
 }
 
 func (this *dependencies) prepareUpdatePlan(ctx context.Context, baseBranch, baseSha string) (*dependencyUpdatePlan, error) {
-	paths := append([]string{defaultCaCertsTargetFn}, dependencyConptyPaths()...)
+	paths := append([]string{defaultCaCertsTargetFn, dependencyToolsPath, dependencyMisePath}, dependencyConptyPaths()...)
 	for _, image := range dependencyImages {
 		for _, location := range image.locations {
 			paths = append(paths, location.path)
@@ -243,10 +243,15 @@ func (this *dependencies) prepareUpdatePlan(ctx context.Context, baseBranch, bas
 		original[path] = content
 		updated[path] = slices.Clone(content)
 	}
-	checks, err := this.applyImageUpdates(ctx, updated)
+	checks, err := this.applyToolUpdates(ctx, updated)
 	if err != nil {
 		return nil, err
 	}
+	imageChecks, err := this.applyImageUpdates(ctx, updated)
+	if err != nil {
+		return nil, err
+	}
+	checks = append(checks, imageChecks...)
 	conptyCheck, err := this.applyConptyUpdate(ctx, updated)
 	if err != nil {
 		return nil, err

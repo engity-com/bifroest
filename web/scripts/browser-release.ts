@@ -290,7 +290,8 @@ export function captureBrowserInputs(
         'web/login.html',
         'docs/assets/favicon.svg',
         'web/vite.app.config.ts',
-        'web/.tool-versions',
+        'mise.toml',
+        'mise.tools.yaml',
     ];
     for (const directory of ['web/src', 'web/scripts', 'web/licenses']) {
         inputNames.push(...files(join(root, directory)).map((name) => `${directory}/${name}`));

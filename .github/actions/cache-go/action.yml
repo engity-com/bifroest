@@ -29,7 +29,7 @@ runs:
           echo "::error::A Go cache scope is required"
           exit 1
         fi
-        go_env="$(mise exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED)"
+        go_env="$(mise run --quiet ci:go:env)"
         values=()
         while IFS= read -r value; do
           value="${value%$'\r'}"
