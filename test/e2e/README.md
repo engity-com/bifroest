@@ -21,6 +21,62 @@ The authorization suite does not require a container runtime. For suites that
 do, select an owned working runtime explicitly, for example
 `BIFROEST_E2E_RUNTIME=podman`; do not use an unrelated cluster or daemon.
 
+## CI runtime grouping
+
+CI keeps separate parallel jobs for the `local`, `docker` and `ssh` suites.
+Each job prepares the toolchain and dependencies once, then runs Docker followed
+by Podman. Browser assets and Chromium are prepared once in the Docker suite.
+The second runtime reuses Go's on-runner compilation cache, not fixture binaries,
+credentials, containers or runtime-specific image storage. Every fixture still
+builds from the checkout with its own version and isolated state.
+
+The kind job follows the same ordering. Docker runs on pull requests, schedules
+and manual dispatches; Podman remains schedule/manual-only. A Docker test failure
+does not skip Podman, but either failure still fails the job. Browser JSON and
+runtime diagnostics use separate `var/e2e/docker` and `var/e2e/podman` paths.
+Individual Go test deadlines and test selections are unchanged; combined jobs
+allow the sum of their previous job budgets.
+
+This reduces runtime jobs from six to three, plus two kind jobs to one on
+schedule/manual runs. Keeping suites parallel avoids serializing all their test
+execution just to share a compiler cache. The primary performance measure is
+time until the complete E2E workflow finishes, including queue time; track
+runner occupancy separately rather than treating it as workflow duration.
+
+Go's reported package/test duration includes fixture builds, image preparation
+and cleanup, but excludes compilation of the test executable before it starts.
+Do not attribute the whole gap between parent and subtest times to compilation.
+Docker and Podman still prepare their own images; their image caches are separate.
+The existing cross-job cache policy is unchanged.
+
+The combined jobs have new check names. If branch protection explicitly requires
+the previous per-runtime checks, update that configuration before merging.
+
+### Mandatory browser tasks
+
+After preparing the pinned frontend, Chromium and Linux network-isolation tools,
+run the same commands locally as CI:
+
+```sh
+BIFROEST_E2E_RUNTIME=podman mise run test:e2e:docker:browser
+BIFROEST_E2E_RUNTIME=podman mise run test:e2e:kubernetes:browser
+```
+
+Select `docker` instead to use Docker. The tasks invoke the tested Go runner in
+`test/e2erunner`, which resolves the pinned Node executable and enables browser
+execution. It streams `go test -json`, retains separate runtime/suite logs, and
+requires every selected top-level test to pass exactly once. Any skipped test
+(including subtests), failed test/build, missing result, malformed JSON, process
+failure or incomplete package result fails the task. The actual E2E assertions
+remain in `test/e2e`; no test-result verification is embedded in workflow YAML.
+Test the runner without Chromium or a container runtime with:
+
+```sh
+go test ./test/e2erunner
+```
+
+## Additional integration suites
+
 For installed curl transport probes, run `mise run test:e2e:curl`. See [tested and probably working curl versions](../curl/README.md) for the recorded results, expected baselines and required-profile settings.
 
 For the built monitoring listener and a real local Prometheus, provide `prometheus` and `promtool` on PATH (or set `BIFROEST_E2E_PROMETHEUS` and `BIFROEST_E2E_PROMTOOL` to their executable paths), then run `go test -tags=e2e -run '^TestMonitoring(PrometheusIntegration|DocumentedPrometheusAlerts)$' -timeout=10m ./test/e2e`. No container runtime is required. The tests build the current checkout, bind only loopback addresses, verify OpenMetrics ingestion, TLS/token negative controls and every alert rule extracted directly from the monitoring guide. Missing tools skip these optional tests; explicitly configured but unavailable tools fail. Process logs are retained under `var/e2e/monitoring-*`.
