@@ -65,17 +65,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { $failed = $true }
             Write-Output "::endgroup::"
           }
-          foreach ($location in @("default", "runner-temp")) {
-            if ($location -eq "default") {
-              $env:TMP = $defaultTmp
-              $env:TEMP = $defaultTemp
-            } else {
-              $env:TMP = $probeTemp
-              $env:TEMP = $probeTemp
-            }
-            Write-Output "::group::Full unchanged Windows host suite: $location"
-            mise -C web exec -- node scripts/native-go-tests.ts
-            if ($LASTEXITCODE -ne 0) { $failed = $true }
-            Write-Output "::endgroup::"
-          }
+          $env:TMP = $probeTemp
+          $env:TEMP = $probeTemp
+          Write-Output "::group::Full unchanged Windows host suite: runner-temp, uncached tests"
+          # Go's Windows temp lookup did not invalidate cached test results when
+          # TMP/TEMP changed. Retain compiled packages, but execute every test.
+          mise exec -- go clean -testcache
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          mise -C web exec -- node scripts/native-go-tests.ts
+          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          Write-Output "::endgroup::"
           if ($failed) { exit 1 }
