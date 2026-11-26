@@ -33,6 +33,8 @@ Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file w
 <<property("authorizedKeys", array_ref("File Path", "../data-type.md#file-path", ref("Authorized Keys", "../data-type.md#authorized-keys")), template_context="../context/authorization-request.md", default=["{{.user.homeDir}}/.ssh/authorized_keys"])>>
 Contains files with the format of classic [authorized keys](../data-type.md#authorized-keys), in which Bifröst will look for [SSH Public Keys](../data-type.md#ssh-public-key).
 
+Each file must be a regular file no larger than 4 MiB. On Unix, the file and its directories must be owned by root, the Bifröst service account, or the selected user, and must not be writable by other users (root-owned sticky directories are allowed). Symbolic links in the path are rejected.
+
 The request's `.connection` and the selected native [`.user`](../context/local-user.md) are available; `.remote.user` remains the original requesting name.
 
 An entry with the `cert-authority` option treats its key as a user certificate authority for that local user. The optional `principals="..."` option restricts it further. An empty `authorizedKeys` list does not disable certificate authentication through `trustedUserCAs` or `trustedUserCAsFile`.
@@ -58,6 +60,7 @@ On macOS this property must be non-empty. For supported platforms and editions, 
 ## Password
 
 * On Linux, passwords are validated via `/etc/passwd` and `/etc/shadow` when [`pamService`](#property-pamService) is empty, or via PAM when it is set.
+  Without PAM, an expired password or one requiring a change cannot be used to log in; Bifröst does not change passwords.
 * On macOS, a non-empty PAM service is required; there is no local password-repository fallback.
 * On Windows, password and keyboard-interactive authentication validate the password of an existing **local SAM account**. Windows account restrictions (such as disabled accounts or denied network logon) still apply. Domain and Microsoft Entra accounts are not supported by `local` authorization.
 

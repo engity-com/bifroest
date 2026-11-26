@@ -4,9 +4,42 @@ package user
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestEtcShadowEntryValidatePasswordExpiration(t *testing.T) {
+	today := uint32(time.Now().Unix() / (24 * 60 * 60))
+	hash := []byte("$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB")
+	for _, tc := range []struct {
+		name     string
+		changed  uint32
+		maximum  uint32
+		inactive bool
+		expire   bool
+		valid    bool
+	}{
+		{name: "valid before expiration", changed: today - 10, maximum: 11, valid: true},
+		{name: "expired without inactivity", changed: today - 10, maximum: 10},
+		{name: "expired during inactivity grace", changed: today - 10, maximum: 10, inactive: true},
+		{name: "password change required", maximum: 100},
+		{name: "future password change", changed: today + 1, maximum: 100},
+		{name: "account expired", changed: today - 10, maximum: 100, expire: true},
+		{name: "large maximum does not overflow", changed: today - 10, maximum: ^uint32(0), valid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := etcShadowEntry{
+				password: hash, lastChangedAtInDays: tc.changed, maximumAgeInDays: tc.maximum,
+				hasInactiveAge: tc.inactive, inactiveAgeInDays: 100,
+				hasExpire: tc.expire, expireAtTsInDays: today,
+			}
+			valid, err := entry.validatePassword("foobar")
+			require.NoError(t, err)
+			require.Equal(t, tc.valid, valid)
+		})
+	}
+}
 
 func Test_etcShadowEntry_decode(t *testing.T) {
 	cases := []struct {

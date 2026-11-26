@@ -5,6 +5,7 @@ package user
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -1501,6 +1502,12 @@ func Test_EtcColonRepository_ValidatePasswordById(t *testing.T) {
 		givenPassword: "foobar",
 
 		expected: false,
+	}, {
+		name:          "expired-no-inactive",
+		givenId:       5,
+		givenPassword: "foobar",
+
+		expected: false,
 	}}
 
 	for _, c := range cases {
@@ -1510,15 +1517,17 @@ func Test_EtcColonRepository_ValidatePasswordById(t *testing.T) {
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh
 expired:abc:3:1::/bin/false:/bin/false
-expired-ts:abc:4:1::/bin/false:/bin/false`)
+expired-ts:abc:4:1::/bin/false:/bin/false
+expired-no-inactive:abc:5:1::/bin/false:/bin/false`)
 			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
-foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:20088:10:100::::
+			shadowFile := dir.file("shadow").setContent(fmt.Sprintf(`root:XrootX:19722:10:100:50:200:20088:
+foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:%d:10:100::::
 bar:XbarX:20453:10:100:::20818:
 expired:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10::5::
-expired-ts:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10:::19931:`)
+expired-ts:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10:::19931:
+expired-no-inactive:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10::::`, time.Now().Unix()/(24*60*60)-1))
 
 			var syncError error
 			instance := EtcColonRepository{
@@ -1663,6 +1672,12 @@ func Test_EtcColonRepository_ValidatePasswordByName(t *testing.T) {
 		givenPassword: "foobar",
 
 		expected: false,
+	}, {
+		name:          "expired-no-inactive",
+		givenName:     "expired-no-inactive",
+		givenPassword: "foobar",
+
+		expected: false,
 	}}
 
 	for _, c := range cases {
@@ -1672,15 +1687,17 @@ func Test_EtcColonRepository_ValidatePasswordByName(t *testing.T) {
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh
 expired:abc:3:1::/bin/false:/bin/false
-expired-ts:abc:4:1::/bin/false:/bin/false`)
+expired-ts:abc:4:1::/bin/false:/bin/false
+expired-no-inactive:abc:5:1::/bin/false:/bin/false`)
 			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
-foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:20088:10:100::::
+			shadowFile := dir.file("shadow").setContent(fmt.Sprintf(`root:XrootX:19722:10:100:50:200:20088:
+foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:%d:10:100::::
 bar:XbarX:20453:10:100:::20818:
 expired:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10::5::
-expired:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10:::19931:`)
+expired-ts:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10:::19931:
+expired-no-inactive:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10::::`, time.Now().Unix()/(24*60*60)-1))
 
 			var syncError error
 			instance := EtcColonRepository{
