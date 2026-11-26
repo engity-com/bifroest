@@ -41,7 +41,7 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 			require.True(t, found, "required MISE task %s", tt.name)
 			body, _, _ := strings.Cut(rest, "\n[tasks.")
 			require.Contains(t, body, `depends = ["build:var"]`)
-			require.Equal(t, len(tt.commands), strings.Count(body, "gotestsum "), "guard every Go test invocation, including the local_build/local_kind variant")
+			require.Equal(t, len(tt.commands), strings.Count(body, "'gotestsum "), "guard every Go test invocation, including the local_build/local_kind variant")
 			require.NotContains(t, body, "--rerun-fails", "test failures must not be retried")
 			for _, command := range tt.commands {
 				require.Contains(t, body, command, "keep the bounded, overridable default and existing test scope/options")
@@ -51,9 +51,11 @@ func TestGoTestTasksBoundPackageParallelismWithoutReducingChecks(t *testing.T) {
 }
 
 func TestGoTestReporterIsPinnedThroughMise(t *testing.T) {
-	versions, err := os.ReadFile("../../.tool-versions")
+	versions, err := os.ReadFile("../../mise.tools.yaml")
 	require.NoError(t, err)
-	require.Contains(t, strings.Split(strings.ReplaceAll(string(versions), "\r\n", "\n"), "\n"), "gotestsum     1.13.0")
+	catalog, err := parseDependencyToolCatalog(versions)
+	require.NoError(t, err)
+	require.Equal(t, "1.13.0", catalog.versions["gotestsum"].Value)
 	configuration, err := os.ReadFile("../../mise.toml")
 	require.NoError(t, err)
 	require.Contains(t, string(configuration), `gotestsum = "aqua:gotestyourself/gotestsum"`)
@@ -68,7 +70,8 @@ func TestGoWorkflowKeepsWindowsTestsSerialWithoutNarrowingTheSuite(t *testing.T)
 		require.Empty(t, configuration.Env["GO_TEST_PARALLELISM"], "%s must retain the bounded default", job)
 	}
 	step := jobs["test-host"].Steps[goJobsStepContaining(t, jobs["test-host"], "scripts/native-go-tests.ts")]
-	require.Equal(t, "mise -C web exec -- node scripts/native-go-tests.ts", step.Run)
+	require.Contains(t, step.Run, "mise run test:go:native")
+	require.Contains(t, step.Run, "mise -C web exec -- node scripts/native-go-tests.ts", "keep historical source support")
 	require.Empty(t, step.If)
 	require.False(t, step.ContinueOnError)
 }

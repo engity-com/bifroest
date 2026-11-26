@@ -13,6 +13,7 @@ Bug fixes, features and documentation improvements are welcome via [GitHub pull 
 
 - Your PR must pass the required CI checks.
 - Go changes must follow [Go best practices](https://go.dev/doc/effective_go).
+- See [development tooling](https://github.com/engity-com/bifroest/blob/main/contrib/development.md) for local tasks and managed tool updates.
 - Sign off your commits with `Signed-off-by: <Your-Name> <Your-email>`. [Learn more about signing off on commits](https://docs.github.com/en/organizations/managing-organization-settings/managing-the-commit-signoff-policy-for-your-organization).
 
 Signing off a commit is different from cryptographically signing it, for example with GPG.

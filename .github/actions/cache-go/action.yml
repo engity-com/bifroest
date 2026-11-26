@@ -29,7 +29,12 @@ runs:
           echo "::error::A Go cache scope is required"
           exit 1
         fi
-        go_env="$(mise exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED)"
+        if [ -f mise.tools.yaml ]; then
+          go_env="$(mise run --quiet ci:go:env)"
+        else
+          # Historical release sources still select Go globally.
+          go_env="$(mise exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED)"
+        fi
         values=()
         while IFS= read -r value; do
           value="${value%$'\r'}"

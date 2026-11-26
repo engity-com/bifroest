@@ -87,20 +87,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	node := os.Getenv("BIFROEST_TEST_NODE")
-	if node == "" {
-		command := exec.CommandContext(ctx, "mise", "-C", "web", "which", "node")
-		command.Stderr = stderr
-		output, err := command.Output()
-		if err != nil {
-			return fmt.Errorf("resolve pinned browser Node runtime: %w", err)
-		}
-		node = strings.TrimSpace(string(output))
-		if node == "" {
-			return errors.New("MISE returned an empty browser Node path")
-		}
+	node, err := browserNodeTool()
+	if err != nil {
+		return fmt.Errorf("resolve pinned browser Node runtime: %w", err)
 	}
 	return runSuite(ctx, suite, runtime, node, root, goTool, stdout, stderr, exec.CommandContext)
+}
+
+func browserNodeTool() (string, error) {
+	if node := os.Getenv("BIFROEST_TEST_NODE"); node != "" {
+		return node, nil
+	}
+	// The invoking MISE task puts its pinned runtime on PATH. A separate
+	// `mise which` cannot see task-local tools as global selections.
+	return exec.LookPath("node")
 }
 
 type commandFactory func(context.Context, string, ...string) *exec.Cmd

@@ -74,6 +74,10 @@ func TestBrowserShardMatrixIsCompleteAndRetainsIndependentRunners(t *testing.T) 
 				require.Equal(t, "always()", step.If)
 				continue
 			}
+			if step.Run == "mise -C web install" || step.Run == "mise -C web install node" {
+				require.Equal(t, "hashFiles('mise.tools.yaml') == ''", step.If, "only historical sources install global tools")
+				continue
+			}
 			require.Empty(t, step.If, "asset creation and all separated tests remain mandatory")
 		}
 	}

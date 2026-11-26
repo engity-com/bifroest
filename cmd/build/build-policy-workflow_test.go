@@ -82,7 +82,7 @@ func TestPolicyWorkflowRunsNativeCLIOnAllThreePlatformsAndKeepsFailedReports(t *
 			install = i
 		}
 		if strings.HasPrefix(step.Uses, "jdx/mise-action@") {
-			require.Equal(t, "go", step.With["install_args"])
+			require.Empty(t, step.With["install_args"], "the policy task owns its Go requirement")
 		}
 		if step.Run == "mise run test:policy" {
 			compile = i

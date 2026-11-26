@@ -20,7 +20,8 @@ func TestPackageAssemblyRunsWithoutWaitingForTestsOrPublicationRights(t *testing
 	require.Empty(t, assembly.If)
 	require.False(t, assembly.ContinueOnError)
 	prepare := assembly.Steps[goJobsStepContaining(t, assembly, "prepare-packages --")]
-	require.Equal(t, "mise exec -- go run ./cmd/build prepare-packages --log.colorMode=always", prepare.Run)
+	require.Contains(t, prepare.Run, "mise run build:go:prepare-packages")
+	require.Contains(t, prepare.Run, "mise exec -- go run ./cmd/build prepare-packages --log.colorMode=always", "retain old-source compatibility")
 	require.Equal(t, "steps.mode.outputs.prepared == 'true'", prepare.If)
 	for _, step := range assembly.Steps {
 		require.False(t, step.ContinueOnError)
@@ -41,7 +42,8 @@ func TestPackageAssemblyRunsWithoutWaitingForTestsOrPublicationRights(t *testing
 	finalize := "needs.assemble.outputs.prepared != 'true' || needs.assemble.outputs.publish == 'true' || inputs.upload_dist"
 	require.Equal(t, "Package", gate.Name, "keep the ruleset's existing required check")
 	publication := gate.Steps[goJobsStepContaining(t, gate, "publish-packages --")]
-	require.Equal(t, "mise exec -- go run ./cmd/build publish-packages --log.colorMode=always", publication.Run)
+	require.Contains(t, publication.Run, "mise run build:go:publish-packages")
+	require.Contains(t, publication.Run, "mise exec -- go run ./cmd/build publish-packages --log.colorMode=always", "retain old-source compatibility")
 	require.Equal(t, "needs.assemble.outputs.prepared == 'true' && (needs.assemble.outputs.publish == 'true' || inputs.upload_dist)", publication.If)
 	for _, step := range gate.Steps[1:] {
 		switch step.Name {

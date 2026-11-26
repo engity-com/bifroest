@@ -390,7 +390,8 @@ func TestBinaryTargetEvaluationUsesWorkflowHelperWithOldSourceTasks(t *testing.T
 	for _, file := range []string{"ci.yml", "release.yml"} {
 		job := readGoJobsWorkflowFile(t, file)["evaluate"]
 		step := job.Steps[goJobsStepContaining(t, job, "mise run ci:evaluate-environment")]
-		require.Contains(t, step.Run, "mise exec node@26.9.0 -- node", "old source refs need no Node pin or new MISE task")
+		require.Contains(t, step.Run, "run group-binary-matrices --", "the workflow-owned task works independently of old source tasks/pins")
+		require.NotContains(t, step.Run, "node@", "the workflow must not maintain a second tool version")
 		for _, status := range []string{"0", "23"} {
 			directory := t.TempDir()
 			scriptPath := ".github/scripts/group-binary-matrices.ts"
@@ -411,7 +412,9 @@ mise() {
       [ "$EVALUATE_EXIT" = 0 ] || return "$EVALUATE_EXIT"
       cat source.environment >> "$GITHUB_OUTPUT"
       ;;
-    'exec node@26.9.0 -- node '*) shift 3; "$@" ;;
+    '-C .github run group-binary-matrices -- '*|'-C var/ci-workflow/.github run group-binary-matrices -- '*)
+      node "$2/scripts/group-binary-matrices.ts" "$6"
+      ;;
     *) return 42 ;;
   esac
 }

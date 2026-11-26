@@ -69,6 +69,12 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: &mise-options
+          version: 2026.10.17
+          # No global tools in modern sources; tasks install their own tools.
+          # This action only schedules post-cache saving when install is enabled.
+          cache_save_post: true
+          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
       - &checkout-workflow-cache
         name: Checkout workflow cache action
@@ -87,7 +93,8 @@ jobs:
           scope: browser-assets
           context: cgo0
 
-      - name: Install pinned browser toolchain
+      - name: Install historical browser toolchain
+        if: hashFiles('mise.tools.yaml') == ''
         run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
@@ -97,7 +104,13 @@ jobs:
         run: mise -C web run build:web
 
       - name: Check browser build inventory
-        run: mise -C web exec -- bun run test:release
+        shell: bash
+        run: |
+          if [ -f mise.tools.yaml ]; then
+            mise run test:web:release
+          else
+            mise -C web exec -- bun run test:release
+          fi
 
       - name: Upload exact browser assets for every binary host
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -135,6 +148,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -146,7 +160,8 @@ jobs:
           context: cgo0
           build-cache: "true"
 
-      - name: Install pinned WebCrypto test runtime
+      - name: Install historical WebCrypto test runtime
+        if: hashFiles('mise.tools.yaml') == ''
         run: mise -C web install node
 
       - &download-browser-assets
@@ -157,7 +172,13 @@ jobs:
           path: pkg/webui/assets
 
       - name: Test full static Linux core with pinned WebCrypto runtime
-        run: mise -C web exec -- node scripts/native-go-tests.ts
+        shell: bash
+        run: &native-go-tests |
+          if [ -f mise.tools.yaml ]; then
+            mise run test:go:native
+          else
+            mise -C web exec -- node scripts/native-go-tests.ts
+          fi
 
       - &summarize-go-tests
         name: Summarize Go tests even after failure
@@ -168,7 +189,11 @@ jobs:
             if [ -f "$report" ]; then
               {
                 printf '### Slowest Go tests: %s\n\n```text\n' "$(basename "$report" .jsonl)"
-                mise exec -- gotestsum tool slowest --num 15 --threshold 0s --jsonfile "$report"
+                if [ -f mise.tools.yaml ]; then
+                  mise run ci:go:slowest -- --num 15 --threshold 0s --jsonfile "$report"
+                else
+                  mise exec -- gotestsum tool slowest --num 15 --threshold 0s --jsonfile "$report"
+                fi
                 printf '```\n\nCached test durations may come from a previous run.\n\n'
               } >> "$GITHUB_STEP_SUMMARY"
             fi
@@ -200,6 +225,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -209,7 +235,8 @@ jobs:
           scope: test-web
           context: cgo0
 
-      - name: Install pinned browser toolchain
+      - name: Install historical browser toolchain
+        if: hashFiles('mise.tools.yaml') == ''
         run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
@@ -248,6 +275,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -258,7 +286,8 @@ jobs:
           context: cgo0
           build-cache: restore-only
 
-      - name: Install pinned browser toolchain
+      - name: Install historical browser toolchain
+        if: hashFiles('mise.tools.yaml') == ''
         run: mise -C web install
 
       - name: Install frozen dependencies without lifecycle scripts
@@ -280,8 +309,10 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
         run: |
-          BIFROEST_TEST_NODE="$(mise -C web which node)"
-          export BIFROEST_TEST_NODE
+          if [ ! -f mise.tools.yaml ]; then
+            BIFROEST_TEST_NODE="$(mise -C web which node)"
+            export BIFROEST_TEST_NODE
+          fi
           if [ -f web/scripts/browser-go-tests.ts ]; then
             mise -C web run test:go:browser -- --shard "$SHARD"
           elif [ "$SHARD" = 1/3 ]; then
@@ -326,6 +357,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -336,7 +368,8 @@ jobs:
           context: cgo0
           build-cache: "true"
 
-      - name: Install pinned WebCrypto test runtime
+      - name: Install historical WebCrypto test runtime
+        if: hashFiles('mise.tools.yaml') == ''
         run: mise -C web install node
 
       - &install-go-dependencies
@@ -360,7 +393,8 @@ jobs:
       - name: Test
         env:
           MISE_GITHUB_TOKEN: ""
-        run: mise -C web exec -- node scripts/native-go-tests.ts
+        shell: bash
+        run: *native-go-tests
 
       - *summarize-go-tests
 
@@ -396,6 +430,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -427,10 +462,9 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.commit || inputs.ref }}
 
-      - name: Install pinned formatter
+      - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: stylua
+        with: *mise-options
 
       - name: Install Luacheck
         run: |
@@ -471,10 +505,9 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.commit || inputs.ref }}
 
-      - name: Install MISE and pinned Go
+      - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: go
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -520,10 +553,9 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.commit || inputs.ref }}
 
-      - name: Install MISE and pinned Go/Docker client
+      - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: go docker-cli
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -573,6 +605,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -650,6 +683,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -705,6 +739,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -741,6 +776,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -822,6 +858,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - *checkout-workflow-cache
 
@@ -901,6 +938,7 @@ jobs:
       - name: Install MISE
         if: *prepare-packages
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Checkout workflow cache action
         if: *prepare-packages
@@ -944,7 +982,13 @@ jobs:
       - name: Prepare packages without publishing
         id: prepare
         if: *prepare-packages
-        run: mise exec -- go run ./cmd/build prepare-packages --log.colorMode=always
+        shell: bash
+        run: |
+          if [ -f mise.tools.yaml ]; then
+            mise run build:go:prepare-packages
+          else
+            mise exec -- go run ./cmd/build prepare-packages --log.colorMode=always
+          fi
 
       - name: Transfer prepared packages for gated publication
         if: steps.mode.outputs.prepared == 'true' && (steps.prepare.outputs.publish == 'true' || inputs.upload_dist)
@@ -1047,6 +1091,7 @@ jobs:
       - name: Install MISE
         if: *finalize-packages
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Checkout workflow cache action
         if: *finalize-packages
@@ -1100,7 +1145,13 @@ jobs:
 
       - name: Verify and publish prepared packages without rebuilding
         if: needs.assemble.outputs.prepared == 'true' && (needs.assemble.outputs.publish == 'true' || inputs.upload_dist)
-        run: mise exec -- go run ./cmd/build publish-packages --log.colorMode=always
+        shell: bash
+        run: |
+          if [ -f mise.tools.yaml ]; then
+            mise run build:go:publish-packages
+          else
+            mise exec -- go run ./cmd/build publish-packages --log.colorMode=always
+          fi
 
       - name: Archive package results
         if: inputs.upload_dist

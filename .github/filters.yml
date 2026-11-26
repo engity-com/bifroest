@@ -19,7 +19,7 @@ go: &go
   - "test/**"
   - ".github/**"
   - "mise.toml"
-  - ".tool-versions"
+  - "mise.tools.yaml"
 
 docs: &docs
   - "mkdocs.yml"
@@ -29,7 +29,7 @@ docs: &docs
   - "LICENSE"
   - ".github/**"
   - "mise.toml"
-  - ".tool-versions"
+  - "mise.tools.yaml"
 
 any:
   - *go

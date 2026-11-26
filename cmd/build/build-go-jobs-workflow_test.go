@@ -65,7 +65,7 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 		command, matrix string
 		lint, native    bool
 	}{
-		"test-host":         {"mise -C web exec -- node scripts/native-go-tests.ts", "test_host_matrix", false, false},
+		"test-host":         {"mise run test:go:native", "test_host_matrix", false, false},
 		"test-container":    {"mise run test:go:coverage", "test_container_matrix", false, true},
 		"test-race":         {"mise run test:go:race", "test_container_matrix", false, true},
 		"lint-go-host":      {"mise run lint:go", "test_host_matrix", true, false},
@@ -101,6 +101,8 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 				require.False(t, step.ContinueOnError)
 				if name == "test-host" && step.Name == "Stress management channel completion on Windows" {
 					require.Equal(t, "runner.os == 'Windows'", step.If)
+				} else if step.Run == "mise -C web install node" {
+					require.Equal(t, "hashFiles('mise.tools.yaml') == ''", step.If, "only old source refs need global Node provisioning")
 				} else if step.If != "" {
 					require.Equal(t, "always()", step.If, "only failure diagnostics may have a conditional")
 					if step.Uses != "" {
@@ -125,7 +127,7 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 				if step.Run == "mise -C web install node" {
 					node = i
 				}
-				if step.Run == check.command || (name == "test-container" && strings.Contains(step.Run, check.command)) {
+				if strings.Contains(step.Run, check.command) {
 					require.Equal(t, -1, command, "run each check once")
 					require.Empty(t, step.If, "test execution must remain mandatory")
 					command = i
@@ -392,7 +394,7 @@ func requireGoWorkflowCacheRevision(t *testing.T, job goJobsWorkflowJob, sourceR
 				workflow = i
 				sparse := ".github/actions/cache-go"
 				if sourceRef == "${{ steps.release-version.outputs.release_tag }}" {
-					sparse += "\n.github/scripts/group-binary-matrices.ts\n"
+					sparse += "\n.github/scripts/group-binary-matrices.ts\n.github/mise.toml\nmise.tools.yaml\n"
 				}
 				require.Equal(t, map[string]string{
 					"repository":                "${{ github.repository }}",
