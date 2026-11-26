@@ -52,6 +52,9 @@ The existing cross-job cache policy is unchanged.
 The combined jobs have new check names. If branch protection explicitly requires
 the previous per-runtime checks, update that configuration before merging.
 
+The native GitHub runner validation and remaining optimization candidates are
+recorded in the [CI performance review](../ci-performance-review.md).
+
 ## Additional integration suites
 
 For installed curl transport probes, run `mise run test:e2e:curl`. See [tested and probably working curl versions](../curl/README.md) for the recorded results, expected baselines and required-profile settings.
