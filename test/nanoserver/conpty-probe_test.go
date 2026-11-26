@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -68,15 +69,33 @@ func TestConPTYProbeOverlayCompilesForWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	work := t.TempDir()
-	overlay := writeConPTYProbeOverlay(t, root, work)
-	command := exec.CommandContext(t.Context(), "go", "test", "-c", "-tags=nanoserver_integration",
-		"-overlay", overlay, "-o", filepath.Join(work, "observed.exe"), "./pkg/environment")
-	command.Dir = root
-	command.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("observed Windows executable: %v\n%s", err, output)
+	work, err := os.MkdirTemp(t.TempDir(), "overlay with spaces-")
+	if err != nil {
+		t.Fatal(err)
 	}
+	overlay := writeConPTYProbeOverlay(t, root, work)
+	for _, mode := range []string{"command-line", "GOFLAGS"} {
+		t.Run(mode, func(t *testing.T) {
+			args := []string{"test", "-c", "-tags=nanoserver_integration"}
+			if mode == "command-line" {
+				args = append(args, "-overlay", overlay)
+			}
+			args = append(args, "-o", filepath.Join(work, mode+".exe"), "./pkg/environment")
+			command := exec.CommandContext(t.Context(), "go", args...)
+			command.Dir = root
+			command.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
+			if mode == "GOFLAGS" {
+				command.Env = append(command.Env, "GOFLAGS="+conptyProbeBuildFlags(overlay))
+			}
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("observed Windows executable: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func conptyProbeBuildFlags(overlay string) string {
+	return strings.TrimSpace(os.Getenv("GOFLAGS") + " " + strconv.Quote("-overlay="+filepath.ToSlash(overlay)))
 }
 
 func writeConPTYProbeOverlay(t *testing.T, root, work string) string {

@@ -363,6 +363,11 @@ hide = true
 tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
 run = 'go test -v -count=1 -tags=nanoserver_integration,conpty_probe -timeout=15m -run=^TestConPTYColdStartProbe$ ./test/nanoserver'
 
+[tasks."diag:windows:conpty-fixture"]
+hide = true
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}", node = "{{ vars.tool_version_node }}", bun = "{{ vars.tool_version_bun }}" }
+run = 'go test -v -count=1 -tags=nanoserver_integration,conpty_probe -timeout=20m -run=^TestConPTYFullFixtureProbe$ ./test/nanoserver'
+
 [tasks."ci:go:slowest"]
 hide = true
 tools = { go = "{{ vars.tool_version_go }}", gotestsum = "{{ vars.tool_version_gotestsum }}" }

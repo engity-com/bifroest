@@ -14,6 +14,19 @@ import (
 	"time"
 )
 
+func TestConPTYFullFixtureProbe(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate diagnostic checkout")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
+	overlay := writeConPTYProbeOverlay(t, root, t.TempDir())
+	// Only the child builds use observations. The already-built service binary,
+	// complete fixture, native assertions and every original deadline are kept.
+	t.Setenv("GOFLAGS", conptyProbeBuildFlags(overlay))
+	TestPinnedNanoServerLocalEnvironment(t)
+}
+
 // Diagnostic only: no production source is edited. The observed executable uses
 // Go's build overlay to add stderr milestones around the existing native calls.
 // Instrumentation can perturb timing; the baseline executable is unmodified.
