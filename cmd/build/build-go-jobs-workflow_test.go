@@ -65,7 +65,7 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 		command, matrix string
 		lint, native    bool
 	}{
-		"test-host":         {"mise -C web exec -- node scripts/native-go-tests.ts", "test_host_matrix", false, false},
+		"test-host":         {"mise run test:go:native", "test_host_matrix", false, false},
 		"test-container":    {"mise run test:go:coverage", "test_container_matrix", false, true},
 		"test-race":         {"mise run test:go:race", "test_container_matrix", false, true},
 		"lint-go-host":      {"mise run lint:go", "test_host_matrix", true, false},
@@ -96,7 +96,7 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 				require.Equal(t, "-p=2", job.Env["GOFLAGS"])
 			}
 
-			checkout, dependencies, command, node := -1, -1, -1, -1
+			checkout, dependencies, command := -1, -1, -1
 			for i, step := range job.Steps {
 				require.False(t, step.ContinueOnError)
 				if name == "test-host" && step.Name == "Stress management channel completion on Windows" {
@@ -122,10 +122,7 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 					dependencies = i
 					require.Equal(t, jobs["test-host"].Steps[goJobsStepContaining(t, jobs["test-host"], "mise run install:go")], step)
 				}
-				if step.Run == "mise -C web install node" {
-					node = i
-				}
-				if step.Run == check.command || (name == "test-container" && strings.Contains(step.Run, check.command)) {
+				if strings.Contains(step.Run, check.command) {
 					require.Equal(t, -1, command, "run each check once")
 					require.Empty(t, step.If, "test execution must remain mandatory")
 					command = i
@@ -138,10 +135,6 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 			require.NotEqual(t, -1, checkout)
 			require.Greater(t, dependencies, checkout)
 			require.Greater(t, command, dependencies)
-			if name == "test-host" {
-				require.Greater(t, node, checkout, "keep the pinned Node WebCrypto runtime")
-				require.Less(t, node, command)
-			}
 		})
 	}
 }
@@ -349,69 +342,49 @@ func TestGoWorkflowCachesFollowMiseAndIsolateBuildContexts(t *testing.T) {
 			case "assemble":
 				scope = "package"
 			}
-			requireGoWorkflowCacheRevision(t, jobs[name], "${{ inputs.commit || inputs.ref }}", scope, context)
+			requireGoWorkflowSourceCache(t, jobs[name], "${{ inputs.commit || inputs.ref }}", scope, context)
 		})
 	}
 }
 
-func TestGoWorkflowReleaseCacheUsesWorkflowRevisionInsteadOfReleaseTag(t *testing.T) {
+func TestGoWorkflowReleaseCacheUsesSelectedSourceRevision(t *testing.T) {
 	job := readGoJobsWorkflowFile(t, "release.yml")["evaluate"]
-	requireGoWorkflowCacheRevision(t, job, "${{ steps.release-version.outputs.release_tag }}", "build-tools", "")
+	requireGoWorkflowSourceCache(t, job, "${{ steps.release-version.outputs.release_tag }}", "build-tools", "")
 	evaluated := false
 	for _, step := range job.Steps {
 		if strings.Contains(step.Run, "mise run ci:evaluate-environment") {
 			evaluated = true
 			require.Equal(t, "${{ steps.release-version.outputs.release_tag }}", step.Env["GITHUB_REF_NAME"])
-			require.Contains(t, step.Run, `GITHUB_SHA="$(git rev-parse HEAD)"`, "evaluate the source checkout, not the workflow helper")
+			require.Contains(t, step.Run, `GITHUB_SHA="$(git rev-parse HEAD)"`, "evaluate the selected source checkout")
 			require.Contains(t, step.Run, "export GITHUB_SHA")
 		}
 	}
 	require.True(t, evaluated)
 }
 
-func requireGoWorkflowCacheRevision(t *testing.T, job goJobsWorkflowJob, sourceRef, scope, context string) {
+func requireGoWorkflowSourceCache(t *testing.T, job goJobsWorkflowJob, sourceRef, scope, context string) {
 	t.Helper()
 	condition := ""
-	switch job.Name {
-	case "Assemble packages":
-		condition = "steps.mode.outputs.prepared == 'true'"
-	case "Package":
-		condition = "needs.assemble.outputs.prepared != 'true' || needs.assemble.outputs.publish == 'true' || inputs.upload_dist"
+	if job.Name == "Package" {
+		condition = "needs.assemble.outputs.publish == 'true' || inputs.upload_dist"
 	}
-	source, mise, workflow, cache := -1, -1, -1, -1
+	source, mise, cache := -1, -1, -1
 	for i, step := range job.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			require.Equal(t, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", step.Uses)
-			if step.With["path"] == "" {
-				require.Equal(t, -1, source)
-				source = i
-				require.Equal(t, sourceRef, step.With["ref"], "keep the source commit/tag independently pinned")
-				require.Empty(t, step.With["sparse-checkout"], "the source checkout retains its own toolchain configuration")
-			} else {
-				require.Equal(t, -1, workflow)
-				workflow = i
-				sparse := ".github/actions/cache-go"
-				if sourceRef == "${{ steps.release-version.outputs.release_tag }}" {
-					sparse += "\n.github/scripts/group-binary-matrices.ts\n"
-				}
-				require.Equal(t, map[string]string{
-					"repository":                "${{ github.repository }}",
-					"ref":                       "${{ github.workflow_sha }}",
-					"path":                      "var/ci-workflow",
-					"sparse-checkout":           sparse,
-					"sparse-checkout-cone-mode": "false",
-					"persist-credentials":       "false",
-				}, step.With, "old source refs need cache infrastructure from the workflow without replacing their MISE pins")
-				require.Equal(t, condition, step.If)
-				require.False(t, step.ContinueOnError)
-			}
+			require.Equal(t, -1, source, "one source checkout owns tasks, versions, scripts and local actions")
+			source = i
+			require.Equal(t, sourceRef, step.With["ref"])
+			require.Empty(t, step.With["path"])
+			require.Empty(t, step.With["sparse-checkout"])
+			require.Equal(t, condition, step.If)
+			require.False(t, step.ContinueOnError)
 		}
 		if strings.HasPrefix(step.Uses, "jdx/mise-action@") {
 			require.Equal(t, condition, step.If)
 			mise = i
 		}
-		require.NotEqual(t, "./.github/actions/cache-go", step.Uses, "the source ref need not contain the cache action")
-		if step.Uses == "./var/ci-workflow/.github/actions/cache-go" {
+		if step.Uses == "./.github/actions/cache-go" {
 			require.Equal(t, -1, cache)
 			cache = i
 			require.Equal(t, scope, step.With["scope"])
@@ -425,8 +398,7 @@ func requireGoWorkflowCacheRevision(t *testing.T, job goJobsWorkflowJob, sourceR
 	}
 	require.NotEqual(t, -1, source)
 	require.Greater(t, mise, source, "MISE reads the selected source checkout's pins")
-	require.Greater(t, workflow, mise)
-	require.Greater(t, cache, workflow, "load the workflow's action after installing the source's MISE toolchain")
+	require.Greater(t, cache, mise, "the source's cache action provisions its task-scoped Go after installing MISE")
 }
 
 func goJobsStepContaining(t *testing.T, job goJobsWorkflowJob, fragment string) int {

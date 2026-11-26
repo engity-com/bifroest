@@ -34,8 +34,7 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 		}
 	}
 	hostJoined := strings.Join(hostCommands, "\n")
-	require.Contains(t, hostJoined, "mise -C web install node")
-	require.Contains(t, hostJoined, "mise -C web exec -- node scripts/native-go-tests.ts")
+	require.Contains(t, hostJoined, "mise run test:go:native")
 	var commands []string
 	for _, step := range job.Steps {
 		if command, ok := step["run"].(string); ok {
@@ -43,13 +42,14 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 		}
 	}
 	joined := strings.Join(commands, "\n")
-	for _, command := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run build:web", "bun run test:release"} {
+	for _, command := range []string{"mise -C web run install:web", "mise -C web run build:web", "mise run test:web:release"} {
 		require.Contains(t, joined, command)
 	}
-	for _, command := range []string{"run test:web", "run test:go", "run lint:web", "install:web:browser"} {
+	require.NotRegexp(t, `\brun test:web(\s|$)`, joined, "asset creation may only check the release inventory, not run the source suite")
+	for _, command := range []string{"run test:go", "run lint:web", "install:web:browser"} {
 		require.NotContains(t, joined, command, "asset production must not wait for test execution")
 	}
-	require.Less(t, strings.Index(joined, "run build:web"), strings.Index(joined, "bun run test:release"))
+	require.Less(t, strings.Index(joined, "run build:web"), strings.Index(joined, "run test:web:release"))
 	for _, name := range []string{"test-static", "test-browser"} {
 		test := workflow.Jobs[name]
 		require.Equal(t, "browser", test.Needs)
@@ -94,24 +94,22 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 		for _, step := range job.Steps {
 			if uses, ok := step["uses"].(string); ok && strings.HasPrefix(uses, "actions/checkout@") {
 				with := step["with"].(map[string]any)
-				if path, _ := with["path"].(string); path == "" {
-					require.Equal(t, "${{ inputs.commit || inputs.ref }}", with["ref"])
-				} else {
-					require.Equal(t, "var/ci-workflow", path)
-					require.Equal(t, "${{ github.workflow_sha }}", with["ref"])
-				}
+				require.Empty(t, with["path"])
+				require.Equal(t, "${{ inputs.commit || inputs.ref }}", with["ref"])
 			}
 		}
 	}
 	filters, err := gos.ReadFile("../../.github/filters.yml")
 	require.NoError(t, err)
 	require.Contains(t, string(filters), `"web/**"`)
-	tools, err := gos.ReadFile("../../web/.tool-versions")
+	tools, err := gos.ReadFile("../../mise.tools.yaml")
 	require.NoError(t, err)
-	require.Contains(t, string(tools), "nodejs 26.9.0")
+	catalog, err := parseDependencyToolCatalog(tools)
+	require.NoError(t, err)
+	require.Equal(t, "26.9.0", catalog.versions["node"].Value)
 	attributes, err := gos.ReadFile("../../.gitattributes")
 	require.NoError(t, err)
-	for _, rule := range []string{"/.gitattributes text eol=lf", "/go.mod   text eol=lf", "/go.sum   text eol=lf", "/web/**   text=auto eol=lf"} {
+	for _, rule := range []string{"/.gitattributes text eol=lf", "/go.mod   text eol=lf", "/go.sum   text eol=lf", "/mise.toml text eol=lf", "/web/**   text=auto eol=lf"} {
 		require.Contains(t, string(attributes), rule)
 	}
 }
@@ -135,7 +133,7 @@ func TestBrowserIntegrationHasSeparateBudgetWithoutExtendingCoreTests(t *testing
 	}
 	core := -1
 	for index, step := range job.Steps {
-		if step.Run == "mise -C web exec -- node scripts/native-go-tests.ts" {
+		if strings.Contains(step.Run, "mise run test:go:native") {
 			core = index
 			for _, flag := range []string{"BIFROEST_TEST_BROWSER_UI", "BIFROEST_TEST_BROWSER_CLIENT"} {
 				require.Empty(t, step.Env[flag], "browser tests must not consume the core package timeout")
@@ -149,10 +147,7 @@ func TestBrowserIntegrationHasSeparateBudgetWithoutExtendingCoreTests(t *testing
 	for _, step := range browser.Steps {
 		if strings.Contains(step.Run, "mise -C web run test:go:browser") {
 			found = true
-			require.Contains(t, step.Run, "mise -C web which node")
-			require.Contains(t, step.Run, `-- --shard "$SHARD"`)
-			require.Contains(t, step.Run, `if [ -f web/scripts/browser-go-tests.ts ]; then`)
-			require.Contains(t, step.Run, `elif [ "$SHARD" = 1/3 ]; then`, "older source refs must run the full suite exactly once")
+			require.Equal(t, `mise -C web run test:go:browser -- --shard "$SHARD"`, step.Run, "every shard must invoke its task directly")
 		}
 		require.NotContains(t, step.Run, "scripts/native-go-tests.ts", "shards must not repeat the full core suite")
 	}
@@ -189,10 +184,10 @@ func TestNanoServerBuildPreparesPinnedFrontendBeforeNativeBinary(t *testing.T) {
 		}
 	}
 	joined := strings.Join(commands, "\n")
-	for _, command := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run build:web", "mise run build:go:binary"} {
+	for _, command := range []string{"mise -C web run install:web", "mise -C web run build:web", "mise run build:go:binary"} {
 		require.Contains(t, joined, command)
 	}
-	require.Less(t, strings.Index(joined, "mise -C web install"), strings.Index(joined, "mise -C web run install:web"))
+	require.NotContains(t, joined, "mise -C web install", "task tools own provisioning")
 	require.Less(t, strings.Index(joined, "mise -C web run install:web"), strings.Index(joined, "mise -C web run build:web"))
 	require.Less(t, strings.Index(joined, "mise -C web run build:web"), strings.Index(joined, "mise run build:go:binary"))
 }

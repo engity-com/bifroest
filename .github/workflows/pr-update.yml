@@ -33,6 +33,10 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with:
+          version: 2026.10.17
+          cache_save_post: true
+          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -41,4 +45,4 @@ jobs:
 
       - name: Execute
         id: refs
-        run: mise run ci:inspect-pr-action "${{github.event.action}}" "${{github.event.number}}" "${{github.event.label.name}}"
+        run: mise run ci:inspect-pr-action -- "${{github.event.action}}" "${{github.event.number}}" "${{github.event.label.name}}"

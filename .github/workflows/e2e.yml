@@ -76,6 +76,10 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: &mise-options
+          version: 2026.10.17
+          cache_save_post: true
+          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -104,7 +108,6 @@ jobs:
       - name: Prepare shared browser E2E
         if: matrix.suite == 'docker'
         run: |
-          mise -C web install
           mise -C web run install:web
           mise -C web run build:web
           mise -C web run install:web:browser
@@ -180,6 +183,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -214,6 +218,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -222,7 +227,6 @@ jobs:
 
       - name: Prepare pinned browser toolchain
         run: |
-          mise -C web install
           mise run install:web
           mise run install:web:browser
 
@@ -250,6 +254,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -294,6 +299,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -305,7 +311,6 @@ jobs:
 
       - name: Prepare actual Kubernetes browser E2E
         run: |
-          mise -C web install
           mise -C web run install:web
           mise -C web run build:web
           mise -C web run install:web:browser

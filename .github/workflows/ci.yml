@@ -60,6 +60,10 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: &mise-options
+          version: 2026.10.17
+          cache_save_post: true
+          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -72,7 +76,7 @@ jobs:
           environment="$RUNNER_TEMP/bifroest-build-environment"
           : > "$environment"
           GITHUB_OUTPUT="$environment" mise run ci:evaluate-environment
-          mise exec node@26.9.0 -- node .github/scripts/group-binary-matrices.ts "$environment" >> "$GITHUB_OUTPUT"
+          mise run ci:group-binary-matrices -- "$environment" >> "$GITHUB_OUTPUT"
 
   biome:
     name: Biome
@@ -87,8 +91,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          install_args: biome
+        with: *mise-options
 
       - name: Check repository formatting and lint
         run: mise run lint:biome
@@ -112,6 +115,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"
@@ -176,6 +180,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Install dependencies
         run: mise run install:docs
