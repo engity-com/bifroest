@@ -58,7 +58,8 @@ const owned = `bifroest-pam-${process.pid}-${Date.now()}`;
 const tag = `localhost/${owned}:test`;
 const required = [
     'TestLocalRepositorySessionResumeRetainsMethodIdentityAndPamBoundaries',
-    'TestLinuxPamRememberMeActualHttpsNativePolicyAndRestart',
+    'TestLinuxPamRememberMeActualHttpsNativePolicy',
+    'TestLinuxPamRememberMeRejectsUnprovenOwnerAfterServiceRestart',
     'TestLinuxPamRememberMeDefaultOptOutRejectsEnrollment',
     'TestLinuxPamSSHRememberMeUsesAccountChecksWithoutRepeatingAuth',
     'TestBrowserLocalPamPasswordRememberMeUiAcrossProfileRestart',

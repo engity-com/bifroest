@@ -336,10 +336,10 @@ func exerciseServerCoreBrowserVariant(t *testing.T, parent context.Context, root
 			timer := time.NewTimer(5 * time.Second)
 			defer timer.Stop()
 			select {
-			case <-done:
+			case _ = <-done: // Cleanup only joins the canceled fixture process.
 			case <-timer.C:
 				_ = command.Process.Kill()
-				<-done
+				_ = <-done // The killed fixture need not exit successfully.
 			}
 		}
 	}()
@@ -421,9 +421,10 @@ func exerciseServerCoreBrowserVariant(t *testing.T, parent context.Context, root
 }
 
 type nativeExecutionExpectation struct {
-	task audit.SessionTask
-	pty  bool
-	exit *uint32
+	task    audit.SessionTask
+	pty     bool
+	exit    *uint32
+	session string
 }
 
 func nativeExit(value uint32) *uint32 { return &value }
@@ -435,6 +436,7 @@ func verifyNativeWindowsEvidence(t *testing.T, dir string, fixture browserfixtur
 	files, err := os.ReadDir(filepath.Join(dir, "recordings", "sealed"))
 	require.NoError(t, err)
 	operations := map[string]string{}
+	sessions := map[string]bool{}
 	for _, file := range files {
 		if !strings.HasSuffix(file.Name(), ".bcast") {
 			continue
@@ -452,7 +454,12 @@ func verifyNativeWindowsEvidence(t *testing.T, dir string, fixture browserfixtur
 		require.Empty(t, operations[connection])
 		operations[connection] = uuidtext.Format(verified.Metadata.OperationId)
 		require.True(t, verified.Trusted)
-		require.Equal(t, id, verified.Metadata.SessionId.String())
+		expectedSession := expect.session
+		if expectedSession == "" {
+			expectedSession = id
+		}
+		sessions[expectedSession] = true
+		require.Equal(t, expectedSession, verified.Metadata.SessionId.String())
 		require.Equal(t, browserfixture.Flow, verified.Metadata.Flow.String())
 		require.Equal(t, expect.task, verified.Metadata.Task)
 		require.Equal(t, expect.pty, verified.Metadata.Pty)
@@ -474,7 +481,11 @@ func verifyNativeWindowsEvidence(t *testing.T, dir string, fixture browserfixtur
 		}
 		expect, found := wanted[event.ConnectionId]
 		require.True(t, found, "no extra executions")
-		require.Equal(t, id, event.SessionId)
+		expectedSession := expect.session
+		if expectedSession == "" {
+			expectedSession = id
+		}
+		require.Equal(t, expectedSession, event.SessionId)
 		require.Equal(t, browserfixture.Flow, event.Flow)
 		require.Equal(t, operations[event.ConnectionId], event.OperationId)
 		require.Equal(t, expect.task, event.SessionTask)
@@ -501,23 +512,29 @@ func verifyNativeWindowsEvidence(t *testing.T, dir string, fixture browserfixtur
 	conf := &configuration.SessionFs{}
 	require.NoError(t, conf.SetDefaults())
 	conf.Storage = filepath.Join(dir, "sessions")
+	// Docker cp cannot preserve container-local ownership/DACLs on the host.
+	// Re-materialize only these owned evidence copies with identical bytes and
+	// host-private ACLs before invoking the production secure metadata reader.
+	require.NoError(t, protectCopiedSessionOwnership(conf.Storage))
 	repository, err := session.NewFsRepository(t.Context(), conf)
 	require.NoError(t, err)
 	defer repository.Close()
-	var storedID session.Id
-	require.NoError(t, storedID.Set(id))
-	stored, err := repository.FindBy(t.Context(), browserfixture.Flow, storedID, nil)
-	require.NoError(t, err)
-	info, err := stored.Info(t.Context())
-	require.NoError(t, err)
-	require.NotEqual(t, session.StateDisposed, info.State())
-	association, err := session.AssociationOf(t.Context(), stored)
-	require.NoError(t, err)
-	require.NotNil(t, association)
-	require.Equal(t, "local", association.Issuer)
-	require.Equal(t, fixture.SID, association.Subject)
+	for id := range sessions {
+		var storedID session.Id
+		require.NoError(t, storedID.Set(id))
+		stored, err := repository.FindBy(t.Context(), browserfixture.Flow, storedID, nil)
+		require.NoError(t, err)
+		info, err := stored.Info(t.Context())
+		require.NoError(t, err)
+		require.NotEqual(t, session.StateDisposed, info.State())
+		association, err := session.AssociationOf(t.Context(), stored)
+		require.NoError(t, err)
+		require.NotNil(t, association)
+		require.Equal(t, "local", association.Issuer)
+		require.Equal(t, fixture.SID, association.Subject)
+	}
 	count := 0
 	require.NoError(t, repository.FindAll(t.Context(), func(context.Context, session.Session) (bool, error) { count++; return true, nil }, nil))
-	require.Equal(t, 1, count, "SSH/key-WASM/reloads must retain exactly one associated native session")
+	require.Equal(t, len(sessions), count, "every native session must be accounted for without importing old ownership")
 	t.Logf("native Windows browser: SID=%s session=%s eight fresh connections, five real ConPTY shells plus native SSH PTY, exact exits7/0, close/reload/logout isolation and signed audit/recordings", fixture.SID, id)
 }

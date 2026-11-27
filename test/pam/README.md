@@ -18,12 +18,17 @@ changes host PAM, creates host users or grants host privileges.
 Actual `pam_unix` authentication/account checks and `pam_access` enforce policy.
 The test-only C module has only an account entry point: it checks `PAM_RHOST` and
 loads a fresh synthetic environment value, never a password. An auth-stack counter
-proves that enrollment/resumption, including after service restart, do not call
+proves that enrollment/resumption in the running service do not call
 `pam_authenticate`. Tests cover explicit server opt-out, real TLS/HTTP2 proof
 requests, fresh environment, policy changes after challenge issuance, native
 password lock, retained binding state and actual Chromium password/interactive
-RememberMe across profile restart. They use the shared service execution fixture;
-they do not claim native local shell/ConPTY or container-workload coverage.
+RememberMe across browser profile restart. A separate service-restart test keeps
+all owner-relevant definitions unchanged and verifies that unproven native
+ownership denies old access and RememberMe without changing stored ownership or
+browser bindings. Fresh primary authentication must create a new owned session.
+This follows the [runtime restart boundary](../../docs/setup/upgrade.md#subsequent-restarts-and-runtime-metadata).
+The tests use the shared service execution fixture; they do not claim native local
+shell/ConPTY or container-workload coverage.
 
 `var/e2e/pam-browser.json` is required to contain successful, non-skipped results
 for every native test. Ordinary unit-test runs skip these container-only tests.

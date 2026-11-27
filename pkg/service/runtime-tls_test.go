@@ -12,7 +12,6 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
-	bnet "github.com/engity-com/bifroest/pkg/net"
 )
 
 func TestRuntimeTLSReloadKeepsSharedManagerBindingsAndMetrics(t *testing.T) {
@@ -68,13 +67,14 @@ func TestRuntimeTLSChallengeOnlyAddressReloadDoesNotServeApplicationTLS(t *testi
 	svc := prepareHTTPListenerTestService(t, conf)
 	run := runtimeListenerTestStart(t, svc, nil)
 	original, _ := run.scope(t, "TLS challenge", conf.Http.Addresses[0].String(), 0)
+	address := runtimeListenerTestLoopbackAddress(t)
 	next := runtimeSshCandidate(t, svc, func(conf *configuration.Configuration) {
-		conf.Http.Addresses = append(conf.Http.Addresses, bnet.MustNewAddress("127.0.0.2:0"))
+		conf.Http.Addresses = append(conf.Http.Addresses, address)
 	})
 	runtimeListenerTestActivate(t, svc, next)
 	kept, _ := run.scope(t, "TLS challenge", conf.Http.Addresses[0].String(), 0)
 	require.Same(t, original, kept)
-	_, added := run.scope(t, "TLS challenge", "127.0.0.2:0", 0)
+	_, added := run.scope(t, "TLS challenge", address.String(), 0)
 	require.Nil(t, svc.https)
 	require.Nil(t, next.https)
 	probe := &tls.Dialer{NetDialer: &net.Dialer{Timeout: time.Second}, Config: &tls.Config{

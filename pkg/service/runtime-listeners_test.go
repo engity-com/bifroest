@@ -101,6 +101,15 @@ func runtimeListenerTestActivate(t *testing.T, svc, candidate *service) *runtime
 	return result
 }
 
+func runtimeListenerTestLoopbackAddress(t *testing.T) bnet.Address {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := bnet.MustNewAddress(listener.Addr().String())
+	require.NoError(t, listener.Close())
+	return address
+}
+
 func TestRuntimeListenersKeepUnchangedScopesAndDetachWithoutClosingSsh(t *testing.T) {
 	svc := runtimeResourcesFixture(t)
 	run := runtimeListenerTestStart(t, svc, nil)
@@ -389,15 +398,16 @@ func TestRuntimeListenerHttpsRemovalKeepsOldHttpConnectionAndSsh(t *testing.T) {
 	body := `{"slug":"Work","user":"alice","password":"correct"}`
 	code, data, initial, _ := runtimeHttpRequest(t, client, "login/password", body, "")
 	runtimeHttpToken(t, code, data)
+	address := runtimeListenerTestLoopbackAddress(t)
 	added := runtimeSshCandidate(t, svc, func(conf *configuration.Configuration) {
-		conf.Http.Addresses = append(conf.Http.Addresses, bnet.MustNewAddress("127.0.0.2:0"))
+		conf.Http.Addresses = append(conf.Http.Addresses, address)
 	})
 	runtimeListenerTestActivate(t, svc, added)
 	svc.resources.mutex.Lock()
 	inputs := svc.resources.listeners
 	svc.resources.mutex.Unlock()
 	inputs.mutex.Lock()
-	scope := inputs.scopes[runtimeListenerKey{"HTTPS", "127.0.0.2:0", 0}]
+	scope := inputs.scopes[runtimeListenerKey{"HTTPS", address.String(), 0}]
 	inputs.mutex.Unlock()
 	require.NotNil(t, scope)
 	// Removing the original address must not Close the shared HTTP server.
@@ -415,7 +425,7 @@ func TestRuntimeListenerHttpsRemovalKeepsOldHttpConnectionAndSsh(t *testing.T) {
 	enabled := runtimeSshCandidate(t, disabled, func(conf *configuration.Configuration) { conf.Http.Enabled = configuration.HttpEnabled })
 	runtimeListenerTestActivate(t, svc, enabled)
 	inputs.mutex.Lock()
-	reopened := inputs.scopes[runtimeListenerKey{"HTTPS", "127.0.0.2:0", 0}].physical
+	reopened := inputs.scopes[runtimeListenerKey{"HTTPS", address.String(), 0}].physical
 	inputs.mutex.Unlock()
 	transport := f.transport.Clone()
 	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -453,10 +463,19 @@ func TestRuntimeListenerSafetySettingsStillRequireCompleteRestart(t *testing.T) 
 }
 
 func TestRuntimeListenerAddressReorderingDoesNotRebind(t *testing.T) {
+	second, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	address := bnet.MustNewAddress(second.Addr().String())
 	svc := runtimeResourcesFixture(t, func(conf *configuration.Configuration) {
-		conf.Ssh.Addresses = append(conf.Ssh.Addresses, bnet.MustNewAddress("127.0.0.2:0"))
+		conf.Ssh.Addresses = append(conf.Ssh.Addresses, address)
 	})
-	run := runtimeListenerTestStart(t, svc, nil)
+	run := runtimeListenerTestStart(t, svc, func(requested bnet.Address) (net.Listener, error) {
+		if requested.IsEqualTo(address) {
+			return second, nil
+		}
+		return requested.Listen()
+	})
 	before := append(bnet.NetAddresses(nil), svc.Configuration.Ssh.Addresses...)
 	scope, physical := run.scope(t, "SSH", before[0].String(), 0)
 	next := runtimeSshCandidate(t, svc, func(conf *configuration.Configuration) {
