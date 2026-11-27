@@ -242,6 +242,10 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, im
 	t.Logf("ConPTY library=%s systemReleaseAvailable=%t runtimeOS=%d.%d.%d nativeConsoleWrite=%t rawFileWrite=%t nonzeroFirst=%t explicitZeroArg=%t nanoMarker=%t (child exit 2 means unexpected geometry)", conpty.Version, windows.NewLazySystemDLL("kernel32.dll").NewProc("ReleasePseudoConsole").Find() == nil, version.MajorVersion, version.MinorVersion, version.BuildNumber, os.Getenv("BIFROEST_CONPTY_TEST_NATIVE_CONSOLE_WRITE") == "1", os.Getenv("BIFROEST_CONPTY_TEST_RAW_FILE_WRITE") == "1", os.Getenv("BIFROEST_CONPTY_TEST_NONZERO_FIRST") == "1", os.Getenv("BIFROEST_CONPTY_TEST_EXPLICIT_ZERO_ARG") == "1", os.Getenv("BIFROEST_TEST_NANOSERVER_IN_CONTAINER") == "1")
 	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$")
 	cmd.Env = append(os.Environ(), "BIFROEST_CONPTY_RELAY_TEST_CHILD=1", "BIFROEST_CONPTY_TEST_EXIT="+strconv.Itoa(status))
+	clientProgress := newLocalConPTYClientProgress(t)
+	if clientProgress != nil {
+		cmd.Env = append(cmd.Env, localConPTYClientProgressEnv+"="+clientProgress.prefix)
+	}
 	ready := make(chan string, 1)
 	stdout := &localConPTYTestOutput{}
 	if !immediateExit {
@@ -263,6 +267,10 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, im
 	var timeoutElapsed time.Duration
 	defer func() {
 		if !waited {
+			if clientProgress != nil {
+				t.Logf("ConPTY client observation before cleanup (non-atomic, zero-wait): phases=%s processes=%s",
+					clientProgress.snapshot(), localConPTYTestProcessSnapshot(uint32(cmd.Process.Pid)))
+			}
 			killErr := cmd.Process.Kill()
 			waitErr := <-result
 			if timeoutPhase != "" {
@@ -318,6 +326,10 @@ func testLocalConPTYRelayRoundTrip(t *testing.T, testName string, status int, im
 	require.Contains(t, strings.ToUpper(stdout.String()), strings.ToUpper(self.User.Sid.String()))
 	require.Contains(t, stdout.String(), "native-console=80x25")
 	require.Contains(t, stdout.String(), "native-console-child write-success=true ")
+	if clientProgress != nil {
+		t.Logf("ConPTY client observation after joined process exit: %s", clientProgress.snapshot())
+		require.Contains(t, clientProgress.snapshot(), "client.exit", "the independent observation channel must work on successful runs")
+	}
 	if !immediateExit {
 		require.Contains(t, stdout.String(), localConPTYTestFinished, "the unacknowledged final output must survive immediate child exit")
 	}

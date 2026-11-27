@@ -141,12 +141,14 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 	}
 	observation.observePhase("relay.console.returned")
 	releaseCreationHandles := func() {
+		observation.observePhase("relay.creation-handles.close.begin")
 		for _, handle := range []*windows.Handle{&inputRead, &outputWrite} {
 			if *handle != 0 {
 				_ = windows.CloseHandle(*handle)
 				*handle = 0
 			}
 		}
+		observation.observePhase("relay.creation-handles.close.returned")
 	}
 	in := os.NewFile(uintptr(inputWrite), "conpty-input")
 	inputWrite = 0
@@ -260,8 +262,12 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 	}
 	outputReader.rootProcess.Store(uintptr(proc.Process))
 	observation.observePhase("relay.resume.begin")
-	if _, err := windows.ResumeThread(proc.Thread); err != nil {
+	if previous, err := windows.ResumeThread(proc.Thread); err != nil {
 		return -1, fmt.Errorf("resume shell: %w", err)
+	} else if previous > 1 {
+		observation.observePhase("relay.resume.multiple-suspensions")
+	} else if previous == 0 {
+		observation.observePhase("relay.resume.was-not-suspended")
 	}
 	observation.observePhase("relay.resume.returned")
 	// Keep the creation-side handles until the console client has been started.
@@ -269,6 +275,7 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 
 	inputDone := make(chan error, 1)
 	go func() {
+		observation.observePhase("relay.input.begin")
 		var header [5]byte
 		var data [32768]byte
 		for {
@@ -331,6 +338,7 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 
 	processDone := make(chan error, 1)
 	go func() {
+		observation.observePhase("relay.process.wait.begin")
 		status, err := windows.WaitForSingleObject(proc.Process, windows.INFINITE)
 		if err == nil && status != windows.WAIT_OBJECT_0 {
 			err = fmt.Errorf("unexpected shell wait result %d", status)

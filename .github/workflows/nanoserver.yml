@@ -53,6 +53,7 @@ jobs:
       BIFROEST_TEST_NANOSERVER: "1"
       BIFROEST_TEST_NANOSERVER_ISOLATION: process
       BIFROEST_TEST_NANOSERVER_VERSION: ${{ matrix.windows }}
+      BIFROEST_TEST_CONPTY_CLIENT_PROGRESS: "1"
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
