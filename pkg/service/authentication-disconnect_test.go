@@ -26,7 +26,7 @@ func TestExpectedSshHandshakeEndDoesNotHideAuthenticationErrors(t *testing.T) {
 func TestClientDisconnectDuringAuthenticationIsLoggedAsDebug(t *testing.T) {
 	provider := logrecording.NewProvider()
 	provider.SetLevel(level.Debug)
-	defer provider.HookGlobally()()
+	t.Cleanup(provider.HookGlobally())
 
 	tests := []struct {
 		name       string
@@ -126,7 +126,7 @@ func TestAuthenticationSystemFailureRemainsError(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			provider := logrecording.NewProvider()
 			provider.SetLevel(level.Debug)
-			defer provider.HookGlobally()()
+			t.Cleanup(provider.HookGlobally())
 
 			server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{})
 			authorizer := &sdkMigrationAuthorizer{CloseableAuthorizer: server.service.authorizer}

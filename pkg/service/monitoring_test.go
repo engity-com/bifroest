@@ -31,6 +31,8 @@ import (
 
 func monitoringTestConfiguration(t *testing.T) configuration.Configuration {
 	t.Helper()
+	hookServiceTestLog(t)
+
 	var conf configuration.Configuration
 	require.NoError(t, conf.LoadFromYaml(strings.NewReader(`monitoring:
   enabled: true
@@ -211,7 +213,7 @@ func TestMonitoringReadinessFollowsJointListenerLifecycle(t *testing.T) {
 func TestMonitoringCapturesSuppressedCleanupFailure(t *testing.T) {
 	monitor, err := newServiceMonitoring(monitoringTestConfiguration(t))
 	require.NoError(t, err)
-	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: fmt.Errorf("permanent failure")})
+	hk := newHouseKeeperForTest(t, &houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: fmt.Errorf("permanent failure")})
 	hk.service.monitoring = monitor
 	sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), state: session.StateDisposed, validUntil: time.Now().Add(time.Hour)}
 	hk.service.flowAuditRecorders[sess.flow] = &recordingAuditRecorder{}

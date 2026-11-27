@@ -34,6 +34,8 @@ func enableMonitoringTest(conf *configuration.Configuration) {
 
 func prepareMonitoringTestService(t *testing.T, definition *Service) (*service, error) {
 	t.Helper()
+	hookServiceTestLog(t)
+
 	m, err := newServiceMonitoring(definition.Configuration)
 	if err != nil {
 		return nil, err

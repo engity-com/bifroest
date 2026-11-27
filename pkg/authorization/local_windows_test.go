@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -72,6 +73,8 @@ func TestWindowsLocalSessionMatchesAccountSID(t *testing.T) {
 }
 
 func TestWindowsLocalRestoreInvalidToken(t *testing.T) {
+	testlog.Hook(t)
+
 	authorizer := &LocalAuthorizer{flow: configuration.FlowName("flow")}
 	for _, token := range []string{`not-json`, `{"user":{"name":"alice"}}`, `{"user":{"name":"alice","sid":"invalid"}}`} {
 		sess := &authorizationRestoreTestSession{flow: "flow", token: []byte(token)}

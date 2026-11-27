@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
@@ -156,6 +157,8 @@ func TestBuildPlatformsAreSorted(t *testing.T) {
 
 func testReleaseManifestBuild(t *testing.T) (*build, *buildContext) {
 	t.Helper()
+	testlog.Hook(t)
+
 	base := &base{}
 	repository := newRepo(base)
 	repository.owner = owner("owner")

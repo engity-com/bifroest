@@ -86,6 +86,8 @@ func (this associationAdapterContext) GetField(name string) (any, bool, error) {
 
 func newAssociatedService(t *testing.T) (*service, *configuration.SessionFs) {
 	t.Helper()
+	hookServiceTestLog(t)
+
 	conf := &configuration.SessionFs{}
 	require.NoError(t, conf.SetDefaults())
 	conf.Storage = t.TempDir()

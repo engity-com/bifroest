@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
@@ -21,6 +22,8 @@ import (
 
 func nativeRecorderTestConfig(t *testing.T, encrypted bool) (configuration.Auditlog, *Identity) {
 	t.Helper()
+	testlog.Hook(t)
+
 	id := nativeTestIdentity(t)
 	conf := auditIdentityTestConfiguration(filepath.Join(t.TempDir(), "audit"))
 	if encrypted {

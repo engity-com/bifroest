@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -263,6 +264,8 @@ func TestLocalUnixFindBySessionLegacyTokenDoesNotDeleteUser(t *testing.T) {
 }
 
 func TestLocalUnixSkipsUnverifiableAccountProcessCleanup(t *testing.T) {
+	testlog.Hook(t)
+
 	uid := user.Id(2_000_000_000)
 	for _, test := range []struct {
 		name    string
@@ -307,6 +310,8 @@ func TestLocalUnixSkipsUnverifiableAccountProcessCleanup(t *testing.T) {
 }
 
 func TestLocalUnixRetriesHomeCleanupAfterAccountDeletion(t *testing.T) {
+	testlog.Hook(t)
+
 	ctx := context.Background()
 	uid := user.Id(2_000_000_000)
 	token := localToken{Version: 2, User: localTokenUser{
@@ -341,6 +346,8 @@ func TestLocalUnixRetriesHomeCleanupAfterAccountDeletion(t *testing.T) {
 }
 
 func TestLocalUnixSkipsIdentityChangedAfterTokenRestore(t *testing.T) {
+	testlog.Hook(t)
+
 	ctx := context.Background()
 	uid := user.Id(2_000_000_000)
 	token := localToken{Version: 2, User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true, KillProcessesOnDispose: true}}
@@ -364,6 +371,8 @@ func TestLocalUnixSkipsIdentityChangedAfterTokenRestore(t *testing.T) {
 }
 
 func TestLocalUnixChangedIdentityDefersPendingDeletion(t *testing.T) {
+	testlog.Hook(t)
+
 	ctx := context.Background()
 	uid := user.Id(2_000_000_000)
 	token := localToken{Version: 2, User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true}}
