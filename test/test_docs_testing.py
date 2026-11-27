@@ -96,13 +96,21 @@ class TestingDocumentationTest(TestCase):
         self.assertIn('luacheck --config .luacheckrc --no-default-config pkg/test', config)
         self.assertIn('stylua --config-path .stylua.toml --check pkg/test', config)
         workflow = yaml.load((ROOT / '.github/workflows/build.yml').read_text(), Loader=yaml.BaseLoader)
-        job = workflow['jobs']['lint-lua']
-        self.assertEqual(job['permissions'], {'contents': 'read'})
-        self.assertTrue(any(step.get('run') == 'mise run lint:lua' for step in job['steps']))
-        for step in job['steps']:
-            if 'uses' in step:
-                self.assertRegex(step['uses'], r'@[a-f0-9]{40}$')
-            self.assertNotEqual(step.get('continue-on-error'), 'true')
+        self.assertNotIn('lint-lua', workflow['jobs'])
+        for name, expected_checks in [('lint-go-host', 1), ('lint-go-container', 0)]:
+            job = workflow['jobs'][name]
+            self.assertEqual(job['name'], 'Lint ${{ matrix.os }}')
+            self.assertEqual(job['permissions'], {'contents': 'read'})
+            self.assertEqual(job['strategy']['fail-fast'], 'false')
+            lua_steps = [step for step in job['steps'] if step.get('run') == 'mise run lint:lua']
+            self.assertEqual(len(lua_steps), expected_checks)
+            for step in lua_steps:
+                self.assertEqual(step.get('if'), "runner.os == 'Windows'")
+            for step in job['steps']:
+                if 'uses' in step and not step['uses'].startswith('./'):
+                    self.assertRegex(step['uses'], r'@[a-f0-9]{40}$')
+                self.assertNotEqual(step.get('continue-on-error'), 'true')
+                self.assertNotRegex(step.get('run', ''), r'\b(sudo|apt-get|luarocks)\b')
 
     def test_lua_reference_uses_existing_typed_property_style(self):
         config = yaml.load((ROOT / 'mkdocs.yml').read_text(), Loader=yaml.BaseLoader)

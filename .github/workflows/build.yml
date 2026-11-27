@@ -339,7 +339,7 @@ jobs:
           if-no-files-found: warn
 
   lint-go-host:
-    name: Go lint ${{ matrix.os }}
+    name: Lint ${{ matrix.os }}
     if: inputs.lint_go
     permissions:
       contents: read
@@ -371,38 +371,16 @@ jobs:
 
       - *install-go-dependencies
 
+      # Luacheck has no macOS binary; its Linux binary needs newer glibc than Debian 12.
+      - name: Lint Lua
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ""
+          MISE_GITHUB_TOKEN: ""
+        run: mise run lint:lua
+
       - name: Lint Go
         run: mise run lint:go
-
-  lint-lua:
-    name: Lua source lint and format
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    timeout-minutes: 10
-    env:
-      GITHUB_TOKEN: ""
-      GH_TOKEN: ""
-      MISE_GITHUB_TOKEN: ""
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          ref: ${{ inputs.commit || inputs.ref }}
-
-      - name: Install MISE
-        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with: *mise-options
-
-      - name: Install Luacheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y luarocks
-          sudo luarocks install luacheck 1.2.0-1
-
-      - name: Check Lua source and formatting without writing
-        run: mise run lint:lua
 
   test-policy:
     name: Offline policy CLI ${{ matrix.os }}
@@ -632,7 +610,7 @@ jobs:
           if-no-files-found: warn
 
   lint-go-container:
-    name: Go lint ${{ matrix.os }}
+    name: Lint ${{ matrix.os }}
     if: inputs.lint_go
     permissions:
       contents: read
@@ -901,7 +879,7 @@ jobs:
       GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
       GITHUB_SHA: ${{ inputs.commit || github.sha }}
     steps:
-      - name: Require successful tests, race, binaries and enabled Go lint
+      - name: Require successful tests, race, binaries and enabled lint
         shell: bash
         env:
           TEST_HOST_RESULT: ${{ needs.test-host.result }}

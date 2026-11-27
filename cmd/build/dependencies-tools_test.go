@@ -189,8 +189,8 @@ func TestToolUpdatesWithNativeMiseWithoutInstallingTools(t *testing.T) {
 		t.Setenv(name, "must-not-affect-the-isolated-check")
 	}
 	files := testToolFiles()
-	files[dependencyToolsPath] = append(files[dependencyToolsPath], []byte("tool_version_go: \"1.27.4\"\ntool_version_docker_cli: \"29.7.2\"\n")...)
-	files[dependencyMisePath] = []byte("[tool_alias]\ngo_licenses = \"go:github.com/google/go-licenses/v2\"\ndocker_cli = \"docker-cli\"\n")
+	files[dependencyToolsPath] = append(files[dependencyToolsPath], []byte("tool_version_go: \"1.27.4\"\ntool_version_docker_cli: \"29.7.2\"\ntool_version_luacheck: \"1.2.0\"\n")...)
+	files[dependencyMisePath] = []byte("[tool_alias]\ngo_licenses = \"go:github.com/google/go-licenses/v2\"\ndocker_cli = \"docker-cli\"\nluacheck = \"github:lunarmodules/luacheck\"\n")
 	dependencies := &dependencies{miseCommand: func(ctx context.Context, directory string, args ...string) ([]byte, error) {
 		raw, err := runDependencyMise(ctx, directory, args...)
 		_, statErr := gos.Stat(filepath.Join(directory, "data", "installs"))
@@ -199,5 +199,5 @@ func TestToolUpdatesWithNativeMiseWithoutInstallingTools(t *testing.T) {
 	}}
 	checks, err := dependencies.applyToolUpdates(t.Context(), files)
 	require.NoError(t, err)
-	require.Len(t, checks, 5, "include unchanged tools and aliased backends")
+	require.Len(t, checks, 6, "include unchanged tools and aliased Go, Aqua and GitHub backends")
 }
