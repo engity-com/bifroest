@@ -21,14 +21,14 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/google/uuid"
 
+	"github.com/engity-com/bifroest"
 	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/pkg/common"
 )
 
-const (
-	syftConfigurationFile = ".syft.yaml"
-	syftVersion           = "1.51.1"
-)
+const syftConfigurationFile = ".syft.yaml"
+
+var syftVersion = bifroest.ToolVersion("syft")
 
 func newBuildSbom(b *build) *buildSbom {
 	return &buildSbom{build: b}

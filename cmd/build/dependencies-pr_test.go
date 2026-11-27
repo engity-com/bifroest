@@ -423,6 +423,11 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 		require.NoError(t, err)
 		files[filename] = string(raw)
 	}
+	for _, companion := range dependencyToolCompanions {
+		raw, err := gos.ReadFile(filepath.Join("..", "..", companion.path))
+		require.NoError(t, err)
+		files[companion.path] = string(raw)
+	}
 	writes := 0
 	var serverURL string
 	client := newDependencyTestGitHubClient(t, func(response http.ResponseWriter, request *http.Request) {

@@ -267,8 +267,8 @@ func TestS3RemoteTargetCloseWaitsForPublish(t *testing.T) {
 	closed := make(chan error, 1)
 	go func() { closed <- target.Close() }()
 	select {
-	case <-closed:
-		t.Fatal("Close returned while Publish was active")
+	case err := <-closed:
+		t.Fatalf("Close returned while Publish was active: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}
 	close(release)

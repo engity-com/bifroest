@@ -22,6 +22,7 @@ import (
 
 	log "github.com/echocat/slf4g"
 
+	"github.com/engity-com/bifroest"
 	bib "github.com/engity-com/bifroest/internal/build"
 	bbin "github.com/engity-com/bifroest/internal/build/binary"
 	"github.com/engity-com/bifroest/internal/build/browser"
@@ -31,12 +32,15 @@ import (
 const (
 	thirdPartyNoticesFilename = "THIRD_PARTY_NOTICES.txt"
 	thirdPartyNoticesFormat   = "1"
-	goLicensesVersion         = "v2.0.1"
-	goToolchainVersion        = "go1.27.4"
 	goToolchainLicenseFile    = "BSD-3-Clause-Go-1.27.4.txt"
 	modifiedGoSourcesVersion  = "go1.22.0"
 	goLicensesTemplate        = "cmd/build/third-party-notices.tpl"
 	projectModule             = "github.com/engity-com/bifroest"
+)
+
+var (
+	goLicensesVersion  = "v" + strings.TrimPrefix(bifroest.ToolVersion("go_licenses"), "v")
+	goToolchainVersion = "go" + bifroest.ToolVersion("go")
 )
 
 //go:embed third-party-license-policy.json

@@ -480,8 +480,7 @@ func TestBinaryTargetCLIFailsWhenOneEditionCannotCompile(t *testing.T) {
 	if bib.Goos != sys.OsLinux || bib.Goarch != sys.ArchAmd64 {
 		t.Skip("the fake compiler exercises the Linux amd64 grouped target")
 	}
-	raw, err := gos.ReadFile("../../internal/build/browser/testdata/minimal.json")
-	require.NoError(t, err)
+	raw := testBrowserManifestBytes(t)
 	manifest, err := browser.Decode(raw)
 	require.NoError(t, err)
 	directory := t.TempDir()

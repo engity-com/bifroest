@@ -4,8 +4,11 @@ import { appendFileSync, copyFileSync, readFileSync, statSync, writeFileSync } f
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { browserGoLicenses } from './go-licenses.ts';
+import { toolVersion } from './tool-versions.ts';
 
-const version = 'go1.27.4';
+const version = `go${toolVersion('go')}`;
+// Reviewed runtime content, independent of the compiler version pin. A real
+// upstream runtime/license change still requires review, never a blind bypass.
 const runtimeHash = '0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14';
 
 // Build-only subprocesses. Browser actions never invoke a Go process.
@@ -25,6 +28,12 @@ export function browserGoToolchain(output: URL) {
     const runtime = readFileSync(source);
     if (createHash('sha256').update(runtime).digest('hex') !== runtimeHash) {
         throw new Error('Go WASM runtime version/hash mismatch');
+    }
+    const approvedLicense = readFileSync(
+        join(cwd, 'cmd/build/third-party-licenses/BSD-3-Clause-Go-1.27.4.txt'),
+    );
+    if (!readFileSync(join(go(['env', 'GOROOT']), 'LICENSE')).equals(approvedLicense)) {
+        throw new Error('Go standard library license changed; review the bundled notice');
     }
     copyFileSync(source, new URL('go-wasm-exec.js', output));
     return {

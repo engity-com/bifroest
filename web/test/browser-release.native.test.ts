@@ -188,6 +188,12 @@ for (const entry of ['browser-key', 'browser-transfer', 'browser-evidence']) {
 test('all browser inputs preserve source bytes on CRLF-default build hosts', (t) => {
     const root = fileURLToPath(new URL('../../', import.meta.url));
     const snapshot = captureBrowserInputs(root);
+    assert(
+        snapshot.inputs.some(
+            (input) => input.name === 'cmd/build/third-party-licenses/BSD-3-Clause-Go-1.27.4.txt',
+        ),
+        'the byte-compared Go license must be fingerprinted and survive Windows checkout unchanged',
+    );
     const checkout = mkdtempSync(join(tmpdir(), 'bifroest-browser-checkout-'));
     const windowsCheckout = join(checkout, 'windows');
     t.after(() => rmSync(checkout, { recursive: true, force: true }));

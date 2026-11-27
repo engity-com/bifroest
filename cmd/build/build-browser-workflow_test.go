@@ -106,7 +106,7 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 	require.NoError(t, err)
 	catalog, err := parseDependencyToolCatalog(tools)
 	require.NoError(t, err)
-	require.Equal(t, "26.9.0", catalog.versions["node"].Value)
+	require.Regexp(t, `^[0-9]+\.[0-9]+\.[0-9]+$`, catalog.versions["node"].Value)
 	attributes, err := gos.ReadFile("../../.gitattributes")
 	require.NoError(t, err)
 	for _, rule := range []string{"/.gitattributes text eol=lf", "/go.mod   text eol=lf", "/go.sum   text eol=lf", "/mise.toml text eol=lf", "/web/**   text=auto eol=lf"} {

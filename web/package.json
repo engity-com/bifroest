@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.4.4",
+  "packageManager": "bun@1.4.5",
   "engines": {
     "node": ">=24.14.0"
   },
@@ -14,7 +14,7 @@
     "format": "biome format --write .",
     "lint": "biome lint .",
     "check": "biome check --error-on-warnings . && tsc --noEmit",
-    "test": "node --test test/browser-go-shards.native.test.ts test/component-boundaries.native.test.ts test/frontend-notices.native.test.ts test/public-navigation.native.test.ts test/public-wasm-diagnostics.native.test.ts test/response-capture.native.test.ts test/terminal-rendering.native.test.ts test/terminal-results.native.test.ts && bun run test:workspace && vitest run && node test/restart.ts",
+    "test": "node --test test/tool-versions.native.test.ts test/browser-go-shards.native.test.ts test/component-boundaries.native.test.ts test/frontend-notices.native.test.ts test/public-navigation.native.test.ts test/public-wasm-diagnostics.native.test.ts test/response-capture.native.test.ts test/terminal-rendering.native.test.ts test/terminal-results.native.test.ts && bun run test:workspace && vitest run && node test/restart.ts",
     "test:workspace": "vitest run --config vitest.workspace.config.ts",
     "test:release": "node --test test/browser-release.native.test.ts",
     "test:browser:install": "playwright install chromium --only-shell"

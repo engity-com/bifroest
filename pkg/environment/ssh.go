@@ -519,10 +519,11 @@ func (this *sshEnvironment) runSubsystem(task Task, transport *sshTransport, env
 }
 
 func watchSubsystemInput(conn connection.Connection, ctx context.Context, inputDone <-chan error, grace time.Duration) {
+	// The session result is already final; this watchdog only needs completion.
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	select {
-	case <-inputDone:
+	case _ = <-inputDone:
 		return
 	case <-ctx.Done():
 		return
@@ -532,7 +533,7 @@ func watchSubsystemInput(conn connection.Connection, ctx context.Context, inputD
 		return
 	}
 	select {
-	case <-inputDone:
+	case _ = <-inputDone:
 		return
 	default:
 	}

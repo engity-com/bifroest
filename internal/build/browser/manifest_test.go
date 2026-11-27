@@ -9,12 +9,24 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/engity-com/bifroest"
 	"github.com/stretchr/testify/require"
 )
 
 func fixture(t *testing.T) (*Manifest, []byte) {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/minimal.json")
+	require.NoError(t, err)
+	var fixture Manifest
+	require.NoError(t, json.Unmarshal(raw, &fixture))
+	fixture.Bun, fixture.Node = bifroest.ToolVersion("bun"), bifroest.ToolVersion("node")
+	fixture.Go = "go" + bifroest.ToolVersion("go")
+	for i := range fixture.Components {
+		if fixture.Components[i].Ecosystem == "go-runtime" {
+			fixture.Components[i].Version = bifroest.ToolVersion("go")
+		}
+	}
+	raw, err = json.Marshal(fixture)
 	require.NoError(t, err)
 	m, err := Decode(raw)
 	require.NoError(t, err)
@@ -36,7 +48,7 @@ func TestBrowserBuildManifestBoundsAndExactInventory(t *testing.T) {
 	root["index.html"].Data = []byte{}
 	delete(root, "browser-key-worker.js")
 	require.Error(t, m.VerifyAssets(root))
-	for _, malformed := range [][]byte{append(bytes.Clone(raw), []byte(`{}`)...), bytes.Replace(raw, []byte(`"bun": "1.4.4"`), []byte(`"unknown": true, "bun": "1.4.4"`), 1), bytes.Repeat([]byte("x"), MaximumManifestBytes+1)} {
+	for _, malformed := range [][]byte{append(bytes.Clone(raw), []byte(`{}`)...), bytes.Replace(raw, []byte(`"bun":`), []byte(`"unknown":true,"bun":`), 1), bytes.Repeat([]byte("x"), MaximumManifestBytes+1)} {
 		_, err := Decode(malformed)
 		require.Error(t, err)
 	}
@@ -53,6 +65,8 @@ func TestBrowserManifestRejectsUnsupportedAndAmbiguousComponents(t *testing.T) {
 		func(m *Manifest) { m.Components[0].Artifacts = []string{"outside.wasm"} },
 		func(m *Manifest) { m.Scope = "signed provenance" },
 		func(m *Manifest) { m.Node = "99.0.0" },
+		func(m *Manifest) { m.Bun = "99.0.0" },
+		func(m *Manifest) { m.Go = "go99.0.0" },
 		func(m *Manifest) { m.LocalBundlingPatches = nil },
 	} {
 		m, _ := fixture(t)

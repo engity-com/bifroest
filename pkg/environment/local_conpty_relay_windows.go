@@ -194,7 +194,7 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 			go in.Close()
 			closedDone := closeConsole()
 			if outputDone != nil {
-				<-outputDone
+				_ = <-outputDone // Error-path cleanup; preserve the original failure.
 			}
 			<-closedDone
 		}

@@ -5,6 +5,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import type { FrontendComponent, FrontendComponents } from './frontend-notices.ts';
+import { toolVersion } from './tool-versions.ts';
 
 interface RuntimeComponents {
     schema: string;
@@ -148,7 +149,7 @@ export function writeBrowserRelease(
     const runtime = sha256(readFileSync(join(target, 'go-wasm-exec.js')));
     for (const component of [key, transfer, evidence]) {
         if (
-            component.toolchain !== 'go1.27.4' ||
+            component.toolchain !== `go${toolVersion('go', root)}` ||
             component.runtimeSHA256 !== runtime ||
             component.runtimeSource !== 'MISE-selected GOROOT/lib/wasm/wasm_exec.js'
         ) {
@@ -230,7 +231,7 @@ export function writeBrowserRelease(
     components.push({
         ecosystem: 'go-runtime',
         name: 'Go runtime and standard library',
-        version: '1.27.4',
+        version: toolVersion('go', root),
         license: 'BSD-3-Clause',
         integrity: '',
         licenseTextSource: 'reviewed Go 1.27.4 BSD notice',
@@ -283,6 +284,7 @@ export function captureBrowserInputs(
         'cmd/build/build-tool.go',
         'cmd/build/third-party-license-policy.json',
         'cmd/build/third-party-notices.tpl',
+        'cmd/build/third-party-licenses/BSD-3-Clause-Go-1.27.4.txt',
         'web/package.json',
         'web/bun.lock',
         'web/bunfig.toml',
@@ -340,8 +342,8 @@ export function captureBrowserInputs(
         ).trim() !== '';
     const bun = execFileSync('bun', ['--version'], { cwd: root, encoding: 'utf8' }).trim();
     if (
-        bun !== '1.4.4' ||
-        process.versions.node !== '26.9.0' ||
+        bun !== toolVersion('bun', root) ||
+        process.versions.node !== toolVersion('node', root) ||
         !/^[0-9a-f]{40}$/u.test(revision)
     ) {
         throw new Error('Browser release needs the pinned Bun/Node and source revision');

@@ -121,7 +121,8 @@ func TestHTTPSEndpointForcedShutdownCancelsSlowRequest(t *testing.T) {
 		t.Fatal("request was not canceled")
 	}
 	select {
-	case <-done:
+	case _ = <-done:
+		// Only completion matters here; shutdown may race the HTTP response.
 	case <-time.After(time.Second):
 		t.Fatal("client did not finish")
 	}

@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/engity-com/bifroest"
 )
 
 const Filename = "browser-build.json"
@@ -121,7 +123,7 @@ func Read(root fs.FS, name string) (*Manifest, []byte, error) {
 }
 
 func (m *Manifest) Validate() error {
-	if m == nil || m.Schema != "bifroest-browser-build-v1" || m.Scope != Scope || !revisionPattern.MatchString(m.Revision) || m.Bun != "1.4.4" || m.Node != "26.9.0" || m.Go != "go1.27.4" {
+	if m == nil || m.Schema != "bifroest-browser-build-v1" || m.Scope != Scope || !revisionPattern.MatchString(m.Revision) || m.Bun != bifroest.ToolVersion("bun") || m.Node != bifroest.ToolVersion("node") || m.Go != "go"+bifroest.ToolVersion("go") {
 		return fmt.Errorf("unsupported browser manifest or toolchain")
 	}
 	for _, group := range []struct {
@@ -197,7 +199,7 @@ func (m *Manifest) Validate() error {
 				return fmt.Errorf("invalid browser Go component %q", key)
 			}
 		case "go-runtime":
-			if component.Name != "Go runtime and standard library" || component.Version != "1.27.4" || component.License != "BSD-3-Clause" || component.Integrity != "" {
+			if component.Name != "Go runtime and standard library" || component.Version != bifroest.ToolVersion("go") || component.License != "BSD-3-Clause" || component.Integrity != "" {
 				return fmt.Errorf("invalid browser runtime component")
 			}
 		default:
