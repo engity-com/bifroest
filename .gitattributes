@@ -22,5 +22,6 @@
 /go.sum   text eol=lf
 /mise.toml text eol=lf
 /cmd/build/third-party-notices.tpl text eol=lf
+/cmd/build/third-party-licenses/*.txt text eol=lf
 /web/**   text=auto eol=lf
 /docs/assets/favicon.svg text eol=lf

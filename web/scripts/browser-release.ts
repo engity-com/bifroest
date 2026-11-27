@@ -284,6 +284,7 @@ export function captureBrowserInputs(
         'cmd/build/build-tool.go',
         'cmd/build/third-party-license-policy.json',
         'cmd/build/third-party-notices.tpl',
+        'cmd/build/third-party-licenses/BSD-3-Clause-Go-1.27.4.txt',
         'web/package.json',
         'web/bun.lock',
         'web/bunfig.toml',
