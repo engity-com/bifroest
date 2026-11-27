@@ -42,6 +42,7 @@ func TestConPTYClientProgressProbeKeepsIndependentNativeCasesAndFailures(t *test
 					Windows []string `yaml:"windows"`
 				} `yaml:"matrix"`
 			} `yaml:"strategy"`
+			Env   map[string]string `yaml:"env"`
 			Steps []struct {
 				Run             string
 				If              string
@@ -58,19 +59,27 @@ func TestConPTYClientProgressProbeKeepsIndependentNativeCasesAndFailures(t *test
 	require.Equal(t, []string{"2022", "2025"}, job.Strategy.Matrix.Windows)
 	require.False(t, job.Strategy.FailFast)
 	require.Nil(t, job.ContinueOnError)
+	require.Equal(t, "1", job.Env["BIFROEST_TEST_CONPTY_CLIENT_PROGRESS"])
+	require.Equal(t, "process", job.Env["BIFROEST_TEST_NANOSERVER_ISOLATION"])
+	require.NotContains(t, job.Env, "CGO_ENABLED", "the full comparison keeps the original runner's native toolchain environment")
+	require.NotContains(t, job.Env, "GOFLAGS")
 	probes, uploads := 0, 0
 	for _, step := range job.Steps {
 		require.Nil(t, step.ContinueOnError)
-		if step.Run == "mise run diag:windows:conpty-client" {
+		if step.Run == "mise run test:e2e:nanoserver" {
 			probes++
 			require.Empty(t, step.If)
 		}
 		if step.Uses == "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" {
 			uploads++
 			require.Equal(t, "always()", step.If)
-			require.Equal(t, "error", step.With["if-no-files-found"])
+			require.Equal(t, "conpty-client-fixture-${{ matrix.windows }}", step.With["name"])
 		}
 	}
 	require.Equal(t, 1, probes)
 	require.Equal(t, 1, uploads)
+	raw, err = os.ReadFile("nanoserver_windows_test.go")
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `os.Getenv("BIFROEST_TEST_CONPTY_CLIENT_PROGRESS") == "1"`)
+	require.Contains(t, string(raw), `extra = append(extra, "--env", "BIFROEST_TEST_CONPTY_CLIENT_PROGRESS=1")`)
 }

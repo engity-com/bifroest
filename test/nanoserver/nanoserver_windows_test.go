@@ -137,7 +137,11 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		}
 	})
 	t.Run("nanoserver-dlls-and-conpty", func(t *testing.T) {
-		result := dockerRun(t, nanoImage, []string{"--user", "ContainerUser", "--env", "BIFROEST_TEST_NANOSERVER_IN_CONTAINER=1"},
+		extra := []string{"--user", "ContainerUser", "--env", "BIFROEST_TEST_NANOSERVER_IN_CONTAINER=1"}
+		if os.Getenv("BIFROEST_TEST_CONPTY_CLIENT_PROGRESS") == "1" {
+			extra = append(extra, "--env", "BIFROEST_TEST_CONPTY_CLIENT_PROGRESS=1")
+		}
+		result := dockerRun(t, nanoImage, extra,
 			`C:\smoke\environment.test.exe`, "-test.run="+smokeTests, "-test.v", "-test.timeout=90s")
 		for _, test := range []string{"TestLocalNanoServerDLLExports", "TestLocalConPTYRelayRoundTrip", "TestLocalConPTYOutputReadKeepsEmptyMessagesDistinctFromEOF", "TestLocalConPTYOutputPipeKeepsEmptyWritesAndBinaryOutput"} {
 			if !strings.Contains(result, "--- PASS: "+test+" ") {

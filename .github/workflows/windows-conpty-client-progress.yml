@@ -1,4 +1,4 @@
-name: Windows ConPTY client-start investigation
+name: Windows ConPTY client-start full-fixture investigation
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   probe:
-    name: ConPTY client progress on Nano Server ${{ matrix.windows }}
+    name: Original Windows fixture with client observations ${{ matrix.windows }}
     strategy:
       fail-fast: false
       matrix:
@@ -17,10 +17,10 @@ jobs:
     runs-on: windows-${{ matrix.windows }}
     timeout-minutes: 25
     env:
-      CGO_ENABLED: "0"
-      GOFLAGS: "-p=2"
-      GITHUB_TOKEN: ""
+      BIFROEST_TEST_NANOSERVER: "1"
+      BIFROEST_TEST_NANOSERVER_ISOLATION: process
       BIFROEST_TEST_NANOSERVER_VERSION: ${{ matrix.windows }}
+      BIFROEST_TEST_CONPTY_CLIENT_PROGRESS: "1"
     steps:
       - name: Checkout diagnostic branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -32,13 +32,58 @@ jobs:
         with:
           version: 2026.10.17
           cache_save_post: true
-          cache_key: mise-conpty-client-probe-v1-{{platform}}-{{version}}-${{ hashFiles('mise.tools.yaml') }}
+          cache_key: mise-conpty-client-fixture-v1-{{platform}}-{{version}}-${{ hashFiles('mise.tools.yaml') }}
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
         with:
-          scope: conpty-client-probe
+          scope: nanoserver
           context: ${{ matrix.windows }}
+
+      - name: Record the original native Go environment
+        run: mise run ci:go:env
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if mise run install:go; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            delay=$((attempt * 5))
+            echo "::warning::Go module download failed (attempt ${attempt}/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
+
+      - name: Install frozen browser dependencies
+        run: mise -C web run install:web
+
+      - name: Build browser before Go embedding
+        run: mise -C web run build:web
+
+      - name: Install pinned Chromium for actual native browser test
+        run: mise -C web run install:web:browser
+
+      - name: Set reproducible build time
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MISE_GITHUB_TOKEN: ""
+        run: mise run ci:write-build-epoch
+
+      - name: Build native Windows binary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BIFROEST_VENDOR: Engity GmbH
+          MISE_GITHUB_TOKEN: ""
+        run: mise run build:go:binary -- --os=windows --arch=amd64 --edition=generic
+
+      - name: Test Windows local authorization
+        run: mise run test:go:windows-local
 
       - name: Start Windows Docker daemon
         shell: pwsh
@@ -48,14 +93,17 @@ jobs:
             Start-Service docker
           }
 
-      - name: Run fixed cold-container cases with observations off and on
-        run: mise run diag:windows:conpty-client
+      - name: Run the original complete Windows fixture once
+        env:
+          GITHUB_TOKEN: ""
+          MISE_GITHUB_TOKEN: ""
+        run: mise run test:e2e:nanoserver
 
-      - name: Retain every result including failures
+      - name: Retain complete-fixture browser diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: conpty-client-progress-${{ matrix.windows }}
-          path: var/e2e/conpty-client-probe-*.log
-          if-no-files-found: error
+          name: conpty-client-fixture-${{ matrix.windows }}
+          path: var/e2e/windows-browser-*
+          if-no-files-found: ignore
           retention-days: 7
