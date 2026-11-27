@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -38,7 +39,7 @@ func decodeHttpFields(node *yaml.Node, target any, known map[string]string) erro
 		// Sequence specifications additionally describe their item type. yaml.v3
 		// otherwise silently removes null items from some typed slices.
 		tag, itemTag, _ := strings.Cut(specification, "/")
-		if value.Tag != tag {
+		if !slices.Contains(strings.Split(tag, "|"), value.Tag) {
 			// Never include the rejected scalar: a pasted private key must not
 			// become part of a configuration error or log message.
 			return reportYamlRelatedErr(&value, fmt.Errorf("[%s] must have YAML type %s", name, tag))
@@ -55,4 +56,17 @@ func decodeHttpFields(node *yaml.Node, target any, known map[string]string) erro
 		}
 	}
 	return decodeConfigurationFields(node, target)
+}
+
+// The overridden field must be omitted by value's raw YAML representation.
+func marshalWithYAMLField(value any, name string, field any) (any, error) {
+	var result, encoded yaml.Node
+	if err := result.Encode(value); err != nil {
+		return nil, err
+	}
+	if err := encoded.Encode(field); err != nil {
+		return nil, err
+	}
+	result.Content = append(result.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name}, &encoded)
+	return &result, nil
 }

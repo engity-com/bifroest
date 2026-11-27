@@ -19,7 +19,7 @@ func TestTLSReloadPreservesExistingConnectionAndUpdatesNewHandshakes(t *testing.
 	first := newTlsTestCertificate(t, []string{"app.example.org"}, false, nil)
 	second := newTlsTestCertificate(t, []string{"app.example.org"}, false, nil)
 	conf := newTlsTestConfiguration(t, "app.example.org")
-	conf.Tls.Acme.Enabled = false
+	conf.Tls.Acme = nil
 	conf.Tls.Certificates = []configuration.HttpCertificate{first.configured}
 	endpoint, err := NewEndpoint(conf, EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "alive") })})
 	require.NoError(t, err)

@@ -6,11 +6,7 @@ description: Configure Bifröst's cryptographically verifiable audit log.
 
 Defines audit logs in the root `auditlogs` map, separately from the regular application log. The map key is the logger's name; its value contains the settings below, without a `name` or `enabled` field. A [flow](../flow.md#property-auditlog) selects a logger by name.
 
-A defined, selected logger is active. An omitted, `null` or empty flow `auditlog`
-selects `auditlogs.default` if defined; otherwise no audit logging or recording
-runs for that flow. No default definition is created implicitly, and an explicit
-unknown reference is a configuration error. Session recording remains a separate
-opt-in on the selected logger through `recording.enabled`.
+A defined, selected logger is active. An omitted or empty flow `auditlog` selects `auditlogs.default` if defined; otherwise no audit logging or recording runs for that flow. Set `auditlog: null` to disable both for that flow even when a default exists. No default definition is created implicitly, and an explicit unknown reference is a configuration error. Session recording remains a separate opt-in on the selected logger through `recording.enabled`.
 
 ## Properties
 

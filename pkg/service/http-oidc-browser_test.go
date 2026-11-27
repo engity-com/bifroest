@@ -66,7 +66,7 @@ func browserOidcCode(t *testing.T, isSSH bool, mode string, prefixes ...string) 
 	svc, _, p, _ := oidcCodeFixture(t, func(conf *configuration.Configuration, _ *oidcCodeProvider) {
 		conf.Http.Addresses = bnet.NetAddresses{bnet.MustNewAddress(backend.Addr().String())}
 		if prefix != "" {
-			conf.Http.Tls = configuration.HttpTls{Enabled: new(false)}
+			conf.Http.Tls = nil
 			conf.Http.Upstream = configuration.HttpUpstream{Mode: "reverseProxy", TrustedPeers: configuration.HttpTrustedPeers{"127.0.0.1"}, DefaultPrefix: prefix, DefaultPort: uint16(listener.Addr().(*net.TCPAddr).Port)}
 			if mode == "request-port" {
 				conf.Http.Upstream.DefaultPort = 0

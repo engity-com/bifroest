@@ -107,7 +107,7 @@ jobs:
           if-no-files-found: error
 
   test-static:
-    name: Static Linux core tests
+    name: Static Linux tests
     needs: browser
     runs-on: ubuntu-latest
     permissions:
@@ -145,6 +145,25 @@ jobs:
 
       - name: Test full static Linux core with pinned WebCrypto runtime
         run: mise run test:go:native
+
+      - name: Test Helm rendering and configuration
+        timeout-minutes: 5
+        run: |
+          if [ -f test/helm/tls_test.go ]; then
+            mise run test:tls:helm
+          else
+            echo "Old source ref: no Helm integration fixture."
+          fi
+
+      - name: Test Kubernetes certificate bootstrap and renewal
+        timeout-minutes: 20
+        # Reuse the verified browser assets instead of building them again.
+        run: |
+          if [ -f test/e2e/kubernetes_tls_test.go ]; then
+            mise run --skip-deps test:e2e:kubernetes:tls
+          else
+            echo "Old source ref: no Kubernetes certificate bootstrap fixture."
+          fi
 
       - &summarize-go-tests
         name: Summarize Go tests even after failure

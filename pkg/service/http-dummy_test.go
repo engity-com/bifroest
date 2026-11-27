@@ -12,7 +12,8 @@ import (
 
 func TestServiceDummyCertificateEmitsAnExplicitWarning(t *testing.T) {
 	conf := httpListenerTestConfiguration(t)
-	conf.Http.Tls.Acme.Enabled = false
+	storage := conf.Http.Tls.Acme.Storage
+	conf.Http.Tls.Acme = nil
 	conf.Http.Tls.Dummy = true
 	logger := recording.NewLogger()
 	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}, Logger: logger}).prepare()
@@ -22,7 +23,7 @@ func TestServiceDummyCertificateEmitsAnExplicitWarning(t *testing.T) {
 	warnings := 0
 	for _, event := range logger.GetAll() {
 		message, _ := event.Get(messageKey)
-		if strings.Contains(fmt.Sprint(message), "http.tls.dummy=true") {
+		if strings.Contains(fmt.Sprint(message), "tls.dummy=true") {
 			require.Equal(t, level.Warn, event.GetLevel())
 			require.Contains(t, fmt.Sprint(message), "self-signed")
 			require.Contains(t, fmt.Sprint(message), "testing only")
@@ -33,5 +34,5 @@ func TestServiceDummyCertificateEmitsAnExplicitWarning(t *testing.T) {
 	require.Equal(t, 1, warnings)
 	require.NoError(t, svc.https.Prepare(t.Context()))
 	require.True(t, svc.https.Ready())
-	require.NoDirExists(t, conf.Http.Tls.Acme.Storage)
+	require.NoDirExists(t, storage)
 }

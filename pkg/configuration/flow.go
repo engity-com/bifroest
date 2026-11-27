@@ -30,9 +30,10 @@ type Flow struct {
 	Title string `yaml:"title,omitempty"`
 
 	// Auditlog references the audit log used by this flow.
-	Auditlog         AuditlogName `yaml:"auditlog,omitempty"`
-	auditlogResolved bool
-	resolvedAuditlog AuditlogName
+	Auditlog             AuditlogName `yaml:"auditlog,omitempty"`
+	auditlogResolved     bool
+	resolvedAuditlog     AuditlogName
+	auditlogExplicitNull bool
 
 	Ssh            FlowSsh  `yaml:"ssh,omitempty"`
 	Http           FlowHttp `yaml:"http,omitempty"`
@@ -50,6 +51,7 @@ type Flow struct {
 
 func (this *Flow) SetDefaults() error {
 	this.auditlogResolved, this.resolvedAuditlog = false, ""
+	this.auditlogExplicitNull = false
 	return setDefaults(this,
 		noopSetDefault[Flow]("name"),
 		noopSetDefault[Flow]("title"),
@@ -175,7 +177,13 @@ func (this *Flow) UnmarshalYAML(node *yaml.Node) error {
 			}
 		}
 		type raw Flow
-		return node.Decode((*raw)(target))
+		if err := node.Decode((*raw)(target)); err != nil {
+			return err
+		}
+		target.auditlogExplicitNull = fields["auditlog"].Tag == "!!null"
+		target.Authorization.explicitNull = fields["authorization"].Tag == "!!null"
+		target.Environment.explicitNull = fields["environment"].Tag == "!!null"
+		return nil
 	}(this, node); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
@@ -191,6 +199,9 @@ func (this Flow) MarshalYAML() (any, error) {
 	type raw Flow
 	if this.auditlogResolved && this.Auditlog == this.resolvedAuditlog {
 		this.Auditlog = ""
+	}
+	if this.auditlogExplicitNull && this.Auditlog == "" {
+		return marshalWithYAMLField(raw(this), "auditlog", nil)
 	}
 	return raw(this), nil
 }
@@ -221,6 +232,7 @@ func (this Flow) isEqualTo(other *Flow) bool {
 	}
 	return isEqual(&this.Name, &other.Name) &&
 		this.Title == other.Title &&
+		this.auditlogExplicitNull == other.auditlogExplicitNull &&
 		isEqual(&this.Auditlog, &other.Auditlog) &&
 		configuredAuditlog(this) == configuredAuditlog(*other) &&
 		this.Ssh.IsEqualTo(other.Ssh) && this.Http.IsEqualTo(other.Http) &&

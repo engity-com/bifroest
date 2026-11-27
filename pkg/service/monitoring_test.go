@@ -279,10 +279,8 @@ func TestMonitoringTLSRejectsSSHKeyReuseWithoutBrowserAccess(t *testing.T) {
 	require.NoError(t, conf.Monitoring.SetDefaults())
 	conf.Monitoring.Enabled = true
 	conf.Monitoring.Addresses = bnet.NetAddresses{bnet.MustNewAddress("127.0.0.1:0")}
-	conf.Monitoring.Tls.Enabled = true
-	for _, certificate := range conf.Http.Tls.Certificates {
-		conf.Monitoring.Tls.Certificates = append(conf.Monitoring.Tls.Certificates, configuration.MonitoringCertificate(certificate))
-	}
+	conf.Monitoring.Domains = configuration.ServerNames{"app.example.org"}
+	conf.Monitoring.Tls = &configuration.Tls{Certificates: conf.Http.Tls.Certificates}
 	conf.Http = nil
 	paths, err := conf.Ssh.Keys.HostKeys.Render(noopContext{})
 	require.NoError(t, err)
@@ -293,7 +291,7 @@ func TestMonitoringTLSRejectsSSHKeyReuseWithoutBrowserAccess(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, monitor.endpoint.Close()) })
 	_, err = (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepareContextWithMonitoring(t.Context(), monitor)
-	require.ErrorContains(t, err, "monitoring TLS key separation")
+	require.ErrorContains(t, err, "TLS source \"monitoring\"")
 	require.ErrorContains(t, err, "must be distinct")
 }
 

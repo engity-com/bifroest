@@ -4,7 +4,7 @@ description: Bifröst must carry out some clean-up tasks periodically to ensure 
 
 # Housekeeping
 
-Bifröst periodically removes expired sessions and resources that are no longer needed. Cleanup remains conservative when persisted state cannot be restored safely.
+Bifröst periodically removes expired sessions and resources that are no longer needed, and renews due [ACME certificates](transports/tls/index.md#acme). Cleanup remains conservative when persisted state cannot be restored safely.
 
 ## Cleanup guarantees
 
@@ -32,7 +32,7 @@ Without automatic repair, corrupt entries are preserved and reported individuall
 ## Properties
 
 <<property("every", "Duration", "data-type.md#duration", default="10m")>>
-How often the housekeeping should run.
+Interval between housekeeping runs, including ACME renewal checks after TLS startup.
 
 <<property("initialDelay", "Duration", "data-type.md#duration", default=0)>>
 How long should be waited upon start of the application before the first run. If `0` it is also blocking, even before the first connection will be accepted.

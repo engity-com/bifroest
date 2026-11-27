@@ -23,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/engity-com/bifroest/pkg/https"
+	"github.com/engity-com/bifroest/pkg/transporttls"
 )
 
 type Endpoint struct {
@@ -41,11 +41,18 @@ type Endpoint struct {
 	lifecycle sync.Mutex
 	started   bool
 	closed    bool
+	tls       *transporttls.TLS
+	cancelTLS context.CancelFunc
 }
 
-// New reads explicitly configured files only when monitoring is enabled. No
-// default HTTP mux, global registry, ACME client or host lookup is installed.
-func New(conf *configuration.Monitoring, gatherer prometheus.Gatherer) (*Endpoint, error) {
+type Options struct {
+	// The service installs a shared binding after verifying all key purposes.
+	DeferTLS bool
+}
+
+// New prepares monitoring only when enabled. The service defers TLS to install a
+// shared, purpose-checked binding. No default HTTP mux or global registry is used.
+func New(conf *configuration.Monitoring, gatherer prometheus.Gatherer, options ...Options) (*Endpoint, error) {
 	if !conf.IsEnabled() {
 		return nil, nil
 	}
@@ -108,24 +115,50 @@ func New(conf *configuration.Monitoring, gatherer prometheus.Gatherer) (*Endpoin
 	}
 	result.server = &http.Server{Handler: result, ReadHeaderTimeout: conf.ReadHeaderTimeout.Native(), ReadTimeout: conf.ReadHeaderTimeout.Native(),
 		WriteTimeout: 10 * time.Second, IdleTimeout: conf.IdleTimeout.Native(), MaxHeaderBytes: int(conf.MaxHeaderBytes)}
-	if conf.Tls.Enabled {
-		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
-		for _, entry := range conf.Tls.Certificates {
-			certificate, err := https.LoadCertificate(configuration.HttpCertificate(entry), time.Now())
-			if err != nil {
-				return nil, fmt.Errorf("cannot load monitoring TLS certificate/key: %w", err)
-			}
-			tlsConfig.Certificates = append(tlsConfig.Certificates, *certificate)
+	deferred := len(options) != 0 && options[0].DeferTLS
+	if conf.Tls.IsEnabled() && !deferred {
+		profile, err := conf.Tls.ServerDefinition()
+		if err != nil {
+			return nil, err
 		}
-		result.server.TLSConfig = tlsConfig
+		manager, err := transporttls.NewManaged(transporttls.Config{Profile: profile, Names: conf.Domains,
+			StartupTimeout: configuration.DefaultHttpStartupTimeout.Native()}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load monitoring TLS certificate/key: %w", err)
+		}
+		result.tls = manager
+		binding, err := manager.Bind(conf.Domains, []string{"h2", "http/1.1"}, len(conf.Domains) == 1)
+		if err != nil {
+			_ = manager.Close()
+			return nil, err
+		}
+		if err := manager.Prepare(context.Background()); err != nil {
+			_ = manager.Close()
+			return nil, err
+		}
+		result.server.TLSConfig = binding.Config()
 	}
 	return result, nil
+}
+
+// SetTLSConfig is only valid before Start; ownership stays with the service.
+func (this *Endpoint) SetTLSConfig(config *tls.Config) error {
+	this.lifecycle.Lock()
+	defer this.lifecycle.Unlock()
+	if this.started || this.closed || config == nil {
+		return fmt.Errorf("cannot install monitoring TLS configuration")
+	}
+	this.server.TLSConfig = config
+	return nil
 }
 
 // ValidateKeys checks purpose separation before the TLS listener is published.
 func (this *Endpoint) ValidateKeys(validate func(crypto.PublicKey) error) error {
 	if this == nil || this.server.TLSConfig == nil {
 		return nil
+	}
+	if this.tls != nil {
+		return this.tls.ValidateKeys(validate)
 	}
 	for _, certificate := range this.server.TLSConfig.Certificates {
 		if err := validate(certificate.Leaf.PublicKey); err != nil {
@@ -149,6 +182,9 @@ func (this *Endpoint) Start(onError func(error)) error {
 	if this.started {
 		return nil
 	}
+	if this.addresses.Tls.IsEnabled() && this.server.TLSConfig == nil {
+		return fmt.Errorf("monitoring TLS binding has not been installed")
+	}
 	for _, address := range this.addresses.Addresses {
 		listener, err := address.Listen()
 		if err != nil {
@@ -161,6 +197,12 @@ func (this *Endpoint) Start(onError func(error)) error {
 		this.listeners = append(this.listeners, listener)
 	}
 	this.started = true
+	if this.tls != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		this.cancelTLS = cancel
+		this.wait.Add(1)
+		go func() { defer this.wait.Done(); _ = this.tls.RunFileReload(ctx, onError) }()
+	}
 	for _, listener := range this.listeners {
 		this.wait.Add(1)
 		go func() {
@@ -195,9 +237,15 @@ func (this *Endpoint) Close() error {
 		this.closed = true
 		this.lifecycle.Unlock()
 		this.SetReady(false)
+		if this.cancelTLS != nil {
+			this.cancelTLS()
+		}
+		if this.tls != nil {
+			this.closeErr = errors.Join(this.closeErr, this.tls.Close())
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), this.addresses.GracefulShutdownTimeout.Native())
 		defer cancel()
-		this.closeErr = this.server.Shutdown(ctx)
+		this.closeErr = errors.Join(this.closeErr, this.server.Shutdown(ctx))
 		if this.closeErr != nil {
 			this.closeErr = errors.Join(this.closeErr, this.server.Close())
 		}

@@ -58,7 +58,7 @@ func TestMonitoringManagementCLI(t *testing.T) {
 	confPath := filepath.Join(dir, "bifroest.yaml")
 	monitoringJSONFile(t, confPath, map[string]any{
 		"ssh":          map[string]any{"addresses": []string{address}, "keys": map[string]any{"hostKeys": []string{hostKey}}, "banner": ""},
-		"monitoring":   map[string]any{"enabled": false, "addresses": []string{unusedMonitoring}, "bearerTokenFile": filepath.Join(dir, "missing-token"), "tls": map[string]any{"enabled": true, "certificates": []any{map[string]any{"certificateFile": filepath.Join(dir, "missing.crt"), "privateKeyFile": filepath.Join(dir, "missing.key")}}}},
+		"monitoring":   map[string]any{"enabled": false, "addresses": []string{unusedMonitoring}, "bearerTokenFile": filepath.Join(dir, "missing-token"), "tls": map[string]any{"certificates": []any{map[string]any{"certificateFile": filepath.Join(dir, "missing.crt"), "privateKeyFile": filepath.Join(dir, "missing.key")}}}},
 		"session":      map[string]any{"type": "fs", "storage": filepath.Join(dir, "sessions")},
 		"alternatives": map[string]any{"location": filepath.Join(dir, "alternatives")},
 		"housekeeping": map[string]any{"initialDelay": "1h"},

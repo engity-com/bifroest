@@ -24,7 +24,7 @@ For the configuration and delivery workflow, see the [concept](../concept.md).
 
 ## Routing and probes
 
-* **Prepare the shared endpoint.** Configure [SSH host keys trusted by your clients](../reference/connection/ssh.md#keys). Choose [TLS passthrough](../reference/connection/http/index.md#tls) with certificates on every backend, or [explicit reverse-proxy mode](../reference/connection/http/index.md#upstream) with public TLS at the ingress. For subpaths, configure prefix stripping and forwarded headers. Keep the backend private; in Kubernetes, use an enforced NetworkPolicy allowing only the intended ingress sources.
+* **Prepare the shared endpoint.** Configure [SSH host keys trusted by your clients](../reference/connection/ssh.md#keys). Choose [TLS passthrough](../reference/transports/tls/index.md) with certificates on every backend, or [explicit reverse-proxy mode](../reference/connection/http/index.md#upstream) with public TLS at the ingress. For subpaths, configure prefix stripping and forwarded headers. Keep the backend private; in Kubernetes, use an enforced NetworkPolicy allowing only the intended ingress sources.
 * **Prefer sticky sessions.** Keep [browser requests and SSH-initiated OIDC approvals](../reference/connection/http/index.md#load-balancers-and-instance-routing) on the same instance during normal operation. Configure TCP persistence through [HAProxy stick tables](https://www.haproxy.com/documentation/haproxy-configuration-tutorials/proxying-essentials/custom-rules/stick-tables/) or [NGINX upstream hashing](https://nginx.org/en/docs/stream/ngx_stream_upstream_module.html#hash).
 * **Monitor each instance.** Use [readiness checks](../guides/monitoring.md#configure-kubernetes-probes) to take unavailable backends out of rotation. `/ready` reports new-access readiness, `/status` process liveness; also test an actual login.
 
@@ -71,20 +71,20 @@ This does not replicate sessions or move existing shells. When several instances
 
 `helm uninstall bifroest --namespace bifroest` stops the deployment but retains its PVCs. Scale-down also retains them. Reinstalling with the same release name, namespace and StatefulSet name can reuse that state. Keep these names stable and prevent any previous writer from running before reusing its volume. Delete PVCs or the namespace only when you deliberately want to remove the stored state and have the required backups.
 
-## Rotate external HTTP certificates
+## Rotate external TLS certificates {: #rotate-external-http-certificates }
 
-1. Provision a valid [certificate/key pair](../reference/connection/http/index.md#certificate), with private-key ownership and permissions suitable for the service account.
+1. Provision a valid [certificate/key pair](../reference/transports/tls/index.md#certificate), with private-key ownership and permissions suitable for the service account.
 2. Publish both files as one generation, preserving their configured paths. Projected Secret or Certbot symlink changes are supported; Kubernetes `subPath` mounts do not update automatically.
-3. Allow the configured [reload interval](../reference/connection/http/index.md#tls-property-reloadInterval), check logs and test a new TLS connection. Existing connections remain open. A rejected rotation keeps the previous valid material, not a certificate past its expiry.
+3. Allow the configured [reload interval](../reference/transports/tls/index.md#property-reloadInterval), check logs and test a new TLS connection on each consumer. Existing connections remain open. A rejected rotation keeps the previous valid material, not a certificate past its expiry.
 
-This reload applies to the application HTTP listener, not the separate monitoring listener. With TLS termination at the ingress and backend TLS disabled, rotate the ingress certificate through its own certificate manager.
+HTTP and monitoring reload through the same certificate manager. With TLS termination at the ingress and backend TLS disabled, rotate the ingress certificate through its own certificate manager. For multiple Pods, use externally renewed Secrets rather than uncoordinated direct ACME.
 
 ## Restart or recover one instance {: #restart-and-recovery-checklist }
 
 In a load-balanced deployment, take only the affected instance out of rotation; healthy instances can keep accepting connections. Keep an independent administration path and define acceptable recovery time and data loss.
 
 1. **Block new traffic to this instance and stop its writer.** Let users finish or [disconnect their connections](../reference/cli/session/disconnect.md). Allow the configured [SSH](../reference/connection/ssh.md#property-gracefulShutdownTimeout) and [HTTP](../reference/connection/http/index.md#property-gracefulShutdownTimeout) shutdown budgets. A failed readiness probe is not proof that the old process has stopped.
-2. **Copy or restore complete state while stopped:** [configuration](../reference/configuration.md) and referenced keys, [sessions](../reference/session/fs.md#property-storage), [journals and signing identities](../reference/auditlog/index.md#journal), [Recording repositories](../reference/auditlog/recording.md#storage-and-recovery) and [ACME storage](../reference/connection/http/index.md#acme-property-storage). Protect backups as credentials; back up workload data separately and keep decryption private keys offline. Remote sealed artifacts alone are not a service backup.
+2. **Copy or restore complete state while stopped:** [configuration](../reference/configuration.md) and referenced keys, [sessions](../reference/session/fs.md#property-storage), [journals and signing identities](../reference/auditlog/index.md#journal), [Recording repositories](../reference/auditlog/recording.md#storage-and-recovery) and [ACME storage](../reference/transports/tls/index.md#acme-property-storage). Protect backups as credentials; back up workload data separately and keep decryption private keys offline. Remote sealed artifacts alone are not a service backup.
 3. **Check identities and revocations.** Retain the matching host and signing keys. An older session backup can restore later-revoked saved access: reconcile it before reopening traffic. Perform [upgrades](upgrade.md) separately from the first recovery attempt.
 4. **Start one writer for the recovered state** through its existing [host service manager](on-host.md), [container supervisor](in-docker.md) or [Helm deployment](#helm-releases-and-persistent-state), initially with the same release and configuration. Inspect startup logs and [check readiness directly](../guides/monitoring.md#scrape-a-host-locally); keep this instance out of rotation during acceptance checks. Resolve key or integrity errors instead of discarding repositories.
 5. **Test before reopening:**

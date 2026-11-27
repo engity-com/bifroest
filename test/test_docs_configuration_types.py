@@ -30,10 +30,11 @@ class DocsConfigurationTypesTest(TestCase):
         self.assertEqual('IP Address or Network', ast.literal_eval(reference.args[0]))
         self.assertEqual('data-type.md#ip-address-or-network', ast.literal_eval(reference.args[1]))
 
-    def test_monitoring_reference_ends_with_a_minimal_configuration_example(self):
+    def test_monitoring_reference_has_a_minimal_example_before_compatibility(self):
         text = (DOCS / 'reference/monitoring.md').read_text(encoding='utf-8')
-        examples = text.split('## Examples\n', 1)[1]
+        examples, compatibility = text.split('## Examples\n', 1)[1].split('## Compatibility\n', 1)
         self.assertNotRegex(examples, r'(?m)^## ')
+        self.assertIn('<<compatibility_editions(', compatibility)
         block = re.search(r'```yaml\n(.*?)\n```', examples, re.DOTALL)
         self.assertIsNotNone(block)
         self.assertEqual({'monitoring': {'enabled': True}}, yaml.safe_load(block.group(1)))
@@ -104,11 +105,183 @@ class DocsConfigurationTypesTest(TestCase):
         example = re.search(r'```yaml[^\n]*\n(.*?)\n```', text, re.DOTALL)
         self.assertIsNotNone(example)
         config = yaml.safe_load(example.group(1))
-        tls = config['http']['tls']
+        tls = config['http'].get('tls', '')
+        if isinstance(tls, str):
+            tls = config['tls'][tls or 'default']
         self.assertNotIn('certificates', tls)
-        self.assertTrue(tls['acme']['enabled'])
+        self.assertNotIn('enabled', tls['acme'])
         self.assertTrue(tls['acme']['acceptTerms'])
         self.assertEqual([':443'], config['http']['addresses'])
+
+    def test_tls_acme_reference_documents_each_property_with_defaults(self):
+        expected = {
+            'acceptTerms': ('bool', False),
+            'email': ('string', ''),
+            'directoryUrl': ('URL', 'https://acme-v02.api.letsencrypt.org/directory'),
+            'storage': ('File Path', '<os specific>'),
+        }
+        documented = {}
+        for call in properties('reference/transports/tls/index.md'):
+            keywords = {keyword.arg: ast.literal_eval(keyword.value) for keyword in call.keywords}
+            if keywords.get('id_prefix') != 'acme-':
+                continue
+            name = ast.literal_eval(call.args[0])
+            self.assertNotIn(name, documented)
+            self.assertEqual(3, keywords['heading'])
+            documented[name] = (ast.literal_eval(call.args[1]), keywords['default'])
+        self.assertEqual(expected, documented)
+
+    def test_tls_acme_storage_defaults_follow_the_session_storage_style(self):
+        text = (DOCS / 'reference/transports/tls/index.md').read_text(encoding='utf-8')
+        acme = text.split('## ACME\n', 1)[1].split('## Examples\n', 1)[0]
+        sentence = 'The default value is different, depending on the platform Bifröst runs on:'
+        session = (DOCS / 'reference/session/fs.md').read_text(encoding='utf-8')
+        self.assertIn(sentence, session)
+        self.assertIn(sentence, acme)
+        for line in [
+            '* Linux: `/var/lib/engity/bifroest/tls/<name>/acme`',
+            '* macOS: `/Library/Application Support/Engity/Bifroest/tls/<name>/acme`',
+            r'* Windows: `C:\ProgramData\Engity\Bifroest\tls\<name>\acme`',
+        ]:
+            self.assertIn(line, acme)
+        self.assertNotIn('<<dist(', acme)
+
+    def test_tls_certificate_defaults_are_complete_platform_specific_sets(self):
+        text = (DOCS / 'reference/transports/tls/index.md').read_text(encoding='utf-8')
+        section = text.split('<<property("certificates",', 1)[1].split('<<property("dummy",', 1)[0]
+        self.assertIn('[`dummy`](#property-dummy)', section)
+        self.assertIn('[`acme`](#property-acme)', section)
+        self.assertIn('If no certificates are supplied', section)
+        blocks = re.findall(r'(Linux|macOS|Windows):\n\n```yaml\n(.*?)\n```', section, re.DOTALL)
+        expected = [
+            ('Linux', '/etc/engity/bifroest/tls/tls.crt', '/etc/engity/bifroest/tls/tls.key'),
+            ('macOS', '/Library/Application Support/Engity/Bifroest/tls/tls.crt', '/Library/Application Support/Engity/Bifroest/tls/tls.key'),
+            ('Windows', r'C:\ProgramData\Engity\Bifroest\tls\tls.crt', r'C:\ProgramData\Engity\Bifroest\tls\tls.key'),
+        ]
+        self.assertEqual(3, len(blocks))
+        for (platform, block), (name, certificate, key) in zip(blocks, expected):
+            self.assertEqual(name, platform)
+            self.assertEqual({'certificates': [{'certificateFile': certificate, 'privateKeyFile': key}]}, yaml.safe_load(block))
+
+    def test_certificate_file_properties_are_required_without_individual_defaults(self):
+        page = 'reference/transports/tls/index.md'
+        text = (DOCS / page).read_text(encoding='utf-8')
+        certificate = re.split(r'(?m)^#{2,3} Certificate\n', text, maxsplit=1)[1].split('\n## ', 1)[0]
+        self.assertNotIn('The default value', certificate)
+        for call in properties(page):
+            keywords = {keyword.arg: ast.literal_eval(keyword.value) for keyword in call.keywords}
+            if keywords.get('id_prefix') == 'certificate-':
+                self.assertTrue(keywords['required'])
+                self.assertNotIn('default', keywords)
+
+    def test_monitoring_links_to_shared_tls_without_a_detached_tls_section(self):
+        text = (DOCS / 'reference/monitoring.md').read_text(encoding='utf-8')
+        self.assertNotIn('## TLS\n', text)
+        self.assertNotIn('### Certificate\n', text)
+        calls = properties('reference/monitoring.md')
+        prop = next(call for call in calls if ast.literal_eval(call.args[0]) == 'tls')
+        self.assertEqual('TLS or name', ast.literal_eval(prop.args[1]))
+        self.assertEqual('transports/tls/index.md', ast.literal_eval(prop.args[2]))
+        self.assertFalse(any(ast.literal_eval(call.args[0]) in {'certificates', 'certificateFile', 'privateKeyFile'} for call in calls))
+        for page in DOCS.rglob('*.md'):
+            self.assertNotIn('monitoring.md#tls', page.read_text(encoding='utf-8'), page)
+
+    def test_tls_reference_has_standard_properties_and_compatibility_after_examples(self):
+        self.assertFalse((DOCS / 'reference/tls.md').exists())
+        text = (DOCS / 'reference/transports/tls/index.md').read_text(encoding='utf-8')
+        introduction = text.split('# TLS\n', 1)[1].split('## Properties\n', 1)[0]
+        self.assertNotIn('```', introduction)
+        self.assertLessEqual(len(introduction.strip().splitlines()), 3)
+        self.assertIn('](../../connection/http/index.md#property-tls)', introduction)
+        self.assertIn('](../../monitoring.md#property-tls)', introduction)
+        self.assertNotIn('profile', text.lower())
+        self.assertNotIn('## Named definitions\n', text)
+        examples, compatibility = text.split('## Examples\n', 1)[1].split('## Compatibility\n', 1)
+        self.assertNotRegex(examples, r'(?m)^## ')
+        self.assertNotRegex(compatibility, r'(?m)^## ')
+        names = set()
+        for call in properties('reference/transports/tls/index.md'):
+            keywords = {keyword.arg: ast.literal_eval(keyword.value) for keyword in call.keywords}
+            if not keywords.get('id_prefix'):
+                names.add(ast.literal_eval(call.args[0]))
+        self.assertEqual({'minVersion', 'certificates', 'dummy', 'reloadInterval', 'acme'}, names)
+        for page in DOCS.rglob('*.md'):
+            self.assertNotIn('allowedNames', page.read_text(encoding='utf-8'), page)
+        minimum = next(call for call in properties('reference/transports/tls/index.md') if ast.literal_eval(call.args[0]) == 'minVersion')
+        self.assertEqual('1.3', next(ast.literal_eval(keyword.value) for keyword in minimum.keywords if keyword.arg == 'default'))
+
+    def test_tls_inline_and_referenced_examples_use_the_same_definition(self):
+        text = (DOCS / 'reference/transports/tls/index.md').read_text(encoding='utf-8')
+        examples = text.split('## Examples\n', 1)[1]
+        blocks = re.findall(r'```yaml\n(.*?)\n```', examples, re.DOTALL)
+        inline, referenced = [yaml.safe_load(block) for block in blocks[:2]]
+        self.assertEqual(inline['http']['tls'], referenced['tls'][referenced['http']['tls']])
+
+    def test_http_links_to_tls_without_a_detached_tls_section(self):
+        text = (DOCS / 'reference/connection/http/index.md').read_text(encoding='utf-8')
+        self.assertNotIn('## TLS\n', text)
+        section = text.split('<<property("tls",', 1)[1].split('<<property("upstream",', 1)[0]
+        self.assertNotIn('```', section)
+        self.assertLessEqual(len(section.strip().splitlines()), 2)
+        self.assertIn('### Load balancers and instance routing', text.split('## Upstream\n', 1)[1].split('## RememberMe\n', 1)[0])
+        prop = next(call for call in properties('reference/connection/http/index.md') if ast.literal_eval(call.args[0]) == 'tls')
+        self.assertEqual('TLS or name', ast.literal_eval(prop.args[1]))
+        self.assertEqual('../../transports/tls/index.md', ast.literal_eval(prop.args[2]))
+
+    def test_http_enabled_documents_application_and_alpn_only_modes(self):
+        page = 'reference/connection/http/index.md'
+        enabled = next(call for call in properties(page) if ast.literal_eval(call.args[0]) == 'enabled')
+        self.assertEqual('bool or string', ast.literal_eval(enabled.args[1]))
+        self.assertFalse(next(ast.literal_eval(keyword.value) for keyword in enabled.keywords if keyword.arg == 'default'))
+        text = (DOCS / page).read_text(encoding='utf-8')
+        section = text.split('<<property("enabled",', 1)[1].split('<<property("webUi",', 1)[0]
+        for value in ['false', 'true', 'acmeTlsAlpnOnly']:
+            self.assertIn(f'| `{value}` |', section)
+        self.assertIn('no WebUI, API, SSH tunnel or OIDC endpoints', section)
+
+    def test_http_examples_are_self_contained_and_link_to_the_helm_installation(self):
+        text = (DOCS / 'reference/connection/http/index.md').read_text(encoding='utf-8')
+        examples = text.split('## Examples\n', 1)[1].split('## Compatibility\n', 1)[0]
+        self.assertEqual(
+            ['HTTPS with ACME', 'SSH tunnels only', 'Behind a reverse proxy'],
+            re.findall(r'^### (.+)$', examples, re.MULTILINE),
+        )
+        configurations = [yaml.safe_load(block) for block in re.findall(r'```yaml\n(.*?)\n```', examples, re.DOTALL)]
+        self.assertEqual(3, len(configurations))
+        self.assertTrue(configurations[0]['http']['tls']['acme']['acceptTerms'])
+        tunnel = configurations[1]
+        self.assertFalse(tunnel['ssh']['enabled'])
+        self.assertFalse(tunnel['http']['webUi']['enabled'])
+        self.assertFalse(tunnel['http']['loginFlow']['enabled'])
+        self.assertTrue(tunnel['http']['tls']['acme']['acceptTerms'])
+        self.assertIn('tls', configurations[2]['http'])
+        self.assertIsNone(configurations[2]['http']['tls'])
+        self.assertNotIn('helm upgrade', examples)
+        self.assertIn('setup/in-kubernetes.md#http-ingress', examples)
+        installation = (DOCS / 'setup/in-kubernetes.md').read_text(encoding='utf-8')
+        ingress = installation.split('## HTTP ingress', 1)[1].split('## Direct ACME', 1)[0]
+        self.assertIn('```yaml title="ingress-values.yaml"', ingress)
+        self.assertIn('helm upgrade bifroest', ingress)
+
+    def test_tls_alpn_only_example_uses_http_listener_configuration(self):
+        text = (DOCS / 'reference/transports/tls/index.md').read_text(encoding='utf-8')
+        self.assertNotIn('## Challenge listener\n', text)
+        child = 'reference/transports/tls/challenge-listener.md'
+        self.assertFalse((DOCS / child).exists())
+        self.assertNotIn(child, (DOCS.parent / 'mkdocs.yml').read_text(encoding='utf-8'))
+        self.assertIn('](../../connection/http/index.md#property-addresses)', text)
+        for page in DOCS.rglob('*.md'):
+            self.assertNotIn('tlsChallenge', page.read_text(encoding='utf-8'), page)
+            self.assertNotIn('challenge-listener.md', page.read_text(encoding='utf-8'), page)
+        example = text.split('### ACME without HTTP browser access\n', 1)[1]
+        block = re.search(r'```yaml\n(.*?)\n```', example, re.DOTALL)
+        config = yaml.safe_load(block.group(1))
+        self.assertEqual('acmeTlsAlpnOnly', config['http']['enabled'])
+        self.assertEqual(config['monitoring']['tls'], config['http']['tls'])
+        self.assertTrue(config['monitoring']['enabled'])
+        self.assertNotIn('enabled', config['tls'][config['monitoring']['tls']]['acme'])
+        self.assertTrue(config['tls'][config['monitoring']['tls']]['acme']['acceptTerms'])
+        self.assertEqual([':8443'], config['http']['addresses'])
 
     def test_flow_examples_show_equivalent_inline_and_referenced_configuration(self):
         text = (DOCS / 'reference/flow.md').read_text(encoding='utf-8')
@@ -217,7 +390,7 @@ class DocsConfigurationTypesTest(TestCase):
 
     def test_acme_directory_uses_the_shared_url_type(self):
         directory = next(
-            call for call in properties('reference/connection/http/index.md')
+            call for call in properties('reference/transports/tls/index.md')
             if ast.literal_eval(call.args[0]) == 'directoryUrl'
         )
         self.assertEqual('URL', ast.literal_eval(directory.args[1]))

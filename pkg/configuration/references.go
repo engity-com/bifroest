@@ -9,6 +9,9 @@ func (this *Configuration) resolveFlowReferences() error {
 	for index := range flows {
 		flow := &flows[index]
 		environment := &flow.Environment
+		if environment.explicitNull {
+			return errors.Config.Newf("[flows][%d][environment] required but absent", index)
+		}
 		if environment.V == nil && !environment.Variables.IsZero() {
 			return errors.Config.Newf("[flows][%d][environment] required but absent", index)
 		}
@@ -32,6 +35,9 @@ func (this *Configuration) resolveFlowReferences() error {
 			environment.Reference, environment.resolved = reference, true
 		}
 		authorization := &flow.Authorization
+		if authorization.explicitNull {
+			return errors.Config.Newf("[flows][%d][authorization] required but absent", index)
+		}
 		if authorization.V == nil && (!authorization.Principal.IsZero() || authorization.RememberMe != "") {
 			return errors.Config.Newf("[flows][%d][authorization] required but absent", index)
 		}
@@ -54,7 +60,9 @@ func (this *Configuration) resolveFlowReferences() error {
 			*authorization = cloneConfigurationValue(definition)
 			authorization.Reference, authorization.resolved = reference, true
 		}
-		if flow.Auditlog == "" || (flow.auditlogResolved && flow.Auditlog == flow.resolvedAuditlog) {
+		if flow.Auditlog == "" && flow.auditlogExplicitNull {
+			flow.auditlogResolved, flow.resolvedAuditlog = false, ""
+		} else if flow.Auditlog == "" || (flow.auditlogResolved && flow.Auditlog == flow.resolvedAuditlog) {
 			flow.Auditlog = ""
 			for _, auditlog := range this.Auditlogs {
 				if auditlog.Name == DefaultAuditlogName {

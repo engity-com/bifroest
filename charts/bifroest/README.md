@@ -17,7 +17,9 @@ The default image matches the chart's application version. SSH uses a private Cl
 ## Configuration and operation
 
 * [Configuration sources and deployment settings](https://bifroest.engity.org/setup/in-kubernetes/#configuration-sources)
-* [HTTP ingress with an existing controller](https://bifroest.engity.org/reference/connection/http/#kubernetes-ingress-with-helm)
+* [HTTP ingress with an existing controller](https://bifroest.engity.org/setup/in-kubernetes/#http-ingress)
+* [Direct TLS-ALPN-01 ACME through the HTTP Service](https://bifroest.engity.org/setup/in-kubernetes/#direct-acme)
+* [TLS and rotating certificate Secrets](https://bifroest.engity.org/reference/transports/tls/)
 * [Prometheus Pod scraping](https://bifroest.engity.org/guides/monitoring/#scrape-the-helm-deployment)
 * [Upgrades, replicas and retained state](https://bifroest.engity.org/setup/operations/#helm-releases-and-persistent-state)
 

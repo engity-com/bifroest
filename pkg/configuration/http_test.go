@@ -50,14 +50,11 @@ func TestHttpDefaultsAndDefaultSlicesAreIndependent(t *testing.T) {
 	require.NoError(t, first.SetDefaults())
 	require.NoError(t, second.SetDefaults())
 	require.NoError(t, first.Validate())
-	require.False(t, first.Enabled)
+	require.Equal(t, HttpDisabled, first.Enabled)
 	require.Equal(t, ":443", first.Addresses[0].String())
 	require.Empty(t, first.Domains)
-	require.False(t, first.Tls.Acme.Enabled)
-	require.False(t, first.Tls.Acme.AcceptTerms)
-	require.Equal(t, DefaultHttpAcmeDirectoryUrl, first.Tls.Acme.DirectoryUrl)
-	require.Equal(t, DefaultHttpAcmeStorage, first.Tls.Acme.Storage)
-	require.True(t, filepath.IsAbs(first.Tls.Acme.Storage))
+	require.Nil(t, first.Tls)
+	require.False(t, first.Tls.IsEnabled())
 	require.Equal(t, 2*time.Minute, first.StartupTimeout.Native())
 	require.Equal(t, 10*time.Second, first.ReadHeaderTimeout.Native())
 	require.Equal(t, time.Minute, first.IdleTimeout.Native())
@@ -111,13 +108,12 @@ func TestHttpAcmeConfigurationIsExplicitAndMayCoexistWithCertificates(t *testing
 domains: [one.example.org, two.example.org]
 tls:
 `+certificates+`  acme:
-    enabled: true
     acceptTerms: true
     email: operator@example.org
     directoryUrl: https://acme-staging-v02.api.letsencrypt.org/directory
     storage: custom/acme
 `), &configured))
-		require.True(t, configured.Tls.Acme.Enabled)
+		require.True(t, configured.Tls.Acme.IsEnabled())
 		encoded, err := yaml.Marshal(configured)
 		require.NoError(t, err)
 		var restored Http
@@ -128,7 +124,7 @@ tls:
 
 func TestDisabledHttpRoundTripPreservesExplicitEmptySourcesAndZeroGrace(t *testing.T) {
 	var configured Http
-	require.NoError(t, yaml.Unmarshal([]byte("addresses: []\ntls: {acme: {directoryUrl: '', storage: ''}}\ngracefulShutdownTimeout: 0s\n"), &configured))
+	require.NoError(t, yaml.Unmarshal([]byte("addresses: []\ntls: {acme: null}\ngracefulShutdownTimeout: 0s\n"), &configured))
 	encoded, err := yaml.Marshal(configured)
 	require.NoError(t, err)
 	var restored Http
@@ -150,7 +146,7 @@ func TestHttpEnabledRequiresDomainsAndListener(t *testing.T) {
 func TestHttpRejectsUnknownNullOrMistypedPropertiesIncludingAliasesAndMerges(t *testing.T) {
 	for _, source := range []string{
 		"http: null", "http: false", "http: []", "http: {enabled: null}", "http: {enabled: 'true'}", "http: {enable: true}",
-		"http: {domains: null}", "http: {addresses: null}", "http: {tls: null}", "http: {tls: {acme: null}}",
+		"http: {domains: null}", "http: {addresses: null}",
 		"http: {tls: {certificate: []}}", "http: {tls: {certificates: null}}", "http: {tls: {certificates: [null]}}",
 		"http: {tls: {certificates: [{certificateFile: cert.pem, privateKeyFile: null}]}}",
 		"http: {tls: {certificates: [{certificateFile: cert.pem, privateKeyFile: key.pem, key: other}]}}",
@@ -167,7 +163,7 @@ func TestHttpRejectsUnknownNullOrMistypedPropertiesIncludingAliasesAndMerges(t *
 		})
 	}
 	var configured Configuration
-	require.NoError(t, configured.LoadFromYaml(strings.NewReader("<<: {http: {enabled: &off false, tls: {acme: {enabled: *off}}}}\n"+httpTestFlows), ""))
+	require.NoError(t, configured.LoadFromYaml(strings.NewReader("<<: {http: {enabled: false, tls: {acme: &off null}}}\n"+httpTestFlows), ""))
 	require.NotNil(t, configured.Http)
 	require.False(t, configured.Http.IsEnabled())
 }
@@ -189,14 +185,14 @@ func TestHttpRejectsUnsafeLimitsAndNonLocalAssetPaths(t *testing.T) {
 
 func TestHttpAcmeRejectsImplicitConsentAndInvalidMetadata(t *testing.T) {
 	for _, source := range []string{
-		"enabled: true", "enabled: true\nacceptTerms: false", "enabled: true\nacceptTerms: true\nstorage: ''",
+		"storage: ''", "directoryUrl: ''",
 		"directoryUrl: http://ca.example/directory", "directoryUrl: /directory", "directoryUrl: https://user:password@ca.example/directory",
 		"directoryUrl: https://ca.example/directory?token=secret", "directoryUrl: https://ca.example/directory?", "directoryUrl: https://ca.example/directory#fragment",
 		"directoryUrl: https://*.example/directory", "email: not-an-address", "email: 'Operator <operator@example.org>'",
 	} {
 		t.Run(source, func(t *testing.T) {
 			var configured HttpAcme
-			err := yaml.Unmarshal([]byte(source), &configured)
+			err := yaml.Unmarshal([]byte("acceptTerms: true\n"+source), &configured)
 			require.Error(t, err)
 			require.NotContains(t, err.Error(), "password@")
 			require.NotContains(t, err.Error(), "token=secret")
@@ -218,10 +214,14 @@ func TestHttpConfigurationValidationDoesNotReadOrCreateFiles(t *testing.T) {
 	storage := filepath.Join(t.TempDir(), "not-created")
 	var configured Http
 	require.NoError(t, configured.SetDefaults())
-	configured.Enabled = true
+	configured.Enabled = HttpEnabled
 	configured.Domains = HttpDomains{"app.example.org"}
+	configured.Tls = &Tls{}
+	require.NoError(t, configured.Tls.SetDefaults())
 	configured.Tls.Certificates = []HttpCertificate{{CertificateFile: filepath.Join(storage, "server.pem"), PrivateKeyFile: filepath.Join(storage, "key.pem")}}
-	configured.Tls.Acme.Enabled, configured.Tls.Acme.AcceptTerms = true, true
+	configured.Tls.Acme = &TlsAcme{}
+	require.NoError(t, configured.Tls.Acme.SetDefaults())
+	configured.Tls.Acme.AcceptTerms = true
 	configured.Tls.Acme.Storage = filepath.Join(storage, "acme")
 	configured.AssetsDirectory = filepath.Join(storage, "assets")
 	configured.CustomJs = HttpAssetFiles{filepath.Join(storage, "custom.js")}
@@ -243,14 +243,14 @@ func TestConfigurationHttpDiscoveryChecksOnlyEnabledEndpointDomains(t *testing.T
 	conf.Http = &Http{}
 	require.NoError(t, conf.Http.SetDefaults())
 	conf.Http.Domains = HttpDomains{"app.example.org"}
-	conf.Http.Tls.Certificates = []HttpCertificate{{CertificateFile: "cert.pem", PrivateKeyFile: "key.pem"}}
-	conf.Http.Enabled = true
+	conf.Http.Tls = &Tls{Certificates: []TlsCertificate{{CertificateFile: "cert.pem", PrivateKeyFile: "key.pem"}}}
+	conf.Http.Enabled = HttpEnabled
 	require.NoError(t, conf.Validate(), "other host is not an endpoint domain")
 	conf.Http.Domains = append(conf.Http.Domains, "other.example.org")
 	require.ErrorContains(t, conf.Validate(), "same slug")
-	conf.Http.Enabled = false
+	conf.Http.Enabled = HttpDisabled
 	require.NoError(t, conf.Validate(), "disabled HTTP must not change legacy SSH startup")
-	conf.Http.Enabled = true
+	conf.Http.Enabled = HttpEnabled
 	no := false
 	conf.Flows[1].Http.Enabled = &no
 	require.NoError(t, conf.Validate(), "HTTP-disabled publishers do not collide")
@@ -292,22 +292,30 @@ func TestHttpReferenceExamplesParseWithoutFilesystemOrNetworkAccess(t *testing.T
 	require.NoError(t, err)
 	exampleSection := strings.SplitN(string(contents), "## Examples", 2)
 	require.Len(t, exampleSection, 2)
-	examples := regexp.MustCompile("(?s)```yaml\n(.*?)\n```").FindAllStringSubmatch(exampleSection[1], -1)
-	require.Len(t, examples, 2)
+	examples := regexp.MustCompile("(?s)### ([^\n]+)\n.*?```yaml\n(.*?)\n```").FindAllStringSubmatch(exampleSection[1], -1)
+	headings := []string{"HTTPS with ACME", "SSH tunnels only", "Behind a reverse proxy"}
+	require.Len(t, examples, len(headings))
 	for index, example := range examples {
+		require.Equal(t, headings[index], example[1])
 		var conf Configuration
 		// The reference demonstrates HTTP settings for existing flows. Supply an
 		// owned, non-executing flow; parsing must not provision TLS or storage.
-		require.NoError(t, conf.LoadFromYaml(strings.NewReader(example[1]+"\n"+httpTestFlows), "http-reference-example"))
+		require.NoError(t, conf.LoadFromYaml(strings.NewReader(example[2]+"\n"+httpTestFlows), "http-reference-example"))
 		require.True(t, conf.Http.IsEnabled())
-		if index == 0 {
+		if index < 2 {
 			require.True(t, conf.Http.Tls.IsEnabled())
-			require.True(t, conf.Http.Tls.Acme.Enabled)
+			require.True(t, conf.Http.Tls.Acme.IsEnabled())
 			require.True(t, conf.Http.Tls.Acme.AcceptTerms)
+			require.True(t, conf.Http.SshTunnel.IsEnabled())
+			require.Equal(t, index == 0, conf.Ssh.IsEnabled())
+			require.Equal(t, index == 0, conf.Http.WebUi.IsEnabled())
+			require.Equal(t, index == 0, conf.Http.LoginFlow.IsEnabled())
 		} else {
 			require.False(t, conf.Http.Tls.IsEnabled())
 			require.True(t, conf.Http.Upstream.IsReverseProxy())
 			require.Equal(t, "/bifroest", conf.Http.Upstream.DefaultPrefix)
+			require.NoError(t, conf.LoadFromYaml(strings.NewReader("tls: {default: {dummy: true}}\n"+example[2]+"\n"+httpTestFlows), "http-proxy-reference-example"))
+			require.False(t, conf.Http.Tls.IsEnabled(), "the proxy example must opt out of a global TLS default")
 		}
 	}
 }

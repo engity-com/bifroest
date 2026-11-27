@@ -12,8 +12,9 @@ type Environment struct {
 	Variables EnvironmentVariables `yaml:"variables,omitempty" sensitive:"true"`
 	V         EnvironmentV         `yaml:"-"`
 	// Reference is the configured definition name; V is the effective per-flow value.
-	Reference string `yaml:"-"`
-	resolved  bool
+	Reference    string `yaml:"-"`
+	resolved     bool
+	explicitNull bool
 }
 
 type EnvironmentV interface {
@@ -133,8 +134,11 @@ func (this Environment) MarshalYAML() (any, error) {
 	if this.Reference != "" {
 		return this.Reference, nil
 	}
-	if this.resolved || this.V == nil {
+	if this.explicitNull {
 		return nil, nil
+	}
+	if this.resolved || this.V == nil {
+		return "", nil
 	}
 	var result yaml.Node
 	if err := result.Encode(this.V); err != nil {
@@ -173,7 +177,7 @@ func (this Environment) IsEqualTo(other any) bool {
 }
 
 func (this Environment) isEqualTo(other *Environment) bool {
-	if other == nil || this.Reference != other.Reference || (this.Reference == "" && this.resolved != other.resolved) {
+	if other == nil || this.explicitNull != other.explicitNull || this.Reference != other.Reference || (this.Reference == "" && this.resolved != other.resolved) {
 		return false
 	}
 	if !isEqual(&this.Variables, &other.Variables) {

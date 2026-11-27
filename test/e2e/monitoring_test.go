@@ -200,12 +200,13 @@ func TestMonitoringPrometheusIntegration(t *testing.T) {
 				tokenPath := filepath.Join(dir, "monitoring.token")
 				require.NoError(t, os.WriteFile(tokenPath, []byte(secret+"\n"), 0600))
 				monitor["bearerTokenFile"] = tokenPath
-				monitor["tls"] = map[string]any{"enabled": true, "certificates": pair}
+				monitor["tls"] = map[string]any{"certificates": pair}
+				monitor["domains"] = []string{"127.0.0.1"}
 				scheme, token = "https", secret
 			}
 			configuration := map[string]any{
 				"ssh":        map[string]any{"addresses": []string{sshAddress}, "keys": map[string]any{"hostKeys": []string{hostPath}}, "banner": ""},
-				"http":       map[string]any{"enabled": true, "addresses": []string{workloadAddress}, "domains": []string{"localhost"}, "webUi": map[string]any{"enabled": false}, "loginFlow": map[string]any{"enabled": false}, "sshTunnel": map[string]any{"enabled": true}, "tls": map[string]any{"certificates": pair, "acme": map[string]any{"enabled": false}}},
+				"http":       map[string]any{"enabled": true, "addresses": []string{workloadAddress}, "domains": []string{"localhost"}, "webUi": map[string]any{"enabled": false}, "loginFlow": map[string]any{"enabled": false}, "sshTunnel": map[string]any{"enabled": true}, "tls": map[string]any{"certificates": pair}},
 				"monitoring": monitor, "session": map[string]any{"type": "fs", "storage": filepath.Join(dir, "sessions")}, "alternatives": map[string]any{"location": filepath.Join(dir, "alternative")}, "housekeeping": map[string]any{"initialDelay": "1h"},
 				"flows": []any{map[string]any{"name": "monitoring-qa", "authorization": map[string]any{"type": "simple", "entries": []any{map[string]any{"name": user, "password": "plain:" + password}}}, "environment": map[string]any{"type": "dummy"}}},
 			}

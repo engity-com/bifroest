@@ -63,8 +63,9 @@ func documentedGatewayWithTestCredentials(t *testing.T, raw []byte) []byte {
 func TestDocumentedHelmInstallationAndOptionalValues(t *testing.T) {
 	helm := testHelm(t)
 	gateway := documentedChartValues(t, "setup/in-kubernetes.md", "values.yaml")
-	ingress := documentedChartValues(t, "reference/connection/http/index.md", "ingress-values.yaml")
+	ingress := documentedChartValues(t, "setup/in-kubernetes.md", "ingress-values.yaml")
 	monitoring := documentedChartValues(t, "guides/monitoring.md", "monitoring-values.yaml")
+	acme := documentedChartValues(t, "setup/in-kubernetes.md", "acme-values.yaml")
 	replicas := documentedChartValues(t, "setup/operations.md", "Additional Helm values")
 	for _, test := range []struct {
 		name                string
@@ -77,6 +78,7 @@ func TestDocumentedHelmInstallationAndOptionalValues(t *testing.T) {
 		{"prometheus", []string{gateway, monitoring}, false, true, 1},
 		{"ingress-and-prometheus", []string{gateway, ingress, monitoring}, true, true, 1},
 		{"two-replicas", []string{gateway, ingress, monitoring, replicas}, true, true, 2},
+		{"direct-acme", []string{gateway, acme}, false, false, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			objects := renderProject(t, helm, test.values...)
@@ -98,6 +100,7 @@ func TestDocumentedHelmInstallationAndOptionalValues(t *testing.T) {
 			raw := documentedGatewayWithTestCredentials(t, projectConfiguration(t, objects))
 			require.NoError(t, parsed.LoadFromYaml(bytes.NewReader(raw), ""))
 			if test.ingress {
+				require.False(t, parsed.Http.Tls.IsEnabled())
 				route := projectObject[*networkingv1.Ingress](t, objects)
 				require.Equal(t, "gateway.example.org", route.Spec.Rules[0].Host)
 				require.Equal(t, "bifroest-public-tls", route.Spec.TLS[0].SecretName)

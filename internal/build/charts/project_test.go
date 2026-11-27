@@ -201,8 +201,6 @@ configuration:
     enabled: true
     domains: [access.example.org]
     addresses: [":8080"]
-    tls:
-      enabled: false
     upstream:
       mode: reverseProxy
       defaultPrefix: /gateway
@@ -315,7 +313,8 @@ func TestProjectChartRejectsUnsafeValuesWithRealHelm(t *testing.T) {
 		"no-monitoring":                    "configuration:\n  monitoring:\n    enabled: false\n",
 		"wrong-probe-port":                 "monitoring:\n  port: 1234\n",
 		"wrong-probe-scheme":               "monitoring:\n  scheme: HTTPS\n",
-		"disabled-direct-tls":              "configuration:\n  http:\n    enabled: true\n    tls:\n      enabled: false\n",
+		"missing-direct-tls":               "configuration:\n  http:\n    enabled: true\n",
+		"invalid-tls-enabled":              "configuration:\n  http:\n    enabled: true\n    tls:\n      enabled: false\n",
 		"proxy-without-trust":              "configuration:\n  http:\n    upstream:\n      mode: reverseProxy\n",
 		"ingress-without-controller-peers": "ingress:\n  enabled: true\n  host: access.example.org\nconfiguration: secret:external\nservice:\n  http:\n    enabled: true\n",
 		"ingress-with-public-backend":      "ingress:\n  enabled: true\n  host: access.example.org\nconfiguration: secret:external\nservice:\n  http:\n    enabled: true\n    type: LoadBalancer\n",

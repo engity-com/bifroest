@@ -2,8 +2,6 @@ package https
 
 import (
 	"context"
-	"crypto"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -16,12 +14,8 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bnet "github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/transporttls"
 )
-
-// KeyValidator checks public key separation before TLS readiness/publication.
-// The built-in ACME backend also checks before requests and persistence; custom
-// Sources own their storage policy. Errors must be log-safe and calls concurrent-safe.
-type KeyValidator func(crypto.PublicKey) error
 
 type EndpointOptions struct {
 	Handler           http.Handler
@@ -31,13 +25,15 @@ type EndpointOptions struct {
 	ObserveConnection func() ConnectionObservation
 	ObserveRejection  func(*http.Request, string)
 	ValidateFiles     func() error
+	Binding           *transporttls.Binding
+	Challenges        *transporttls.Registry
 }
 
 // Endpoint serves already-bound listeners. The caller must bind every SSH and
-// HTTPS input before serving challenges, call Prepare, and own the renewal loop.
+// HTTPS input before serving challenges, call Prepare, and own TLS maintenance.
 type Endpoint struct {
 	tls               *TLS
-	source            *lazyACME
+	binding           *transporttls.Binding
 	server            *http.Server
 	grace             time.Duration
 	closeOnce         sync.Once
@@ -49,42 +45,39 @@ type Endpoint struct {
 }
 
 func NewEndpoint(conf *configuration.Http, options EndpointOptions) (*Endpoint, error) {
-	var lazy *lazyACME
-	source := options.Source
-	if conf.IsEnabled() && conf.Tls.IsEnabled() && conf.Tls.Acme.Enabled && source == nil {
-		copyOfConf := *conf
-		lazy = &lazyACME{configuration: copyOfConf, validateKey: options.ValidateKey}
-		source = lazy
-	}
 	if conf == nil || !conf.IsEnabled() {
 		return nil, fmt.Errorf("HTTP is disabled")
 	}
 	if err := conf.Validate(); err != nil {
 		return nil, err
 	}
+	if !conf.Tls.IsEnabled() && options.Binding != nil {
+		return nil, fmt.Errorf("disabled HTTP TLS cannot use a server binding")
+	}
 	var manager *TLS
 	var err error
-	if conf.Tls.IsEnabled() {
-		manager, err = NewTLS(conf, source)
+	binding := options.Binding
+	if conf.Tls.IsEnabled() && binding == nil {
+		adapted, adaptErr := tlsConfiguration(conf)
+		if adaptErr != nil {
+			return nil, adaptErr
+		}
+		adapted.ValidateKey, adapted.ValidateFiles = options.ValidateKey, options.ValidateFiles
+		manager, err = transporttls.NewManaged(adapted, options.Source)
 		if err != nil {
 			return nil, err
 		}
-		manager.validateKey = options.ValidateKey
-		manager.validateFiles = options.ValidateFiles
-		for _, certificate := range manager.explicit {
-			if options.ValidateKey != nil {
-				if err := options.ValidateKey(certificate.value.Leaf.PublicKey); err != nil {
-					_ = manager.Close()
-					return nil, err
-				}
-			}
+		binding, err = manager.Bind(conf.Domains, []string{"h2", "http/1.1"}, false)
+		if err != nil {
+			_ = manager.Close()
+			return nil, err
 		}
 	}
 	handler := options.Handler
 	if handler == nil {
 		handler = http.HandlerFunc(unimplementedBrowserHandler)
 	}
-	endpoint := &Endpoint{tls: manager, source: lazy, grace: conf.GracefulShutdownTimeout.Native(), observeConnection: options.ObserveConnection, done: make(chan struct{})}
+	endpoint := &Endpoint{tls: manager, binding: binding, grace: conf.GracefulShutdownTimeout.Native(), observeConnection: options.ObserveConnection, done: make(chan struct{})}
 	boundary, err := httpBoundary(conf, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !endpoint.Ready() {
 			http.Error(w, "HTTPS is not ready", http.StatusServiceUnavailable)
@@ -108,14 +101,24 @@ func NewEndpoint(conf *configuration.Http, options EndpointOptions) (*Endpoint, 
 		ErrorLog:  log.New(discardHTTPDiagnostics{}, "", 0),
 		ConnState: observeConnectionState,
 	}
-	if manager != nil {
-		endpoint.server.TLSConfig = manager.Config()
+	if binding != nil {
+		challenges := options.Challenges
+		if challenges == nil {
+			challenges = &transporttls.Registry{}
+			if manager != nil {
+				if err := challenges.Register(manager); err != nil {
+					_ = manager.Close()
+					return nil, err
+				}
+			}
+		}
+		endpoint.server.TLSConfig = challenges.Config(binding.Config())
 	}
 	return endpoint, nil
 }
 
 func (this *Endpoint) Prepare(ctx context.Context) error {
-	if this.tls == nil {
+	if this.binding == nil {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -125,16 +128,16 @@ func (this *Endpoint) Prepare(ctx context.Context) error {
 		this.plainReady.Store(true)
 		return nil
 	}
-	return this.tls.Prepare(ctx)
+	return this.binding.Prepare(ctx)
 }
 func (this *Endpoint) Ready() bool {
-	return !this.closed.Load() && (this.tls != nil && this.tls.Ready() || this.tls == nil && this.plainReady.Load())
+	return !this.closed.Load() && (this.binding != nil && this.binding.Ready() || this.binding == nil && this.plainReady.Load())
 }
 func (this *Endpoint) Serve(listener net.Listener) error {
 	if this.observeConnection != nil {
 		listener = observedListener{Listener: listener, observe: this.observeConnection}
 	}
-	if this.tls == nil {
+	if this.binding == nil {
 		return this.server.Serve(listener)
 	}
 	return this.server.ServeTLS(listener, "", "")
@@ -142,18 +145,12 @@ func (this *Endpoint) Serve(listener net.Listener) error {
 
 // CertificateExpirations snapshots only published, configured certificates.
 func (this *Endpoint) CertificateExpirations() map[string]time.Time {
-	if this.tls == nil {
+	if this.binding == nil {
 		return nil
 	}
-	this.tls.mutex.RLock()
-	defer this.tls.mutex.RUnlock()
-	result := make(map[string]time.Time, len(this.tls.certificates))
-	for domain, certificate := range this.tls.certificates {
-		result[domain] = certificate.notAfter
-	}
-	return result
+	return this.binding.Expirations()
 }
-func (this *Endpoint) RunRenewal(ctx context.Context, onFailure func(error)) error {
+func (this *Endpoint) RunFileReload(ctx context.Context, onFailure func(error)) error {
 	if this.tls == nil {
 		select {
 		case <-ctx.Done():
@@ -162,7 +159,19 @@ func (this *Endpoint) RunRenewal(ctx context.Context, onFailure func(error)) err
 			return ErrClosed
 		}
 	}
-	return this.tls.RunRenewal(ctx, onFailure)
+	return this.tls.RunFileReload(ctx, onFailure)
+}
+
+// RenewDue lets the owner schedule maintenance for a standalone endpoint.
+// Externally supplied bindings are maintained through their shared TLS manager.
+func (this *Endpoint) RenewDue(ctx context.Context) error {
+	if this.closed.Load() {
+		return ErrClosed
+	}
+	if this.tls == nil {
+		return ctx.Err()
+	}
+	return this.tls.RenewDue(ctx)
 }
 
 // Shutdown stops acquisition and new handshakes immediately, then bounds HTTP
@@ -216,9 +225,6 @@ func onlyShutdownCause(err, target error) bool {
 func (this *Endpoint) Close() error {
 	this.closeOnce.Do(func() {
 		this.closeErr = this.Shutdown()
-		if this.source != nil {
-			this.closeErr = errors.Join(this.closeErr, this.source.Close())
-		}
 	})
 	return this.closeErr
 }
@@ -238,52 +244,3 @@ func unimplementedBrowserHandler(w http.ResponseWriter, r *http.Request) {
 type discardHTTPDiagnostics struct{}
 
 func (discardHTTPDiagnostics) Write(value []byte) (int, error) { return len(value), nil }
-
-type lazyACME struct {
-	configuration configuration.Http
-	validateKey   KeyValidator
-	mutex         sync.Mutex
-	value         *ACME
-	closed        bool
-}
-
-func (this *lazyACME) get() (*ACME, error) {
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	if this.closed {
-		return nil, ErrClosed
-	}
-	if this.value == nil {
-		value, err := NewACME(&this.configuration)
-		if err != nil {
-			return nil, err
-		}
-		value.validateKey = this.validateKey
-		value.store.validateKey = this.validateKey
-		this.value = value
-	}
-	return this.value, nil
-}
-func (this *lazyACME) Certificate(ctx context.Context, domain string, challenge Challenge) (*tls.Certificate, error) {
-	value, err := this.get()
-	if err != nil {
-		return nil, err
-	}
-	return value.Certificate(ctx, domain, challenge)
-}
-func (this *lazyACME) Renew(ctx context.Context, domain string, challenge Challenge) (*tls.Certificate, error) {
-	value, err := this.get()
-	if err != nil {
-		return nil, err
-	}
-	return value.Renew(ctx, domain, challenge)
-}
-func (this *lazyACME) Close() error {
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	this.closed = true
-	if this.value != nil {
-		return this.value.Close()
-	}
-	return nil
-}

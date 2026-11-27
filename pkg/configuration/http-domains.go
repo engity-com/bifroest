@@ -10,11 +10,12 @@ import (
 	"github.com/engity-com/bifroest/pkg/net"
 )
 
-// HttpDomains is a finite allowlist, never a wildcard or a source of requesting
+// ServerNames is a finite allowlist, never a wildcard or a source of requesting
 // names. Ports belong to listener addresses, not to this list.
-type HttpDomains []string
+type ServerNames []string
+type HttpDomains = ServerNames
 
-func (this HttpDomains) Canonical() ([]string, error) {
+func (this ServerNames) Canonical() ([]string, error) {
 	result := make([]string, len(this))
 	seen := make(map[string]int, len(this))
 	for index, domain := range this {
@@ -34,7 +35,7 @@ func (this HttpDomains) Canonical() ([]string, error) {
 	return result, nil
 }
 
-func (this *HttpDomains) Trim() error {
+func (this *ServerNames) Trim() error {
 	canonical, err := this.Canonical()
 	if err != nil {
 		return err
@@ -43,12 +44,12 @@ func (this *HttpDomains) Trim() error {
 	return nil
 }
 
-func (this HttpDomains) Validate() error {
+func (this ServerNames) Validate() error {
 	_, err := this.Canonical()
 	return err
 }
 
-func (this *HttpDomains) UnmarshalYAML(node *yaml.Node) error {
+func (this *ServerNames) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.SequenceNode {
 		return fmt.Errorf("domains must be a sequence")
 	}
@@ -67,7 +68,7 @@ func (this *HttpDomains) UnmarshalYAML(node *yaml.Node) error {
 	return this.Trim()
 }
 
-func (this HttpDomains) IsEqualTo(other any) bool {
+func (this ServerNames) IsEqualTo(other any) bool {
 	switch value := other.(type) {
 	case HttpDomains:
 		return slices.Equal(this, value)
@@ -80,7 +81,7 @@ func (this HttpDomains) IsEqualTo(other any) bool {
 
 // AllowsHost checks the same canonical host representation used by flow
 // selection. It is not a substitute for SNI/Origin checks at the HTTP boundary.
-func (this HttpDomains) AllowsHost(authority string) (bool, error) {
+func (this ServerNames) AllowsHost(authority string) (bool, error) {
 	host, err := net.CanonicalHttpHost(authority)
 	if err != nil {
 		return false, err

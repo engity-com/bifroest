@@ -37,6 +37,7 @@ type serviceMonitoring struct {
 	cleanupProblems    *prometheus.GaugeVec
 	cleanupScanTime    *prometheus.GaugeVec
 	tasks              *prometheus.GaugeVec
+	tlsRenewalErrors   *prometheus.CounterVec
 	descriptions       map[string]*prometheus.Desc
 	access             monitoringAccess
 	http               monitoringHTTP
@@ -78,6 +79,10 @@ func newServiceMonitoring(conf configuration.Configuration) (*serviceMonitoring,
 	result.registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	result.initAccess()
 	result.initHTTP()
+	result.tlsRenewalErrors = result.counterVec(prometheus.CounterOpts{Name: "bifroest_tls_renewal_errors_total", Help: "Failed certificate refresh rounds, once per active TLS source."}, []string{"source"})
+	result.registry.MustRegister(result.tlsRenewalErrors)
+	result.descriptions["tls_certificate_expiration_timestamp_seconds"] = prometheus.NewDesc("bifroest_tls_certificate_expiration_timestamp_seconds", "Effective certificate chain expiry per TLS source and registered name.", []string{"source", "name"}, nil)
+	result.descriptions["tls_binding_ready"] = prometheus.NewDesc("bifroest_tls_binding_ready", "Whether a configured TLS consumer has valid material.", []string{"source", "consumer"}, nil)
 	result.initJournal()
 	for name, help := range map[string]string{
 		"ready":              "Whether all configured access listeners have completed startup and are accepting new access.",
@@ -107,7 +112,7 @@ func newServiceMonitoring(conf configuration.Configuration) (*serviceMonitoring,
 		result.descriptions[name] = prometheus.NewDesc("bifroest_"+name, help, []string{"auditlog", "target", "kind"}, nil)
 	}
 	var err error
-	result.endpoint, err = monitoring.New(conf.Monitoring, result.registry)
+	result.endpoint, err = monitoring.New(conf.Monitoring, result.registry, monitoring.Options{DeferTLS: true})
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +167,7 @@ func (this *serviceMonitoring) Collect(ch chan<- prometheus.Metric) {
 	emit("connections_active", float64(svc.activeConnections.Load()))
 	this.collectAccess(ch, svc)
 	this.collectHTTP(ch, svc)
+	this.collectTLS(ch, svc)
 	counts := svc.sessionConnections.monitoringCounts()
 	for flow, labels := range this.flows {
 		emit("sessions_active", float64(counts[flow][0]), labels...)

@@ -23,8 +23,9 @@ type Configuration struct {
 
 	Ssh Ssh `yaml:"ssh"`
 
-	Http       *Http       `yaml:"http,omitempty"`
-	Monitoring *Monitoring `yaml:"monitoring,omitempty"`
+	Http       *Http          `yaml:"http,omitempty"`
+	Monitoring *Monitoring    `yaml:"monitoring,omitempty"`
+	Tls        TlsDefinitions `yaml:"tls,omitempty"`
 
 	// Session defines how new and existing sessions (a connection relates to) should be treated by the service.
 	// These session should not be mixed up with [ssh sessions].
@@ -51,6 +52,7 @@ func (this *Configuration) SetDefaults() error {
 		func(v *Configuration) (string, defaulter) { return "ssh", &v.Ssh },
 		fixedDefault("http", func(v *Configuration) **Http { return &v.Http }, (*Http)(nil)),
 		fixedDefault("monitoring", func(v *Configuration) **Monitoring { return &v.Monitoring }, (*Monitoring)(nil)),
+		func(v *Configuration) (string, defaulter) { return "tls", &v.Tls },
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 		func(v *Configuration) (string, defaulter) { return "houseKeeping", &v.HouseKeeping },
@@ -60,6 +62,12 @@ func (this *Configuration) SetDefaults() error {
 }
 
 func (this *Configuration) Trim() error {
+	if err := this.Tls.Trim(); err != nil {
+		return errors.Config.Newf("[tls] %w", err)
+	}
+	if err := this.resolveTlsReferences(); err != nil {
+		return err
+	}
 	if err := this.Environments.Trim(); err != nil {
 		return errors.Config.Newf("[environments] %w", err)
 	}
@@ -83,6 +91,9 @@ func (this *Configuration) Trim() error {
 }
 
 func (this *Configuration) Validate() error {
+	if err := this.resolveTlsReferences(); err != nil {
+		return err
+	}
 	if err := this.Environments.Validate(); err != nil {
 		return errors.Config.Newf("[environments] %w", err)
 	}
@@ -104,6 +115,9 @@ func (this *Configuration) Validate() error {
 		func(v *Configuration) (string, validator) { return "alternatives", &v.Alternatives },
 		func(v *Configuration) (string, validator) { return "startMessage", &v.StartMessage },
 	); err != nil {
+		return err
+	}
+	if err := this.validateTlsListener(); err != nil {
 		return err
 	}
 	if err := this.validateAuditlogReferences(); err != nil {
@@ -161,7 +175,7 @@ func (this *Configuration) UnmarshalYAML(node *yaml.Node) error {
 		if err != nil {
 			return err
 		}
-		for _, name := range []string{"http", "monitoring"} {
+		for _, name := range []string{"http", "monitoring", "tls"} {
 			if value, exists := fields[name]; exists && value.Kind != yaml.MappingNode {
 				return reportYamlRelatedErrf(&value, "[%s] must be a mapping", name)
 			}
@@ -237,6 +251,7 @@ func (this Configuration) isEqualTo(other *Configuration) bool {
 		isEqual(&this.Ssh, &other.Ssh) &&
 		this.Http.IsEqualTo(other.Http) &&
 		this.Monitoring.IsEqualTo(other.Monitoring) &&
+		this.Tls.IsEqualTo(other.Tls) &&
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&

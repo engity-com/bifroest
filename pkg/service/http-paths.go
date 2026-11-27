@@ -16,7 +16,11 @@ type httpRuntimePath struct{ path, description string }
 // Canonical aliases and existing hard links must not expose private inputs via
 // future public overlays or mutable session/audit/ACME storage.
 func validateHTTPRuntimePaths(conf *configuration.Configuration, storage string) error {
-	if !conf.Http.IsEnabled() {
+	consumers, err := activeTLSConsumers(conf)
+	if err != nil {
+		return err
+	}
+	if !conf.Http.IsEnabled() && len(consumers) == 0 {
 		return nil
 	}
 	h := conf.Http
@@ -112,36 +116,56 @@ func validateHTTPRuntimePaths(conf *configuration.Configuration, storage string)
 		return nil
 	}
 	var tlsPaths []httpRuntimePath
-	for _, pair := range h.Tls.FileCertificates() {
-		for _, field := range []struct {
-			value       *string
-			description string
-		}{
-			{&pair.CertificateFile, "HTTPS certificate file"}, {&pair.PrivateKeyFile, "HTTPS private key file"},
-		} {
-			value, err := resolve(*field.value, field.description)
-			if err != nil {
-				return err
+	sources := make(map[string]bool)
+	for _, consumer := range consumers {
+		if sources[consumer.source] {
+			continue
+		}
+		sources[consumer.source] = true
+		for _, pair := range consumer.config.Profile.Certificates {
+			for _, field := range []struct {
+				value       *string
+				description string
+			}{
+				{&pair.CertificateFile, "TLS certificate file"}, {&pair.PrivateKeyFile, "TLS private key file"},
+			} {
+				value, err := resolve(*field.value, field.description)
+				if err != nil {
+					return err
+				}
+				if err := check(value, private); err != nil {
+					return err
+				}
+				// Keep the configured name: projected Secrets and Certbot replace
+				// symlink targets. A reload must resolve the current generation.
+				tlsPaths = append(tlsPaths, value)
 			}
-			if err := check(value, private); err != nil {
-				return err
-			}
-			// Keep the configured name: projected Secrets and Certbot replace
-			// symlink targets. A reload must resolve the current generation.
-			tlsPaths = append(tlsPaths, value)
 		}
 	}
 	private = append(private, tlsPaths...)
-	if h.Tls.Acme.Enabled {
-		value, err := resolve(h.Tls.Acme.Storage, "HTTPS ACME storage")
+	clear(sources)
+	for _, consumer := range consumers {
+		if sources[consumer.source] || !consumer.config.Profile.Acme.IsEnabled() {
+			continue
+		}
+		sources[consumer.source] = true
+		value, err := resolve(consumer.config.Profile.Acme.Storage, "TLS ACME storage")
 		if err != nil {
 			return err
 		}
 		if err := check(value, private); err != nil {
 			return err
 		}
-		h.Tls.Acme.Storage = value.path
+		switch consumer.source {
+		case "http":
+			h.Tls.Acme.Storage = value.path
+		case "monitoring":
+			conf.Monitoring.Tls.Acme.Storage = value.path
+		}
 		private = append(private, value)
+	}
+	if !conf.Http.IsEnabled() {
+		return nil
 	}
 	if h.AssetsDirectory != "" {
 		value, err := resolve(h.AssetsDirectory, "HTTP asset directory")

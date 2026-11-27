@@ -15,15 +15,17 @@ Point `bifroest.example.org` at the host and make TCP port 443 publicly reachabl
 Use the following configuration with your hostname, contact email and local account. Review the certificate authority's terms before setting `acceptTerms: true`. Keep another way to access the host while changing its service.
 
 ```yaml title="Bifröst host: /etc/engity/bifroest/configuration.yaml"
+tls:
+  default:
+    acme:
+      acceptTerms: true
+      email: operator@example.org
 http:
   enabled: true
   addresses: [":443"]
   domains: [bifroest.example.org]
-  tls:
-    acme:
-      enabled: true
-      acceptTerms: true
-      email: operator@example.org
+  ## The "default" TLS config is used implicitly.
+  # tls: default
 
 flows:
   - name: local

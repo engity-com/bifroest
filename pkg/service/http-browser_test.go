@@ -634,7 +634,7 @@ func TestRealHttpsPasswordAndSshLoginShareOneStoredSession(t *testing.T) {
 		conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^Work$")
 		conf.Http = &configuration.Http{}
 		require.NoError(t, conf.Http.SetDefaults())
-		conf.Http.Enabled = true
+		conf.Http.Enabled = configuration.HttpEnabled
 		conf.Http.Domains = configuration.HttpDomains{"app.example.org"}
 		conf.Http.Addresses = bnet.NetAddresses{bnet.MustNewAddress("127.0.0.1:0")}
 		root = httpListenerTestCertificate(t, conf, nil)

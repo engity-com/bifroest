@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,45 +29,96 @@ func TestMonitoringDefaultsAndIsolation(t *testing.T) {
 	require.Equal(t, "9090", port)
 	require.Empty(t, first.AllowedRemoteHosts)
 	require.Empty(t, first.BearerToken)
-	require.False(t, first.Tls.Enabled)
+	require.Nil(t, first.Tls)
 	require.NoError(t, first.Addresses[0].Set("127.0.0.1:9999"))
 	require.True(t, second.Addresses[0].IsEqualTo(DefaultMonitoringAddresses[0]))
 	require.NotEqual(t, first.Addresses[0].String(), second.Addresses[0].String())
 }
 
-func TestMonitoringCertificateDefaultsAreSeparateFromHTTP(t *testing.T) {
-	require.NotEqual(t, DefaultHttpCertificateFile, DefaultMonitoringCertificateFile)
-	require.NotEqual(t, DefaultHttpPrivateKeyFile, DefaultMonitoringPrivateKeyFile)
-	for _, test := range []struct {
-		source, certificate, key string
-	}{
-		{"{}", DefaultMonitoringCertificateFile, DefaultMonitoringPrivateKeyFile},
-		{"{certificateFile: custom.crt}", "custom.crt", DefaultMonitoringPrivateKeyFile},
-		{"{privateKeyFile: custom.key}", DefaultMonitoringCertificateFile, "custom.key"},
-		{"{certificateFile: custom.crt, privateKeyFile: custom.key}", "custom.crt", "custom.key"},
-	} {
-		t.Run(test.source, func(t *testing.T) {
-			var conf Monitoring
-			require.NoError(t, yaml.Unmarshal([]byte("enabled: true\ntls: {enabled: true, certificates: ["+test.source+"]}"), &conf))
-			require.Equal(t, []MonitoringCertificate{{CertificateFile: test.certificate, PrivateKeyFile: test.key}}, conf.Tls.Certificates)
-			encoded, err := yaml.Marshal(conf)
-			require.NoError(t, err)
-			var restored Monitoring
-			require.NoError(t, yaml.Unmarshal(encoded, &restored))
-			require.True(t, conf.IsEqualTo(&restored))
-		})
-	}
+func TestMonitoringCertificatesRequireBothFilePaths(t *testing.T) {
+	var conf Monitoring
+	require.NoError(t, yaml.Unmarshal([]byte("enabled: true\ndomains: [monitoring.example.org]\ntls: {certificates: [{certificateFile: custom.crt, privateKeyFile: custom.key}]}"), &conf))
+	require.Equal(t, []TlsCertificate{{CertificateFile: "custom.crt", PrivateKeyFile: "custom.key"}}, conf.Tls.Certificates)
+	encoded, err := yaml.Marshal(conf)
+	require.NoError(t, err)
+	var restored Monitoring
+	require.NoError(t, yaml.Unmarshal(encoded, &restored))
+	require.True(t, conf.IsEqualTo(&restored))
 	for _, source := range []string{
+		"{}", "{certificateFile: custom.crt}", "{privateKeyFile: custom.key}",
 		"{certificateFile: ''}", "{privateKeyFile: ''}", "{certificateFile: null}",
 		"{privateKeyFile: false}", "{unknown: value}",
 	} {
-		var certificate MonitoringCertificate
+		var certificate TlsCertificate
 		require.Error(t, yaml.Unmarshal([]byte(source), &certificate), source)
 	}
-	var http HttpCertificate
-	require.NoError(t, yaml.Unmarshal([]byte("{}"), &http))
-	require.Equal(t, DefaultHttpCertificateFile, http.CertificateFile)
-	require.Equal(t, DefaultHttpPrivateKeyFile, http.PrivateKeyFile)
+}
+
+func TestMonitoringTLSIsExplicitAndUsesTheSharedCertificateDefaults(t *testing.T) {
+	for _, source := range []string{
+		"monitoring: {enabled: true}",
+		"tls: {unused: {dummy: true}}\nmonitoring: {enabled: true}",
+	} {
+		var conf Configuration
+		require.NoError(t, conf.LoadFromYaml(strings.NewReader(source+"\n"+httpTestFlows), ""))
+		require.Nil(t, conf.Monitoring.Tls)
+		require.False(t, conf.Monitoring.Tls.IsEnabled())
+	}
+	for _, source := range []string{
+		"monitoring: {enabled: true, domains: [metrics.example.org], tls: {}}",
+		"tls: {private: {}}\nmonitoring: {enabled: true, domains: [metrics.example.org], tls: private}",
+	} {
+		var conf Configuration
+		require.NoError(t, conf.LoadFromYaml(strings.NewReader(source+"\n"+httpTestFlows), ""))
+		definition, err := conf.Monitoring.Tls.ServerDefinition()
+		require.NoError(t, err)
+		require.True(t, conf.Monitoring.Tls.IsEnabled())
+		require.Equal(t, (&Tls{}).FileCertificates(), definition.Certificates)
+		encoded, err := yaml.Marshal(conf)
+		require.NoError(t, err)
+		var restored Configuration
+		require.NoError(t, yaml.Unmarshal(encoded, &restored))
+		require.True(t, conf.IsEqualTo(restored))
+		require.True(t, restored.Monitoring.Tls.IsEnabled())
+	}
+}
+
+func TestMonitoringTLSRequiresExplicitDomainsForInlineAndNamedDefinitions(t *testing.T) {
+	for _, selection := range []string{"{}", "{dummy: true}", "{certificates: [{certificateFile: cert, privateKeyFile: key}]}", "private"} {
+		for _, domains := range []string{"", "domains: [],", "domains: ['*.example.org'],", "domains: ['metrics.example.org:443'],"} {
+			var conf Configuration
+			source := "tls: {private: {dummy: true}}\nmonitoring: {enabled: true, " + domains + " tls: " + selection + "}\n"
+			err := conf.LoadFromYaml(strings.NewReader(source+httpTestFlows), "")
+			require.Error(t, err, source)
+			if domains == "" || domains == "domains: []," {
+				require.ErrorContains(t, err, "[domains]")
+			}
+		}
+		var conf Configuration
+		source := "tls: {private: {dummy: true}}\nmonitoring: {enabled: false, tls: " + selection + "}\n"
+		require.NoError(t, conf.LoadFromYaml(strings.NewReader(source+httpTestFlows), ""), "disabled monitoring must not require names or read files")
+	}
+}
+
+func TestMonitoringInlineACMEStorageIsIsolatedAndPreservesExplicitPaths(t *testing.T) {
+	const prefix = "http: {enabled: true, domains: [app.example.org], tls: {acme: {acceptTerms: true}}}\n"
+	const enabled = "monitoring: {enabled: true, domains: [metrics.example.org], tls: "
+	for _, test := range []struct{ definition, storage string }{
+		{"{acme: {acceptTerms: true}}", filepath.Join(filepath.Dir(filepath.Dir(DefaultHttpAcmeStorage)), "monitoring", "acme")},
+		{"{acme: {acceptTerms: true, storage: custom/account}}", "custom/account"},
+		{"{<<: {acme: {acceptTerms: true, storage: merged/account}}}", "merged/account"},
+		{"{acme: {<<: {acceptTerms: true, storage: nested/account}}}", "nested/account"},
+	} {
+		var conf Configuration
+		require.NoError(t, conf.LoadFromYaml(strings.NewReader(prefix+enabled+test.definition+"}\n"+httpTestFlows), ""))
+		require.NotEqual(t, conf.Http.Tls.Acme.Storage, conf.Monitoring.Tls.Acme.Storage)
+		require.Equal(t, test.storage, conf.Monitoring.Tls.Acme.Storage)
+		encoded, err := yaml.Marshal(conf)
+		require.NoError(t, err)
+		var restored Configuration
+		require.NoError(t, yaml.Unmarshal(encoded, &restored))
+		require.True(t, conf.IsEqualTo(restored))
+	}
 }
 
 func TestMonitoringEmptyPeerListsAndNetworks(t *testing.T) {
@@ -90,8 +142,8 @@ func TestMonitoringEmptyPeerListsAndNetworks(t *testing.T) {
 
 func TestMonitoringConfigurationShapesAndTLS(t *testing.T) {
 	for _, content := range []string{
-		"enabled: null", "addresses: []\nenabled: true", "addresses: [null]", "addresses: ['127.0.0.1:9090','127.0.0.1:9090']", "tls: null", "tls: {enabled: true}",
-		"tls: {acme: {enabled: true}}", "tls: {dummy: true}", "tls: {enabled: true, certificates: [{certificateFile: file, privateKeyFile: ''}]}",
+		"enabled: null", "addresses: []\nenabled: true", "addresses: [null]", "addresses: ['127.0.0.1:9090','127.0.0.1:9090']", "tls: {enabled: true}",
+		"tls: {acme: {}}", "tls: {certificates: [{certificateFile: file, privateKeyFile: ''}]}",
 		"bearerToken: 'secret secret'", "bearerToken: abc\nbearerTokenFile: token", "readHeaderTimeout: 0s", "maxHeaderBytes: 0", "misspelled: true",
 	} {
 		t.Run(content, func(t *testing.T) { var conf Monitoring; require.Error(t, yaml.Unmarshal([]byte(content), &conf)) })
@@ -101,7 +153,7 @@ func TestMonitoringConfigurationShapesAndTLS(t *testing.T) {
 		require.Error(t, conf.LoadFromYaml(strings.NewReader(content+httpTestFlows), ""))
 	}
 	var conf Monitoring
-	require.NoError(t, yaml.Unmarshal([]byte("enabled: true\nallowedRemoteHosts: ['::1']\ntls:\n  enabled: true\n  certificates:\n    - certificateFile: missing/certificate.pem\n      privateKeyFile: missing/private.pem\nbearerToken: abc_def-12=="), &conf))
+	require.NoError(t, yaml.Unmarshal([]byte("enabled: true\ndomains: [monitoring.example.org]\nallowedRemoteHosts: ['::1']\ntls:\n  certificates:\n    - certificateFile: missing/certificate.pem\n      privateKeyFile: missing/private.pem\nbearerToken: abc_def-12=="), &conf))
 	encoded, err := yaml.Marshal(conf)
 	require.NoError(t, err)
 	var decoded Monitoring

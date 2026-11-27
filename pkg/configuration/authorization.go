@@ -16,8 +16,9 @@ type Authorization struct {
 	Principal  template.String `yaml:"principal,omitempty"`
 	RememberMe RememberMe      `yaml:"rememberMe,omitempty"`
 	// Reference is the configured definition name; V is the effective per-flow value.
-	Reference string `yaml:"-"`
-	resolved  bool
+	Reference    string `yaml:"-"`
+	resolved     bool
+	explicitNull bool
 }
 
 type AuthorizationV interface {
@@ -141,8 +142,11 @@ func (this Authorization) MarshalYAML() (any, error) {
 	if this.Reference != "" {
 		return this.Reference, nil
 	}
-	if this.resolved || this.V == nil {
+	if this.explicitNull {
 		return nil, nil
+	}
+	if this.resolved || this.V == nil {
+		return "", nil
 	}
 	if this.RememberMe != "" && !this.SupportsRememberMe() {
 		return nil, fmt.Errorf("[rememberMe] is not supported by this authorization type")
@@ -185,7 +189,7 @@ func (this Authorization) IsEqualTo(other any) bool {
 }
 
 func (this Authorization) isEqualTo(other *Authorization) bool {
-	if other == nil || this.Reference != other.Reference || this.RememberMe.String() != other.RememberMe.String() || (this.Reference == "" && this.resolved != other.resolved) || !this.Principal.IsEqualTo(other.Principal) {
+	if other == nil || this.explicitNull != other.explicitNull || this.Reference != other.Reference || this.RememberMe.String() != other.RememberMe.String() || (this.Reference == "" && this.resolved != other.resolved) || !this.Principal.IsEqualTo(other.Principal) {
 		return false
 	}
 	if other.V == nil {

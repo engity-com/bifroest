@@ -46,10 +46,14 @@ func httpListenerTestConfiguration(t *testing.T) configuration.Configuration {
 	conf.Flows[0].Auditlog = ""
 	conf.Http = &configuration.Http{}
 	require.NoError(t, conf.Http.SetDefaults())
-	conf.Http.Enabled = true
+	conf.Http.Enabled = configuration.HttpEnabled
 	conf.Http.Domains = configuration.HttpDomains{"app.example.org"}
 	conf.Http.Addresses = bnet.NetAddresses{bnet.MustNewAddress("127.0.0.1:0")}
-	conf.Http.Tls.Acme.Enabled, conf.Http.Tls.Acme.AcceptTerms = true, true
+	conf.Http.Tls = &configuration.Tls{}
+	require.NoError(t, conf.Http.Tls.SetDefaults())
+	conf.Http.Tls.Acme = &configuration.TlsAcme{}
+	require.NoError(t, conf.Http.Tls.Acme.SetDefaults())
+	conf.Http.Tls.Acme.AcceptTerms = true
 	conf.Http.Tls.Acme.Storage = filepath.Join(root, "acme")
 	conf.Http.GracefulShutdownTimeout = common.DurationOf(100 * time.Millisecond)
 	conf.Ssh.GracefulShutdownTimeout = common.DurationOf(100 * time.Millisecond)
@@ -58,6 +62,10 @@ func httpListenerTestConfiguration(t *testing.T) configuration.Configuration {
 
 func httpListenerTestCertificate(t *testing.T, conf *configuration.Configuration, signer crypto.Signer) *x509.Certificate {
 	t.Helper()
+	if conf.Http.Tls == nil {
+		conf.Http.Tls = &configuration.Tls{}
+		require.NoError(t, conf.Http.Tls.SetDefaults())
+	}
 	if signer == nil {
 		_, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
@@ -324,6 +332,8 @@ func TestJointStartupAllowsOnlyAcmeProofsAndCancelsBothInputs(t *testing.T) {
 			conf.Http.StartupTimeout = common.DurationOf(time.Second)
 			svc := prepareHTTPListenerTestService(t, conf)
 			require.NoError(t, svc.https.Close())
+			require.NoError(t, svc.closeTLS())
+			svc.tlsManagers, svc.tlsSourceNames = nil, nil
 			account, err := (bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEcdsa}).GenerateKey(nil)
 			require.NoError(t, err)
 			client := &acme.Client{Key: account.ToSdk()}

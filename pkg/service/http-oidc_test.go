@@ -178,7 +178,8 @@ func oidcCodeFixture(t *testing.T, configure ...func(*configuration.Configuratio
 	conf.Flows[0].DiscoverAsSlug = "Work"
 	conf.Http = &configuration.Http{}
 	require.NoError(t, conf.Http.SetDefaults())
-	conf.Http.Enabled, conf.Http.Domains, conf.Http.Tls.Dummy = true, configuration.HttpDomains{"app.example.org"}, true
+	conf.Http.Enabled, conf.Http.Domains = configuration.HttpEnabled, configuration.HttpDomains{"app.example.org"}
+	conf.Http.Tls = &configuration.Tls{Dummy: true}
 	for _, change := range configure {
 		change(&conf, p)
 	}

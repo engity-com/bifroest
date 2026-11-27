@@ -49,7 +49,7 @@ func TestEnvironmentDefinitionsPreserveProviderNameFields(t *testing.T) {
 }
 
 func TestConfigurationReferenceDefaults(t *testing.T) {
-	for _, value := range []string{"", "null", "''", "default"} {
+	for _, value := range []string{"", "''", "default"} {
 		for _, field := range []string{"environment", "authorization", "auditlog"} {
 			t.Run(field+"/"+value, func(t *testing.T) {
 				source := referenceTestDefaults + "auditlogs:\n  default: {}\nflows:\n  - name: first\n"

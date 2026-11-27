@@ -56,6 +56,7 @@ func TestHTTPSEndpointServesRealHttp2AndChecksAuthorities(t *testing.T) {
 	fixture := newTlsTestCertificate(t, []string{"app.example.org", "other.example.org"}, true, nil)
 	conf := newTlsTestConfiguration(t, "app.example.org", "other.example.org")
 	conf.Tls.Certificates = []configuration.HttpCertificate{fixture.configured}
+	conf.Tls.Acme.Storage = filepath.Join(t.TempDir(), "unused-acme")
 	endpoint, err := NewEndpoint(conf, EndpointOptions{})
 	require.NoError(t, err)
 	listener, _ := startEndpointTestListener(t, endpoint)
@@ -78,31 +79,7 @@ func TestHTTPSEndpointServesRealHttp2AndChecksAuthorities(t *testing.T) {
 	require.NoError(t, err)
 	defer response.Body.Close()
 	require.Equal(t, http.StatusMisdirectedRequest, response.StatusCode)
-	require.Nil(t, endpoint.source.value, "explicit coverage must not open ACME storage")
-}
-
-func TestHTTPSEndpointUsesRealListenerForLocalAcmeProofs(t *testing.T) {
-	clock := newACMETestClock()
-	ca := newACMETestCA(t, clock)
-	conf := newTlsTestConfiguration(t, "app.example.org")
-	conf.Tls.Acme.DirectoryUrl = ca.server.URL + "/directory"
-	conf.Tls.Acme.Storage = filepath.Join(t.TempDir(), "acme")
-	source, err := newACME(conf, ca.server.Client(), clock.now)
-	require.NoError(t, err)
-	defer source.Close()
-	endpoint, err := NewEndpoint(conf, EndpointOptions{Source: source})
-	require.NoError(t, err)
-	endpoint.tls.now = clock.now
-	listener, _ := startEndpointTestListener(t, endpoint)
-	ca.setProbe(listener.Addr().String())
-	require.NoError(t, endpoint.Prepare(context.Background()))
-	require.True(t, endpoint.Ready())
-	require.Equal(t, 1, ca.counts().proofs)
-	client := endpointTestClient(t, listener, ca.root)
-	response, err := client.Get("https://app.example.org/")
-	require.NoError(t, err)
-	defer response.Body.Close()
-	require.Equal(t, http.StatusNotImplemented, response.StatusCode)
+	require.NoDirExists(t, conf.Tls.Acme.Storage, "explicit coverage must not open ACME storage")
 }
 
 func TestHTTPSEndpointKeyRejectionPreventsReadiness(t *testing.T) {

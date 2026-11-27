@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -164,6 +165,123 @@ func TestGoWorkflowRaceRetainsPreparedContainerAndAsciinema(t *testing.T) {
 	value, exists := step.Env["MISE_GITHUB_TOKEN"]
 	require.True(t, exists)
 	require.Empty(t, value)
+}
+
+func TestGoWorkflowIntegrationsReuseTheExistingStaticLinuxJob(t *testing.T) {
+	jobs := readGoJobsWorkflow(t)
+	require.NotContains(t, jobs, "tls")
+	require.NotContains(t, readGoJobsWorkflowFile(t, "ci.yml"), "tls")
+	job := jobs["test-static"]
+	require.Equal(t, "ubuntu-latest", job.RunsOn)
+	require.Equal(t, "0", job.Env["CGO_ENABLED"])
+	require.Equal(t, map[string]string{"contents": "read"}, job.Permissions)
+	var needs string
+	require.NoError(t, job.Needs.Decode(&needs))
+	require.Equal(t, "browser", needs)
+	core := goJobsStepContaining(t, job, "mise run test:go:native")
+	helm := goJobsStepContaining(t, job, "mise run test:tls:helm")
+	kubernetes := goJobsStepContaining(t, job, "mise run --skip-deps test:e2e:kubernetes:tls")
+	require.Less(t, core, helm)
+	require.Less(t, helm, kubernetes)
+	require.Empty(t, job.Steps[helm].If, "integration test steps remain mandatory")
+	require.Empty(t, job.Steps[kubernetes].If)
+	require.Equal(t, 5, job.Steps[helm].TimeoutMinutes)
+	require.Equal(t, 20, job.Steps[kubernetes].TimeoutMinutes)
+	download, upload := -1, -1
+	for index, step := range job.Steps {
+		require.False(t, step.ContinueOnError)
+		require.NotContains(t, step.Run, "install:docs")
+		require.NotContains(t, step.Run, "install:web")
+		require.NotContains(t, step.Run, "build:web")
+		require.NotContains(t, step.Run, "mise run test:e2e:kubernetes:tls", "CI must skip prerequisites to reuse verified browser assets")
+		require.NotContains(t, step.Run, "python", "Go integration tests must manage their own fixtures")
+		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "browser-assets" {
+			download = index
+			require.Equal(t, "pkg/webui/assets", step.With["path"])
+		}
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["path"] == "var/test-report/" {
+			upload = index
+			require.Equal(t, "always()", step.If)
+		}
+	}
+	require.NotEqual(t, -1, download)
+	require.Less(t, download, core)
+	require.Greater(t, upload, kubernetes, "the existing report upload must include Kubernetes failure diagnostics")
+}
+
+func TestGoWorkflowIntegrationStepsPreserveOldRefsAndPropagateFailures(t *testing.T) {
+	bash, err := goexec.LookPath("bash")
+	if err != nil {
+		t.Skip("Bash is required to exercise integration task selection")
+	}
+	job := readGoJobsWorkflow(t)["test-static"]
+	for _, test := range []struct{ fixture, command string }{
+		{"test/helm/tls_test.go", "mise run test:tls:helm"},
+		{"test/e2e/kubernetes_tls_test.go", "mise run --skip-deps test:e2e:kubernetes:tls"},
+	} {
+		step := job.Steps[goJobsStepContaining(t, job, test.command)]
+		require.Contains(t, step.Run, "if [ -f "+test.fixture+" ]; then")
+		require.FileExists(t, filepath.Join("../..", test.fixture), "the current checkout must actually execute the fixture")
+		for _, modern := range []bool{false, true} {
+			for _, status := range []string{"0", "23"} {
+				directory := t.TempDir()
+				if modern {
+					path := filepath.Join(directory, test.fixture)
+					require.NoError(t, gos.MkdirAll(filepath.Dir(path), 0o700))
+					require.NoError(t, gos.WriteFile(path, nil, 0o600))
+				}
+				script := `mise() { printf 'EXEC mise %s\n' "$*"; return "$TEST_EXIT"; }
+go() { printf 'EXEC go %s\n' "$*"; return "$TEST_EXIT"; }
+` + step.Run
+				path := filepath.Join(directory, "run.sh")
+				require.NoError(t, gos.WriteFile(path, []byte(script), 0o600))
+				command := goexec.Command(bash, "--noprofile", "--norc", "-e", "-o", "pipefail", filepath.ToSlash(path))
+				command.Dir = directory
+				command.Env = append(gos.Environ(), "TEST_EXIT="+status)
+				output, runErr := command.CombinedOutput()
+				if !modern {
+					require.NoError(t, runErr, string(output))
+					require.Contains(t, string(output), "Old source ref:")
+					require.NotContains(t, string(output), "EXEC ")
+				} else {
+					require.Equal(t, "EXEC "+test.command+"\n", string(output))
+					if status == "0" {
+						require.NoError(t, runErr)
+					} else {
+						var exit *goexec.ExitError
+						require.ErrorAs(t, runErr, &exit)
+						require.Equal(t, 23, exit.ExitCode())
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTLSIntegrationTasksUsePinnedToolsAndFocusedSelection(t *testing.T) {
+	raw, err := gos.ReadFile("../../mise.toml")
+	require.NoError(t, err)
+	var configuration struct {
+		Tasks map[string]struct {
+			Tools   map[string]any `toml:"tools"`
+			Depends []string       `toml:"depends"`
+			Run     any            `toml:"run"`
+		} `toml:"tasks"`
+	}
+	_, err = toml.Decode(string(raw), &configuration)
+	require.NoError(t, err)
+	require.NotContains(t, configuration.Tasks, "test:tls:kubernetes")
+	kubernetes := configuration.Tasks["test:e2e:kubernetes:tls"]
+	require.Equal(t, map[string]any{
+		"go": "{{ vars.tool_version_go }}", "docker_cli": "{{ vars.tool_version_docker_cli }}",
+		"kind": "{{ vars.tool_version_kind }}", "kubectl": "{{ vars.tool_version_kubectl }}",
+		"helm": "{{ vars.tool_version_helm }}",
+	}, kubernetes.Tools)
+	require.ElementsMatch(t, []string{"build:web", "build:var"}, kubernetes.Depends)
+	require.Equal(t, "go test -v -count=1 -parallel=1 -tags=e2e -timeout=15m -run '^TestKubernetesTLSBootstrap$' ./test/e2e", kubernetes.Run)
+	require.Equal(t, map[string]any{
+		"go": "{{ vars.tool_version_go }}", "helm": "{{ vars.tool_version_helm }}",
+	}, configuration.Tasks["test:tls:helm"].Tools)
 }
 
 func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testing.T) {
