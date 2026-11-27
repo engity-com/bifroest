@@ -106,7 +106,7 @@ environment:
 		done := make(chan error, 1)
 		go func() { done <- client.Wait() }()
 		select {
-		case <-done:
+		case _ = <-done: // A server-initiated disconnect may return an SSH error.
 		case <-time.After(5 * time.Second):
 			t.Fatal("workload connection remained open")
 		}
@@ -124,7 +124,7 @@ environment:
 	thirdDone := make(chan error, 1)
 	go func() { thirdDone <- third.Wait() }()
 	select {
-	case <-thirdDone:
+	case _ = <-thirdDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("disposed session's connection remained open")
 	}

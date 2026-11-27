@@ -12,13 +12,14 @@ const (
 	goStandardLibraryLicense      = "BSD-3-Clause"
 	modifiedGoSourcesLicense      = "BSD-3-Clause"
 	mozillaCaDataLicense          = "MPL-2.0"
-	licenseDetectionComment       = "validated from the built binary with go-licenses " + goLicensesVersion
 	spdxNoAssertion               = "NOASSERTION"
 	modifiedGoSourcesSpdxID       = "SPDXRef-BifroestBundled-ModifiedGoSources"
 	mozillaCaDataSpdxID           = "SPDXRef-BifroestBundled-MozillaNssCaData"
 	modifiedGoSourcesCycloneDxRef = "urn:bifroest:component:modified-go-sources"
 	mozillaCaDataCycloneDxRef     = "urn:bifroest:component:mozilla-nss-ca-data"
 )
+
+var licenseDetectionComment = "validated from the built binary with go-licenses " + goLicensesVersion
 
 type bundledLicenseComponent struct {
 	spdxID       string

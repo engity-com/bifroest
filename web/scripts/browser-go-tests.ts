@@ -4,6 +4,7 @@ import {
     spawnSync,
 } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { requirePinnedNode } from './tool-versions.ts';
 
 // Successful Phase 1 run 45472956311, Browser assets and inventory job
 // 138726110604, mise test:go:browser (Linux, CGO_ENABLED=0). These are measured
@@ -189,9 +190,7 @@ export function runBrowserGoTests(
     }: { run?: CommandRunner; env?: NodeJS.ProcessEnv; log?: (message: string) => void } = {},
 ): number {
     const shard = parseBrowserShard(args);
-    if (process.versions.node !== '26.9.0') {
-        throw new Error('Browser Go tests require the MISE-pinned Node 26.9.0 runtime');
-    }
+    requirePinnedNode();
     const parallelism = env.GO_TEST_PARALLELISM ?? '2';
     if (!/^[1-9][0-9]*$/u.test(parallelism) || !Number.isSafeInteger(Number(parallelism))) {
         throw new Error('GO_TEST_PARALLELISM must be a positive safe integer');

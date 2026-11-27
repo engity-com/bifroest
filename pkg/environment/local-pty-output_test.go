@@ -15,8 +15,8 @@ func TestLocalPtyOutputDrainWaitsBeforePublishingProcessSuccess(t *testing.T) {
 		result <- waitLocalPtyOutput(t.Context(), done, time.Second, func() { t.Error("unexpected abort") })
 	}()
 	select {
-	case <-result:
-		t.Fatal("process success escaped before output completion")
+	case err := <-result:
+		t.Fatalf("process result escaped before output completion: %v", err)
 	default:
 	}
 	done <- nil

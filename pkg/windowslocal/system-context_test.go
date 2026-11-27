@@ -63,8 +63,8 @@ func TestS4USystemContextJoinsNativeWorkAfterCancellation(t *testing.T) {
 	<-entered
 	cancel()
 	select {
-	case <-done:
-		t.Fatal("cancellation abandoned native callback/cleanup")
+	case err := <-done:
+		t.Fatalf("cancellation abandoned native callback/cleanup: %v", err)
 	case <-time.After(30 * time.Millisecond):
 	}
 	released.Store(true)
@@ -238,8 +238,8 @@ func TestS4USystemContextStartupHandoffJoinsCanceledChild(t *testing.T) {
 	<-entered
 	cancel()
 	select {
-	case <-done:
-		t.Fatal("handoff returned before canceled child's cleanup")
+	case err := <-done:
+		t.Fatalf("handoff returned before canceled child's cleanup: %v", err)
 	case <-time.After(30 * time.Millisecond):
 	}
 	released.Store(true)

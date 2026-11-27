@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/engity-com/bifroest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -127,9 +128,9 @@ func TestMiseNativeTaskParsingDoesNotInstallAnyTool(t *testing.T) {
 			require.NoError(t, err)
 			require.NotContains(t, string(tools), "{{", "MISE itself must resolve all catalog references")
 		}
-		require.Equal(t, "1.27.4", parsed["ci:go:env"]["go"])
-		require.Equal(t, "26.9.0", parsed["test:go:native"]["node"])
-		require.Equal(t, map[string]any{"node": "26.9.0"}, parsed["ci:group-binary-matrices"])
+		require.Equal(t, bifroest.ToolVersion("go"), parsed["ci:go:env"]["go"])
+		require.Equal(t, bifroest.ToolVersion("node"), parsed["test:go:native"]["node"])
+		require.Equal(t, map[string]any{"node": bifroest.ToolVersion("node")}, parsed["ci:group-binary-matrices"])
 	}
 	_, err = gos.Stat(filepath.Join(data, "installs"))
 	require.ErrorIs(t, err, gos.ErrNotExist)

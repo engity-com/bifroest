@@ -370,7 +370,7 @@ func serveOidcSSH(t *testing.T, svc *service, p *oidcCodeProvider) string {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-done:
+		case _ = <-done: // Cancellation may return a listener error.
 		case <-time.After(5 * time.Second):
 			t.Error("SSH server did not stop")
 		}
@@ -594,7 +594,7 @@ func TestOidcCodeWithUnmodifiedOpenSSH(t *testing.T) {
 	output := startOidcOpenSSH(t, cmd)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	t.Cleanup(func() { cancel(); _ = output.Close(); <-done })
+	t.Cleanup(func() { cancel(); _ = output.Close(); _ = <-done }) // Cancellation may kill OpenSSH.
 	instructions := make(chan string, 1)
 	go func() {
 		instructions <- readOidcSSHInstruction(output)
@@ -857,7 +857,7 @@ func TestOidcCodeSSHDisconnectInvalidatesPendingLogin(t *testing.T) {
 	require.Equal(t, 401, oidcCallbackRequest(handler, browser.callback, browser.cookie).Code)
 	require.Zero(t, webSessionCount(t, svc))
 	select {
-	case <-done:
+	case _ = <-done: // The raw SSH connection was deliberately closed.
 	case <-time.After(3 * time.Second):
 		t.Fatal("SSH client did not stop")
 	}

@@ -92,7 +92,7 @@ func runDefaultUntilInterrupted(t *testing.T, configurationPath string, lockPath
 			return
 		}
 		select {
-		case <-done:
+		case _ = <-done: // Cleanup only; the interrupted command may fail.
 			return
 		default:
 		}
@@ -101,7 +101,7 @@ func runDefaultUntilInterrupted(t *testing.T, configurationPath string, lockPath
 			_ = process.Signal(syscall.SIGINT)
 		}
 		select {
-		case <-done:
+		case _ = <-done:
 		case <-time.After(10 * time.Second):
 		}
 	})

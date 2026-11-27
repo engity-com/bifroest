@@ -1,10 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { requirePinnedNode } from './tool-versions.ts';
 
-if (process.versions.node !== '26.9.0') {
-    throw new Error('Native WebCrypto tests require the MISE-pinned Node runtime');
-}
+requirePinnedNode();
 // Check/warm the pinned runtime before concurrent Go package startup. The real
 // Go/WebCrypto possession test still creates independent keys and must run;
 // this preflight is neither its substitute nor a credential/export operation.

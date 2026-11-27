@@ -616,7 +616,7 @@ func TestConnectionLifecycleWaitsForSessionHandlerDuringGracefulShutdown(t *test
 		t.Fatal("service did not finish after the session handler ended")
 	}
 	select {
-	case <-runDone:
+	case _ = <-runDone: // Closing the client may interrupt the SSH command.
 	case <-time.After(time.Second):
 		t.Fatal("SSH client session did not finish")
 	}
@@ -665,7 +665,7 @@ func TestConnectionLifecycleDrainsSessionHandlerAfterForcedShutdown(t *testing.T
 		t.Fatal("service did not finish after the forced session handler ended")
 	}
 	select {
-	case <-runDone:
+	case _ = <-runDone: // Forced shutdown may interrupt the SSH command.
 	case <-time.After(time.Second):
 		t.Fatal("SSH client session did not finish")
 	}
@@ -769,7 +769,7 @@ func (this *authorizedKeysTestServer) stop() error {
 		this.service.connectionLifecycle.stop()
 		this.cancelServe()
 		select {
-		case <-this.serveDone:
+		case _ = <-this.serveDone: // Cancellation may return a listener error.
 		case <-time.After(5 * time.Second):
 			this.stopErr = fmt.Errorf("SSH server did not stop")
 			return

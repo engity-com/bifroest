@@ -156,8 +156,8 @@ func TestDarwinPamRunnerDoesNotAbandonAnOutstandingNativeCall(t *testing.T) {
 	<-entered
 	cancel()
 	select {
-	case <-done:
-		t.Fatal("abandoned a synchronous PAM call")
+	case err := <-done:
+		t.Fatalf("abandoned a synchronous PAM call: %v", err)
 	default:
 	}
 	releaseNative()

@@ -34,7 +34,7 @@ func TestServeConnCancelsHandlerWhenClientDisconnects(t *testing.T) {
 	require.NoError(t, client.Close())
 
 	select {
-	case <-serveDone:
+	case _ = <-serveDone: // A disconnected client may produce a transport error.
 	case <-time.After(time.Second):
 		t.Fatal("handler was not canceled after the client disconnected")
 	}

@@ -553,8 +553,8 @@ func TestHTTPSArtifactDataEndCannotBypassRecordingSealFailure(t *testing.T) {
 		t.Fatal("recording did not attempt sealing")
 	}
 	select {
-	case <-done:
-		t.Fatal("artifact completed before recording seal")
+	case err := <-done:
+		t.Fatalf("artifact completed before recording seal: %v", err)
 	default:
 	}
 	unblock()

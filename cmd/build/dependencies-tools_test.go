@@ -102,6 +102,84 @@ func TestApplyToolUpdatesNoOpRetainsExactBytes(t *testing.T) {
 	require.Equal(t, previous, string(files[dependencyToolsPath]))
 }
 
+func TestToolUpdatesKeepRequiredLiteralCompanionsInTheSamePlan(t *testing.T) {
+	for _, bump := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bump=%t", bump), func(t *testing.T) {
+			files := map[string][]byte{
+				dependencyToolsPath: []byte("tool_version_biome: \"2.6.3\"\ntool_version_bun: \"1.4.4\"\n"),
+				dependencyMisePath:  []byte("[tool_alias]\nbiome = \"aqua:biomejs/biome\"\n"),
+				"biome.json":        []byte("{\r\n  \"$schema\": \"https://biomejs.dev/schemas/2.6.0/schema.json\"\r\n}\r\n"),
+				"web/package.json":  []byte("{\"packageManager\": \"bun@1.4.0\", \"scripts\": {\"test\": \"untouched\"}}\n"),
+			}
+			results := map[string]any{
+				"biome": map[string]any{"name": "biome", "requested": "2.6.3", "bump": nil, "latest": "2.6.3"},
+				"bun":   map[string]any{"name": "bun", "requested": "1.4.4", "bump": nil, "latest": "1.4.4"},
+			}
+			if bump {
+				results["biome"].(map[string]any)["bump"] = "2.6.9"
+				results["bun"].(map[string]any)["bump"] = "1.4.5"
+			}
+			dependencies := &dependencies{miseCommand: func(context.Context, string, ...string) ([]byte, error) {
+				return json.Marshal(results)
+			}}
+			checks, err := dependencies.applyToolUpdates(t.Context(), files)
+			require.NoError(t, err)
+			require.Len(t, checks, 2)
+			for _, check := range checks {
+				require.True(t, check.changed, "repair stale literal companions even without a new tool version")
+				require.Len(t, check.files, 2)
+			}
+			catalog, err := parseDependencyToolCatalog(files[dependencyToolsPath])
+			require.NoError(t, err)
+			require.Equal(t, "{\r\n  \"$schema\": \"https://biomejs.dev/schemas/"+catalog.versions["biome"].Value+"/schema.json\"\r\n}\r\n", string(files["biome.json"]))
+			require.Equal(t, "{\"packageManager\": \"bun@"+catalog.versions["bun"].Value+"\", \"scripts\": {\"test\": \"untouched\"}}\n", string(files["web/package.json"]))
+			next, err := dependencyToolCompanionUpdates(catalog, files)
+			require.NoError(t, err)
+			require.Empty(t, next, "reconciliation is idempotent")
+		})
+	}
+}
+
+func TestInvalidToolCompanionsCannotPartiallyUpdateThePlan(t *testing.T) {
+	for _, invalid := range []string{
+		"", "not json", `{}`, `{"packageManager":"npm@1.0.0"}`,
+		`{"packageManager":"bun@1.4.4","packageManager":"bun@1.4.5"}`,
+	} {
+		t.Run(invalid, func(t *testing.T) {
+			files := map[string][]byte{
+				dependencyToolsPath: []byte("tool_version_biome: \"2.6.3\"\ntool_version_bun: \"1.4.4\"\n"),
+				dependencyMisePath:  []byte(""),
+				"biome.json":        []byte(`{"$schema":"https://biomejs.dev/schemas/2.6.3/schema.json"}`),
+				"web/package.json":  []byte(invalid),
+			}
+			original := map[string][]byte{}
+			for path, raw := range files {
+				original[path] = append([]byte{}, raw...)
+			}
+			dependencies := &dependencies{miseCommand: func(context.Context, string, ...string) ([]byte, error) {
+				return []byte(`{"biome":{"name":"biome","requested":"2.6.3","bump":"2.6.9","latest":"2.6.9"},"bun":{"name":"bun","requested":"1.4.4","bump":"1.4.5","latest":"1.4.5"}}`), nil
+			}}
+			_, err := dependencies.applyToolUpdates(t.Context(), files)
+			require.ErrorContains(t, err, "web/package.json")
+			require.Equal(t, original, files, "no catalog or first companion published after a later companion failure")
+		})
+	}
+}
+
+func TestRepositoryToolCompanionsMatchTheCanonicalCatalog(t *testing.T) {
+	files := map[string][]byte{}
+	for _, path := range dependencyToolPaths() {
+		raw, err := gos.ReadFile(filepath.Join("..", "..", filepath.FromSlash(path)))
+		require.NoError(t, err)
+		files[path] = raw
+	}
+	catalog, err := parseDependencyToolCatalog(files[dependencyToolsPath])
+	require.NoError(t, err)
+	updates, err := dependencyToolCompanionUpdates(catalog, files)
+	require.NoError(t, err)
+	require.Empty(t, updates, "literal references must never drift from the canonical tool catalog")
+}
+
 func TestApplyToolUpdatesRejectsPartialOrInvalidResultsAtomically(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

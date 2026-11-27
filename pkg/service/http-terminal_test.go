@@ -483,7 +483,7 @@ func TestRealWebSocketAndSshExecuteAgainstOnePersistentSession(t *testing.T) {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-done:
+		case _ = <-done: // Cancellation may return a listener error.
 		case <-time.After(3 * time.Second):
 			t.Error("SSH did not stop")
 		}

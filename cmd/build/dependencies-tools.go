@@ -30,6 +30,48 @@ var (
 	toolVersionPattern    = regexp.MustCompile(`^v?[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.-]+)?$`)
 )
 
+// These formats require literal versions rather than MISE variable references.
+// Keep them in the same atomic update plan as their canonical catalog entries.
+var dependencyToolCompanions = []struct {
+	tool    string
+	path    string
+	pattern *regexp.Regexp
+}{
+	{"biome", "biome.json", regexp.MustCompile(`"\$schema"\s*:\s*"https://biomejs\.dev/schemas/([^"/]+)/schema\.json"`)},
+	{"bun", "web/package.json", regexp.MustCompile(`"packageManager"\s*:\s*"bun@([^"]+)"`)},
+}
+
+func dependencyToolPaths() []string {
+	paths := []string{dependencyToolsPath, dependencyMisePath}
+	for _, companion := range dependencyToolCompanions {
+		paths = append(paths, companion.path)
+	}
+	return paths
+}
+
+func dependencyToolCompanionUpdates(catalog *dependencyToolCatalog, files map[string][]byte) (map[string][]byte, error) {
+	updated := map[string][]byte{}
+	for _, companion := range dependencyToolCompanions {
+		version, exists := catalog.versions[companion.tool]
+		if !exists {
+			continue
+		}
+		raw := files[companion.path]
+		matches := companion.pattern.FindAllSubmatchIndex(raw, -1)
+		if !json.Valid(raw) || len(matches) != 1 {
+			return nil, fmt.Errorf("%s must contain exactly one managed %s version reference", companion.path, companion.tool)
+		}
+		start, end := matches[0][2], matches[0][3]
+		next := append([]byte{}, raw[:start]...)
+		next = append(next, version.Value...)
+		next = append(next, raw[end:]...)
+		if !bytes.Equal(raw, next) {
+			updated[companion.path] = next
+		}
+	}
+	return updated, nil
+}
+
 type dependencyMiseCommand func(context.Context, string, ...string) ([]byte, error)
 
 type dependencyToolCatalog struct {
@@ -189,6 +231,21 @@ func (this *dependencies) applyToolUpdates(ctx context.Context, files map[string
 		changed = changed || check.changed
 		version.Value = current
 	}
+	companionUpdates, err := dependencyToolCompanionUpdates(catalog, files)
+	if err != nil {
+		return nil, err
+	}
+	for i, name := range names {
+		for _, companion := range dependencyToolCompanions {
+			if companion.tool != name {
+				continue
+			}
+			checks[i].files = append(checks[i].files, companion.path)
+			if _, exists := companionUpdates[companion.path]; exists {
+				checks[i].changed = true
+			}
+		}
+	}
 	if changed {
 		var updated bytes.Buffer
 		encoder := yaml.NewEncoder(&updated)
@@ -199,12 +256,15 @@ func (this *dependencies) applyToolUpdates(ctx context.Context, files map[string
 		// Publish into the plan only after every result has passed validation.
 		files[dependencyToolsPath] = updated.Bytes()
 	}
+	for path, raw := range companionUpdates {
+		files[path] = raw
+	}
 	return checks, nil
 }
 
 func (this *dependencies) checkToolUpdates(ctx context.Context) error {
 	files := map[string][]byte{}
-	for _, path := range []string{dependencyToolsPath, dependencyMisePath} {
+	for _, path := range dependencyToolPaths() {
 		raw, err := gos.ReadFile(path)
 		if err != nil {
 			return err

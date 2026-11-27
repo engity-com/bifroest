@@ -12,6 +12,7 @@ import { xtermDocumentPlugin } from './scripts/xterm-document.ts';
 const output = new URL('../pkg/webui/assets/', import.meta.url);
 const marker = readFileSync(new URL('README.txt', output));
 let browserInputs: BrowserInputs | undefined;
+let buildFailed = false;
 const xtermVersion = JSON.parse(
     readFileSync(new URL('./node_modules/@xterm/xterm/package.json', import.meta.url), 'utf8'),
 ).version as string;
@@ -95,7 +96,15 @@ export default defineConfig({
                     browserInputs = captureBrowserInputs();
                 }
             },
+            buildEnd(error) {
+                buildFailed = error !== undefined;
+            },
             closeBundle() {
+                // Preserve the original buildStart/compiler failure instead of
+                // replacing it with a secondary missing-snapshot error.
+                if (buildFailed) {
+                    return;
+                }
                 mkdirSync(output, { recursive: true });
                 writeFileSync(new URL('README.txt', output), marker);
                 writeFrontendNotices(output);

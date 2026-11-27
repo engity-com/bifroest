@@ -13,14 +13,32 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/engity-com/bifroest"
 	"github.com/engity-com/bifroest/internal/build/browser"
 	"github.com/stretchr/testify/require"
 )
 
-func testBrowserManifest(t *testing.T, binary *buildArtifact) {
+func testBrowserManifestBytes(t *testing.T) []byte {
 	t.Helper()
 	raw, err := gos.ReadFile("../../internal/build/browser/testdata/minimal.json")
 	require.NoError(t, err)
+	var m browser.Manifest
+	require.NoError(t, json.Unmarshal(raw, &m))
+	m.Bun, m.Node = bifroest.ToolVersion("bun"), bifroest.ToolVersion("node")
+	m.Go = "go" + bifroest.ToolVersion("go")
+	for i := range m.Components {
+		if m.Components[i].Ecosystem == "go-runtime" {
+			m.Components[i].Version = bifroest.ToolVersion("go")
+		}
+	}
+	raw, err = json.MarshalIndent(m, "", "  ")
+	require.NoError(t, err)
+	return raw
+}
+
+func testBrowserManifest(t *testing.T, binary *buildArtifact) {
+	t.Helper()
+	raw := testBrowserManifestBytes(t)
 	m, err := browser.Decode(raw)
 	require.NoError(t, err)
 	binary.buildContext.revision = m.Revision
@@ -32,8 +50,7 @@ func testBrowserManifest(t *testing.T, binary *buildArtifact) {
 
 func TestBrowserBuildRequiresExactOutputsInputsAndRevision(t *testing.T) {
 	t.Setenv("GITHUB_ACTIONS", "false")
-	raw, err := gos.ReadFile("../../internal/build/browser/testdata/minimal.json")
-	require.NoError(t, err)
+	raw := testBrowserManifestBytes(t)
 	m, err := browser.Decode(raw)
 	require.NoError(t, err)
 	root := fstest.MapFS{browserAssetDirectory + "/" + browser.Filename: &fstest.MapFile{Data: raw}}
