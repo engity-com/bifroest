@@ -101,6 +101,8 @@ func TestGoWorkflowTestsRaceAndLintRunIndependently(t *testing.T) {
 				require.False(t, step.ContinueOnError)
 				if name == "test-host" && step.Name == "Stress management channel completion on Windows" {
 					require.Equal(t, "runner.os == 'Windows'", step.If)
+				} else if check.lint && step.Run == "mise run lint:lua" && !check.native {
+					require.Equal(t, "runner.os == 'Windows'", step.If, "check shared Lua sources once without additional runners")
 				} else if step.If != "" {
 					require.Equal(t, "always()", step.If, "only failure diagnostics may have a conditional")
 					if step.Uses != "" {

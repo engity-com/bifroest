@@ -45,26 +45,40 @@ func TestLuaLintToolsAreTaskOwnedAndKeepBothChecks(t *testing.T) {
 	require.Equal(t, "stylua --config-path .stylua.toml --verify pkg/test", configuration.Tasks["format:lua"].Run)
 }
 
-func TestLuaWorkflowUsesTheSameUnprivilegedTaskOnLinuxAndWindows(t *testing.T) {
-	job := readGoJobsWorkflow(t)["lint-lua"]
-	require.Equal(t, "${{ matrix.runner }}", job.RunsOn)
-	require.Equal(t, map[string]any{"runner": []any{"ubuntu-latest", "windows-latest"}}, job.Strategy.Matrix)
-	require.NotNil(t, job.Strategy.FailFast)
-	require.False(t, *job.Strategy.FailFast)
-	require.Equal(t, map[string]string{"contents": "read"}, job.Permissions)
-	require.False(t, job.ContinueOnError)
-	checks := 0
-	for _, step := range job.Steps {
-		require.False(t, step.ContinueOnError)
-		for _, forbidden := range []string{"sudo", "apt-get", "luarocks", "mise install", "mise exec"} {
-			require.NotContains(t, step.Run, forbidden)
-		}
-		if step.Run == "mise run lint:lua" {
-			checks++
-			require.Empty(t, step.If)
-		}
+func TestLuaWorkflowSharesExistingLintJobsAndMiseSetup(t *testing.T) {
+	jobs := readGoJobsWorkflow(t)
+	require.NotContains(t, jobs, "lint-lua", "Lua must not need its own runners or MISE setup")
+	for name, expectedChecks := range map[string]int{
+		"lint-go-host":      1,
+		"lint-go-container": 0,
+	} {
+		t.Run(name, func(t *testing.T) {
+			job := jobs[name]
+			require.Equal(t, "Lint ${{ matrix.os }}", job.Name)
+			require.Equal(t, map[string]string{"contents": "read"}, job.Permissions)
+			require.False(t, job.ContinueOnError)
+			checks, setups := 0, 0
+			for _, step := range job.Steps {
+				require.False(t, step.ContinueOnError)
+				for _, forbidden := range []string{"sudo", "apt-get", "luarocks", "mise install", "mise exec"} {
+					require.NotContains(t, step.Run, forbidden)
+				}
+				if strings.HasPrefix(step.Uses, "jdx/mise-action@") {
+					setups++
+				}
+				if step.Run == "mise run lint:lua" {
+					checks++
+					require.Equal(t, "runner.os == 'Windows'", step.If)
+					require.Equal(t, map[string]string{"GH_TOKEN": "", "MISE_GITHUB_TOKEN": ""}, step.Env)
+				}
+			}
+			require.Equal(t, expectedChecks, checks, "check all Lua sources once on the supported Windows runner")
+			require.Equal(t, 1, setups, "reuse the Go linter's MISE setup and post-cache save")
+			if expectedChecks != 0 {
+				require.Less(t, goJobsStepContaining(t, job, "mise run lint:lua"), goJobsStepContaining(t, job, "mise run lint:go"))
+			}
+		})
 	}
-	require.Equal(t, 1, checks, "both platforms must execute the same task without a fallback")
 }
 
 func TestLuaSourceCheckoutsKeepUnixLineEndingsOnWindows(t *testing.T) {
