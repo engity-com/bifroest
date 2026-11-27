@@ -23,6 +23,21 @@ The test uses the Windows/amd64 binary built by `cmd/build`, builds temporary te
 
 The GitHub Actions `Nano Server Integration` workflow runs this task on a disposable `windows-2022` runner with process isolation, if its Windows Docker daemon is available. For Hyper-V isolation use a dedicated Windows Docker runner instead. A successful cross-build or a native Windows host test does **not** replace these container tests; the Nano SAM lifecycle and Server Core S4U tests must pass separately before claiming those capabilities for the tested runtime.
 
+## ConPTY startup diagnostics
+
+ConPTY relay test children emit at most 64 fixed operation milestones with elapsed
+times, covering private DLL preparation, pseudoconsole/process startup and
+release/drain/close. Normal production calls install no observer and emit no
+phase output. No environment, input frames or credentials enter these milestones.
+Events may interleave across goroutines. A native call returning does not prove
+successful completion or child readiness; existing result/EOF assertions decide that.
+
+On a timeout, `lastObservedPhase` is extracted from the capture **after** killing
+and joining the child. It is not a native-state snapshot at the deadline or proof
+of a root cause. Existing 20-second limits, native output/EOF assertions, protected
+DLL handling and shutdown order remain unchanged. These observations improve
+failure diagnosis; they do not establish a fix for sporadic ConPTY stalls.
+
 ## Actual Server Core / browser path
 
 The required `servercore-native-browser` subtest starts the **real built Windows

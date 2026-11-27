@@ -69,21 +69,13 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-
-      - name: Checkout workflow cache action
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.workflow_sha }}
-          path: var/ci-workflow
-          sparse-checkout: |
-            .github/actions/cache-go
-            .github/scripts/group-binary-matrices.ts
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
+        with: &mise-options
+          version: 2026.10.17
+          cache_save_post: true
+          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
       - name: Cache Go modules
-        uses: ./var/ci-workflow/.github/actions/cache-go
+        uses: ./.github/actions/cache-go
         with:
           scope: build-tools
 
@@ -97,8 +89,7 @@ jobs:
           environment="$RUNNER_TEMP/bifroest-build-environment"
           : > "$environment"
           GITHUB_OUTPUT="$environment" mise run ci:evaluate-environment
-          # The grouping runtime belongs to the workflow, not the release's MISE pins.
-          mise exec node@26.9.0 -- node var/ci-workflow/.github/scripts/group-binary-matrices.ts "$environment" >> "$GITHUB_OUTPUT"
+          mise run ci:group-binary-matrices -- "$environment" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build and release packages
@@ -159,6 +150,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -217,6 +209,7 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with: *mise-options
 
       - name: Update managed release artifacts
         env:

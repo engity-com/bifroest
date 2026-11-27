@@ -188,7 +188,7 @@ func TestBuiltBrowserReleaseInventoryMatchesActualSources(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, raw, image)
 	require.Equal(t, m, verified)
-	for _, name := range []string{"web/bun.lock", "web/.tool-versions", "pkg/recording/cast/verifier.go", "cmd/browser-evidence/main_js.go"} {
+	for _, name := range []string{"web/bun.lock", "mise.tools.yaml", "mise.toml", "pkg/recording/cast/verifier.go", "cmd/browser-evidence/main_js.go"} {
 		found := false
 		for _, input := range m.Inputs {
 			if input.Name == name {

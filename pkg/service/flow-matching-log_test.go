@@ -31,7 +31,7 @@ func TestNoMatchingFlowIsLoggedForEachAuthenticationMethod(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			provider := logrecording.NewProvider()
 			provider.SetLevel(level.Debug)
-			defer provider.HookGlobally()()
+			t.Cleanup(provider.HookGlobally())
 
 			server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, test.configure)
 			client, err := gossh.Dial("tcp", server.address, &gossh.ClientConfig{
@@ -67,7 +67,7 @@ func TestNoMatchingFlowIsLoggedForEachAuthenticationMethod(t *testing.T) {
 func TestMatchingFlowDoesNotLogNoMatchWhenCredentialsAreRejected(t *testing.T) {
 	provider := logrecording.NewProvider()
 	provider.SetLevel(level.Debug)
-	defer provider.HookGlobally()()
+	t.Cleanup(provider.HookGlobally())
 
 	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{})
 	client, err := gossh.Dial("tcp", server.address, &gossh.ClientConfig{

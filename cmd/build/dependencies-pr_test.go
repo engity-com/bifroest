@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/google/go-github/v65/github"
 	"github.com/stretchr/testify/require"
 
@@ -378,6 +379,8 @@ func TestDependencyPullRequestHasFilesAcceptsExactContents(t *testing.T) {
 }
 
 func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
+	testlog.Hook(t)
+
 	now := time.Date(2026, time.September, 13, 12, 0, 0, 0, time.UTC)
 	source := testCaCertsSource(t, testCaCertData{label: "Root", serial: 1, trust: certdata.TrustTrustedDelegator})
 	bundle, err := buildCaCertsBundle(t.Context(), source, now)
@@ -398,6 +401,8 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 		"mcr.microsoft.com/windows/servercore:ltsc2025": "sha256:" + strings.Repeat("b", 64),
 	}
 	files := map[string]string{
+		dependencyToolsPath:         "tool_version_go: \"1.27.4\"\n",
+		dependencyMisePath:          "[tasks.example]\nrun = \"go version\"\n",
 		defaultCaCertsTargetFn:      certificates.String(),
 		dependencyBuildWorkflowPath: dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
 		dependencyBuildMatrixPath: dependencyImages[0].source + "@" + digests[dependencyImages[0].source] + "\n" +
@@ -451,6 +456,12 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 	serverURL = strings.TrimSuffix(client.BaseURL.String(), "/")
 	repository := newDependencyTestRepo(client)
 	dependencies := newDependencies(repository.base)
+	miseChecks := 0
+	dependencies.miseCommand = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		miseChecks++
+		require.Equal(t, []string{"outdated", "--bump", "--json"}, args)
+		return []byte(`{"go":{"name":"go","requested":"1.27.4","bump":null,"latest":"1.27.4"}}`), nil
+	}
 	dependencies.caCerts.now = func() time.Time { return now }
 	dependencies.resolveImageDigest = func(_ context.Context, image string) (string, error) { return digests[image], nil }
 	conptyChecks := 0
@@ -464,6 +475,7 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Zero(t, writes)
+	require.Equal(t, 1, miseChecks, "the daily reconciliation must include the complete MISE catalog")
 	require.Equal(t, 1, conptyChecks, "the daily reconciliation must include ConPTY even when all dependencies are current")
 }
 

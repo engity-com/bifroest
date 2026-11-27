@@ -22,7 +22,7 @@ import (
 func TestManagementRecordingHTTPFailureLogsTheBackendCauseButNotTheRequestOrBearer(t *testing.T) {
 	provider := logrecording.NewProvider()
 	provider.SetLevel(level.Debug)
-	defer provider.HookGlobally()()
+	t.Cleanup(provider.HookGlobally())
 	svc, handler, _, token := managementWebFixture(t)
 	svc.recordingRepositories["default"] = nil
 	code, _, body := managementWebRead(t, handler, token, "recordings/list", map[string]string{"auditlog": "default", "flow": "docker", "query": "DO-NOT-LOG-QUERY"})
@@ -98,7 +98,7 @@ func TestManagementChannelReadLogsCorrelatedFailureAndKeepsExpectedCancellationA
 		t.Run(test.name, func(t *testing.T) {
 			provider := logrecording.NewProvider()
 			provider.SetLevel(level.Debug)
-			defer provider.HookGlobally()()
+			t.Cleanup(provider.HookGlobally())
 			fixture := newWebSocketFixture(t, nil, func(conf *configuration.Configuration) {
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 			})

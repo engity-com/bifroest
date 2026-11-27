@@ -18,6 +18,7 @@ on:
       - internal/build/**
       - internal/conpty/**
       - mise.toml
+      - mise.tools.yaml
       - pkg/configuration/**
       - pkg/authorization/**
       - pkg/environment/**
@@ -60,6 +61,10 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with:
+          version: 2026.10.17
+          cache_save_post: true
+          cache_key: mise-task-tools-v1-{{platform}}-{{version}}-${{ github.job }}-{{file_hash}}-${{ hashFiles('mise.tools.yaml') }}
 
       - name: Cache Go modules
         uses: ./.github/actions/cache-go
@@ -84,9 +89,6 @@ jobs:
             sleep "$delay"
           done
 
-      - name: Install pinned browser toolchain
-        run: mise -C web install
-
       - name: Install frozen browser dependencies
         run: mise -C web run install:web
 
@@ -110,7 +112,7 @@ jobs:
         run: mise run build:go:binary -- --os=windows --arch=amd64 --edition=generic
 
       - name: Test Windows local authorization
-        run: go test ./pkg/configuration ./pkg/authorization ./pkg/windowslocal ./pkg/environment ./pkg/service -run '^(TestWindowsLocal.*|TestLocalWindowsAuthorizationAccountReplacement|TestLocalSAMIntegration|TestSIDMatching|TestMissingIdentity|TestNames|TestFieldsWithoutConfiguration|TestInvalidCredentials|TestAccountUnavailable|TestS4ULogonBuffer)$'
+        run: mise run test:go:windows-local
 
       - name: Start Windows Docker daemon
         shell: pwsh
@@ -124,10 +126,7 @@ jobs:
         env:
           GITHUB_TOKEN: ""
           MISE_GITHUB_TOKEN: ""
-        shell: pwsh
-        run: |
-          $env:BIFROEST_TEST_NODE = (mise -C web which node).Trim()
-          mise run test:e2e:nanoserver
+        run: mise run test:e2e:nanoserver
 
       - name: Upload native Windows browser diagnostics
         if: failure()

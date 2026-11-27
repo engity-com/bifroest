@@ -54,7 +54,7 @@ func TestHouseKeeperOIDCCleanupBeforeRetentionWithDisposedSession(t *testing.T) 
 		flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(-time.Minute),
 		authorizationToken: []byte("oidc-token"),
 	}}
-	hk := newHouseKeeperForTest(repository, nil)
+	hk := newHouseKeeperForTest(t, repository, nil)
 	hk.service.authorizer = authorizer
 	hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
 	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
@@ -95,7 +95,7 @@ func TestHouseKeeperOIDCCleanupWaitsForAuditAndEnvironment(t *testing.T) {
 				flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(-time.Minute),
 				authorizationToken: []byte("oidc-token"),
 			}
-			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, authorizer)
+			hk := newHouseKeeperForTest(t, &houseKeeperTestSessionRepository{}, authorizer)
 			hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
 			hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
@@ -136,7 +136,7 @@ func TestHouseKeeperOIDCCleanupWaitsForAuditAndEnvironment(t *testing.T) {
 
 func TestHouseKeeperForgetsOIDCRevocationAfterFinalDeleteEvenIfAuditCompletionFails(t *testing.T) {
 	repository := &houseKeeperTestSessionRepository{}
-	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+	hk := newHouseKeeperForTest(t, repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 	sess := &houseKeeperTestSession{
 		flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(-2 * time.Hour), authorizationToken: []byte("oidc-token"),
 	}
@@ -171,7 +171,7 @@ func TestHouseKeeperOIDCFinalRetentionClearsLocalTokenWithoutRestore(t *testing.
 				flow: "current", id: session.MustNewId(),
 				validUntil: time.Now().Add(-2 * time.Hour), authorizationToken: []byte("oidc-token"),
 			}
-			hk := newHouseKeeperForTest(repository, authorizer)
+			hk := newHouseKeeperForTest(t, repository, authorizer)
 			hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
 			hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
 			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security"}}
@@ -236,7 +236,7 @@ func TestHouseKeeperOIDCOnlyBypassesRestoreAndSuccessfulTokenAccess(t *testing.T
 			if tc.disposed {
 				sess.state = session.StateDisposed
 			}
-			hk := newHouseKeeperForTest(repository, authorizer)
+			hk := newHouseKeeperForTest(t, repository, authorizer)
 			authConfig := configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}
 			if tc.nonOIDC {
 				authConfig = configuration.Authorization{V: &configuration.AuthorizationNone{}}

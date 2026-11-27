@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -1344,6 +1345,8 @@ func TestRemoteDeliveryFallsBackToPeriodicPollingWithoutFsnotify(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			testlog.Hook(t)
+
 			conf, identity := newJournalTestIdentity(t)
 			conf.Name = "security"
 			recorder, err := newNativeRecorder(&conf, identity)
@@ -1568,6 +1571,8 @@ func TestRemoteDeliveryBackoffIsBounded(t *testing.T) {
 
 func newRemoteDeliveryTestJournal(t *testing.T, count int) (configuration.Auditlog, *Identity, []journalSegmentFile) {
 	t.Helper()
+	testlog.Hook(t)
+
 	conf, identity := newJournalTestIdentity(t)
 	conf.Name = "security"
 	recorder, err := newNativeRecorder(&conf, identity)

@@ -654,6 +654,8 @@ func TestSessionRecordingLifecycleStartupRecoveryCreatesIncompleteEvent(t *testi
 
 func sessionRecordingTestConfiguration(t *testing.T, root string) configuration.Configuration {
 	t.Helper()
+	hookServiceTestLog(t)
+
 	var conf configuration.Configuration
 	err := conf.LoadFromYaml(strings.NewReader(fmt.Sprintf(`
 ssh:

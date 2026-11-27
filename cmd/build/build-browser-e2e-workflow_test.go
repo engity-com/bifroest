@@ -30,7 +30,7 @@ func TestDockerBrowserE2ERunsSequentiallyWithBothRuntimesWithoutSkip(t *testing.
 		}
 		if strings.Contains(command, "mise -C web run build:web") {
 			require.Equal(t, "matrix.suite == 'docker'", step["if"])
-			for _, required := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run install:web:browser"} {
+			for _, required := range []string{"mise -C web run install:web", "mise -C web run install:web:browser"} {
 				require.Contains(t, command, required)
 			}
 			preparations++
@@ -93,7 +93,7 @@ func TestKubernetesBrowserE2ERunsSequentiallyWithBothKindProvidersWithoutSkip(t 
 				if step["name"] == "Prepare actual Kubernetes browser E2E" {
 					require.Nil(t, step["if"])
 					require.Nil(t, step["continue-on-error"])
-					for _, required := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run build:web", "mise -C web run install:web:browser"} {
+					for _, required := range []string{"mise -C web run install:web", "mise -C web run build:web", "mise -C web run install:web:browser"} {
 						require.Contains(t, command, required)
 					}
 					prepared = true

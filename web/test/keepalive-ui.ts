@@ -23,12 +23,23 @@ export async function exerciseKeepAlive(page: Page, login: Login) {
             }
         }),
     );
-    const connected = (view: number) =>
-        page
+    const connected = async (view: number, execution = view) => {
+        await page
             .locator(
                 `#terminal-pane-${view}[data-connection-active="true"] [data-terminal-phase="connected"]`,
             )
             .waitFor();
+        // Transport readiness precedes server-side execution preparation. A
+        // real backend marker proves the execution reached RunTerminal before
+        // settings, reload or browser teardown can retire its connection.
+        await page.waitForFunction(
+            ({ view, execution }) =>
+                document
+                    .querySelector(`#terminal-pane-${view} .xterm-accessibility-tree`)
+                    ?.textContent?.includes(`EXECUTION_START:${execution}`),
+            { view, execution },
+        );
+    };
     const settings = () => page.getByRole('dialog', { name: 'Connection settings', exact: true });
     const interval = () => settings().getByLabel('Keepalive interval', { exact: true });
     const stored = (slug: string) =>
@@ -129,7 +140,7 @@ export async function exerciseKeepAlive(page: Page, login: Login) {
         'preferences cannot authenticate or start a shell after reload',
     );
     await login(page, false);
-    await connected(1);
+    await connected(1, 5);
     assert.deepEqual(openings[4], { slug: 'Other', keepAlive: '20s' });
     await openSettings('20s');
     await settings().getByRole('button', { name: 'Close', exact: true }).click();

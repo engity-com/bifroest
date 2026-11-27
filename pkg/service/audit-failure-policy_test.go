@@ -31,6 +31,8 @@ func TestFailurePolicyAuditRecorderStrictReturnsFailure(t *testing.T) {
 }
 
 func TestFailurePolicyAuditRecorderBestEffortDisablesAuditlog(t *testing.T) {
+	hookServiceTestLog(t)
+
 	failure := goerrors.New("journal unavailable")
 	delegate := &recordingAuditRecorder{recordErr: failure}
 	svc := &service{
@@ -49,6 +51,8 @@ func TestFailurePolicyAuditRecorderBestEffortDisablesAuditlog(t *testing.T) {
 }
 
 func TestFailurePolicyAuditRecorderClosePreservesNewCleanupFailure(t *testing.T) {
+	hookServiceTestLog(t)
+
 	accepted := goerrors.New("journal unavailable")
 	cleanup := goerrors.New("journal close failed")
 	delegate := &failurePolicyCloseTestRecorder{recordErr: accepted, closeAfterErr: cleanup}
@@ -86,6 +90,8 @@ func TestFailurePolicyAuditRecorderClosePreservesFailureWhenJournalDidNotFail(t 
 }
 
 func TestBestEffortSessionRecordingSinkDisablesAfterFailure(t *testing.T) {
+	hookServiceTestLog(t)
+
 	delegate := &failurePolicyRecordingSink{err: goerrors.New("disk full")}
 	svc := &service{
 		Service: &Service{},
@@ -103,6 +109,8 @@ func TestBestEffortSessionRecordingSinkDisablesAfterFailure(t *testing.T) {
 }
 
 func TestFailurePolicyAuditRecorderCloseWaitsForAcceptedFailure(t *testing.T) {
+	hookServiceTestLog(t)
+
 	accepted := goerrors.New("journal unavailable")
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -139,6 +147,8 @@ func TestFailurePolicyAuditRecorderCloseWaitsForAcceptedFailure(t *testing.T) {
 func TestBestEffortAuditFailurePreservesRecordingRetentionState(t *testing.T) {
 	for _, completionPending := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before deletion", true: "before completion"}[completionPending], func(t *testing.T) {
+			hookServiceTestLog(t)
+
 			delegate := &recordingAuditRecorder{recordErr: goerrors.New("journal unavailable")}
 			svc := &service{
 				Service: &Service{},

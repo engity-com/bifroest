@@ -44,6 +44,29 @@ func TestLibraryRejectsTamperedAndUnprotectedPayloads(t *testing.T) {
 	require.ErrorContains(t, err, "digest mismatch")
 }
 
+func TestLibraryPhaseObservationPreservesProtectedLoadingAndCleanup(t *testing.T) {
+	var phases []string
+	library, err := LoadWithObservation(func(phase string) { phases = append(phases, phase) })
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, library.Close()) })
+	require.Equal(t, []string{
+		"library.begin", "library.payload.verified", "library.temp.ready",
+		"library.directory.begin", "library.directory.created", "library.directory.locked",
+		"library.bootstrap.begin", "library.bootstrap.ready", "library.payload-lock.begin",
+		"library.payload-lock.ready", "library.load.begin", "library.load.ready", "library.ready",
+	}, phases)
+	directory := library.directory
+	path := filepath.Join(directory, "conpty.dll")
+	require.NotNil(t, library.release)
+	require.Error(t, os.WriteFile(path, []byte("replaced"), 0600))
+	require.Error(t, os.Rename(path, path+".moved"))
+	require.Error(t, os.Remove(path))
+	require.Error(t, os.Rename(directory, directory+".moved"))
+	require.NoError(t, library.Close())
+	_, err = os.Stat(directory)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestLibraryPreservesHRESULTFailuresAndPacksCoordByValue(t *testing.T) {
 	require.Equal(t, uintptr(80|25<<16), packedSize(windows.Coord{X: 80, Y: 25}))
 	require.NoError(t, hresult("release", 0))

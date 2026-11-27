@@ -337,7 +337,7 @@ func TestProjectChartRejectsUnsafeValuesWithRealHelm(t *testing.T) {
 func testHelm(t *testing.T) string {
 	t.Helper()
 	helm, err := exec.LookPath("helm")
-	require.NoError(t, err, "Helm is required for chart tests; run mise install")
+	require.NoError(t, err, "Helm is required for chart tests; use mise run test:go")
 	return helm
 }
 

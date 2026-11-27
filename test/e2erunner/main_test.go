@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,25 @@ func TestRunnerRejectsInvalidArgumentsAndImplicitRuntime(t *testing.T) {
 		t.Setenv("BIFROEST_E2E_RUNTIME", runtime)
 		require.ErrorContains(t, run(t.Context(), []string{"--suite=docker-browser"}, &bytes.Buffer{}, &bytes.Buffer{}), "explicitly select docker or podman")
 	}
+}
+
+func TestBrowserNodeUsesTaskPathWithoutGlobalMiseSelections(t *testing.T) {
+	directory := t.TempDir()
+	name := "node"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	filename := filepath.Join(directory, name)
+	require.NoError(t, os.WriteFile(filename, []byte("not executed"), 0o700))
+	t.Setenv("PATH", directory)
+	t.Setenv("BIFROEST_TEST_NODE", "")
+	node, err := browserNodeTool()
+	require.NoError(t, err, "task-scoped Node must not depend on mise which")
+	require.Equal(t, filename, node)
+	t.Setenv("BIFROEST_TEST_NODE", "explicit-owned-node")
+	node, err = browserNodeTool()
+	require.NoError(t, err)
+	require.Equal(t, "explicit-owned-node", node, "retain the caller's explicit runtime")
 }
 
 // A real child process tests exit handling and streaming without requiring a

@@ -50,9 +50,11 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 	return runLocalConPTYRelay(cols, rows, argv, nil)
 }
 
-// Passive test observations; these never change shutdown order, I/O, process
-// rights or a production exit. Root-state probes use a zero-time native wait.
+// Passive test observations never replace native/terminal operations, process
+// rights or production exits. Root-state probes use a zero-time native wait.
+// Optional phase callbacks must not block or panic and may arrive concurrently.
 type localConPTYRelayObservation struct {
+	phase           func(string)
 	jobQueryOK      bool
 	activeProcesses uint32
 	released        bool
@@ -66,7 +68,14 @@ type localConPTYRelayObservation struct {
 	eofBeforeClose  bool
 }
 
+func (observation *localConPTYRelayObservation) observePhase(phase string) {
+	if observation != nil && observation.phase != nil {
+		observation.phase(phase)
+	}
+}
+
 func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTYRelayObservation) (resultCode int, resultErr error) {
+	observation.observePhase("relay.begin")
 	if cols < 1 || cols > 32767 || rows < 1 || rows > 32767 {
 		return -1, fmt.Errorf("invalid ConPTY size %d x %d", cols, rows)
 	}
@@ -86,15 +95,23 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 	if err != nil {
 		return -1, fmt.Errorf("invalid shell command line: %w", err)
 	}
-	library, err := conpty.Load()
+	var observe func(string)
+	if observation != nil {
+		observe = observation.phase
+	}
+	observation.observePhase("relay.library.begin")
+	library, err := conpty.LoadWithObservation(observe)
 	if err != nil {
 		return -1, fmt.Errorf("prepare ConPTY library: %w", err)
 	}
+	observation.observePhase("relay.library.ready")
 	defer func() {
+		observation.observePhase("relay.library.close.begin")
 		if err := library.Close(); err != nil {
 			resultCode = -1
 			resultErr = errors.Join(resultErr, fmt.Errorf("close ConPTY library: %w", err))
 		}
+		observation.observePhase("relay.library.close.returned")
 	}()
 
 	var inputRead, inputWrite, outputRead, outputWrite windows.Handle
@@ -117,10 +134,12 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 			observation.stdoutType, _ = windows.GetFileType(stdout)
 		}
 	}
+	observation.observePhase("relay.console.begin")
 	console, err := library.Create(windows.Coord{X: int16(cols), Y: int16(rows)}, inputRead, outputWrite)
 	if err != nil {
 		return -1, fmt.Errorf("create pseudoconsole: %w", err)
 	}
+	observation.observePhase("relay.console.returned")
 	releaseCreationHandles := func() {
 		for _, handle := range []*windows.Handle{&inputRead, &outputWrite} {
 			if *handle != 0 {
@@ -138,10 +157,12 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 	defer out.Close()
 	outputDone := make(chan error, 1)
 	go func() {
+		observation.observePhase("relay.output.begin")
 		written, err := io.Copy(os.Stdout, outputReader)
 		if observation != nil {
 			observation.outputBytes = written
 		}
+		observation.observePhase("relay.output.returned")
 		outputDone <- err
 	}()
 	// Closing a pseudoconsole may wait for its output pipe. Never close it on
@@ -155,7 +176,9 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 			consoleClosed = true
 			consoleMu.Unlock()
 			outputReader.closeStarted.Store(true)
+			observation.observePhase("relay.console.close.begin")
 			library.CloseConsole(console)
+			observation.observePhase("relay.console.close.returned")
 			close(done)
 		}()
 		return done
@@ -208,6 +231,7 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 		return -1, fmt.Errorf("configure shell job: %w", err)
 	}
 
+	observation.observePhase("relay.process.begin")
 	var proc windows.ProcessInformation
 	if err := withLocalConPTYChildStandardHandles(windows.GetStdHandle, windows.SetStdHandle, func() error {
 		return windows.CreateProcess(path, line, nil, nil, false,
@@ -222,6 +246,7 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 		}
 		return -1, fmt.Errorf("start shell: %w", err)
 	}
+	observation.observePhase("relay.process.created-suspended")
 	defer func() { _ = windows.CloseHandle(proc.Process) }()
 	defer func() { _ = windows.CloseHandle(proc.Thread) }()
 	// A suspended process cannot spawn children before joining the job.
@@ -234,9 +259,11 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 		return -1, fmt.Errorf("assign shell to job: %w", err)
 	}
 	outputReader.rootProcess.Store(uintptr(proc.Process))
+	observation.observePhase("relay.resume.begin")
 	if _, err := windows.ResumeThread(proc.Thread); err != nil {
 		return -1, fmt.Errorf("resume shell: %w", err)
 	}
+	observation.observePhase("relay.resume.returned")
 	// Keep the creation-side handles until the console client has been started.
 	releaseCreationHandles()
 
@@ -337,6 +364,7 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 			}
 		case err := <-processDone:
 			processDone = nil
+			observation.observePhase("relay.process.wait-returned")
 			if err != nil {
 				relayErr = fmt.Errorf("wait for shell: %w", err)
 			}
@@ -375,12 +403,16 @@ func runLocalConPTYRelay(cols, rows int, argv []string, observation *localConPTY
 	// then let conhost flush and finish naturally, before freeing HPCON at EOF.
 	// https://learn.microsoft.com/windows/console/releasepseudoconsole
 	if err := finishLocalConPTYOutput(func() error {
+		observation.observePhase("relay.release.begin")
 		err := library.Release(console)
 		if observation != nil {
 			observation.released = err == nil
 		}
+		observation.observePhase("relay.release.returned")
 		return err
 	}, func() error {
+		observation.observePhase("relay.drain.begin")
+		defer observation.observePhase("relay.drain.returned")
 		if outputDone == nil {
 			return nil
 		}

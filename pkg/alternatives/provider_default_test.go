@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -19,6 +20,8 @@ import (
 )
 
 func TestFindBinaryDownloadsExecutableAlternative(t *testing.T) {
+	testlog.Hook(t)
+
 	target := filepath.Join(t.TempDir(), "bifroest")
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte("alternative binary"))

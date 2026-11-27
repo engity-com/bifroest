@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -72,6 +73,8 @@ func TestBuildMatricesUsesOneDarwinTestForAmd64OnlyBuilds(t *testing.T) {
 }
 
 func TestEvaluateEnvironmentEmitsMatrices(t *testing.T) {
+	testlog.Hook(t)
+
 	b := newBase()
 	b.rawCommit = "revision"
 	b.rawRef = "main"

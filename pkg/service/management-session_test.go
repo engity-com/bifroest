@@ -54,7 +54,7 @@ func newManagementSessionControlTest(t *testing.T) (managementSessionControl, *h
 			return err
 		},
 	}
-	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+	hk := newHouseKeeperForTest(t, repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 	hk.service.houseKeeper.service = hk.service
 	hk.service.Configuration.Flows = append(hk.service.Configuration.Flows, configuration.Flow{Name: "administration", Environment: configuration.Environment{V: &configuration.EnvironmentManagement{}}})
 	recorder := &recordingAuditRecorder{}

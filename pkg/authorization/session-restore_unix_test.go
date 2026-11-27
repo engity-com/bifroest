@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/user"
@@ -22,6 +23,8 @@ func TestLocalRestoreClassifiesRemovedUserAsUnusable(t *testing.T) {
 }
 
 func TestLocalRestoreAutoCleanupRemovesTokenOfRemovedUser(t *testing.T) {
+	testlog.Hook(t)
+
 	authorizer := &LocalAuthorizer{flow: "flow", userRepository: &authorizationRestoreTestUserRepository{}}
 	sess := &authorizationRestoreTestSession{flow: "flow", token: []byte(`{"user":{"name":"removed"}}`)}
 	autoCleanup := true

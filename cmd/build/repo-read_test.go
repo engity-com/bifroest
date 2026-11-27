@@ -8,6 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/google/go-github/v65/github"
 	"github.com/stretchr/testify/require"
 )
@@ -34,6 +35,8 @@ func TestRetryGitHubRead(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
+				testlog.Hook(t)
+
 				failure := errors.New("injected GitHub failure")
 				calls := 0
 				start := time.Now()
@@ -61,6 +64,8 @@ func TestRetryGitHubRead(t *testing.T) {
 
 func TestRetryGitHubReadHonorsCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		testlog.Hook(t)
+
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 		calls := 0

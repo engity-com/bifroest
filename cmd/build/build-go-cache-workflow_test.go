@@ -68,7 +68,8 @@ func TestGoCacheActionUsesPinnedCachesAndCompatibleRollingBuildKeys(t *testing.T
 	require.Equal(t, map[string]string{
 		"CACHE_SCOPE": "${{ inputs.scope }}", "CACHE_CONTEXT": "${{ inputs.context }}",
 	}, detect.Env)
-	require.Contains(t, detect.Run, "mise exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED")
+	require.Contains(t, detect.Run, `go_env="$(mise run --quiet ci:go:env)"`)
+	require.NotContains(t, detect.Run, "mise exec")
 	require.NotContains(t, detect.Run, "${{", "inputs must be passed as data, not interpolated into shell commands")
 	modules, build := action.Runs.Steps[1], action.Runs.Steps[2]
 	require.Empty(t, modules.If, "module caching remains enabled without the build-cache opt-in")
@@ -121,7 +122,7 @@ func runGoCacheDetection(t *testing.T, goEnv, scope, context, status string) (ma
 	require.NoError(t, gos.WriteFile(output, nil, 0o600))
 	// Stub only MISE/Go; run the actual action shell code and checksum utility.
 	script := `mise() {
-  [ "$*" = "exec -- go env GOCACHE GOMODCACHE GOVERSION GOOS GOARCH CGO_ENABLED" ] || return 42
+  [ "$*" = "run --quiet ci:go:env" ] || return 42
   printf '%s' "$GO_CACHE_TEST_ENV"
   return "$GO_CACHE_TEST_STATUS"
 }
@@ -130,6 +131,7 @@ func runGoCacheDetection(t *testing.T, goEnv, scope, context, status string) (ma
 	scriptPath := filepath.Join(directory, "cache-detection.sh")
 	require.NoError(t, gos.WriteFile(scriptPath, []byte(script), 0o600))
 	cmd := osexec.CommandContext(t.Context(), bash, "--noprofile", "--norc", "-e", "-o", "pipefail", filepath.ToSlash(scriptPath))
+	cmd.Dir = directory
 	cmd.Env = append(gos.Environ(),
 		"GITHUB_OUTPUT="+filepath.ToSlash(output),
 		"CACHE_SCOPE="+scope, "CACHE_CONTEXT="+context,
@@ -149,6 +151,22 @@ func runGoCacheDetection(t *testing.T, goEnv, scope, context, status string) (ma
 		values[key] = value
 	}
 	return values, string(log), runErr
+}
+
+func TestGoCacheActionUsesTaskGoAndNeverFallsBackAfterTaskFailure(t *testing.T) {
+	goEnv := "/cache/build\n/cache/mod\ngo1.27.4\nlinux\namd64\n0\n"
+	for _, status := range []string{"0", "23"} {
+		values, output, err := runGoCacheDetection(t, goEnv, "test", "", status)
+		if status == "0" {
+			require.NoError(t, err, output)
+			require.Equal(t, "go1.27.4", values["goversion"])
+		} else {
+			require.Empty(t, values, "failed task provisioning must not publish cache paths")
+			var exit *osexec.ExitError
+			require.ErrorAs(t, err, &exit)
+			require.Equal(t, 23, exit.ExitCode())
+		}
+	}
 }
 
 func TestGoCacheActionDetectsPlatformPathsAndHashesScopeContextAsData(t *testing.T) {

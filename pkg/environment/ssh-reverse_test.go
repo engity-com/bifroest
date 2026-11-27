@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 
@@ -186,6 +187,8 @@ func TestSshReverseForwardingPolicyAndNoLocalBind(t *testing.T) {
 }
 
 func TestSshReverseForwardingResolvesPerRequest(t *testing.T) {
+	testlog.Hook(t)
+
 	conf := &configuration.EnvironmentSsh{}
 	require.NoError(t, conf.SetDefaults())
 	conf.Address = template.MustNewString("target.example.org:22")

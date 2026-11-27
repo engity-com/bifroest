@@ -18,7 +18,12 @@ import (
 func TestGoToolchainMetadataMatchesRepository(t *testing.T) {
 	version := strings.TrimPrefix(goToolchainVersion, "go")
 	root := filepath.Join("..", "..")
-	for name, directive := range map[string]string{".tool-versions": "golang", "go.mod": "go"} {
+	catalogRaw, err := gos.ReadFile(filepath.Join(root, dependencyToolsPath))
+	require.NoError(t, err)
+	catalog, err := parseDependencyToolCatalog(catalogRaw)
+	require.NoError(t, err)
+	require.Equal(t, version, catalog.versions["go"].Value, "catalog and reviewed Go license metadata must agree")
+	for name, directive := range map[string]string{"go.mod": "go"} {
 		t.Run(name, func(t *testing.T) {
 			contents, err := gos.ReadFile(filepath.Join(root, name))
 			require.NoError(t, err)
