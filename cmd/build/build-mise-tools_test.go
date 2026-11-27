@@ -77,7 +77,7 @@ func TestMiseTaskToolsUseTheSingleVersionCatalog(t *testing.T) {
 }
 
 func TestMiseWorkflowsHaveNoJobSpecificToolListsAndSaveTaskInstalls(t *testing.T) {
-	for _, name := range []string{"build.yml", "ci.yml", "release.yml", "e2e.yml", "nanoserver.yml", "pr-update.yml", "dependencies.yml"} {
+	for _, name := range []string{"build.yml", "ci.yml", "release.yml", "e2e.yml", "nanoserver.yml", "pr-update.yml", "dependencies.yml", "windows-conpty-client-progress.yml"} {
 		for jobName, job := range readGoJobsWorkflowFile(t, name) {
 			for _, step := range job.Steps {
 				require.NotContains(t, step.Run, "mise exec", "invoke task-owned tools directly")

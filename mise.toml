@@ -209,6 +209,11 @@ tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_
 env.BIFROEST_TEST_NODE = "node"
 run = "go test -v -count=1 -tags=nanoserver_integration -timeout=20m -run=TestPinnedNanoServerLocalEnvironment ./test/nanoserver"
 
+[tasks."diag:windows:conpty-client"]
+description = "Diagnose native ConPTY client startup in fixed independent Nano Server cases."
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}" }
+run = 'go test -v -count=1 -tags=nanoserver_integration,conpty_probe -timeout=18m -run="^TestConPTYClientProgressProbe$" ./test/nanoserver'
+
 [tasks."test:e2e:darwin"]
 tools = { go = "{{ vars.tool_version_go }}" }
 depends = ["build:var"]

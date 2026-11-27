@@ -115,16 +115,28 @@ func TestLocalWindowsUnmanagedCleanupSnapshot(t *testing.T) {
 func TestMain(m *testing.M) {
 	consoleChildArgs := len(os.Args) == 2 || (len(os.Args) == 3 || len(os.Args) == 4 && os.Args[3] == "roundtrip") && (os.Args[2] == "0" || os.Args[2] == "7")
 	if consoleChildArgs && (os.Args[1] == "local-windows-console-child" || os.Args[1] == "local-windows-native-console-child" || os.Args[1] == "local-windows-file-console-child") {
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) || !term.IsTerminal(int(os.Stderr.Fd())) {
+		observe := localConPTYClientPhaseObserver(os.Getenv(localConPTYClientProgressEnv))
+		observe("client.entered")
+		isTerminal := func(file *os.File, name string) bool {
+			observe("client." + name + ".begin")
+			result := term.IsTerminal(int(file.Fd()))
+			observe("client." + name + ".returned")
+			return result
+		}
+		if !isTerminal(os.Stdin, "stdin") || !isTerminal(os.Stdout, "stdout") || !isTerminal(os.Stderr, "stderr") {
 			fmt.Fprintln(os.Stderr, "native child standard handles are not attached to its console")
 			os.Exit(1)
 		}
+		observe("client.identity.begin")
 		user, err := windows.GetCurrentProcessToken().GetTokenUser()
+		observe("client.identity.returned")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		observe("client.geometry.begin")
 		cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
+		observe("client.geometry.returned")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -137,6 +149,7 @@ func TestMain(m *testing.M) {
 		output := fmt.Sprintf("%s\r\nnative-console=%dx%d\r\n", user.User.Sid.String(), cols, rows)
 		var written int
 		var writeErr error
+		observe("client.output.begin")
 		switch os.Args[1] {
 		case "local-windows-native-console-child":
 			written, writeErr = writeLocalTestConsoleNative(os.Stdout, output)
@@ -145,12 +158,14 @@ func TestMain(m *testing.M) {
 		default:
 			written, writeErr = fmt.Fprint(os.Stdout, output)
 		}
+		observe("client.output.returned")
 		complete := writeErr == nil && written == len(output)
 		// This acknowledges OS writes only, not delivery through ConPTY. Keep
 		// the diagnostic bounded and omit raw write errors and identity data.
 		diagnostic := fmt.Sprintf("native-console-child write-success=%t bytes=%d expected=%d\r\n", complete, written, len(output))
 		var diagnosticWritten int
 		var diagnosticErr error
+		observe("client.diagnostic.begin")
 		switch os.Args[1] {
 		case "local-windows-native-console-child":
 			diagnosticWritten, diagnosticErr = writeLocalTestConsoleNative(os.Stderr, diagnostic)
@@ -159,14 +174,18 @@ func TestMain(m *testing.M) {
 		default:
 			diagnosticWritten, diagnosticErr = fmt.Fprint(os.Stderr, diagnostic)
 		}
+		observe("client.diagnostic.returned")
 		if !complete || diagnosticErr != nil || diagnosticWritten != len(diagnostic) {
 			os.Exit(1)
 		}
 		if len(os.Args) == 4 {
+			observe("client.handshake.begin")
 			if err := runLocalConPTYTestHandshake(os.Stdin, os.Stdout); err != nil {
 				os.Exit(1)
 			}
+			observe("client.handshake.returned")
 		}
+		observe("client.exit")
 		if len(os.Args) >= 3 && os.Args[2] == "7" {
 			os.Exit(7)
 		}
