@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -177,9 +178,9 @@ func TestGoWorkflowIntegrationsReuseTheExistingStaticLinuxJob(t *testing.T) {
 	var needs string
 	require.NoError(t, job.Needs.Decode(&needs))
 	require.Equal(t, "browser", needs)
-	core := goJobsStepContaining(t, job, "scripts/native-go-tests.ts")
+	core := goJobsStepContaining(t, job, "mise run test:go:native")
 	helm := goJobsStepContaining(t, job, "mise run test:tls:helm")
-	kubernetes := goJobsStepContaining(t, job, "go test -v -count=1 -parallel=1 -tags=e2e -timeout=15m -run '^TestKubernetesTLSBootstrap$' ./test/e2e")
+	kubernetes := goJobsStepContaining(t, job, "mise run --skip-deps test:e2e:kubernetes:tls")
 	require.Less(t, core, helm)
 	require.Less(t, helm, kubernetes)
 	require.Empty(t, job.Steps[helm].If, "integration test steps remain mandatory")
@@ -192,7 +193,7 @@ func TestGoWorkflowIntegrationsReuseTheExistingStaticLinuxJob(t *testing.T) {
 		require.NotContains(t, step.Run, "install:docs")
 		require.NotContains(t, step.Run, "install:web")
 		require.NotContains(t, step.Run, "build:web")
-		require.NotContains(t, step.Run, "test:e2e:kubernetes:tls", "the local convenience task rebuilds browser assets")
+		require.NotContains(t, step.Run, "mise run test:e2e:kubernetes:tls", "CI must skip prerequisites to reuse verified browser assets")
 		require.NotContains(t, step.Run, "python", "Go integration tests must manage their own fixtures")
 		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "browser-assets" {
 			download = index
@@ -216,7 +217,7 @@ func TestGoWorkflowIntegrationStepsPreserveOldRefsAndPropagateFailures(t *testin
 	job := readGoJobsWorkflow(t)["test-static"]
 	for _, test := range []struct{ fixture, command string }{
 		{"test/helm/tls_test.go", "mise run test:tls:helm"},
-		{"test/e2e/kubernetes_tls_test.go", "go test -v -count=1 -parallel=1 -tags=e2e -timeout=15m -run '^TestKubernetesTLSBootstrap$' ./test/e2e"},
+		{"test/e2e/kubernetes_tls_test.go", "mise run --skip-deps test:e2e:kubernetes:tls"},
 	} {
 		step := job.Steps[goJobsStepContaining(t, job, test.command)]
 		require.Contains(t, step.Run, "if [ -f "+test.fixture+" ]; then")
@@ -243,7 +244,7 @@ go() { printf 'EXEC go %s\n' "$*"; return "$TEST_EXIT"; }
 					require.Contains(t, string(output), "Old source ref:")
 					require.NotContains(t, string(output), "EXEC ")
 				} else {
-					require.Equal(t, "EXEC "+strings.ReplaceAll(test.command, "'", "")+"\n", string(output))
+					require.Equal(t, "EXEC "+test.command+"\n", string(output))
 					if status == "0" {
 						require.NoError(t, runErr)
 					} else {
@@ -255,6 +256,32 @@ go() { printf 'EXEC go %s\n' "$*"; return "$TEST_EXIT"; }
 			}
 		}
 	}
+}
+
+func TestTLSIntegrationTasksUsePinnedToolsAndFocusedSelection(t *testing.T) {
+	raw, err := gos.ReadFile("../../mise.toml")
+	require.NoError(t, err)
+	var configuration struct {
+		Tasks map[string]struct {
+			Tools   map[string]any `toml:"tools"`
+			Depends []string       `toml:"depends"`
+			Run     any            `toml:"run"`
+		} `toml:"tasks"`
+	}
+	_, err = toml.Decode(string(raw), &configuration)
+	require.NoError(t, err)
+	require.NotContains(t, configuration.Tasks, "test:tls:kubernetes")
+	kubernetes := configuration.Tasks["test:e2e:kubernetes:tls"]
+	require.Equal(t, map[string]any{
+		"go": "{{ vars.tool_version_go }}", "docker_cli": "{{ vars.tool_version_docker_cli }}",
+		"kind": "{{ vars.tool_version_kind }}", "kubectl": "{{ vars.tool_version_kubectl }}",
+		"helm": "{{ vars.tool_version_helm }}",
+	}, kubernetes.Tools)
+	require.ElementsMatch(t, []string{"build:web", "build:var"}, kubernetes.Depends)
+	require.Equal(t, "go test -v -count=1 -parallel=1 -tags=e2e -timeout=15m -run '^TestKubernetesTLSBootstrap$' ./test/e2e", kubernetes.Run)
+	require.Equal(t, map[string]any{
+		"go": "{{ vars.tool_version_go }}", "helm": "{{ vars.tool_version_helm }}",
+	}, configuration.Tasks["test:tls:helm"].Tools)
 }
 
 func TestGoWorkflowPackageGateRequiresAllChecksButAllowsReleaseLintSkip(t *testing.T) {

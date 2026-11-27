@@ -80,7 +80,7 @@ func newHousekeepingTLSManager(t *testing.T, timeout time.Duration) (*transportt
 func TestHouseKeeperRenewsEachTLSManagerOnlyAfterListenerStartup(t *testing.T) {
 	manager, source := newHousekeepingTLSManager(t, time.Second)
 	require.False(t, manager.HasFileCertificates())
-	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+	hk := newHouseKeeperForTest(t, &houseKeeperTestSessionRepository{}, nil)
 	hk.service.tlsManagers = map[string]*transporttls.TLS{"tls:shared": manager}
 	hk.service.tlsSourceNames = []string{"tls:shared"}
 	require.NoError(t, hk.run(hk.logger(), t.Context()))
@@ -118,7 +118,7 @@ func TestHouseKeeperTLSFailuresKeepOtherSourcesAndCleanupRunning(t *testing.T) {
 			repository := &houseKeeperTestSessionRepository{findAll: func(context.Context, session.Consumer, *session.FindOpts) error {
 				return injected
 			}}
-			hk := newHouseKeeperForTest(repository, nil)
+			hk := newHouseKeeperForTest(t, repository, nil)
 			hk.service.tlsManagers = map[string]*transporttls.TLS{"tls:first": first, "tls:second": second}
 			hk.service.tlsSourceNames = []string{"tls:first", "tls:second"}
 			var conf configuration.Configuration
@@ -157,7 +157,7 @@ func TestHouseKeeperRenewsExpiredTLSMaterial(t *testing.T) {
 	source.initial = housekeepingTLSCertificate(t, 3, now.Add(-time.Hour), now.Add(time.Second))
 	require.NoError(t, manager.Prepare(t.Context()))
 	require.Eventually(t, func() bool { return !manager.Ready() }, 2*time.Second, 10*time.Millisecond)
-	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+	hk := newHouseKeeperForTest(t, &houseKeeperTestSessionRepository{}, nil)
 	hk.service.tlsManagers = map[string]*transporttls.TLS{"http": manager}
 	hk.service.tlsSourceNames = []string{"http"}
 	hk.startTLSRenewal(t.Context())
@@ -178,7 +178,7 @@ func TestHouseKeeperTLSRenewalStopsWithItsOwner(t *testing.T) {
 				<-ctx.Done()
 				return nil, ctx.Err()
 			}
-			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+			hk := newHouseKeeperForTest(t, &houseKeeperTestSessionRepository{}, nil)
 			hk.service.tlsManagers = map[string]*transporttls.TLS{"http": manager}
 			hk.service.tlsSourceNames = []string{"http"}
 			hk.service.Configuration.HouseKeeping.Every.SetNative(time.Millisecond)

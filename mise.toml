@@ -125,6 +125,7 @@ description = "Build and check the native offline policy CLI; var/policy-ci must
 run = "go run ./test/policyci --output var/policy-ci"
 
 [tasks."test:tls:helm"]
+tools = { go = "{{ vars.tool_version_go }}", helm = "{{ vars.tool_version_helm }}" }
 description = "Render TLS/chart modes with Helm 4.3.2 and validate configurations using the Go resolver."
 run = "go test -v -count=1 -tags=helm_integration ./test/helm"
 
@@ -190,6 +191,7 @@ depends = ["build:var"]
 run = "go run ./test/e2erunner --suite=kubernetes-browser"
 
 [tasks."test:e2e:kubernetes:tls"]
+tools = { go = "{{ vars.tool_version_go }}", docker_cli = "{{ vars.tool_version_docker_cli }}", kind = "{{ vars.tool_version_kind }}", kubectl = "{{ vars.tool_version_kubectl }}", helm = "{{ vars.tool_version_helm }}" }
 description = "Run the Go-managed Pebble/bootstrap test in an isolated rootless kind deployment with a fresh PVC."
 depends = ["build:web", "build:var"]
 run = "go test -v -count=1 -parallel=1 -tags=e2e -timeout=15m -run '^TestKubernetesTLSBootstrap$' ./test/e2e"

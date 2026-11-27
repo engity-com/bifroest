@@ -79,7 +79,7 @@ go test ./test/e2erunner
 
 For installed curl transport probes, run `mise run test:e2e:curl`. See [tested and probably working curl versions](../curl/README.md) for the recorded results, expected baselines and required-profile settings.
 
-For Kubernetes TLS bootstrap and renewal, provide Docker, kind, kubectl and Helm on PATH, then run `mise run test:e2e:kubernetes:tls`. The test creates and removes its own kind cluster and fixture image, runs a Go-managed Pebble CA, and checks a fresh PVC, rootless operation, ACME routing before readiness and certificate renewal. Reports are retained under `var/test-report/bifroest-tls-*`.
+For Kubernetes TLS bootstrap and renewal, use an owned Docker daemon and run `mise run test:e2e:kubernetes:tls`. MISE provides the pinned CLI tools. The test creates and removes its own kind cluster and fixture image, runs a Go-managed Pebble CA, and checks a fresh PVC, rootless operation, ACME routing before readiness and certificate renewal. Reports are retained under `var/test-report/bifroest-tls-*`.
 
 For the built monitoring listener and a real local Prometheus, provide `prometheus` and `promtool` on PATH (or set `BIFROEST_E2E_PROMETHEUS` and `BIFROEST_E2E_PROMTOOL` to their executable paths), then run `go test -tags=e2e -run '^TestMonitoring(PrometheusIntegration|DocumentedPrometheusAlerts)$' -timeout=10m ./test/e2e`. No container runtime is required. The tests build the current checkout, bind only loopback addresses, verify OpenMetrics ingestion, TLS/token negative controls and every alert rule extracted directly from the monitoring guide. Missing tools skip these optional tests; explicitly configured but unavailable tools fail. Process logs are retained under `var/e2e/monitoring-*`.
 

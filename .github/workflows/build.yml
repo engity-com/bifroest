@@ -160,7 +160,7 @@ jobs:
         # Reuse the verified browser assets instead of building them again.
         run: |
           if [ -f test/e2e/kubernetes_tls_test.go ]; then
-            go test -v -count=1 -parallel=1 -tags=e2e -timeout=15m -run '^TestKubernetesTLSBootstrap$' ./test/e2e
+            mise run --skip-deps test:e2e:kubernetes:tls
           else
             echo "Old source ref: no Kubernetes certificate bootstrap fixture."
           fi
