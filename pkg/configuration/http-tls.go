@@ -130,7 +130,11 @@ func (this *Tls) Validate() error {
 			return fmt.Errorf("[certificates][%d] %w", index, err)
 		}
 	}
-	return validate(this, func(v *Tls) (string, validator) { return "acme", v.Acme })
+	// Runtime TLS validation stays confined to the concrete TLS settings.
+	if err := this.Acme.Validate(); err != nil {
+		return configurationFieldError(this, "acme", err)
+	}
+	return nil
 }
 func (this *Tls) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
@@ -201,14 +205,13 @@ func (this *TlsCertificate) Trim() error {
 	return this.Validate()
 }
 func (this *TlsCertificate) Validate() error {
-	return validate(this,
-		func(v *TlsCertificate) (string, validator) {
-			return "certificateFile", validatorFunc(func() error { return validateHttpFilePath(v.CertificateFile, false) })
-		},
-		func(v *TlsCertificate) (string, validator) {
-			return "privateKeyFile", validatorFunc(func() error { return validateHttpFilePath(v.PrivateKeyFile, false) })
-		},
-	)
+	if err := validateHttpFilePath(this.CertificateFile, false); err != nil {
+		return configurationFieldError(this, "certificateFile", err)
+	}
+	if err := validateHttpFilePath(this.PrivateKeyFile, false); err != nil {
+		return configurationFieldError(this, "privateKeyFile", err)
+	}
+	return nil
 }
 func (this *TlsCertificate) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *TlsCertificate, node *yaml.Node) error {

@@ -68,6 +68,57 @@ func TestTLSProfilesRejectUnknownMistypedAndAmbiguousConfiguration(t *testing.T)
 	require.ErrorContains(t, conf.Validate(), "cannot be combined")
 }
 
+func TestTLSValidationPreservesFieldContextWithoutExposingValues(t *testing.T) {
+	const secret = "tls-validation-secret-marker"
+	for _, test := range []struct {
+		name       string
+		definition Tls
+		message    string
+	}{
+		{
+			name:       "certificate path",
+			definition: Tls{Certificates: []TlsCertificate{{CertificateFile: secret + "\n", PrivateKeyFile: "missing/key.pem"}}},
+			message:    "[certificates][0] [certificateFile] must be a local filesystem path",
+		},
+		{
+			name:       "private key path",
+			definition: Tls{Certificates: []TlsCertificate{{CertificateFile: "missing/cert.pem", PrivateKeyFile: secret + "\n"}}},
+			message:    "[certificates][0] [privateKeyFile] invalid credential value (***redacted***)",
+		},
+		{
+			name:       "missing private key",
+			definition: Tls{Certificates: []TlsCertificate{{CertificateFile: "missing/cert.pem"}}},
+			message:    "[certificates][0] [privateKeyFile] required but absent (***redacted***)",
+		},
+		{
+			name:       "ACME consent",
+			definition: Tls{Acme: &TlsAcme{}},
+			message:    "[acme] [acceptTerms] must be true",
+		},
+		{
+			name:       "ACME email",
+			definition: Tls{Acme: &TlsAcme{AcceptTerms: true, Email: secret + "\n"}},
+			message:    "[acme] [email] must be a plain email address",
+		},
+		{
+			name:       "ACME directory",
+			definition: Tls{Acme: &TlsAcme{AcceptTerms: true, DirectoryUrl: "https://user:" + secret + "@ca.example.org/directory"}},
+			message:    "[acme] [directoryUrl] must be an absolute HTTPS URL without credentials, query or fragment",
+		},
+		{
+			name:       "ACME storage",
+			definition: Tls{Acme: &TlsAcme{AcceptTerms: true, DirectoryUrl: DefaultHttpAcmeDirectoryUrl, Storage: secret + "\n"}},
+			message:    "[acme] [storage] must be a local filesystem path",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.definition.Validate()
+			require.EqualError(t, err, test.message)
+			require.NotContains(t, err.Error(), secret)
+		})
+	}
+}
+
 func TestSharedTLSDefinitionsAcceptTheUsingListenersDomains(t *testing.T) {
 	var conf Configuration
 	require.NoError(t, conf.LoadFromYaml(strings.NewReader(sharedTlsTestYaml+httpTestFlows), ""))
