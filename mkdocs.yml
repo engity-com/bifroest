@@ -158,6 +158,8 @@ nav:
           - reference/connection/index.md
           - SSH: reference/connection/ssh.md
           - HTTP: reference/connection/http/index.md
+      - Transports:
+          - TLS: reference/transports/tls/index.md
       - reference/flow.md
       - Authorizations:
           - reference/authorization/index.md

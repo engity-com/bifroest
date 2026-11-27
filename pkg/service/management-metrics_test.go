@@ -44,8 +44,8 @@ func TestMonitoringCollectionActivationMatrix(t *testing.T) {
 				}
 				if !enabled {
 					conf.Monitoring.BearerTokenFile = filepath.Join(t.TempDir(), "missing-token")
-					conf.Monitoring.Tls.Enabled = true
-					conf.Monitoring.Tls.Certificates = []configuration.MonitoringCertificate{{CertificateFile: "missing.crt", PrivateKeyFile: "missing.key"}}
+					conf.Monitoring.Tls = &configuration.Tls{}
+					conf.Monitoring.Tls.Certificates = []configuration.TlsCertificate{{CertificateFile: "missing.crt", PrivateKeyFile: "missing.key"}}
 				}
 				m, err := newServiceMonitoring(conf)
 				require.NoError(t, err, "disabled HTTP must not read credentials")
@@ -76,10 +76,10 @@ func TestMonitoringCollectionActivationMatrix(t *testing.T) {
 
 func TestMonitoringPreparationWithoutCollectorAndStableProcessStart(t *testing.T) {
 	conf := monitoringTestConfiguration(t)
-	conf.Monitoring.Tls.Enabled = true
+	conf.Monitoring.Tls = &configuration.Tls{}
 	svc := &service{Service: &Service{Configuration: conf}}
 	require.NoError(t, svc.prepareHTTPS(), "preparation without a collector must remain nil-safe")
-	conf.Monitoring.Tls.Enabled = false
+	conf.Monitoring.Tls = nil
 	m, err := newServiceMonitoring(conf)
 	require.NoError(t, err)
 	first, err := m.Snapshot(t.Context(), nil)

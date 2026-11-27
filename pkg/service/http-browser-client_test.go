@@ -57,7 +57,7 @@ func TestBrowserRememberMeClientAgainstRealHttpsAndWebSocket(t *testing.T) {
 	}
 	settings := &configuration.Http{}
 	require.NoError(t, settings.SetDefaults())
-	settings.Enabled = true
+	settings.Enabled = configuration.HttpEnabled
 	settings.Domains = configuration.HttpDomains{"app.example.org", "other.example.org"}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)

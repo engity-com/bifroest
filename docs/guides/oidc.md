@@ -31,16 +31,18 @@ Enable your provider's refresh-token scope/settings. The example uses `offline_a
 Merge this into your host configuration. Replace the domain, ACME contact, issuer, credentials and allowed subject.
 
 ```yaml title="/etc/engity/bifroest/configuration.yaml"
-http:
-  enabled: true
-  domains: [ gateway.example.org ]
-  tls:
+tls:
+  default:
     acme:
-      enabled: true
       # Set this to true means you accept the terms of:
       # https://letsencrypt.org/repository/
       acceptTerms: true
       email: operator@example.org
+http:
+  enabled: true
+  domains: [ gateway.example.org ]
+  ## The "default" TLS config is used implicitly.
+  # tls: default
 
 flows:
   - name: oidc-shell

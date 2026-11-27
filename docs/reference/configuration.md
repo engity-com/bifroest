@@ -26,6 +26,9 @@ Defines how the SSH connections itself will behave.
 <<property("http", "HTTP", "connection/http/index.md")>>
 Configures optional HTTPS browser access. Disabled by default. A startup failure in any enabled SSH or HTTPS endpoint prevents the service from starting.
 
+<<property("tls", ref("Map", None, ref("TLS", "transports/tls/index.md")))>>
+Named TLS definitions shared by HTTP and monitoring. HTTP selects `tls.default` when its `tls` setting is omitted or `""`; monitoring selects it only with `tls: ""`. Both listeners also accept inline definitions. Unused definitions perform no file or network operations.
+
 <<property("session", "Session", "session/index.md")>>
 Defines where and how the sessions inside Bifröst are handled.
 
@@ -46,16 +49,16 @@ A flow selects exactly one authorization, either inline or by name, not a list
 or a chain of providers.
 
 For both maps, a `default` entry is optional and never created automatically.
-Omitting a flow's corresponding setting, or setting it to `null` or `''`, uses
+Omitting a flow's corresponding setting, or setting it to `""`, uses
 that map's `default` if defined; otherwise the setting is required. Explicit
 references to unknown names are configuration errors.
 
 <<property("auditlogs", ref("Map", None, ref("Audit log", "auditlog/index.md")))>>
 Audit logs keyed by name, with their settings directly in each value. A defined,
 selected logger is active; there is no audit-log `enabled` setting. A flow with
-an omitted, `null` or empty `auditlog` uses `auditlogs.default` if defined,
+an omitted or empty `auditlog` uses `auditlogs.default` if defined,
 otherwise it has no audit logging or recording. No default logger is created
-implicitly. Unknown explicit references are configuration errors.
+implicitly. Set a flow's `auditlog` to `null` to disable logging and recording even when a default exists. Unknown explicit references are configuration errors.
 
 <<property("monitoring", "Monitoring", "monitoring.md")>>
 Configures a separate, optional listener for Prometheus metrics and startup, readiness and liveness probes. Disabled by default.

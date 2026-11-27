@@ -145,7 +145,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 			svc, recorder, _ := executionTestFixture(t, nil, func(conf *configuration.Configuration) {
 				conf.Http = &configuration.Http{}
 				require.NoError(t, conf.Http.SetDefaults())
-				conf.Http.Enabled = true
+				conf.Http.Enabled = configuration.HttpEnabled
 				conf.Http.Domains = configuration.HttpDomains{"app.example.org"}
 				key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 				require.NoError(t, err)

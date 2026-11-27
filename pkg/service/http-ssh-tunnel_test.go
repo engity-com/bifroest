@@ -46,7 +46,7 @@ func newSshTunnelFixture(t *testing.T, direct, web, tunnel, login bool, configur
 	conf.Flows[0].Requirement.Http.IncludedSlug = common.MustNewRegexp("^work$")
 	conf.Ssh.Enabled = new(direct)
 	conf.Http.WebUi.Enabled, conf.Http.SshTunnel.Enabled, conf.Http.LoginFlow.Enabled = new(web), new(tunnel), new(login)
-	conf.Http.Tls.Acme.Enabled = false
+	conf.Http.Tls.Acme = nil
 	conf.Ssh.GracefulShutdownTimeout = common.DurationOf(200 * time.Millisecond)
 	if configure != nil {
 		configure(&conf)

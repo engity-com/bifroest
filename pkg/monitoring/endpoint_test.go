@@ -137,8 +137,8 @@ func TestEndpointTokenFilesAndDisabledMode(t *testing.T) {
 	}
 	conf.Enabled = false
 	conf.BearerTokenFile = "missing"
-	conf.Tls.Enabled = true
-	conf.Tls.Certificates = []configuration.MonitoringCertificate{{CertificateFile: "missing", PrivateKeyFile: "missing"}}
+	conf.Tls = &configuration.Tls{}
+	conf.Tls.Certificates = []configuration.TlsCertificate{{CertificateFile: "missing", PrivateKeyFile: "missing"}}
 	endpoint, err = New(conf, nil)
 	require.NoError(t, err)
 	require.Nil(t, endpoint)
@@ -188,7 +188,8 @@ func TestEndpointTLSWithProvidedCertificate(t *testing.T) {
 	require.NoError(t, os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600))
 	require.NoError(t, bfcrypto.WriteBootstrapFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), false))
 	conf := endpointTestConfiguration(t)
-	conf.Tls = configuration.MonitoringTls{Enabled: true, Certificates: []configuration.MonitoringCertificate{{CertificateFile: certPath, PrivateKeyFile: keyPath}}}
+	conf.Domains = configuration.ServerNames{"127.0.0.1"}
+	conf.Tls = &configuration.Tls{Certificates: []configuration.TlsCertificate{{CertificateFile: certPath, PrivateKeyFile: keyPath}}}
 	endpoint, err := New(conf, endpointTestRegistry())
 	require.NoError(t, err)
 	require.NoError(t, endpoint.Start(nil))
@@ -212,6 +213,35 @@ func templateCertificate(t *testing.T, der []byte) *x509.Certificate {
 	certificate, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
 	return certificate
+}
+
+func TestEndpointInlineDummyTLSBindsOnlyConfiguredNamesAndNeverServesChallenges(t *testing.T) {
+	for _, domains := range []configuration.ServerNames{{"metrics.example.org"}, {"metrics.example.org", "second.example.org"}} {
+		conf := endpointTestConfiguration(t)
+		conf.Domains = domains
+		conf.Tls = &configuration.Tls{Dummy: true, MinVersion: "1.2"}
+		endpoint, err := New(conf, endpointTestRegistry())
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, endpoint.Close()) })
+		for _, name := range domains {
+			selected, err := endpoint.server.TLSConfig.GetConfigForClient(&tls.ClientHelloInfo{ServerName: name})
+			require.NoError(t, err)
+			require.Equal(t, uint16(tls.VersionTLS12), selected.MinVersion)
+		}
+		_, err = endpoint.server.TLSConfig.GetConfigForClient(&tls.ClientHelloInfo{})
+		if len(domains) == 1 {
+			require.NoError(t, err, "single-identity monitoring permits probes without SNI")
+		} else {
+			require.Error(t, err, "multiple identities require SNI")
+		}
+		for _, hello := range []*tls.ClientHelloInfo{
+			{ServerName: "unconfigured.example.org"},
+			{ServerName: domains[0], SupportedProtos: []string{"acme-tls/1"}},
+		} {
+			_, err := endpoint.server.TLSConfig.GetConfigForClient(hello)
+			require.Error(t, err)
+		}
+	}
 }
 
 func TestEndpointPartialBindRollsBack(t *testing.T) {

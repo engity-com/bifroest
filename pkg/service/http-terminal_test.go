@@ -60,7 +60,7 @@ func newWebSocketFixture(t *testing.T, run func(environment.TerminalTask) (int, 
 	setup := func(conf *configuration.Configuration) {
 		conf.Http = &configuration.Http{}
 		require.NoError(t, conf.Http.SetDefaults())
-		conf.Http.Enabled = true
+		conf.Http.Enabled = configuration.HttpEnabled
 		conf.Http.Domains = configuration.HttpDomains{"app.example.org", "other.example.org"}
 		conf.Http.GracefulShutdownTimeout = common.DurationOf(100 * time.Millisecond)
 		certificate = httpListenerTestCertificate(t, conf, nil)

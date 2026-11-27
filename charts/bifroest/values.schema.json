@@ -166,6 +166,7 @@
         "targetPort": { "$ref": "#/definitions/port" },
         "annotations": { "$ref": "#/definitions/stringMap" },
         "sessionAffinity": { "enum": ["None", "ClientIP"] },
+        "publishNotReadyAddresses": { "type": "boolean" },
         "loadBalancerSourceRanges": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 }

@@ -50,6 +50,7 @@ service:
     annotations: {}
     sessionAffinity: None
     loadBalancerSourceRanges: []
+    publishNotReadyAddresses: false
   http:
     enabled: false
     type: ClusterIP
@@ -58,6 +59,7 @@ service:
     annotations: {}
     sessionAffinity: None
     loadBalancerSourceRanges: []
+    publishNotReadyAddresses: false
 
 monitoring:
   # Private Pod port only, never exposed by a Service or Ingress.

@@ -33,8 +33,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/imp"
+	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/transporttls"
 )
 
 var (
@@ -108,7 +110,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		return errors.Config.Newf("cannot prepare monitoring: %w", err)
 	}
 	if monitor != nil && monitor.endpoint != nil {
-		if !this.Configuration.Monitoring.Tls.Enabled {
+		if !this.Configuration.Monitoring.Tls.IsEnabled() {
 			if err := monitor.endpoint.Start(func(err error) { this.logger().WithError(err).Error("monitoring listener failed") }); err != nil {
 				return err
 			}
@@ -252,7 +254,7 @@ func (this *Service) prepareContextWithMonitoring(ctx context.Context, monitor *
 	if err := svc.prepareHTTPS(); err != nil {
 		return fail(err)
 	}
-	if monitor != nil && monitor.endpoint != nil && this.Configuration.Monitoring.Tls.Enabled {
+	if monitor != nil && monitor.endpoint != nil && this.Configuration.Monitoring.Tls.IsEnabled() {
 		if err := monitor.endpoint.Start(func(err error) { this.logger().WithError(err).Error("monitoring listener failed") }); err != nil {
 			return fail(err)
 		}
@@ -342,7 +344,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 
 	serverPrivateKeys := hostSigners
-	if this.Configuration.Http.IsEnabled() || len(this.Configuration.Auditlogs) > 0 || this.Configuration.Monitoring.IsEnabled() && this.Configuration.Monitoring.Tls.Enabled {
+	if this.Configuration.Http.IsListenerEnabled() || len(this.Configuration.Auditlogs) > 0 || this.Configuration.Monitoring.IsEnabled() && this.Configuration.Monitoring.Tls.IsEnabled() {
 		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
 		if err != nil {
 			return err
@@ -907,6 +909,11 @@ type service struct {
 	tunnelServer             essh.Server
 	sshTunnel                *sshTunnel
 	https                    *https.Endpoint
+	tlsManagers              map[string]*transporttls.TLS
+	tlsSourceNames           []string
+	tlsBindings              map[string]*transporttls.Binding
+	tlsChallenges            transporttls.Registry
+	tlsChallengeAddresses    bnet.NetAddresses
 	httpsForbiddenKeys       []crypto.PublicKey
 	forwardHandler           essh.ForwardedTCPHandler
 
@@ -1044,6 +1051,7 @@ func (this *service) close(flush bool) (rErr error) {
 	if this.https != nil {
 		defer common.KeepCloseError(&rErr, this.https)
 	}
+	defer func() { rErr = goerrors.Join(rErr, this.closeTLS()) }()
 	return rErr
 }
 
@@ -1249,15 +1257,32 @@ func cloneRuntimePathConfiguration(conf *configuration.Configuration) configurat
 	result := *conf
 	if conf.Http != nil {
 		cloned := *conf.Http
-		cloned.Tls.Certificates = slices.Clone(conf.Http.Tls.Certificates)
-		cloned.Upstream.TrustedPeers = slices.Clone(conf.Http.Upstream.TrustedPeers)
-		if conf.Http.Tls.Enabled != nil {
-			enabled := *conf.Http.Tls.Enabled
-			cloned.Tls.Enabled = &enabled
+		if conf.Http.Tls != nil {
+			tls := *conf.Http.Tls
+			tls.Certificates = slices.Clone(conf.Http.Tls.Certificates)
+			if tls.Acme != nil {
+				automation := *tls.Acme
+				tls.Acme = &automation
+			}
+			cloned.Tls = &tls
 		}
+		cloned.Upstream.TrustedPeers = slices.Clone(conf.Http.Upstream.TrustedPeers)
 		cloned.CustomCss = slices.Clone(conf.Http.CustomCss)
 		cloned.CustomJs = slices.Clone(conf.Http.CustomJs)
 		result.Http = &cloned
+	}
+	if conf.Monitoring != nil {
+		cloned := *conf.Monitoring
+		if conf.Monitoring.Tls != nil {
+			tls := *conf.Monitoring.Tls
+			tls.Certificates = slices.Clone(tls.Certificates)
+			if tls.Acme != nil {
+				automation := *tls.Acme
+				tls.Acme = &automation
+			}
+			cloned.Tls = &tls
+		}
+		result.Monitoring = &cloned
 	}
 	result.Auditlogs = slices.Clone(conf.Auditlogs)
 	for auditlogIndex := range result.Auditlogs {

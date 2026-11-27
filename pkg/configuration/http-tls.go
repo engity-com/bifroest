@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/mail"
 	"net/url"
@@ -16,20 +17,47 @@ import (
 
 const DefaultHttpAcmeDirectoryUrl = "https://acme-v02.api.letsencrypt.org/directory"
 
-// HttpTls permits explicit certificates and optional ACME for remaining domains,
-// or an explicitly selected ephemeral dummy certificate for testing only.
-// File content, domain coverage and certificate validity are runtime checks.
-type HttpTls struct {
-	Enabled        *bool             `yaml:"enabled,omitempty"`
-	Dummy          bool              `yaml:"dummy,omitempty"`
-	Certificates   []HttpCertificate `yaml:"certificates,omitempty"`
-	Acme           HttpAcme          `yaml:"acme"`
-	ReloadInterval common.Duration   `yaml:"reloadInterval,omitempty"`
+// Tls is the shared server TLS definition. Consumers may also select a named
+// root definition; definitions themselves cannot form reference chains.
+type Tls struct {
+	Reference      string `yaml:"-"`
+	definition     *Tls
+	implicit       bool
+	MinVersion     string           `yaml:"minVersion,omitempty"`
+	Dummy          bool             `yaml:"dummy,omitempty"`
+	Certificates   []TlsCertificate `yaml:"certificates,omitempty"`
+	Acme           *TlsAcme         `yaml:"acme"`
+	ReloadInterval common.Duration  `yaml:"reloadInterval,omitempty"`
+}
+type HttpTls = Tls
+
+func (this *Tls) IsEnabled() bool { return this != nil }
+
+// ServerDefinition returns an independent effective definition, without reading
+// files or changing the configured inline/reference representation.
+func (this *Tls) ServerDefinition() (Tls, error) {
+	if this == nil {
+		return Tls{}, fmt.Errorf("TLS is not configured")
+	}
+	if this.Reference != "" {
+		if this.definition == nil {
+			return Tls{}, fmt.Errorf("unresolved TLS reference")
+		}
+		return this.definition.ServerDefinition()
+	}
+	result := cloneConfigurationValue(*this)
+	result.Certificates = this.FileCertificates()
+	return result, nil
 }
 
-func (this HttpTls) IsEnabled() bool { return this.Enabled == nil || *this.Enabled }
+func (this Tls) MinimumVersion() uint16 {
+	if this.MinVersion == "1.2" {
+		return tls.VersionTLS12
+	}
+	return tls.VersionTLS13
+}
 
-func (this HttpTls) ReloadEvery() time.Duration {
+func (this Tls) ReloadEvery() time.Duration {
 	if this.ReloadInterval.Native() == 0 {
 		return 5 * time.Second
 	}
@@ -38,24 +66,36 @@ func (this HttpTls) ReloadEvery() time.Duration {
 
 // FileCertificates selects defaults lazily, without changing ACME/dummy source
 // selection or making a disabled listener touch the filesystem.
-func (this HttpTls) FileCertificates() []HttpCertificate {
-	if !this.IsEnabled() || this.Dummy {
+func (this *Tls) FileCertificates() []TlsCertificate {
+	if this == nil {
+		return nil
+	}
+	if this.Reference != "" {
+		if this.definition == nil {
+			return nil
+		}
+		return this.definition.FileCertificates()
+	}
+	if this.Dummy {
 		return nil
 	}
 	if len(this.Certificates) != 0 {
 		return slices.Clone(this.Certificates)
 	}
-	if this.Acme.Enabled {
+	if this.Acme.IsEnabled() {
 		return nil
 	}
-	return []HttpCertificate{{CertificateFile: DefaultHttpCertificateFile, PrivateKeyFile: DefaultHttpPrivateKeyFile}}
+	return []TlsCertificate{{CertificateFile: DefaultHttpCertificateFile, PrivateKeyFile: DefaultHttpPrivateKeyFile}}
 }
 
-func (this *HttpTls) SetDefaults() error {
-	*this = HttpTls{}
-	return this.Acme.SetDefaults()
+func (this *Tls) SetDefaults() error {
+	*this = Tls{}
+	return nil
 }
-func (this *HttpTls) Trim() error {
+func (this *Tls) Trim() error {
+	if this == nil {
+		return nil
+	}
 	for index := range this.Certificates {
 		if err := this.Certificates[index].Trim(); err != nil {
 			return fmt.Errorf("[certificates][%d] %w", index, err)
@@ -66,92 +106,153 @@ func (this *HttpTls) Trim() error {
 	}
 	return this.Validate()
 }
-func (this *HttpTls) Validate() error {
+func (this *Tls) Validate() error {
+	if this == nil {
+		return nil
+	}
+	if this.Reference != "" {
+		if this.MinVersion != "" || this.Dummy || len(this.Certificates) != 0 || this.Acme.IsEnabled() || this.ReloadInterval.Native() != 0 {
+			return fmt.Errorf("TLS reference cannot be combined with inline settings")
+		}
+		return validateDefinitionName(this.Reference)
+	}
+	if this.MinVersion != "" && this.MinVersion != "1.2" && this.MinVersion != "1.3" {
+		return fmt.Errorf("[minVersion] must be 1.2 or 1.3")
+	}
 	if this.ReloadInterval.Native() < 0 {
 		return fmt.Errorf("[reloadInterval] must be positive")
 	}
-	if !this.IsEnabled() && (this.Dummy || this.Acme.Enabled || len(this.Certificates) != 0) {
-		return fmt.Errorf("disabled TLS cannot select certificates, ACME or dummy TLS")
-	}
-	if this.Dummy && (len(this.Certificates) > 0 || this.Acme.Enabled) {
-		return fmt.Errorf("[dummy] cannot be combined with certificates or enabled ACME")
+	if this.Dummy && (len(this.Certificates) > 0 || this.Acme.IsEnabled()) {
+		return fmt.Errorf("[dummy] cannot be combined with certificates or ACME")
 	}
 	for index := range this.Certificates {
 		if err := this.Certificates[index].Validate(); err != nil {
 			return fmt.Errorf("[certificates][%d] %w", index, err)
 		}
 	}
-	return validate(this, func(v *HttpTls) (string, validator) { return "acme", &v.Acme })
+	return validate(this, func(v *Tls) (string, validator) { return "acme", v.Acme })
 }
-func (this *HttpTls) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *HttpTls, node *yaml.Node) error {
-		type raw HttpTls
-		return decodeHttpFields(node, (*raw)(target), map[string]string{"enabled": "!!bool", "dummy": "!!bool", "certificates": "!!seq/!!map", "acme": "!!map", "reloadInterval": "!!str"})
+func (this *Tls) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
+		if node.Value == "" {
+			*this = Tls{Reference: "default", implicit: true}
+			return nil
+		}
+		if err := validateDefinitionName(node.Value); err != nil {
+			return err
+		}
+		*this = Tls{Reference: node.Value}
+		return nil
+	}
+	return unmarshalYAML(this, node, func(target *Tls, node *yaml.Node) error {
+		type raw Tls
+		return decodeHttpFields(node, (*raw)(target), map[string]string{"dummy": "!!bool", "minVersion": "!!str", "certificates": "!!seq/!!map", "acme": "!!map|!!null", "reloadInterval": "!!str"})
 	})
 }
-func (this HttpTls) IsEqualTo(other any) bool {
+func (this Tls) MarshalYAML() (any, error) {
+	if err := this.Validate(); err != nil {
+		return nil, err
+	}
+	if this.Reference != "" {
+		if this.implicit {
+			return "", nil
+		}
+		return this.Reference, nil
+	}
+	type raw Tls
+	return raw(this), nil
+}
+func (this *Tls) IsEqualTo(other any) bool {
 	switch value := other.(type) {
-	case HttpTls:
-		return this.IsEnabled() == value.IsEnabled() && this.ReloadEvery() == value.ReloadEvery() && this.Dummy == value.Dummy && slices.Equal(this.Certificates, value.Certificates) && this.Acme == value.Acme
-	case *HttpTls:
-		return value != nil && this.IsEqualTo(*value)
+	case Tls:
+		return this.IsEqualTo(&value)
+	case *Tls:
+		return this.isEqualTo(value)
 	default:
 		return false
 	}
 }
 
-type HttpCertificate struct {
+func (this *Tls) isEqualTo(value *Tls) bool {
+	if this == nil || value == nil {
+		return this == value
+	}
+	if this.Reference != "" || value.Reference != "" {
+		return this.Reference == value.Reference && this.implicit == value.implicit && this.Validate() == nil && value.Validate() == nil
+	}
+	return this.MinimumVersion() == value.MinimumVersion() &&
+		this.ReloadEvery() == value.ReloadEvery() &&
+		this.Dummy == value.Dummy && slices.Equal(this.Certificates, value.Certificates) && this.Acme.isEqualTo(value.Acme)
+}
+
+type TlsCertificate struct {
 	CertificateFile string `yaml:"certificateFile"`
 	PrivateKeyFile  string `yaml:"privateKeyFile" sensitive:"true"`
 }
+type HttpCertificate = TlsCertificate
 
-func (this *HttpCertificate) SetDefaults() error {
-	*this = HttpCertificate{CertificateFile: DefaultHttpCertificateFile, PrivateKeyFile: DefaultHttpPrivateKeyFile}
+func (this *TlsCertificate) SetDefaults() error {
+	*this = TlsCertificate{}
 	return nil
 }
-func (this *HttpCertificate) Trim() error {
+func (this *TlsCertificate) Trim() error {
 	this.CertificateFile = strings.TrimSpace(this.CertificateFile)
 	this.PrivateKeyFile = strings.TrimSpace(this.PrivateKeyFile)
 	return this.Validate()
 }
-func (this *HttpCertificate) Validate() error {
+func (this *TlsCertificate) Validate() error {
 	return validate(this,
-		func(v *HttpCertificate) (string, validator) {
+		func(v *TlsCertificate) (string, validator) {
 			return "certificateFile", validatorFunc(func() error { return validateHttpFilePath(v.CertificateFile, false) })
 		},
-		func(v *HttpCertificate) (string, validator) {
+		func(v *TlsCertificate) (string, validator) {
 			return "privateKeyFile", validatorFunc(func() error { return validateHttpFilePath(v.PrivateKeyFile, false) })
 		},
 	)
 }
-func (this *HttpCertificate) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *HttpCertificate, node *yaml.Node) error {
-		type raw HttpCertificate
+func (this *TlsCertificate) UnmarshalYAML(node *yaml.Node) error {
+	return unmarshalYAML(this, node, func(target *TlsCertificate, node *yaml.Node) error {
+		type raw TlsCertificate
 		return decodeHttpFields(node, (*raw)(target), map[string]string{"certificateFile": "!!str", "privateKeyFile": "!!str"})
 	})
 }
 
-type HttpAcme struct {
-	Enabled      bool   `yaml:"enabled,omitempty"`
+type TlsAcme struct {
 	AcceptTerms  bool   `yaml:"acceptTerms,omitempty"`
 	Email        string `yaml:"email,omitempty"`
 	DirectoryUrl string `yaml:"directoryUrl"`
 	Storage      string `yaml:"storage"`
 }
+type HttpAcme = TlsAcme
 
-func (this *HttpAcme) SetDefaults() error {
-	*this = HttpAcme{DirectoryUrl: DefaultHttpAcmeDirectoryUrl, Storage: DefaultHttpAcmeStorage}
+func (this *TlsAcme) IsEnabled() bool { return this != nil }
+
+func (this *TlsAcme) isEqualTo(other *TlsAcme) bool {
+	if this == nil || other == nil {
+		return this == other
+	}
+	return *this == *other
+}
+
+func (this *TlsAcme) SetDefaults() error {
+	*this = TlsAcme{DirectoryUrl: DefaultHttpAcmeDirectoryUrl, Storage: DefaultHttpAcmeStorage}
 	return nil
 }
-func (this *HttpAcme) Trim() error {
+func (this *TlsAcme) Trim() error {
+	if this == nil {
+		return nil
+	}
 	this.Email = strings.TrimSpace(this.Email)
 	this.DirectoryUrl = strings.TrimSpace(this.DirectoryUrl)
 	this.Storage = strings.TrimSpace(this.Storage)
 	return this.Validate()
 }
-func (this *HttpAcme) Validate() error {
-	if this.Enabled && !this.AcceptTerms {
-		return fmt.Errorf("[acceptTerms] must be true when ACME is enabled")
+func (this *TlsAcme) Validate() error {
+	if this == nil {
+		return nil
+	}
+	if !this.AcceptTerms {
+		return fmt.Errorf("[acceptTerms] must be true")
 	}
 	if this.Email != "" {
 		address, err := mail.ParseAddress(this.Email)
@@ -159,24 +260,22 @@ func (this *HttpAcme) Validate() error {
 			return fmt.Errorf("[email] must be a plain email address")
 		}
 	}
-	if this.DirectoryUrl != "" || this.Enabled {
-		parsed, err := url.Parse(this.DirectoryUrl)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Opaque != "" {
-			return fmt.Errorf("[directoryUrl] must be an absolute HTTPS URL without credentials, query or fragment")
-		}
-		if _, err := net.CanonicalHttpHost(parsed.Host); err != nil {
-			return fmt.Errorf("[directoryUrl] invalid HTTPS authority")
-		}
+	parsed, err := url.Parse(this.DirectoryUrl)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Opaque != "" {
+		return fmt.Errorf("[directoryUrl] must be an absolute HTTPS URL without credentials, query or fragment")
 	}
-	if err := validateHttpFilePath(this.Storage, !this.Enabled); err != nil {
+	if _, err := net.CanonicalHttpHost(parsed.Host); err != nil {
+		return fmt.Errorf("[directoryUrl] invalid HTTPS authority")
+	}
+	if err := validateHttpFilePath(this.Storage, false); err != nil {
 		return configurationFieldError(this, "storage", err)
 	}
 	return nil
 }
-func (this *HttpAcme) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *HttpAcme, node *yaml.Node) error {
-		type raw HttpAcme
-		return decodeHttpFields(node, (*raw)(target), map[string]string{"enabled": "!!bool", "acceptTerms": "!!bool", "email": "!!str", "directoryUrl": "!!str", "storage": "!!str"})
+func (this *TlsAcme) UnmarshalYAML(node *yaml.Node) error {
+	return unmarshalYAML(this, node, func(target *TlsAcme, node *yaml.Node) error {
+		type raw TlsAcme
+		return decodeHttpFields(node, (*raw)(target), map[string]string{"acceptTerms": "!!bool", "email": "!!str", "directoryUrl": "!!str", "storage": "!!str"})
 	})
 }
 

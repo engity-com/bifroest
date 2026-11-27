@@ -28,6 +28,7 @@ type houseKeeper struct {
 	done               chan struct{}
 	orphanedFlows      map[configuration.FlowName]struct{}
 	monitoringProblems map[configuration.FlowName]int
+	tlsRuntime         atomic.Pointer[housekeepingTLSRuntime]
 }
 
 func (this *houseKeeper) init(service *service) error {
@@ -123,7 +124,7 @@ func (this *houseKeeper) run(logger log.Logger, ctx context.Context) error {
 		}
 	}
 	recordingErr := this.cleanupRecordings(logger, ctx, time.Now().UTC())
-	return goerrors.Join(result, recordingErr)
+	return goerrors.Join(result, recordingErr, this.renewTLS(ctx))
 }
 
 func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Context, now time.Time) error {

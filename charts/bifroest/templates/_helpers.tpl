@@ -55,6 +55,40 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
   {{- end -}}
 {{- end -}}
 
+{{/* Structural TLS selection only; security validation belongs to Bifröst. */}}
+{{- define "bifroest.tlsSelection" -}}
+  {{- $tls := .value -}}
+  {{- $definitions := default dict .config.tls -}}
+  {{- if not (kindIs "map" $definitions) -}}{{- fail "configuration.tls must be a mapping" -}}{{- end -}}
+  {{- $automatic := or (and (not .present) .defaultWhenAbsent) (and .present (kindIs "string" $tls) (eq $tls "")) -}}
+  {{- $enabled := and .present (not (kindIs "invalid" $tls)) -}}
+  {{- $acme := false -}}
+  {{- if $automatic -}}
+    {{- $enabled = hasKey $definitions "default" -}}
+    {{- if $enabled -}}{{- $tls = index $definitions "default" -}}{{- end -}}
+  {{- else if and $enabled (kindIs "string" $tls) -}}
+    {{- if not (hasKey $definitions $tls) -}}{{- fail "unknown TLS reference" -}}{{- end -}}
+    {{- $tls = index $definitions $tls -}}
+  {{- end -}}
+  {{- if $enabled -}}
+    {{- if not (kindIs "map" $tls) -}}{{- fail "TLS must select an inline mapping, not a reference chain" -}}{{- end -}}
+  {{- else -}}
+    {{- $tls = dict -}}
+  {{- end -}}
+  {{- if hasKey $tls "enabled" -}}
+    {{- fail "TLS definitions do not accept enabled; set the listener's tls property to null to disable TLS" -}}
+  {{- end -}}
+  {{- if hasKey $tls "allowedNames" -}}{{- fail "TLS definitions contain unknown field allowedNames; set domains on the listener" -}}{{- end -}}
+  {{- if and $enabled (hasKey $tls "acme") (not (kindIs "invalid" $tls.acme)) -}}
+    {{- $automation := $tls.acme -}}
+    {{- if not (kindIs "map" $automation) -}}{{- fail "TLS acme must be a mapping or null" -}}{{- end -}}
+    {{- if hasKey $automation "enabled" -}}{{- fail "ACME does not accept enabled; omit acme or use null to disable it" -}}{{- end -}}
+    {{- if not (and (kindIs "bool" $automation.acceptTerms) $automation.acceptTerms) -}}{{- fail "ACME requires acceptTerms: true" -}}{{- end -}}
+    {{- $acme = true -}}
+  {{- end -}}
+  {{- dict "enabled" $enabled "acme" $acme | toJson -}}
+{{- end -}}
+
 {{- define "bifroest.validate" -}}
   {{- if or (and .Values.service.ssh.enabled (eq (int .Values.service.ssh.targetPort) (int .Values.monitoring.port))) (and .Values.service.http.enabled (eq (int .Values.service.http.targetPort) (int .Values.monitoring.port))) -}}
     {{- fail "Services must not expose the private monitoring port" -}}
@@ -77,6 +111,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
     {{- if hasKey $config "Error" -}}
       {{- fail "configuration must contain a valid YAML object" -}}
     {{- end -}}
+    {{- if hasKey $config "tlsChallenge" -}}{{- fail "configuration contains unknown field tlsChallenge" -}}{{- end -}}
     {{- if not $config.flows -}}
       {{- fail "configuration.flows is required" -}}
     {{- end -}}
@@ -88,9 +123,10 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
     {{- if ne (toJson $monitoring.addresses) (toJson (list (printf ":%v" .Values.monitoring.port))) -}}
       {{- fail "configuration.monitoring.addresses must match monitoring.port on all Pod interfaces" -}}
     {{- end -}}
-    {{- $tls := default dict $monitoring.tls -}}
-    {{- if ne (eq .Values.monitoring.scheme "HTTPS") (default false $tls.enabled) -}}
-      {{- fail "monitoring.scheme must match configuration.monitoring.tls.enabled" -}}
+    {{- $tls := include "bifroest.tlsSelection" (dict "config" $config "value" $monitoring.tls "present" (hasKey $monitoring "tls") "defaultWhenAbsent" false) | fromJson -}}
+    {{- if and $tls.enabled (not $monitoring.domains) -}}{{- fail "monitoring.domains is required when TLS is configured" -}}{{- end -}}
+    {{- if ne (eq .Values.monitoring.scheme "HTTPS") $tls.enabled -}}
+      {{- fail "monitoring.scheme must match whether configuration.monitoring.tls is configured" -}}
     {{- end -}}
 
     {{- $ssh := default dict $config.ssh -}}
@@ -99,22 +135,41 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
     {{- end -}}
 
     {{- $http := default dict $config.http -}}
+    {{- $httpMode := false -}}
+    {{- if hasKey $http "enabled" -}}{{- $httpMode = $http.enabled -}}{{- end -}}
+    {{- $httpEnabled := eq (toJson $httpMode) "true" -}}
+    {{- $alpnOnly := eq (toJson $httpMode) (toJson "acmeTlsAlpnOnly") -}}
+    {{- if not (or (kindIs "bool" $httpMode) $alpnOnly) -}}{{- fail "http.enabled must be false, true or acmeTlsAlpnOnly" -}}{{- end -}}
+    {{- $httpListener := or $httpEnabled $alpnOnly -}}
     {{- $upstream := default dict $http.upstream -}}
-    {{- $httpTls := default dict $http.tls -}}
-    {{- if and (hasKey $httpTls "enabled") (not $httpTls.enabled) (ne (default "direct" $upstream.mode) "reverseProxy") -}}
-      {{- fail "disabled HTTP TLS requires http.upstream.mode: reverseProxy" -}}
+    {{- $httpTls := include "bifroest.tlsSelection" (dict "config" $config "value" $http.tls "present" (hasKey $http "tls") "defaultWhenAbsent" true) | fromJson -}}
+    {{- if and $alpnOnly (or (not $httpTls.acme) (ne (default "direct" $upstream.mode) "direct")) -}}{{- fail "acmeTlsAlpnOnly requires ACME-enabled TLS and direct upstream mode" -}}{{- end -}}
+    {{- if and $httpListener (not $http.domains) -}}{{- fail "http.domains is required when the listener is enabled" -}}{{- end -}}
+    {{- if and $httpEnabled (not $httpTls.enabled) (ne (default "direct" $upstream.mode) "reverseProxy") -}}
+      {{- fail "HTTP requires tls unless http.upstream.mode is reverseProxy" -}}
     {{- end -}}
     {{- if and (eq $upstream.mode "reverseProxy") (not $upstream.trustedPeers) -}}
       {{- fail "reverseProxy requires explicit http.upstream.trustedPeers" -}}
     {{- end -}}
-    {{- if and .Values.service.http.enabled (not $http.enabled) -}}
-      {{- fail "the HTTP Service requires configuration.http.enabled" -}}
+    {{- if and .Values.service.http.enabled (not $httpListener) -}}
+      {{- fail "the HTTP Service requires http.enabled: true or acmeTlsAlpnOnly" -}}
     {{- end -}}
     {{- if and .Values.service.http.enabled (not (has (printf ":%v" .Values.service.http.targetPort) (default list $http.addresses))) -}}
       {{- fail "configuration.http.addresses must include the HTTP Service targetPort on all Pod interfaces" -}}
     {{- end -}}
-    {{- if and .Values.ingress.enabled (ne $upstream.mode "reverseProxy") -}}
+    {{- if and .Values.ingress.enabled (or (not $httpEnabled) (ne $upstream.mode "reverseProxy")) -}}
       {{- fail "HTTP Ingress requires http.upstream.mode: reverseProxy" -}}
+    {{- end -}}
+    {{- $acme := or (and $httpListener $httpTls.acme) (and $monitoring.enabled $tls.acme) -}}
+    {{- if $acme -}}
+      {{- if not (and $httpListener $httpTls.enabled) -}}{{- fail "active ACME requires an HTTP TLS listener with enabled true or acmeTlsAlpnOnly" -}}{{- end -}}
+      {{- if ne (int .Values.replicaCount) 1 -}}{{- fail "direct ACME requires replicaCount: 1; use external certificate Secrets for multiple Pods" -}}{{- end -}}
+      {{- if .Values.ingress.enabled -}}{{- fail "HTTP Ingress cannot forward TLS-ALPN-01; use TLS passthrough or external certificates" -}}{{- end -}}
+      {{- if not .Values.service.http.enabled -}}{{- fail "direct ACME requires the HTTP Service for TCP 443" -}}{{- end -}}
+      {{- $target := int .Values.service.http.targetPort -}}
+      {{- if or (ne (int .Values.service.http.port) 443) (not .Values.service.http.publishNotReadyAddresses) -}}{{- fail "direct ACME requires Service port 443 and publishNotReadyAddresses" -}}{{- end -}}
+      {{- if not (has (printf ":%v" $target) (default list $http.addresses)) -}}{{- fail "http.addresses must include the public TLS targetPort" -}}{{- end -}}
+      {{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.httpPeers) -}}{{- fail "direct ACME requires networkPolicy.httpPeers for CA validation" -}}{{- end -}}
     {{- end -}}
   {{- end -}}
 

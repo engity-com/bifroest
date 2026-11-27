@@ -11,24 +11,23 @@ import (
 
 func TestHttpFileDefaultsDoNotChangeSourceSelection(t *testing.T) {
 	var conf Http
-	require.NoError(t, yaml.Unmarshal([]byte("enabled: true\ndomains: [app.example.org]"), &conf))
+	require.NoError(t, yaml.Unmarshal([]byte("enabled: true\ndomains: [app.example.org]\ntls: {}"), &conf))
 	require.True(t, conf.Tls.IsEnabled())
 	require.Equal(t, []HttpCertificate{{CertificateFile: DefaultHttpCertificateFile, PrivateKeyFile: DefaultHttpPrivateKeyFile}}, conf.Tls.FileCertificates())
-	conf.Tls.Acme.Enabled = true
+	conf.Tls.Acme = &TlsAcme{AcceptTerms: true}
 	require.Empty(t, conf.Tls.FileCertificates())
 	conf.Tls.Certificates = []HttpCertificate{{CertificateFile: "chosen.crt", PrivateKeyFile: "chosen.key"}}
 	require.Equal(t, conf.Tls.Certificates, conf.Tls.FileCertificates())
 	conf.Tls.Certificates = nil
-	conf.Tls.Acme.Enabled, conf.Tls.Dummy = false, true
+	conf.Tls.Acme, conf.Tls.Dummy = nil, true
 	require.Empty(t, conf.Tls.FileCertificates())
-	var pair HttpCertificate
-	require.NoError(t, yaml.Unmarshal([]byte("{}"), &pair))
-	require.Equal(t, DefaultHttpPrivateKeyFile, pair.PrivateKeyFile)
 }
 
-func TestHttpProxyRequiresExplicitTrustAndExplicitTLSOptOut(t *testing.T) {
+func TestHttpProxyRequiresExplicitTrustAndTLSIsOptIn(t *testing.T) {
 	for _, source := range []string{
+		"enabled: true\ndomains: [app.example.org]\ntls: null",
 		"tls: {enabled: false}",
+		"tls: {enabled: true}",
 		"upstream: {mode: reverseProxy}",
 		"upstream: {mode: reverseProxy, trustedPeers: []}",
 		"upstream: {mode: unknown}",
@@ -45,13 +44,15 @@ func TestHttpProxyRequiresExplicitTrustAndExplicitTLSOptOut(t *testing.T) {
 	}
 	var conf Http
 	require.NoError(t, yaml.Unmarshal([]byte("enabled: true\ndomains: [app.example.org]\nupstream: {mode: reverseProxy, trustedPeers: [private], defaultPrefix: /team/bifroest, defaultPort: 8443}"), &conf))
-	require.True(t, conf.Tls.IsEnabled(), "proxy mode alone never disables TLS")
+	require.Nil(t, conf.Tls, "omitting TLS selects a plaintext backend only in explicit proxy mode")
 	encoded, err := yaml.Marshal(conf)
 	require.NoError(t, err)
 	var restored Http
 	require.NoError(t, yaml.Unmarshal(encoded, &restored))
 	require.True(t, conf.IsEqualTo(restored))
-	require.NoError(t, yaml.Unmarshal([]byte("upstream: {mode: reverseProxy, trustedPeers: [private]}\ntls: {enabled: false}"), &conf))
+	require.NoError(t, yaml.Unmarshal([]byte("upstream: {mode: reverseProxy, trustedPeers: [private]}\ntls: {}"), &conf))
+	require.True(t, conf.Tls.IsEnabled())
+	require.NoError(t, yaml.Unmarshal([]byte("upstream: {mode: reverseProxy, trustedPeers: [private]}"), &conf))
 	require.Empty(t, conf.Tls.FileCertificates())
 }
 
@@ -68,7 +69,7 @@ func TestHttpPrivatePeersAreNotAllSpecialOrLocalNetworks(t *testing.T) {
 func TestOidcCodeProxyPrefixAndPortDefaults(t *testing.T) {
 	for _, test := range []struct{ field, prefix string }{{"", "/bifroest"}, {"pathPrefix: '<default>'", "/bifroest"}, {"pathPrefix: ''", ""}, {"pathPrefix: /other", "/other"}} {
 		var conf Configuration
-		source := "http:\n  enabled: true\n  addresses: [':8080']\n  domains: [app.example.org]\n  tls: {enabled: false}\n  upstream: {mode: reverseProxy, trustedPeers: [private], defaultPrefix: /bifroest, defaultPort: 8443}\nflows:\n- name: default\n  authorization:\n    type: oidcAuthorizationCode\n    issuer: https://idp.example.org\n    clientId: test\n    clientSecret: secret\n    " + test.field + "\n  environment: {type: local, name: test}\n"
+		source := "http:\n  enabled: true\n  addresses: [':8080']\n  domains: [app.example.org]\n  upstream: {mode: reverseProxy, trustedPeers: [private], defaultPrefix: /bifroest, defaultPort: 8443}\nflows:\n- name: default\n  authorization:\n    type: oidcAuthorizationCode\n    issuer: https://idp.example.org\n    clientId: test\n    clientSecret: secret\n    " + test.field + "\n  environment: {type: local, name: test}\n"
 		require.NoError(t, conf.LoadFromYaml(strings.NewReader(source), ""))
 		code := conf.Flows[0].Authorization.V.(*AuthorizationOidcAuthorizationCode)
 		require.Equal(t, "https://app.example.org:8443"+test.prefix+"/login/callback", code.RedirectURL())

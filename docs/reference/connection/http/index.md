@@ -13,10 +13,18 @@ Workload links use browser fragments, such as `/#Shell` or `/#alice@Shell`; see 
 
 ## Configuration
 
-These properties belong to the root `http` block. `domains` is required when HTTP is enabled.
+These properties belong to the root `http` block. `domains` is required unless `enabled` is `false`.
 
-<<property("enabled", "bool", default=False)>>
-Enables the HTTP connection. TLS remains enabled unless explicitly disabled in [reverse-proxy mode](#upstream).
+<<property("enabled", "bool or string", default=False)>>
+Selects what the listener serves:
+
+| Value | Behavior |
+| - | - |
+| `false` | No HTTP listener |
+| `true` | HTTP application endpoints, with TLS or trusted [reverse-proxy mode](#upstream) |
+| `acmeTlsAlpnOnly` | Only [ACME TLS-ALPN-01 validation](../../transports/tls/index.md#acme); no WebUI, API, SSH tunnel or OIDC endpoints |
+
+`acmeTlsAlpnOnly` requires [`tls`](#property-tls) with enabled ACME and uses `addresses` and `domains`. It cannot use reverse-proxy mode.
 
 <<property("webUi", "WebUI", "#webui")>>
 Controls the browser workspace and its API independently of SSH tunnels and the login page.
@@ -33,8 +41,8 @@ Addresses to listen on; at least one is required when enabled.
 <<property("domains", array_ref("Host", "../../data-type.md#host"), required=True)>>
 Accepted public host names or IP addresses, without schemes, ports, paths or wildcards. With backend TLS enabled, each needs a matching certificate. [Flow requirements](../../flow.md#http-requirements) can restrict this list further.
 
-<<property("tls", "TLS", "#tls")>>
-Existing certificates, ACME, or self-signed TLS for local testing. Without an explicit source, uses the [default certificate files](#certificate).
+<<property("tls", "TLS or name", "../../transports/tls/index.md")>>
+An inline [TLS definition](../../transports/tls/index.md) or the name of an entry in the root `tls` map. Omitted or `""` selects `tls.default` if defined; otherwise no TLS is configured. Set `tls: null` to disable TLS explicitly, including when a default exists. An unencrypted backend requires trusted [reverse-proxy mode](#upstream). `tls: {}` selects inline TLS with the default certificate files, not `tls.default`.
 
 <<property("upstream", "Upstream", "#upstream")>>
 Direct HTTPS or an explicitly trusted reverse proxy, including public path and port defaults.
@@ -113,93 +121,6 @@ These properties belong to `http.loginFlow`.
 <<property("enabled", "bool", default=True, id_prefix="login-flow-", heading=3)>>
 Enable the login page, its resources and required OIDC endpoints, including when `http.webUi.enabled` is `false`. [OIDC Authorization Code](../../authorization/oidc/authorization-code.md) requires this component; configurations that disable it are rejected.
 
-## TLS
-
-By default, TLS terminates at Bifröst. Existing certificates take priority over ACME. External TLS termination requires explicit [reverse-proxy configuration](#upstream).
-
-### Load balancers and instance routing
-
-Browser access, pending logins and management confirmations belong to the instance that created them. A load balancer or reverse proxy must keep related HTTP requests and channels on that instance.
-
-For [SSH Authorization Code logins](../../authorization/oidc/authorization-code.md#login), coordinate persistence across SSH and HTTPS so browser approval and the IdP callback reach the instance holding the SSH login. Browser-cookie affinity alone cannot establish that relationship; use instance-specific login endpoints when these paths cannot be pinned together.
-
-After a backend failure, the load balancer can route a new connection to a healthy instance, where the user signs in again. Bifröst sessions are not shared between instances. See [HA deployment and recovery](../../../setup/operations.md#high-availability-current-limits).
-
-### Configuration {: #tls-configuration }
-
-These properties belong to `http.tls`.
-
-<<property("enabled", "bool", default=True, id_prefix="tls-", heading=4)>>
-Enable TLS on the Bifröst listener. `false` requires `http.upstream.mode: reverseProxy`; it cannot be combined with certificates, ACME or dummy TLS. Proxy mode alone does not disable TLS.
-
-<<property("reloadInterval", "Duration", "../../data-type.md#duration", default="5s", id_prefix="tls-", heading=4)>>
-Interval for reloading external certificate/key files. `0s` uses the default; negative values are invalid. A complete valid set replaces the previous certificates without restarting or closing established connections. Invalid rotations are logged and retain the last valid set; expired certificates cannot accept new connections.
-
-<<property("dummy", "bool", default=False, id_prefix="tls-", heading=4)>>
-Generate a temporary self-signed certificate for local testing. Cannot be combined with existing certificates or ACME.
-
-!!! warning
-    Use trusted certificates or ACME for production, not dummy TLS.
-
-<<property("certificates", array_ref("Certificate", "#certificate"), id_prefix="tls-", heading=4)>>
-PEM certificate/key pairs covering the configured domains. If omitted or empty, the default pair below is used only when neither ACME nor dummy TLS is selected. Explicit pairs can be combined with ACME for the remaining domains.
-
-<<property("acme", "ACME", "#acme", id_prefix="tls-", heading=4)>>
-Optional automatic certificate issuance and renewal. Disabled by default.
-
-### Certificate
-
-Each entry in `http.tls.certificates` has these properties.
-
-<<property("certificateFile", "File Path", "../../data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
-Local PEM certificate-chain file.
-
-##### Default settings
-
-| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
-| - | - | - |
-| `/etc/engity/bifroest/tls/tls.crt` | `/Library/Application Support/Engity/Bifroest/tls/tls.crt` | `C:\ProgramData\Engity\Bifroest\tls\tls.crt` |
-
-<<property("privateKeyFile", "File Path", "../../data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
-Local PEM private-key file, separate from SSH and audit keys.
-
-##### Default settings
-
-| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
-| - | - | - |
-| `/etc/engity/bifroest/tls/tls.key` | `/Library/Application Support/Engity/Bifroest/tls/tls.key` | `C:\ProgramData\Engity\Bifroest\tls\tls.key` |
-
-Do not put the key itself in the configuration. Keep the key privately owned by the service account, with owner-only permissions such as `0400` or `0600` on Unix, and separate from public assets and mutable application storage.
-
-### ACME
-
-The configured DNS names must resolve to Bifröst, with public TCP port **443** reaching it directly. IP addresses and wildcard certificates are not supported by ACME.
-
-#### Configuration {: #acme-configuration }
-
-These properties belong to `http.tls.acme`.
-
-<<property("enabled", "bool", default=False, id_prefix="acme-", heading=5)>>
-Obtain and renew certificates for domains not covered by existing certificates.
-
-<<property("acceptTerms", "bool", default=False, id_prefix="acme-", heading=5)>>
-`true` means you accept the terms of the ACME directory, you defined via [`directoryUrl`](#acme-property-directoryUrl). In case of Let's Encrypt you can find them at https://letsencrypt.org/repository/. This is mandatory, when ACME is enabled.
-
-<<property("email", "string", default="", id_prefix="acme-", heading=5)>>
-Optional contact email address, without a display name.
-
-<<property("directoryUrl", "URL", "../../data-type.md#url", default="https://acme-v02.api.letsencrypt.org/directory", id_prefix="acme-", heading=5)>>
-Certificate authority's HTTPS directory. A staging service can be used for testing; its certificates are not browser-trusted.
-
-<<property("storage", "File Path", "../../data-type.md#file-path", default="<os specific>", id_prefix="acme-", heading=5)>>
-Persistent private directory for ACME account and certificate keys. Preserve it across restarts and keep it separate from public assets and other service storage.
-
-###### Default settings
-
-| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
-| - | - | - |
-| `/var/lib/engity/bifroest/http/acme` | `/Library/Application Support/Engity/Bifroest/http/acme` | `C:\ProgramData\Engity\Bifroest\http\acme` |
-
 ## Upstream
 
 These properties belong to `http.upstream`.
@@ -234,6 +155,10 @@ The ingress must remove client-supplied metadata and set the authoritative value
 
 For subpaths, strip the public prefix and set `X-Forwarded-Prefix`; preserve Origin and browser fetch metadata. Restrict backend access to the ingress; internal HTTP is unencrypted. Subpaths do not isolate untrusted applications.
 
+### Load balancers and instance routing
+
+Keep browser access, pending logins and management confirmations on the instance that created them. For [SSH Authorization Code logins](../../authorization/oidc/authorization-code.md#login), SSH and HTTPS must reach the same instance; browser-cookie affinity alone is insufficient. After backend failure, users sign in again on a healthy instance. Sessions are not shared; see [HA deployment and recovery](../../../setup/operations.md#high-availability-current-limits).
+
 ## RememberMe
 
 The authorization's [RememberMe](../../data-type.md#rememberme) setting controls saved access. One non-exportable signing key is shared within this browser profile, origin and mount path; permissions remain separate. Resumption requires current authorization and a valid session. Use **Log out** to revoke saved access.
@@ -245,7 +170,11 @@ Maximum inactivity of saved browser access; a successful resume resets it. Must 
 
 ## Examples
 
-Enable HTTPS with ACME for your existing flows:
+Add one of these configurations to your existing flows.
+
+### HTTPS with ACME
+
+Serve browser access, SSH tunnels and OIDC login endpoints over HTTPS:
 
 ```yaml
 http:
@@ -253,12 +182,33 @@ http:
   domains: [bifroest.example.org]
   tls:
     acme:
-      enabled: true
       acceptTerms: true
       email: operator@example.org
 ```
 
-To expose only SSH over HTTPS/WSS, keep the HTTPS configuration above and set `ssh.enabled`, `http.webUi.enabled` and `http.loginFlow.enabled` to `false`. Leave `http.sshTunnel.enabled` at its default of `true`.
+### SSH tunnels only
+
+Keep SSH over HTTPS/WSS, without a direct SSH listener, WebUI or OIDC login page:
+
+```yaml
+ssh:
+  enabled: false
+http:
+  enabled: true
+  domains: [bifroest.example.org]
+  tls:
+    acme:
+      acceptTerms: true
+      email: operator@example.org
+  webUi:
+    enabled: false
+  loginFlow:
+    enabled: false
+```
+
+Connect using [OpenSSH and curl](../../../guides/ssh-over-https.md).
+
+### Behind a reverse proxy
 
 For a TLS-terminating ingress at `https://gateway.example.org/bifroest/`, forwarding from `10.20.0.0/24` to backend port `8080`:
 
@@ -267,62 +217,16 @@ http:
   enabled: true
   addresses: [":8080"]
   domains: [gateway.example.org]
-  tls:
-    enabled: false
+  tls: null
   upstream:
     mode: reverseProxy
     trustedPeers: [10.20.0.0/24]
     defaultPrefix: /bifroest
 ```
 
-Restrict that backend port to the ingress and apply the [header and rewrite contract](#upstream-forwarded-headers). Set `defaultPort` as well if the public HTTPS port is not `443`.
+The backend connection is unencrypted. Restrict that port to the ingress and apply the [header and rewrite contract](#upstream-forwarded-headers). Set `defaultPort` as well if the public HTTPS port is not `443`.
 
-### Kubernetes ingress with Helm
-
-Start with a working [Helm installation](../../../setup/in-kubernetes.md). This example uses an existing Traefik controller and serves Bifröst at `https://gateway.example.org/`. Point that hostname at the controller and provide a valid TLS Secret named `bifroest-public-tls` in Bifröst's namespace. The chart does not install an ingress controller or a certificate manager.
-
-Configure the controller to satisfy the [forwarded-header contract](#upstream-forwarded-headers) before exposing the backend. Replace the trusted source range and both selectors below with those of your actual controller. Keep namespace and Pod selectors in the **same** peer entry so both must match. Review existing flows: enabling HTTP makes them HTTP-eligible by default; set `http.enabled: false` on flows that must stay SSH-only.
-
-```yaml title="ingress-values.yaml"
-configuration:
-  http:
-    enabled: true
-    addresses: [":8080"]
-    domains: [gateway.example.org]
-    tls:
-      enabled: false
-    upstream:
-      mode: reverseProxy
-      trustedPeers: [10.42.0.0/16]
-service:
-  http:
-    enabled: true
-    port: 80
-    targetPort: 8080
-ingress:
-  enabled: true
-  className: traefik
-  host: gateway.example.org
-  tlsSecretName: bifroest-public-tls
-networkPolicy:
-  httpPeers:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: traefik
-      podSelector:
-        matchLabels:
-          app.kubernetes.io/name: traefik
-```
-
-Apply this additional values file with the same full release version and the `values.yaml` from your installation. Retain any other values files, such as your monitoring settings:
-
-```sh
-helm upgrade bifroest oci://ghcr.io/engity-com/bifroest --version <version> --namespace bifroest -f values.yaml -f ingress-values.yaml --wait --timeout 5m
-```
-
-Check the public certificate and a permitted login: with the Helm guide's gateway flow, open `https://gateway.example.org/#gateway@Gateway` and sign in using the client's SSH key, or use [SSH over HTTPS](../../../guides/ssh-over-https.md). Also test rejection of access to the backend from unrelated Pods. This configuration explicitly disables backend TLS; the ingress-to-Pod traffic is unencrypted. Keep the HTTP Service private and NetworkPolicy enforced.
-
-For a subpath, also set `ingress.path` and `configuration.http.upstream.defaultPrefix` to the same path, for example `/bifroest`. Configure prefix stripping and `X-Forwarded-Prefix` in your controller's middleware and reference it through `ingress.annotations`; the Ingress resource alone does not configure these behaviors. Update OIDC [callback URLs](../../authorization/oidc/authorization-code.md#property-pathPrefix) to include the public path. Before adding replicas, plan [routing across SSH and HTTPS](#load-balancers-and-instance-routing).
+For Kubernetes, see [HTTP ingress with Helm](../../../setup/in-kubernetes.md#http-ingress).
 
 ## Compatibility
 

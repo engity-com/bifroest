@@ -72,7 +72,39 @@ This guide queries metrics from an installed, configured Bifröst instance throu
       - targets: ["localhost:9090"]
     ```
 
-    Restart Bifröst and reload Prometheus. `/metrics` now requires the token; the minimal `/ready` and `/status` probes remain token-free. For remote scraping, configure a private reachable address, an appropriate peer allowlist and [TLS](../reference/monitoring.md#tls) or an encrypted network. HTTP alone does not protect the token from interception.
+    Restart Bifröst and reload Prometheus. `/metrics` now requires the token; the minimal `/ready` and `/status` probes remain token-free. For remote scraping, configure a private reachable address, an appropriate peer allowlist and [TLS](../reference/transports/tls/index.md) or an encrypted network. HTTP alone does not protect the token from interception.
+
+### Scrape a private TLS listener
+
+1. Provision a certificate trusted by Prometheus and readable by the Bifröst service account. Define named TLS and keep monitoring bound to a private address:
+
+    ```yaml title="Bifröst configuration"
+    tls:
+      monitoring:
+        certificates:
+          - certificateFile: /run/bifroest/tls/monitoring.crt
+            privateKeyFile: /run/bifroest/tls/monitoring.key
+    monitoring:
+      enabled: true
+      addresses: ["10.20.0.10:9090"]
+      domains: [monitoring.internal.example]
+      tls: monitoring
+      allowedRemoteHosts: ["10.20.0.20"]
+    ```
+
+2. Restart Bifröst and configure Prometheus with its own CA trust and expected server name:
+
+    ```yaml title="Prometheus scrape job"
+    job_name: bifroest
+    scheme: https
+    tls_config:
+      ca_file: /etc/prometheus/bifroest-ca.crt
+      server_name: monitoring.internal.example
+    static_configs:
+      - targets: ["10.20.0.10:9090"]
+    ```
+
+3. Reload Prometheus and check `up{job="bifroest"} == 1`. Do not use `insecure_skip_verify`. Directory-mounted certificate Secrets rotate without restarting Bifröst.
 
 ### Configure Kubernetes probes
 
@@ -172,7 +204,7 @@ The [Helm chart](../setup/in-kubernetes.md) already configures these probes on a
             target_label: pod
     ```
 
-    Pod discovery supplies the address of the named port. The annotations supply the scrape switch, scheme, path and port; they do not install or configure Prometheus. No ServiceMonitor or PodMonitor is created. For protected metrics, add [bearer credentials](#use-a-bearer-token) and [TLS trust](../reference/monitoring.md#tls) to the job as required by your configuration.
+    Pod discovery supplies the address of the named port. The annotations supply the scrape switch, scheme, path and port; they do not install or configure Prometheus. No ServiceMonitor or PodMonitor is created. For protected metrics, add [bearer credentials](#use-a-bearer-token) and [TLS trust](../reference/transports/tls/index.md) to the job as required by your configuration.
 
 3. Check Prometheus targets and query `up{job="bifroest"}` and `bifroest_ready`. Each ready Bifröst Pod should appear separately with both values at `1`; do not scrape through the load-balanced SSH or HTTP Service.
 

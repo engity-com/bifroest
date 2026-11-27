@@ -8,15 +8,14 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/audit"
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/webui"
 )
 
 func (this *service) prepareHTTPS() error {
-	monitoringTLS := this.monitoring != nil && this.Configuration.Monitoring.IsEnabled() && this.Configuration.Monitoring.Tls.Enabled
-	if !this.Configuration.Http.IsEnabled() && !monitoringTLS {
+	monitoringTLS := this.monitoring != nil && this.Configuration.Monitoring.IsEnabled() && this.Configuration.Monitoring.Tls.IsEnabled()
+	if !this.Configuration.Http.IsListenerEnabled() && !monitoringTLS {
 		return nil
 	}
 	// Audit best-effort policy must not waive transport key safety.
@@ -36,10 +35,8 @@ func (this *service) prepareHTTPS() error {
 			return fmt.Errorf("cannot inspect audit recipient identities for HTTPS")
 		}
 	}
-	if monitoringTLS {
-		if err := this.monitoring.endpoint.ValidateKeys(this.validateHTTPSKey); err != nil {
-			return fmt.Errorf("cannot validate monitoring TLS key separation: %w", err)
-		}
+	if err := this.prepareTLS(); err != nil {
+		return err
 	}
 	if !this.Configuration.Http.IsEnabled() {
 		return nil
@@ -58,15 +55,8 @@ func (this *service) prepareHTTPS() error {
 		this.sshTunnel.logger = this.logger()
 		this.sshTunnel.monitoring = this.monitoring
 	}
-	options := https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: http.HandlerFunc(this.serveHTTPS)}
-	options.ValidateFiles = func() error {
-		candidate := cloneRuntimePathConfiguration(&this.Configuration)
-		var storage string
-		if configured, ok := candidate.Session.V.(*configuration.SessionFs); ok && configured != nil {
-			storage = configured.Storage
-		}
-		return validateHTTPRuntimePaths(&candidate, storage)
-	}
+	options := https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: http.HandlerFunc(this.serveHTTPS),
+		Binding: this.tlsBindings["http"], Challenges: &this.tlsChallenges, ValidateFiles: this.validateTLSFiles}
 	if this.monitoring != nil {
 		options.ObserveRequest = this.monitoring.observeHTTPRequest
 		options.ObserveConnection = this.monitoring.httpConnectionOpened
@@ -77,10 +67,6 @@ func (this *service) prepareHTTPS() error {
 		return fmt.Errorf("cannot prepare HTTPS endpoint: %w", err)
 	}
 	this.https = endpoint
-	if this.Configuration.Http.Tls.Dummy {
-		this.logger().With("domains", this.Configuration.Http.Domains).
-			Warn("http.tls.dummy=true: created an ephemeral self-signed HTTPS dummy certificate for testing only; browsers do not trust it, certificate expires in 24 hours")
-	}
 	return nil
 }
 

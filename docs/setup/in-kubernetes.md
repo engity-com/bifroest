@@ -143,6 +143,94 @@ Use a Secret for configuration containing credentials. Inline configuration is a
 
 Enable monitoring TLS only together with `monitoring.scheme: HTTPS` and the necessary certificate mounts. Keep other writable repositories and generated keys under `/var/lib/engity/bifroest`; `/etc/engity/bifroest` and the root filesystem are read-only. Changes to external configuration require a [Pod rollout](operations.md#helm-releases-and-persistent-state).
 
+## HTTP ingress {: #http-ingress }
+
+With the Helm installation above, use an existing Traefik controller to serve Bifröst at `https://gateway.example.org/`. Point that hostname at the controller and provide a valid TLS Secret named `bifroest-public-tls` in Bifröst's namespace. The chart does not install an ingress controller or a certificate manager.
+
+Configure the controller to satisfy the [forwarded-header contract](../reference/connection/http/index.md#upstream-forwarded-headers) before exposing the backend. Replace the trusted source range and both selectors below with those of your actual controller. Keep namespace and Pod selectors in the **same** peer entry so both must match. Review existing flows: enabling HTTP makes them HTTP-eligible by default; set `http.enabled: false` on flows that must stay SSH-only.
+
+Save these additional values as `ingress-values.yaml`:
+
+```yaml title="ingress-values.yaml"
+configuration:
+  http:
+    enabled: true
+    addresses: [":8080"]
+    domains: [gateway.example.org]
+    tls: null
+    upstream:
+      mode: reverseProxy
+      trustedPeers: [10.42.0.0/16]
+service:
+  http:
+    enabled: true
+    port: 80
+    targetPort: 8080
+ingress:
+  enabled: true
+  className: traefik
+  host: gateway.example.org
+  tlsSecretName: bifroest-public-tls
+networkPolicy:
+  httpPeers:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+```
+
+Apply this file with the same full release version and the `values.yaml` from your installation. Retain any other values files, such as your monitoring settings:
+
+```sh
+helm upgrade bifroest oci://ghcr.io/engity-com/bifroest --version <version> --namespace bifroest -f values.yaml -f ingress-values.yaml --wait --timeout 5m
+```
+
+Check the public certificate and a permitted login: with the gateway flow above, open `https://gateway.example.org/#gateway@Gateway` and sign in using the client's SSH key, or use [SSH over HTTPS](../guides/ssh-over-https.md). Also test rejection of access to the backend from unrelated Pods. `tls: null` explicitly disables backend TLS; the ingress-to-Pod traffic is unencrypted. Keep the HTTP Service private and NetworkPolicy enforced.
+
+For a subpath, also set `ingress.path` and `configuration.http.upstream.defaultPrefix` to the same path, for example `/bifroest`. Configure prefix stripping and `X-Forwarded-Prefix` in your controller's middleware and reference it through `ingress.annotations`; the Ingress resource alone does not configure these behaviors. Update OIDC [callback URLs](../reference/authorization/oidc/authorization-code.md#property-pathPrefix) to include the public path. Before adding replicas, plan [routing across SSH and HTTPS](../reference/connection/http/index.md#load-balancers-and-instance-routing).
+
+## Direct ACME {: #direct-acme }
+
+Use this alternative to HTTP Ingress when Bifröst terminates TLS itself. Point your DNS name at a TCP LoadBalancer that forwards public port 443 to the Pod's port 8443, including before readiness. Keep one replica and persistent ACME storage.
+
+Add these values to your existing access-flow configuration:
+
+```yaml title="acme-values.yaml"
+replicaCount: 1
+configuration:
+  tls:
+    public:
+      acme:
+        acceptTerms: true
+        email: operator@example.org
+  http:
+    enabled: true
+    addresses: [":8443"]
+    domains: [bifroest.example.org]
+    tls: public
+service:
+  http:
+    enabled: true
+    type: LoadBalancer
+    port: 443
+    targetPort: 8443
+    publishNotReadyAddresses: true
+networkPolicy:
+  httpPeers:
+    - ipBlock: {cidr: 0.0.0.0/0}
+    - ipBlock: {cidr: "::/0"}
+```
+
+Review the CA's terms before accepting them. Install with your existing values plus `-f acme-values.yaml`. The HTTP Service forwards TCP 443 for both HTTPS and ACME validation. Monitoring stays on its private probe port.
+
+Check `kubectl get endpointslices,pods` and the startup logs: the CA must reach the challenge entrance while the Pod is unready; application handshakes remain blocked until certificates are ready. Test this behavior with your actual LoadBalancer/controller. `publishNotReadyAddresses` alone does not guarantee every cloud LB's health-check behavior. A conventional HTTP Ingress is not a TLS-ALPN proxy; use external certificate Secrets if your routing cannot support this bootstrap.
+
+The default startup-probe budget allows about five minutes; increase it deliberately if certificate preparation needs longer. ACME needs outbound DNS/HTTPS, not DNS API credentials or additional Kubernetes permissions. Set `configuration.http.enabled: acmeTlsAlpnOnly` to serve only validation, without HTTP application endpoints. Keep `service.http.enabled: true`; the Kubernetes Service exposes the same TCP port in either mode.
+
+For multiple Pods, mount externally renewed certificate Secrets as read-only directories without `subPath` and select file-based [TLS](../reference/transports/tls/index.md). Use `defaultMode: 0440` with the chart's UID/GID `10001`; the read-only root filesystem and existing data PVC need no extra capabilities.
+
 ## Deployment settings
 
 Use `helm show values oci://ghcr.io/engity-com/bifroest --version <version>` for all settings. Common choices are:
@@ -156,6 +244,7 @@ Use `helm show values oci://ghcr.io/engity-com/bifroest --version <version>` for
 | `image.tag` | `""` (chart's application version) | Select an [edition tag](distribution.md#image-syntax) from the same release |
 | `image.digest` | `""` | Pin the image by digest; takes precedence over `image.tag` |
 | `service.ssh.type` | `ClusterIP` | Expose native SSH through your cluster's chosen service type |
+| `service.http.enabled` | `false` | Publish the TCP port for HTTP or ACME-only validation |
 | `networkPolicy.sshPeers` | All IPv4/IPv6 sources | Restrict which sources can reach the SSH port |
 | `networkPolicy.httpPeers`, `networkPolicy.monitoringPeers` | `[]` (deny) | Explicitly admit the ingress controller or Prometheus |
 | `resources` | `{}` | Set CPU/memory requests and limits for your workload |
@@ -164,7 +253,7 @@ The Pod runs as UID/GID `10001`, with `RuntimeDefault` seccomp, no added capabil
 
 ## Next steps
 
-* [HTTP ingress](../reference/connection/http/index.md#kubernetes-ingress-with-helm) enables browser access and SSH over HTTPS through an existing controller.
+* [HTTP ingress](#http-ingress) enables browser access and SSH over HTTPS through an existing controller.
 * [Prometheus with Helm](../guides/monitoring.md#scrape-the-helm-deployment) adds Pod discovery without exposing monitoring publicly.
 * [Helm releases and persistent state](operations.md#helm-releases-and-persistent-state) covers upgrades, replicas and removal.
 * The [Kubernetes session environment](../reference/environment/kubernetes.md) is a separate choice that requires its own credentials and permissions; installing this chart does not enable it.

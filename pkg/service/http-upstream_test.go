@@ -24,8 +24,7 @@ func TestHttpUpstreamRealTLSIngressAndPlainBackendKeepAccessPrefixBound(t *testi
 	svc, _, _ := webTestFixture(t)
 	conf := &configuration.Http{}
 	require.NoError(t, conf.SetDefaults())
-	conf.Enabled, conf.Domains = true, configuration.HttpDomains{"app.example.org"}
-	conf.Tls.Enabled = new(false)
+	conf.Enabled, conf.Domains = configuration.HttpEnabled, configuration.HttpDomains{"app.example.org"}
 	conf.Upstream = configuration.HttpUpstream{Mode: "reverseProxy", TrustedPeers: configuration.HttpTrustedPeers{"127.0.0.1"}}
 	svc.Configuration.Http = conf
 	seen := make(chan https.UpstreamRequest, 8)

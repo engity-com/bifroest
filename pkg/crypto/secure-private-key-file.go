@@ -23,10 +23,25 @@ func LoadSecurePrivateKeyFile(path string, maximumSize int64) (PrivateKey, error
 	return key, nil
 }
 
+// LoadServicePrivateKeyFile additionally accepts a root-managed read-only key
+// for the process's primary group (e.g. a Kubernetes fsGroup Secret). This policy
+// is for explicitly supplied server identities, never writable private state.
+func LoadServicePrivateKeyFile(path string, maximumSize int64) (PrivateKey, error) {
+	raw, err := readPrivateFile(path, maximumSize, validateServicePrivateKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrivateKeyBytes(raw)
+}
+
 // ReadSecurePrivateFile reads bounded opaque private state using the same
 // stable-file, owner, permission/ACL and single-link policy as private keys.
 // It never creates, repairs or replaces a file.
 func ReadSecurePrivateFile(path string, maximumSize int64) ([]byte, error) {
+	return readPrivateFile(path, maximumSize, validateSecurePrivateKeyFile)
+}
+
+func readPrivateFile(path string, maximumSize int64, validate func(string, *os.File, os.FileInfo) error) ([]byte, error) {
 	if maximumSize <= 0 {
 		return nil, fmt.Errorf("illegal maximum private key size %d", maximumSize)
 	}
@@ -53,7 +68,7 @@ func ReadSecurePrivateFile(path string, maximumSize int64) ([]byte, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("private key %q changed while opening", path)
 	}
-	if err := validateSecurePrivateKeyFile(path, file, openInfo); err != nil {
+	if err := validate(path, file, openInfo); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -78,7 +93,7 @@ func ReadSecurePrivateFile(path string, maximumSize int64) ([]byte, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("private key %q changed while reading", path)
 	}
-	if err := validateSecurePrivateKeyFile(path, file, afterInfo); err != nil {
+	if err := validate(path, file, afterInfo); err != nil {
 		_ = file.Close()
 		return nil, err
 	}

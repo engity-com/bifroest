@@ -26,28 +26,36 @@ const DefaultHttpMaxHeaderBytes = uint32(1 << 20)
 // Http is optional at the root. Neither omission nor an explicit disabled block
 // starts a listener, reads certificates or initiates ACME requests.
 type Http struct {
-	Enabled                 bool             `yaml:"enabled,omitempty"`
+	Enabled                 HttpMode         `yaml:"enabled,omitempty"`
 	WebUi                   HttpComponent    `yaml:"webUi,omitempty"`
 	SshTunnel               HttpComponent    `yaml:"sshTunnel,omitempty"`
 	LoginFlow               HttpComponent    `yaml:"loginFlow,omitempty"`
 	Addresses               net.NetAddresses `yaml:"addresses"`
 	Domains                 HttpDomains      `yaml:"domains,omitempty"`
-	Tls                     HttpTls          `yaml:"tls"`
-	Upstream                HttpUpstream     `yaml:"upstream,omitempty"`
-	StartupTimeout          common.Duration  `yaml:"startupTimeout,omitempty"`
-	ReadHeaderTimeout       common.Duration  `yaml:"readHeaderTimeout,omitempty"`
-	IdleTimeout             common.Duration  `yaml:"idleTimeout,omitempty"`
-	GracefulShutdownTimeout common.Duration  `yaml:"gracefulShutdownTimeout"`
-	MaxHeaderBytes          uint32           `yaml:"maxHeaderBytes,omitempty"`
-	RememberMe              HttpRememberMe   `yaml:"rememberMe,omitempty"`
-	AssetsDirectory         string           `yaml:"assetsDirectory,omitempty"`
-	CustomCss               HttpAssetFiles   `yaml:"customCss,omitempty"`
-	CustomJs                HttpAssetFiles   `yaml:"customJs,omitempty"`
-	CustomHtmlHead          string           `yaml:"customHtmlHead,omitempty"`
-	CustomHtmlBody          string           `yaml:"customHtmlBody,omitempty"`
+	Tls                     *Tls             `yaml:"tls,omitempty"`
+	tlsExplicitNull         bool
+	Upstream                HttpUpstream    `yaml:"upstream,omitempty"`
+	StartupTimeout          common.Duration `yaml:"startupTimeout,omitempty"`
+	ReadHeaderTimeout       common.Duration `yaml:"readHeaderTimeout,omitempty"`
+	IdleTimeout             common.Duration `yaml:"idleTimeout,omitempty"`
+	GracefulShutdownTimeout common.Duration `yaml:"gracefulShutdownTimeout"`
+	MaxHeaderBytes          uint32          `yaml:"maxHeaderBytes,omitempty"`
+	RememberMe              HttpRememberMe  `yaml:"rememberMe,omitempty"`
+	AssetsDirectory         string          `yaml:"assetsDirectory,omitempty"`
+	CustomCss               HttpAssetFiles  `yaml:"customCss,omitempty"`
+	CustomJs                HttpAssetFiles  `yaml:"customJs,omitempty"`
+	CustomHtmlHead          string          `yaml:"customHtmlHead,omitempty"`
+	CustomHtmlBody          string          `yaml:"customHtmlBody,omitempty"`
 }
 
-func (this *Http) IsEnabled() bool { return this != nil && this.Enabled }
+// IsEnabled selects application HTTP, not the validation-only TLS listener.
+func (this *Http) IsEnabled() bool { return this != nil && this.Enabled == HttpEnabled }
+func (this *Http) IsListenerEnabled() bool {
+	return this != nil && (this.Enabled == HttpEnabled || this.Enabled == HttpAcmeTlsAlpnOnly)
+}
+func (this *Http) IsAcmeTlsAlpnOnly() bool {
+	return this != nil && this.Enabled == HttpAcmeTlsAlpnOnly
+}
 
 func (this *Http) SetDefaults() error {
 	*this = Http{
@@ -56,10 +64,14 @@ func (this *Http) SetDefaults() error {
 		GracefulShutdownTimeout: DefaultHttpGracefulShutdownTimeout, MaxHeaderBytes: DefaultHttpMaxHeaderBytes,
 		RememberMe: HttpRememberMe{IdleTimeout: DefaultHttpRememberMeIdleTimeout},
 	}
-	return this.Tls.SetDefaults()
+	return nil
 }
 
 func (this *Http) Trim() error {
+	return this.trim(true)
+}
+
+func (this *Http) trim(requireResolvedTLS bool) error {
 	if this == nil {
 		return nil
 	}
@@ -70,14 +82,21 @@ func (this *Http) Trim() error {
 	if err := this.Tls.Trim(); err != nil {
 		return configurationFieldError(this, "tls", err)
 	}
-	return this.Validate()
+	return this.validate(requireResolvedTLS)
 }
 
 func (this *Http) Validate() error {
+	return this.validate(true)
+}
+
+func (this *Http) validate(requireResolvedTLS bool) error {
 	if this == nil {
 		return nil
 	}
-	if this.Enabled && len(this.Addresses) == 0 {
+	if err := this.Enabled.Validate(); err != nil {
+		return configurationFieldError(this, "enabled", err)
+	}
+	if this.IsListenerEnabled() && len(this.Addresses) == 0 {
 		return fmt.Errorf("[addresses] at least one listener address is required")
 	}
 	seenAddresses := make(map[string]struct{}, len(this.Addresses))
@@ -95,7 +114,7 @@ func (this *Http) Validate() error {
 	if err := this.Domains.Validate(); err != nil {
 		return configurationFieldError(this, "domains", err)
 	}
-	if this.Enabled && len(this.Domains) == 0 {
+	if this.IsListenerEnabled() && len(this.Domains) == 0 {
 		return fmt.Errorf("[domains] at least one explicit domain is required")
 	}
 	if err := this.Tls.Validate(); err != nil {
@@ -104,8 +123,24 @@ func (this *Http) Validate() error {
 	if err := this.Upstream.Validate(); err != nil {
 		return configurationFieldError(this, "upstream", err)
 	}
-	if !this.Tls.IsEnabled() && !this.Upstream.IsReverseProxy() {
-		return fmt.Errorf("[tls][enabled] false requires upstream.mode reverseProxy")
+	tlsPending := !requireResolvedTLS && (this.Tls == nil && !this.tlsExplicitNull || this.Tls != nil && this.Tls.implicit)
+	if this.IsAcmeTlsAlpnOnly() {
+		if !tlsPending && !this.Tls.IsEnabled() || this.Upstream.IsReverseProxy() {
+			return fmt.Errorf("[enabled] acmeTlsAlpnOnly requires TLS and direct upstream mode")
+		}
+		// Inline decoding precedes root reference resolution.
+		if !tlsPending && (this.Tls.Reference == "" || this.Tls.definition != nil) {
+			definition, err := this.Tls.ServerDefinition()
+			if err != nil {
+				return err
+			}
+			if !definition.Acme.IsEnabled() {
+				return fmt.Errorf("[tls][acme] required for acmeTlsAlpnOnly")
+			}
+		}
+	}
+	if !tlsPending && this.IsEnabled() && !this.Tls.IsEnabled() && !this.Upstream.IsReverseProxy() {
+		return fmt.Errorf("[tls] required unless upstream.mode is reverseProxy")
 	}
 	for _, field := range []struct {
 		name  string
@@ -139,15 +174,37 @@ func (this *Http) Validate() error {
 }
 
 func (this *Http) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *Http, node *yaml.Node) error {
+	if err := this.SetDefaults(); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	if err := func(target *Http, node *yaml.Node) error {
+		fields, err := effectiveHttpFields(node)
+		if err != nil {
+			return err
+		}
+		target.tlsExplicitNull = fields["tls"].Tag == "!!null"
 		type raw Http
 		return decodeHttpFields(node, (*raw)(target), map[string]string{
 			"webUi": "!!map", "sshTunnel": "!!map", "loginFlow": "!!map",
-			"enabled": "!!bool", "addresses": "!!seq/!!str", "domains": "!!seq/!!str", "tls": "!!map", "upstream": "!!map",
+			"enabled": "!!bool|!!str", "addresses": "!!seq/!!str", "domains": "!!seq/!!str", "tls": "!!map|!!str|!!null", "upstream": "!!map",
 			"startupTimeout": "!!str", "readHeaderTimeout": "!!str", "idleTimeout": "!!str", "gracefulShutdownTimeout": "!!str", "maxHeaderBytes": "!!int",
 			"rememberMe": "!!map", "assetsDirectory": "!!str", "customCss": "!!seq/!!str", "customJs": "!!seq/!!str", "customHtmlHead": "!!str", "customHtmlBody": "!!str",
 		})
-	})
+	}(this, node); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	if err := this.trim(false); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	return nil
+}
+
+func (this Http) MarshalYAML() (any, error) {
+	type raw Http
+	if this.Tls == nil && this.tlsExplicitNull {
+		return marshalWithYAMLField(raw(this), "tls", nil)
+	}
+	return raw(this), nil
 }
 
 func (this *Http) IsEqualTo(other any) bool {
@@ -165,7 +222,8 @@ func (this *Http) IsEqualTo(other any) bool {
 }
 func (this *Http) isEqualTo(other *Http) bool {
 	return this.Enabled == other.Enabled && this.WebUi.IsEqualTo(other.WebUi) && this.SshTunnel.IsEqualTo(other.SshTunnel) && this.LoginFlow.IsEqualTo(other.LoginFlow) &&
-		this.Addresses.IsEqualTo(other.Addresses) && this.Domains.IsEqualTo(other.Domains) && this.Tls.IsEqualTo(other.Tls) && this.Upstream.IsEqualTo(other.Upstream) &&
+		this.Addresses.IsEqualTo(other.Addresses) && this.Domains.IsEqualTo(other.Domains) && this.Tls.IsEqualTo(other.Tls) &&
+		(this.Tls != nil || this.tlsExplicitNull == other.tlsExplicitNull) && this.Upstream.IsEqualTo(other.Upstream) &&
 		this.StartupTimeout.IsEqualTo(other.StartupTimeout) && this.ReadHeaderTimeout.IsEqualTo(other.ReadHeaderTimeout) && this.IdleTimeout.IsEqualTo(other.IdleTimeout) &&
 		this.GracefulShutdownTimeout.IsEqualTo(other.GracefulShutdownTimeout) && this.MaxHeaderBytes == other.MaxHeaderBytes && this.RememberMe == other.RememberMe &&
 		this.AssetsDirectory == other.AssetsDirectory && slices.Equal(this.CustomCss, other.CustomCss) && slices.Equal(this.CustomJs, other.CustomJs) &&

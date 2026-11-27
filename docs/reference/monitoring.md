@@ -17,7 +17,7 @@ Starts the monitoring listener. When disabled or omitted, no monitoring listener
 Addresses to listen on. At least one is required when enabled. The default is loopback-only; Kubernetes HTTP probes need an explicitly configured address reachable through the Pod IP. Port `9090` is configurable and must not conflict with Prometheus or another local listener.
 
 !!! warning
-    Metrics include configured flow, authorization, environment, audit-log and remote-target names, and HTTP certificate domains. Keep the listener on a private network, restrict its peers, and do not expose it through a public Ingress or LoadBalancer. A bearer token does not encrypt HTTP traffic; use TLS or another encrypted transport outside a trusted network.
+    Metrics include configured flow, authorization, environment, audit-log and remote-target names, and TLS certificate domains. Keep the listener on a private network, restrict its peers, and do not expose it through a public Ingress or LoadBalancer. A bearer token does not encrypt HTTP traffic; use TLS or another encrypted transport outside a trusted network.
 
 <<property("allowedRemoteHosts", array_ref("IP Address or Network", "data-type.md#ip-address-or-network"), default=[])>>
 Allowed peers. An omitted, `null` or empty value allows every peer that can reach the listener. With entries, a peer must match at least one. Empty entries are ignored.
@@ -30,8 +30,11 @@ Optional RFC 6750 bearer token protecting only `/metrics`. Cannot be combined wi
 <<property("bearerTokenFile", "File Path", "data-type.md#file-path", default="")>>
 Reads the metrics bearer token from a local file at startup, suitable for a mounted Kubernetes Secret. The token may contain at most 4096 bytes, excluding a trailing line ending. Empty or invalid files prevent startup. Restart Bifröst after rotating the token.
 
-<<property("tls", "TLS", "#tls")>>
-Optional TLS using supplied certificate/key pairs. Without TLS, the listener serves HTTP.
+<<property("tls", "TLS or name", "transports/tls/index.md")>>
+An inline [TLS definition](transports/tls/index.md) or the name of an entry in the root `tls` map. Omitted or `null` disables TLS; `tls: ""` selects `tls.default` if defined. `tls: {}` selects inline TLS with the default certificate files, not `tls.default`.
+
+<<property("domains", array_ref("Host", "data-type.md#host"))>>
+Explicit server identities, required when monitoring and TLS are enabled. A single identity also permits TLS probes without SNI; multiple identities require SNI. This does not make the listener public.
 
 <<property("readHeaderTimeout", "Duration", "data-type.md#duration", default="10s")>>
 Request-header and request-read timeout. Must be positive.
@@ -44,41 +47,6 @@ Maximum time for monitoring requests to finish on shutdown. `0s` closes them imm
 
 <<property("maxHeaderBytes", "uint32", default=1048576)>>
 Maximum request-header size, from `1` to `16777216` bytes.
-
-
-## TLS
-
-These properties belong to `monitoring.tls`.
-
-<<property("enabled", "bool", default=False, id_prefix="tls-", heading=3)>>
-Enables TLS. Requires at least one supplied certificate/key pair. No ACME, automatic issuance or generated fallback certificates are supported.
-
-<<property("certificates", array_ref("Certificate", "#certificate"), id_prefix="tls-", heading=3)>>
-PEM certificate/key pairs, using the same file-property names as [HTTP certificates](connection/http/index.md#certificate). Certificates are read at startup; restart Bifröst after replacing them.
-
-### Certificate
-
-Each entry in `monitoring.tls.certificates` has these properties.
-
-<<property("certificateFile", "File Path", "data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
-Local PEM certificate-chain file. Use a certificate trusted by your scraper and covering its connection name or IP.
-
-The default value is different, depending on the platform Bifröst runs on:
-
-* Linux: `/etc/engity/bifroest/tls/monitoring.crt`
-* macOS: `/Library/Application Support/Engity/Bifroest/tls/monitoring.crt`
-* Windows: `C:\ProgramData\Engity\Bifroest\tls\monitoring.crt`
-
-<<property("privateKeyFile", "File Path", "data-type.md#file-path", default="<os specific>", id_prefix="certificate-", heading=4)>>
-Local PEM private-key file, separate from SSH, audit-signing, SFTP and audit-encryption keys.
-
-The default value is different, depending on the platform Bifröst runs on:
-
-* Linux: `/etc/engity/bifroest/tls/monitoring.key`
-* macOS: `/Library/Application Support/Engity/Bifroest/tls/monitoring.key`
-* Windows: `C:\ProgramData\Engity\Bifroest\tls\monitoring.key`
-
-Do not put the key itself in the configuration. Keep the key privately owned by the service account, with owner-only permissions such as `0400` or `0600` on Unix, and separate from public assets and mutable application storage.
 
 ## Endpoints
 
@@ -170,15 +138,12 @@ These metrics exclude the monitoring listener, its scrapes and its health probes
 | `bifroest_http_channels_closed_total` | Counter | Channel endings with `kind` and bounded `reason`; an established channel may still fail authentication or protocol validation. |
 | `bifroest_http_channel_duration_seconds` | Histogram | Open channel lifetimes, separate from ordinary API latency. |
 | `bifroest_http_tls_certificate_expiration_timestamp_seconds` | Gauge | Earliest Unix expiry time in the currently published certificate chain, per configured `domain`. |
-| `bifroest_http_tls_renewal_errors_total` | Counter | Failed renewal rounds of the existing HTTP certificate manager. Does not enable ACME on monitoring. |
+| `bifroest_http_tls_renewal_errors_total` | Counter | Failed refresh rounds of a source used by HTTP. |
+| `bifroest_tls_certificate_expiration_timestamp_seconds` | Gauge | Effective chain expiry, once per active `source` (`http`, `monitoring` or `tls:<name>`) and configured `name`. |
+| `bifroest_tls_binding_ready` | Gauge | Valid material for a configured `source` and `consumer` (`http` or `monitoring`). |
+| `bifroest_tls_renewal_errors_total` | Counter | Failed refresh rounds, counted once per `source`, not per referring consumer. |
 
 Rising rejection or handshake-abort rates can indicate scans, slow clients or overload, but also ordinary health checks and client/network failures. Use rates and sustained error ratios together with audit logs; these metrics are not an IDS and must not trigger liveness restarts merely because an external backend fails.
-
-## Compatibility
-
-| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
-| - | - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |
 
 ## Examples
 
@@ -188,3 +153,9 @@ Add this block to an existing Bifröst configuration to enable loopback-only mon
 monitoring:
   enabled: true
 ```
+
+## Compatibility
+
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

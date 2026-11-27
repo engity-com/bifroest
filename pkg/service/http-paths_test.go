@@ -18,11 +18,11 @@ func TestHTTPRuntimePathsProtectPrivateStateAndPublicAssetsAtomically(t *testing
 	}{
 		{"ACME in session storage", func(c *configuration.Configuration) {
 			c.Http.Tls.Acme.Storage = filepath.Join(c.Session.V.(*configuration.SessionFs).Storage, "acme")
-		}, "HTTPS ACME storage overlaps session storage"},
+		}, "TLS ACME storage overlaps session storage"},
 		{"TLS key in journal", func(c *configuration.Configuration) {
 			configureDefaultTestAuditlog(c).Directory = filepath.Join(t.TempDir(), "journal")
 			c.Http.Tls.Certificates[0].PrivateKeyFile = filepath.Join(c.Auditlogs[0].Directory, "tls.pem")
-		}, "HTTPS private key file overlaps"},
+		}, "TLS private key file overlaps"},
 		{"TLS key equals SSH key", func(c *configuration.Configuration) {
 			paths, err := c.Ssh.Keys.HostKeys.Render(noopContext{})
 			require.NoError(t, err)
@@ -30,16 +30,16 @@ func TestHTTPRuntimePathsProtectPrivateStateAndPublicAssetsAtomically(t *testing
 		}, "overlaps SSH host key"},
 		{"ACME contains TLS files", func(c *configuration.Configuration) {
 			c.Http.Tls.Acme.Storage = filepath.Dir(c.Http.Tls.Certificates[0].PrivateKeyFile)
-		}, "HTTPS ACME storage overlaps HTTPS"},
+		}, "TLS ACME storage overlaps TLS"},
 		{"public overlay contains sessions", func(c *configuration.Configuration) {
 			c.Http.AssetsDirectory = filepath.Dir(c.Session.V.(*configuration.SessionFs).Storage)
 		}, "HTTP asset directory overlaps"},
 		{"public overlay in ACME", func(c *configuration.Configuration) {
 			c.Http.AssetsDirectory = filepath.Join(c.Http.Tls.Acme.Storage, "public")
-		}, "HTTP asset directory overlaps HTTPS ACME storage"},
+		}, "HTTP asset directory overlaps TLS ACME storage"},
 		{"custom CSS reads TLS key", func(c *configuration.Configuration) {
 			c.Http.CustomCss = configuration.HttpAssetFiles{c.Http.Tls.Certificates[0].PrivateKeyFile}
-		}, "HTTP customization file overlaps HTTPS private key"},
+		}, "HTTP customization file overlaps TLS private key"},
 		{"custom JS reads audit key", func(c *configuration.Configuration) {
 			configureDefaultTestAuditlog(c).IdentityFile = filepath.Join(t.TempDir(), "audit-key")
 			c.Http.CustomJs = configuration.HttpAssetFiles{c.Auditlogs[0].IdentityFile}
@@ -67,12 +67,12 @@ func TestHTTPRuntimePathsRejectHardLinkedCustomizationInputs(t *testing.T) {
 	alias := filepath.Join(filepath.Dir(key), "public.css")
 	require.NoError(t, os.Link(key, alias))
 	conf.Http.CustomCss = configuration.HttpAssetFiles{alias}
-	require.ErrorContains(t, validateRuntimePaths(&conf), "HTTP customization file overlaps HTTPS private key")
+	require.ErrorContains(t, validateRuntimePaths(&conf), "HTTP customization file overlaps TLS private key")
 }
 
 func TestDisabledHttpDoesNotInspectUnusedHttpPaths(t *testing.T) {
 	conf := httpListenerTestConfiguration(t)
-	conf.Http.Enabled = false
+	conf.Http.Enabled = configuration.HttpDisabled
 	conf.Http.Tls.Acme.Storage = conf.Session.V.(*configuration.SessionFs).Storage
 	conf.Http.AssetsDirectory = conf.Http.Tls.Acme.Storage
 	require.NoError(t, validateRuntimePaths(&conf))

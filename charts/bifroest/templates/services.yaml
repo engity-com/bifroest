@@ -8,7 +8,8 @@ spec:
   clusterIP: None
   selector:
     {{- include "bifroest.selectorLabels" . | nindent 4 }}
-{{ range $name, $service := .Values.service }}
+{{ range $name := list "ssh" "http" }}
+{{- $service := index $.Values.service $name }}
 {{- if $service.enabled }}
 ---
 apiVersion: v1
@@ -24,6 +25,7 @@ metadata:
 spec:
   type: {{ $service.type }}
   sessionAffinity: {{ $service.sessionAffinity }}
+  publishNotReadyAddresses: {{ $service.publishNotReadyAddresses }}
   {{- if eq $service.type "LoadBalancer" }}
   {{- with $service.loadBalancerSourceRanges }}
   loadBalancerSourceRanges:

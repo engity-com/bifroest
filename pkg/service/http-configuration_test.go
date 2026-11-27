@@ -32,7 +32,7 @@ flows:
 	conf.Session.V.(*configuration.SessionFs).Storage = filepath.Join(storage, "sessions")
 	definition := &Service{Configuration: conf, Version: serviceTestVersion{}}
 	err := definition.Run(context.Background())
-	require.ErrorContains(t, err, "cannot prepare HTTPS endpoint")
+	require.ErrorContains(t, err, "cannot prepare TLS source")
 	_, err = os.Stat(filepath.Join(storage, "sessions"))
 	require.True(t, os.IsNotExist(err), "invalid TLS must fail before sessions, authorizers or listeners are prepared")
 }
@@ -57,7 +57,7 @@ flows:
     authorization: {type: none}
     environment: {type: dummy}
 `), ""))
-	conf.Http.Enabled = true
+	conf.Http.Enabled = configuration.HttpEnabled
 	conf.Flows[1].Requirement.Http.IncludedHost = common.MustNewRegexp(`^app\.example\.org$`)
 	definition := &Service{Configuration: conf}
 	_, err := definition.prepare()

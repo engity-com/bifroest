@@ -32,10 +32,7 @@ Unique flow name, used in logs and stored [sessions](session/index.md).
 Optional display title, defaulting to `name`. At most 255 UTF-8 bytes without control or formatting characters. A shell's terminal title can override it in that shell's tab.
 
 <<property("auditlog", "Audit log Name", "auditlog/index.md")>>
-Name of an entry in the root `auditlogs` map. Omitted, `null` and `''` select
-`auditlogs.default` only if it is defined; otherwise this flow has no audit
-logging or recording. An explicit unknown name is a configuration error.
-Selecting a defined logger activates it; no `enabled` flag is needed.
+Name of an entry in the root `auditlogs` map. Omitted or `""` selects `auditlogs.default` if defined; otherwise this flow has no audit logging or recording. Set `null` to disable audit logging and recording for this flow even when a default exists. An explicit unknown name is a configuration error. Selecting a defined logger activates it; no `enabled` flag is needed.
 
 <<property("ssh", "SSH transport", "#ssh-transport")>>
 Controls incoming SSH access, independently of HTTP.
@@ -66,7 +63,7 @@ startup; publishing a link does not widen the allowed slug scope.
 Rules a request must satisfy before authorization.
 
 <<property("authorization", "Authorization or name", "authorization/index.md")>>
-An inline authorization or the name of an entry in the root `authorizations` map. If omitted, `authorizations.default` must be defined.
+An inline authorization or the name of an entry in the root `authorizations` map. If omitted or `""`, `authorizations.default` must be defined.
 
 **Inline authorization and environment:**
 
@@ -97,7 +94,7 @@ flows:
 ```
 
 <<property("environment", "Environment or name", "environment/index.md")>>
-An inline environment or the name of an entry in the root `environments` map, as shown above. If omitted, `environments.default` must be defined.
+An inline environment or the name of an entry in the root `environments` map, as shown above. If omitted or `""`, `environments.default` must be defined.
 
 ### SSH transport
 

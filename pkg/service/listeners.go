@@ -60,6 +60,23 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 			transport string
 		}{this.Configuration.Http.Addresses, "HTTPS"})
 	}
+	for _, address := range this.tlsChallengeAddresses {
+		shared := false
+		if this.https != nil && this.Configuration.Http.Tls.IsEnabled() {
+			for _, httpAddress := range this.Configuration.Http.Addresses {
+				if address.String() == httpAddress.String() && address.Get().Network() == httpAddress.Get().Network() {
+					shared = true
+					break
+				}
+			}
+		}
+		if !shared {
+			groups = append(groups, struct {
+				addresses bnet.NetAddresses
+				transport string
+			}{bnet.NetAddresses{address}, "TLS challenge"})
+		}
+	}
 	for _, group := range groups {
 		for _, address := range group.addresses {
 			if err := parent.Err(); err != nil {
@@ -81,7 +98,7 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
 	// Every task has exactly one buffered result, including aborted preparation.
-	results := make(chan inputResult, len(inputs)+3)
+	results := make(chan inputResult, len(inputs)+len(this.tlsManagers)+3)
 	running := 0
 	start := func(input boundInput, operation string, serve func() error) {
 		running++
@@ -105,13 +122,16 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 		if input.transport == "HTTPS" {
 			start(input, "listener", func() error { return this.https.Serve(input.listener) })
 		}
+		if input.transport == "TLS challenge" {
+			start(input, "listener", func() error { return this.tlsChallenges.Serve(ctx, input.listener) })
+		}
 	}
 	if this.monitoring != nil {
 		start(boundInput{}, "journal space observation", func() error { return this.monitoring.runJournalObserver(ctx, this) })
 	}
-	prepared := this.https == nil
+	prepared := this.https == nil && len(this.tlsManagers) == 0
 	if !prepared {
-		start(boundInput{}, "HTTPS preparation", func() error { return this.https.Prepare(ctx) })
+		start(boundInput{}, "HTTPS preparation", func() error { return this.prepareTLSBindings(ctx) })
 	}
 	failed := false
 	for !prepared && !failed {
@@ -143,15 +163,16 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 				this.sshTunnel.ready.Store(true)
 			}
 		}
-		if this.https != nil {
-			start(boundInput{}, "HTTPS renewal", func() error {
-				return this.https.RunRenewal(ctx, func(err error) {
-					if this.monitoring != nil {
-						this.monitoring.http.renewalErrors.Inc()
-					}
-					this.logger().WithError(err).Warn("HTTPS certificate renewal failed; existing valid material retained")
+		this.houseKeeper.startTLSRenewal(ctx)
+		for _, name := range this.tlsSourceNames {
+			manager := this.tlsManagers[name]
+			if manager.HasFileCertificates() {
+				start(boundInput{}, "TLS file reload", func() error {
+					return manager.RunFileReload(ctx, func(err error) {
+						this.tlsRefreshFailed(name, "file reload", err)
+					})
 				})
-			})
+			}
 		}
 		this.logger().WithAll(sys.VersionToMap(this.Version)).Info("started")
 		if this.monitoring != nil {
@@ -212,6 +233,7 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 	if this.https != nil {
 		rErr = errors.Join(rErr, this.https.Close())
 	}
+	rErr = errors.Join(rErr, this.closeTLS())
 	if rErr == nil && this.isProblematicError(shutdown.cause) {
 		rErr = shutdown.cause
 	}

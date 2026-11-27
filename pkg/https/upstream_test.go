@@ -29,7 +29,7 @@ func proxyTestRequest() *http.Request {
 func proxyTestConf(t *testing.T) *configuration.Http {
 	t.Helper()
 	conf := newTlsTestConfiguration(t, "app.example.org")
-	conf.Tls = configuration.HttpTls{Enabled: new(false)}
+	conf.Tls = nil
 	conf.Upstream = configuration.HttpUpstream{Mode: "reverseProxy", TrustedPeers: configuration.HttpTrustedPeers{"private"}}
 	return conf
 }
@@ -154,7 +154,7 @@ func TestPlainProxyEndpointDoesNotPrepareCertificateSources(t *testing.T) {
 	require.NoError(t, endpoint.Prepare(context.Background()))
 	require.True(t, endpoint.Ready())
 	done := make(chan error, 1)
-	go func() { done <- endpoint.RunRenewal(context.Background(), nil) }()
+	go func() { done <- endpoint.RunFileReload(context.Background(), nil) }()
 	require.NoError(t, endpoint.Close())
 	require.False(t, endpoint.Ready())
 	select {

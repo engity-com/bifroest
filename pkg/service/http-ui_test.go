@@ -365,7 +365,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	}
 	settings := &configuration.Http{}
 	require.NoError(t, settings.SetDefaults())
-	settings.Enabled = true
+	settings.Enabled = configuration.HttpEnabled
 	settings.Domains = configuration.HttpDomains{"app.example.org", "other.example.org"}
 	directory := t.TempDir()
 	custom := filepath.Join(directory, "custom.js")

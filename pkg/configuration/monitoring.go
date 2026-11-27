@@ -3,6 +3,7 @@ package configuration
 import (
 	"fmt"
 	"net/netip"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -14,18 +15,20 @@ import (
 
 var DefaultMonitoringAddresses = net.NetAddresses{net.MustNewAddress("localhost:9090")}
 
-// Monitoring is independent of browser access and has no certificate automation.
+// Monitoring has its own listener and access policy, independent of browser access.
 type Monitoring struct {
 	Enabled                 bool                  `yaml:"enabled,omitempty"`
 	Addresses               net.NetAddresses      `yaml:"addresses"`
 	AllowedRemoteHosts      MonitoringRemoteHosts `yaml:"allowedRemoteHosts,omitempty"`
 	BearerToken             string                `yaml:"bearerToken,omitempty" sensitive:"true"`
 	BearerTokenFile         string                `yaml:"bearerTokenFile,omitempty" sensitive:"true"`
-	Tls                     MonitoringTls         `yaml:"tls,omitempty"`
-	ReadHeaderTimeout       common.Duration       `yaml:"readHeaderTimeout,omitempty"`
-	IdleTimeout             common.Duration       `yaml:"idleTimeout,omitempty"`
-	GracefulShutdownTimeout common.Duration       `yaml:"gracefulShutdownTimeout,omitempty"`
-	MaxHeaderBytes          uint32                `yaml:"maxHeaderBytes,omitempty"`
+	Tls                     *Tls                  `yaml:"tls,omitempty"`
+	tlsDefault              bool
+	Domains                 ServerNames     `yaml:"domains,omitempty"`
+	ReadHeaderTimeout       common.Duration `yaml:"readHeaderTimeout,omitempty"`
+	IdleTimeout             common.Duration `yaml:"idleTimeout,omitempty"`
+	GracefulShutdownTimeout common.Duration `yaml:"gracefulShutdownTimeout,omitempty"`
+	MaxHeaderBytes          uint32          `yaml:"maxHeaderBytes,omitempty"`
 }
 
 func (this *Monitoring) IsEnabled() bool { return this != nil && this.Enabled }
@@ -40,6 +43,10 @@ func (this *Monitoring) SetDefaults() error {
 }
 
 func (this *Monitoring) Trim() error {
+	return this.trim(true)
+}
+
+func (this *Monitoring) trim(requireResolvedTLS bool) error {
 	if this == nil {
 		return nil
 	}
@@ -50,10 +57,17 @@ func (this *Monitoring) Trim() error {
 	if err := this.Tls.Trim(); err != nil {
 		return configurationFieldError(this, "tls", err)
 	}
-	return this.Validate()
+	if err := this.Domains.Trim(); err != nil {
+		return configurationFieldError(this, "domains", err)
+	}
+	return this.validate(requireResolvedTLS)
 }
 
 func (this *Monitoring) Validate() error {
+	return this.validate(true)
+}
+
+func (this *Monitoring) validate(requireResolvedTLS bool) error {
 	if this == nil {
 		return nil
 	}
@@ -83,6 +97,13 @@ func (this *Monitoring) Validate() error {
 	if err := this.Tls.Validate(); err != nil {
 		return configurationFieldError(this, "tls", err)
 	}
+	if err := this.Domains.Validate(); err != nil {
+		return configurationFieldError(this, "domains", err)
+	}
+	tlsPending := !requireResolvedTLS && this.Tls != nil && this.Tls.implicit
+	if !tlsPending && this.Enabled && this.Tls.IsEnabled() && len(this.Domains) == 0 {
+		return fmt.Errorf("[domains] required when TLS is configured")
+	}
 	return nil
 }
 
@@ -105,7 +126,10 @@ func ValidMonitoringBearerToken(value string) bool {
 }
 
 func (this *Monitoring) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *Monitoring, node *yaml.Node) error {
+	if err := this.SetDefaults(); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	if err := func(target *Monitoring, node *yaml.Node) error {
 		fields, err := effectiveHttpFields(node)
 		if err != nil {
 			return err
@@ -128,12 +152,32 @@ func (this *Monitoring) UnmarshalYAML(node *yaml.Node) error {
 			}
 			filtered.Content = append(filtered.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name}, &value)
 		}
-		if err := decodeHttpFields(filtered, (*raw)(target), map[string]string{"enabled": "!!bool", "addresses": "!!seq/!!str", "bearerToken": "!!str", "bearerTokenFile": "!!str", "tls": "!!map", "readHeaderTimeout": "!!str", "idleTimeout": "!!str", "gracefulShutdownTimeout": "!!str", "maxHeaderBytes": "!!int"}); err != nil {
+		if err := decodeHttpFields(filtered, (*raw)(target), map[string]string{"enabled": "!!bool", "addresses": "!!seq/!!str", "domains": "!!seq/!!str", "bearerToken": "!!str", "bearerTokenFile": "!!str", "tls": "!!map|!!str|!!null", "readHeaderTimeout": "!!str", "idleTimeout": "!!str", "gracefulShutdownTimeout": "!!str", "maxHeaderBytes": "!!int"}); err != nil {
 			return err
+		}
+		if node, exists := fields["tls"]; exists {
+			storage := filepath.Join(filepath.Dir(filepath.Dir(DefaultHttpAcmeStorage)), "monitoring", "acme")
+			if err := target.Tls.setDefaultAcmeStorage(&node, storage); err != nil {
+				return configurationFieldError(target, "tls", err)
+			}
 		}
 		target.AllowedRemoteHosts = hosts
 		return nil
-	})
+	}(this, node); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	if err := this.trim(false); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	return nil
+}
+
+func (this Monitoring) MarshalYAML() (any, error) {
+	type raw Monitoring
+	if this.Tls == nil && this.tlsDefault {
+		return marshalWithYAMLField(raw(this), "tls", "")
+	}
+	return raw(this), nil
 }
 
 func (this *Monitoring) IsEqualTo(value any) bool {
@@ -152,62 +196,10 @@ func (this *Monitoring) IsEqualTo(value any) bool {
 	// Hostname resolution may yield a four-byte IPv4 address, while parsing its
 	// serialized literal yields a mapped representation of that same endpoint.
 	addressesEqual := slices.EqualFunc(this.Addresses, other.Addresses, func(left, right net.Address) bool { return left.String() == right.String() })
-	return this.Enabled == other.Enabled && addressesEqual && slices.Equal(this.AllowedRemoteHosts, other.AllowedRemoteHosts) &&
+	return this.Enabled == other.Enabled && addressesEqual && this.Domains.IsEqualTo(other.Domains) && slices.Equal(this.AllowedRemoteHosts, other.AllowedRemoteHosts) &&
 		this.BearerToken == other.BearerToken && this.BearerTokenFile == other.BearerTokenFile && this.Tls.IsEqualTo(other.Tls) &&
+		(this.Tls != nil || this.tlsDefault == other.tlsDefault) &&
 		this.ReadHeaderTimeout == other.ReadHeaderTimeout && this.IdleTimeout == other.IdleTimeout && this.GracefulShutdownTimeout == other.GracefulShutdownTimeout && this.MaxHeaderBytes == other.MaxHeaderBytes
-}
-
-type MonitoringTls struct {
-	Enabled      bool                    `yaml:"enabled,omitempty"`
-	Certificates []MonitoringCertificate `yaml:"certificates,omitempty"`
-}
-
-func (this *MonitoringTls) SetDefaults() error { *this = MonitoringTls{}; return nil }
-func (this *MonitoringTls) Trim() error {
-	for index := range this.Certificates {
-		if err := this.Certificates[index].Trim(); err != nil {
-			return fmt.Errorf("[certificates][%d] %w", index, err)
-		}
-	}
-	return this.Validate()
-}
-func (this *MonitoringTls) Validate() error {
-	if !this.Enabled && len(this.Certificates) > 0 {
-		return fmt.Errorf("[enabled] must be true when certificates are configured")
-	}
-	if this.Enabled && len(this.Certificates) == 0 {
-		return fmt.Errorf("[certificates] required when TLS is enabled")
-	}
-	for index := range this.Certificates {
-		if err := this.Certificates[index].Validate(); err != nil {
-			return fmt.Errorf("[certificates][%d] %w", index, err)
-		}
-	}
-	return nil
-}
-func (this *MonitoringTls) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *MonitoringTls, node *yaml.Node) error {
-		type raw MonitoringTls
-		return decodeHttpFields(node, (*raw)(target), map[string]string{"enabled": "!!bool", "certificates": "!!seq/!!map"})
-	})
-}
-func (this MonitoringTls) IsEqualTo(other MonitoringTls) bool {
-	return this.Enabled == other.Enabled && slices.Equal(this.Certificates, other.Certificates)
-}
-
-type MonitoringCertificate HttpCertificate
-
-func (this *MonitoringCertificate) SetDefaults() error {
-	*this = MonitoringCertificate{CertificateFile: DefaultMonitoringCertificateFile, PrivateKeyFile: DefaultMonitoringPrivateKeyFile}
-	return nil
-}
-func (this *MonitoringCertificate) Trim() error     { return (*HttpCertificate)(this).Trim() }
-func (this *MonitoringCertificate) Validate() error { return (*HttpCertificate)(this).Validate() }
-func (this *MonitoringCertificate) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *MonitoringCertificate, node *yaml.Node) error {
-		type raw MonitoringCertificate
-		return decodeHttpFields(node, (*raw)(target), map[string]string{"certificateFile": "!!str", "privateKeyFile": "!!str"})
-	})
 }
 
 type MonitoringRemoteHosts []string
