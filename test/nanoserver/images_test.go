@@ -79,6 +79,7 @@ func TestWindowsContainerWorkflowRunsBothReleasesIndependently(t *testing.T) {
 		} `yaml:"jobs"`
 	}
 	require.NoError(t, yaml.Unmarshal(raw, &workflow))
+	require.Len(t, workflow.Jobs, 1, "client observations use the existing Windows job, not a separate probe")
 	job, exists := workflow.Jobs["windows-local"]
 	require.True(t, exists)
 	require.Equal(t, []string{"2022", "2025"}, job.Strategy.Matrix.Windows)
@@ -88,6 +89,7 @@ func TestWindowsContainerWorkflowRunsBothReleasesIndependently(t *testing.T) {
 	require.Equal(t, "windows-${{ matrix.windows }}", job.RunsOn)
 	require.Equal(t, "${{ matrix.windows }}", job.Env["BIFROEST_TEST_NANOSERVER_VERSION"])
 	require.Equal(t, "process", job.Env["BIFROEST_TEST_NANOSERVER_ISOLATION"])
+	require.Equal(t, "1", job.Env["BIFROEST_TEST_CONPTY_CLIENT_PROGRESS"])
 	uploads := 0
 	for _, step := range job.Steps {
 		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") {
@@ -96,4 +98,24 @@ func TestWindowsContainerWorkflowRunsBothReleasesIndependently(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, uploads)
+}
+
+func TestWindowsContainerClientProgressIsOnlyForwardedToConPTYSmoke(t *testing.T) {
+	raw, err := os.ReadFile("nanoserver_windows_test.go")
+	require.NoError(t, err)
+	source := string(raw)
+	_, smoke, found := strings.Cut(source, `t.Run("nanoserver-dlls-and-conpty",`)
+	require.True(t, found)
+	smoke, _, found = strings.Cut(smoke, `t.Run("nanoserver-local-sam-lifecycle",`)
+	require.True(t, found)
+	for _, marker := range []string{
+		`os.Getenv("BIFROEST_TEST_CONPTY_CLIENT_PROGRESS") == "1"`,
+		`extra = append(extra, "--env", "BIFROEST_TEST_CONPTY_CLIENT_PROGRESS=1")`,
+	} {
+		require.Contains(t, smoke, marker)
+		require.Equal(t, 1, strings.Count(source, marker))
+	}
+	require.Equal(t, 2, strings.Count(source, "BIFROEST_TEST_CONPTY_CLIENT_PROGRESS"))
+	require.Contains(t, smoke, `"--user", "ContainerUser"`)
+	require.Contains(t, smoke, `"-test.run="+smokeTests, "-test.v", "-test.timeout=90s"`)
 }
