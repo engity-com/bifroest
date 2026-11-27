@@ -375,8 +375,12 @@ jobs:
         run: mise run lint:go
 
   lint-lua:
-    name: Lua source lint and format
-    runs-on: ubuntu-latest
+    name: Lua source lint and format ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
     timeout-minutes: 10
@@ -394,12 +398,6 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with: *mise-options
-
-      - name: Install Luacheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y luarocks
-          sudo luarocks install luacheck 1.2.0-1
 
       - name: Check Lua source and formatting without writing
         run: mise run lint:lua

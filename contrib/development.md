@@ -6,7 +6,14 @@ its own MISE tools; running it installs missing tools as needed. Go is the only
 global MISE prerequisite: Go-backed installers need it before task-local PATH
 activation. Its version still comes exclusively from the catalog. All other
 tools are task-local; `mise install` installs only Go. System dependencies such as
-a container daemon, native compiler/PAM headers, OpenSSH and Luacheck remain host requirements.
+a container daemon, native compiler/PAM headers and OpenSSH remain host requirements.
+
+`mise run lint:lua` installs its catalog-pinned Luacheck release binary and
+Aqua-backed StyLua without APT, LuaRocks or administrator privileges. The upstream
+Luacheck binaries support Linux/x64 and Windows/x64; this task fails explicitly
+on unsupported hosts rather than selecting another platform's binary. StyLua
+checks formatting; Luacheck retains the repository's strict global allowlist.
+`mise run format:lua` remains a StyLua-only task.
 
 `mise.tools.yaml` is the version catalog, imported into MISE's `vars`. Every entry
 is a quoted `tool_version_<tool>` string. Tasks reference those variables; backend

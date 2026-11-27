@@ -57,12 +57,16 @@ run = [
 ]
 
 [tasks."lint:lua"]
-tools = { stylua = "{{ vars.tool_version_stylua }}" }
-description = "Check repository Lua sources with Luacheck 1.2.0 and pinned StyLua; not a Bifröst command."
+description = "Check repository Lua sources with task-owned Luacheck and StyLua; not a Bifröst command."
 run = [
     "luacheck --config .luacheckrc --no-default-config pkg/test",
     "stylua --config-path .stylua.toml --check pkg/test"
 ]
+
+[tasks."lint:lua".tools]
+stylua = "{{ vars.tool_version_stylua }}"
+# Upstream publishes native Linux/x64 and Windows/x64 binaries, not macOS/ARM.
+luacheck = { version = "{{ vars.tool_version_luacheck }}", asset_pattern = "{% if arch() == 'x64' %}{{ os(linux='luacheck', windows='luacheck.exe', macos='unsupported-macos') }}{% else %}unsupported-{{ os() }}-{{ arch() }}{% endif %}" }
 
 [tasks."format:lua"]
 tools = { stylua = "{{ vars.tool_version_stylua }}" }
@@ -350,6 +354,7 @@ go_licenses = "go:github.com/google/go-licenses/v2"
 docker_cli = "docker-cli"
 reuse = "pipx:reuse"
 stylua = "aqua:JohnnyMorganz/StyLua"
+luacheck = "github:lunarmodules/luacheck"
 syft = "aqua:anchore/syft"
 helm = "aqua:helm/helm"
 

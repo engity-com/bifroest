@@ -98,11 +98,15 @@ class TestingDocumentationTest(TestCase):
         workflow = yaml.load((ROOT / '.github/workflows/build.yml').read_text(), Loader=yaml.BaseLoader)
         job = workflow['jobs']['lint-lua']
         self.assertEqual(job['permissions'], {'contents': 'read'})
+        self.assertEqual(job['runs-on'], '${{ matrix.runner }}')
+        self.assertEqual(job['strategy']['matrix']['runner'], ['ubuntu-latest', 'windows-latest'])
+        self.assertEqual(job['strategy']['fail-fast'], 'false')
         self.assertTrue(any(step.get('run') == 'mise run lint:lua' for step in job['steps']))
         for step in job['steps']:
             if 'uses' in step:
                 self.assertRegex(step['uses'], r'@[a-f0-9]{40}$')
             self.assertNotEqual(step.get('continue-on-error'), 'true')
+            self.assertNotRegex(step.get('run', ''), r'\b(sudo|apt-get|luarocks)\b')
 
     def test_lua_reference_uses_existing_typed_property_style(self):
         config = yaml.load((ROOT / 'mkdocs.yml').read_text(), Loader=yaml.BaseLoader)
