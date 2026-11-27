@@ -14,6 +14,8 @@ helm upgrade --install bifroest oci://ghcr.io/engity-com/bifroest --version <ver
 
 The default image matches the chart's application version. SSH uses a private ClusterIP Service; HTTP ingress is disabled. Each Pod has its own persistent volume, retained on scale-down and uninstall.
 
+Configuration watching defaults to `watch: preserve`: supported changes reload without configuration-checksum rollouts. The modes match `--watch`: `off`, `preserve`, `reconnect`, `reuse`. `false`, `no` and `0` mean `off`; `true` means `preserve`. Unsupported changes still require a deliberate rollout. See the [live-reload contract and acceptance checks](https://bifroest.engity.org/setup/operations/#reload-configuration-without-restarting).
+
 ## Configuration and operation
 
 * [Configuration sources and deployment settings](https://bifroest.engity.org/setup/in-kubernetes/#configuration-sources)

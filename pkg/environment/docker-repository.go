@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"github.com/engity-com/bifroest/pkg/uuidtext"
 	gonet "net"
@@ -71,9 +72,15 @@ type DockerRepository struct {
 	activeInstances sync.Map
 
 	rawDialer gonet.Dialer
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker, ap alternatives.Provider, i imp.Imp) (*DockerRepository, error) {
+	return newDockerRepositoryUsing(ctx, flow, conf, ap, i, newDockerApiClient)
+}
+
+func newDockerRepositoryUsing(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker, ap alternatives.Provider, i imp.Imp, create func(*configuration.EnvironmentDocker) (client.APIClient, error)) (_ *DockerRepository, resultErr error) {
 	fail := func(err error) (*DockerRepository, error) {
 		return nil, err
 	}
@@ -84,11 +91,21 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 	if conf == nil {
 		return failf("nil configuration")
 	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
 
-	apiClient, err := newDockerApiClient(conf)
+	apiClient, err := create(conf)
 	if err != nil {
 		return fail(err)
 	}
+	defer func() {
+		if resultErr != nil {
+			if err := apiClient.Close(); err != nil {
+				resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot close prepared Docker client: %w", err))
+			}
+		}
+	}()
 
 	hostVersion, err := apiClient.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
@@ -108,7 +125,7 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 		return failf("cannot parse docker host's os: %w", err)
 	}
 	if err = result.hostArch.SetOci(result.hostVersion.Arch); err != nil {
-		return failf("cannot parse docker host's os: %w", err)
+		return failf("cannot parse docker host's architecture: %w", err)
 	}
 
 	lp := result.logger().GetProvider()
@@ -119,6 +136,9 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 				return failf("cannot transform to name of level %v: %w", lvl, err)
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
 	}
 
 	return &result, nil
@@ -835,7 +855,12 @@ func (this *DockerRepository) findContainerBy(ctx context.Context, filters clien
 }
 
 func (this *DockerRepository) Close() error {
-	return nil
+	this.closeOnce.Do(func() {
+		if this.apiClient != nil {
+			this.closeErr = this.apiClient.Close()
+		}
+	})
+	return this.closeErr
 }
 
 func (this *DockerRepository) Cleanup(ctx context.Context, opts *CleanupOpts) error {

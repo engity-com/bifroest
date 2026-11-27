@@ -68,7 +68,7 @@ func (this *service) onNewConnConnection(ctx essh.Context, orig gonet.Conn) (gon
 
 func (this *service) newConnection(orig gonet.Conn, ctx essh.Context, logger log.Logger) (gonet.Conn, error) {
 	for {
-		current := this.activeConnections.Load()
+		current := this.connectionCounter().Load()
 		if current >= int64(this.Configuration.Ssh.MaxConnections) {
 			this.monitoring.reject("ssh", "connections")
 			logger.
@@ -77,14 +77,14 @@ func (this *service) newConnection(orig gonet.Conn, ctx essh.Context, logger log
 				Info("max connections reached; closing forcibly")
 			return nil, nil
 		}
-		if this.activeConnections.CompareAndSwap(current, current+1) {
+		if this.connectionCounter().CompareAndSwap(current, current+1) {
 			break
 		}
 	}
 
 	id, err := bconn.NewId()
 	if err != nil {
-		this.activeConnections.Add(-1)
+		this.connectionCounter().Add(-1)
 		return nil, err
 	}
 
@@ -133,6 +133,7 @@ func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 }
 
 func (this *service) onConnectionFailed(ctx essh.Context, _ gonet.Conn, err error) error {
+	defer finishConnectionLifecycle(ctx)
 	if conn := this.connection(ctx); conn != nil {
 		reason := monitoringEndReason(err)
 		if reason == 4 && isExpectedSshHandshakeEnd(err) {
@@ -142,7 +143,6 @@ func (this *service) onConnectionFailed(ctx essh.Context, _ gonet.Conn, err erro
 		this.monitoring.connectionFinished(conn)
 		this.sessionConnections.untrack(conn)
 	}
-	finishConnectionLifecycle(ctx)
 	return nil
 }
 
@@ -150,16 +150,20 @@ func finishConnectionLifecycle(ctx essh.Context) {
 	if release, ok := ctx.Value(connectionLifecycleCtxKey).(func()); ok {
 		release()
 	}
+	if release, ok := ctx.Value(listenerHandlerContextKey{}).(func()); ok {
+		release()
+	}
 }
 
 type connection struct {
 	gonet.Conn
-	id        bconn.Id
-	context   essh.Context
-	logger    log.Logger
-	service   *service
-	created   int64
-	createdAt time.Time
+	id           bconn.Id
+	context      essh.Context
+	logger       log.Logger
+	service      *service
+	created      int64
+	createdAt    time.Time
+	sshAdmission *sshConnectionAdmission
 
 	interceptorP            atomic.Pointer[session.ConnectionInterceptor]
 	closed                  atomic.Bool
@@ -385,7 +389,7 @@ func (this *connection) closeOwned() (rErr error) {
 			*target = err
 		}
 	}(&rErr)
-	if v := this.service.activeConnections.Add(-1); v < 0 {
+	if v := this.service.connectionCounter().Add(-1); v < 0 {
 		panic(fmt.Errorf("trying to close more connections that are actually opened; currently: %d", v))
 	}
 

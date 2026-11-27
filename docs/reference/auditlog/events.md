@@ -306,9 +306,11 @@ Housekeeping events are not associated with an active SSH connection. They there
 
 #### `housekeeping.session.dispose.started`
 
-Written before housekeeping disposes the session state, environment, and authorization resources of an expired session. If this event cannot be recorded, disposal is not attempted.
+Written before housekeeping disposes the session state, environment, and authorization resources of an expired or revoked session. If this event cannot be recorded, disposal is not attempted.
 
 Fields: `domain` is `housekeeping`; `flow`, `sessionId`, and `operationId` identify the disposal attempt. `reason` is `expired` for the initial expiry path when the session is not yet selected for deletion. `reason` is `retention-elapsed` when housekeeping has selected the deletion path, either because the retention threshold elapsed or because the session was already marked as disposed. `outcome` is omitted.
+
+Other disposal reasons include `session-revoked` when retrying cleanup after an explicit revocation, `oidc-access-lost` for OIDC invalidation, `session-incompatible` for incompatible IMP metadata, and `missing-flow` for a removed flow with a known runtime owner. Unknown orphaned sessions remain preserved for operator recovery; a matching flow name alone does not establish ownership.
 
 #### `housekeeping.session.dispose.completed`
 

@@ -46,15 +46,30 @@ func TestHtpasswdRememberedSSHKeyRequiresCurrentAccount(t *testing.T) {
 			returning, err := server.dial()
 			require.NoError(t, err, "existing account can use its registered key")
 			require.NoError(t, returning.Close())
+			rememberedSigner := server.signer
 			switch source {
 			case "entries":
 				settings.Entries = crypto.Htpasswd{}
+				unchanged, err := server.dial()
+				require.NoError(t, err, "mutating the caller's input must not modify an active configuration")
+				require.NoError(t, unchanged.Close())
+				// Applying a new static entry list requires a new runtime
+				// configuration. Keep the persisted remembered session/key.
+				storage := server.service.Configuration.Session
+				require.NoError(t, server.stop())
+				server = newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+					conf.Session = storage
+					conf.Flows[0].Authorization.V = settings
+					conf.Flows[0].Authorization.RememberMe = configuration.RememberMeAllowedAndEnabledByDefault
+				})
 			case "file":
 				require.NoError(t, os.WriteFile(path, []byte("other:{SHA}irrelevant\n"), 0600))
 			case "missing file":
 				require.NoError(t, os.Remove(path))
 			}
-			denied, err := server.dial()
+			denied, err := dialSdkMigrationServerWithClientConfig(server, func(conf *ssh.ClientConfig) {
+				conf.Auth = []ssh.AuthMethod{ssh.PublicKeys(rememberedSigner)}
+			})
 			if denied != nil {
 				_ = denied.Close()
 			}

@@ -23,7 +23,7 @@ func (this *FsRepository) persistentSessionProtection(flow configuration.FlowNam
 	for _, marker := range []struct {
 		name    string
 		problem error
-	}{{FsFileAssociation, ErrInvalidAssociation}, {FsFileBrowserBindings, ErrInvalidBrowserBinding}, {FsFileSshRemember, ErrInvalidSSHRememberMe}} {
+	}{{FsFileAssociation, ErrInvalidAssociation}, {FsFileBrowserBindings, ErrInvalidBrowserBinding}, {FsFileSshRemember, ErrInvalidSSHRememberMe}, {FsFileRuntimeOwnership, ErrInvalidRuntimeOwnership}, {FsFileRuntimeRevocation, ErrInvalidRuntimeOwnership}} {
 		path, err := this.file(flow, id, marker.name)
 		if err != nil {
 			return err

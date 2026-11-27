@@ -207,12 +207,7 @@ At this address Bifröst will then connect to the published IMP port. The value 
 This is usually required, if you run Bifröst on a Docker/Podman for Desktop installation (such as on Windows or macOS) where the Docker daemon does not run on the host directly, but inside a virtual machine.
 
 <<property("cleanOrphan", "bool", template_context="../context/container.md", default=True)>>
-While the [housekeeping iterations](../housekeeping.md) this environment will look for containers that can be inspected by its docker daemon connection if there is any container that does not belong to any flow of this Bifröst instance.
-
-This is useful to clean up old containers which are leftovers after you have changed the configuration of Bifröst.
-
-!!! warning
-     If multiple Bifröst installations are using the same Docker host, this should be disabled. Otherwise, each instance is removing the container of the other instance.
+Unscoped automatic orphan scans are currently disabled by the service: a flow label alone does not prove runtime ownership, particularly after configuration changes or a restart. `cleanOrphan` does not authorize removing another instance's or an unassigned session's container. Cleanup through a known session owner remains active. Verify and reconcile truly orphaned containers manually.
 
 ## Execution lifecycle and upgrades
 
@@ -222,7 +217,7 @@ On Windows, the command is resumed only after it has been assigned to Bifröst's
 
 On Linux, execution-scoped signaling requires Linux kernel 5.3 or later for `pidfd_open` and `pidfd_send_signal` support. The container's seccomp policy must allow both system calls; Bifröst rejects the signal request rather than falling back to an unsafe numeric PID when they are unavailable.
 
-Containers without matching declared lifecycle and IMP protocol revisions cannot be reused. A missing IMP protocol revision is treated as revision 1. A normal login rejects reuse without deleting the container, even when automatic cleanup is allowed. Housekeeping proactively disposes sessions with known incompatible metadata as a whole, even if still active and not expired, including their environments; explicit environment disposal also removes the container. Invalid metadata or failed inspections require operator review instead. Session storage is deleted only after the required cleanup succeeds and its retention period has elapsed.
+Containers without matching declared lifecycle and IMP protocol revisions cannot be reused. A missing IMP protocol revision is treated as revision 1. A normal login rejects reuse without deleting the container, even when automatic cleanup is allowed. For sessions with a known, retained runtime owner, housekeeping proactively disposes known incompatible sessions as a whole, even if still active and not expired, including their environments. Unassigned or unproven sessions are not cleaned through a newly configured provider; this includes all v0.7.8 sessions and Docker sessions after a process restart without a supported ownership proof. Preserve them for operator review and follow the [upgrade contract](../../setup/upgrade.md#existing-sessions-no-import). Invalid metadata or failed inspections also require operator review. Session storage is deleted only after the required cleanup succeeds and its retention period has elapsed.
 
 !!! warning
     Removing the container can destroy container-local data and anonymous volumes. Back up anything you need before upgrading or allowing disposal; metadata alone is not a guarantee that the container or its data will be preserved.

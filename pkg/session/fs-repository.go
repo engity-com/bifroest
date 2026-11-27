@@ -280,6 +280,18 @@ func (this *FsRepository) create(ctx context.Context, flow configuration.FlowNam
 			return fail(err)
 		}
 	}
+	if binding, present := ctx.Value(runtimeOwnershipContextKey{}).(RuntimeFlow); present {
+		if err := binding.Validate(); err != nil {
+			return fail(err)
+		}
+		owner := RuntimeOwnership{
+			Schema: RuntimeOwnershipSchema, Flow: flow, SessionID: id,
+			Incarnation: binding.Incarnation, Environment: binding.Environment, Owner: binding.Owner,
+		}
+		if err := this.writeRuntimeOwnership(flow, id, owner); err != nil {
+			return fail(err)
+		}
+	}
 
 	committed = true
 	return &sess, nil
@@ -413,6 +425,9 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 	}
 	buf.init(this, flow, id)
 	if _, err := this.readAssociation(flow, id); err != nil {
+		return nil, err
+	}
+	if _, err := this.readRuntimeOwnership(flow, id); err != nil {
 		return nil, err
 	}
 
@@ -692,7 +707,7 @@ func (this *FsRepository) deleteUnexpectedFiles(logger log.Logger, sess *fs) err
 	for _, entry := range entries {
 		name := entry.Name()
 		switch name {
-		case FsFileSession, FsFileLastAccessed, FsFileAccessToken, FsFileEnvironmentToken, FsFileAssociation, FsFileBrowserBindings, FsFileSshRemember:
+		case FsFileSession, FsFileLastAccessed, FsFileAccessToken, FsFileEnvironmentToken, FsFileAssociation, FsFileBrowserBindings, FsFileSshRemember, FsFileRuntimeOwnership, FsFileRuntimeRevocation:
 			// Valid filename
 			continue
 		}
@@ -747,7 +762,7 @@ func fsPathContainsEnvironmentToken(path string) (bool, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.Name() == FsFileAssociation || entry.Name() == FsFileBrowserBindings || entry.Name() == FsFileSshRemember {
+		if entry.Name() == FsFileAssociation || entry.Name() == FsFileBrowserBindings || entry.Name() == FsFileSshRemember || entry.Name() == FsFileRuntimeOwnership || entry.Name() == FsFileRuntimeRevocation {
 			present = true
 			return iofs.SkipAll
 		}

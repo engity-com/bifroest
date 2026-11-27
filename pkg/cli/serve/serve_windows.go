@@ -25,6 +25,7 @@ type opts struct {
 	configuration.Opts
 	cservice.BaseOpts
 	internalOptions
+	cliCommon.ServiceRunOptions
 }
 
 func CreateCommands(version sys.Version, run cliCommon.ServiceRunner) []cli.CommandRequirementLike {
@@ -72,6 +73,7 @@ func doRun(ctx context.Context, o *opts, version sys.Version, run cliCommon.Serv
 		Conf:    *o.Configuration,
 		Logger:  eLog,
 		Run:     run,
+		Options: o.ServiceRunOptions,
 	}
 	if err := svc.Run(ws.Name, ws); err != nil {
 		return errors.System.Newf("cannot run Windows SCM service %s: %w", ws.Name, err)

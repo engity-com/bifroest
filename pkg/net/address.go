@@ -58,7 +58,11 @@ func (this Address) Listen() (gonet.Listener, error) {
 
 	switch v := pv.(type) {
 	case *gonet.TCPAddr:
-		return gonet.ListenTCP(v.Network(), v)
+		listener, err := gonet.ListenTCP(v.Network(), v)
+		if err != nil {
+			return nil, err
+		}
+		return listener, nil
 	default:
 		panic(fmt.Errorf("illegal address type: %v(%v)", reflect.TypeOf(pv), pv))
 	}

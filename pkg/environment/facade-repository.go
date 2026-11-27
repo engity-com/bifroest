@@ -3,6 +3,7 @@ package environment
 import (
 	"context"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -32,13 +33,41 @@ func NewRepositoryFacadeWithHostKeys(ctx context.Context, flows *configuration.F
 }
 
 func NewRepositoryFacadeWithManagement(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp, hostKeys []crypto.PrivateKey, sessions session.Repository, management ManagementCommandRunner) (*RepositoryFacade, error) {
-	ctx = context.WithValue(ctx, repositoryDependenciesContextKey{}, repositoryDependencies{
-		hostKeys: hostKeys, localAccounts: &localAccountCoordinator{sessions: sessions}, management: management,
+	return NewFacadeFactory(ap, i, hostKeys, sessions).NewWithManagement(ctx, flows, management)
+}
+
+// FacadeFactory borrows process-wide dependencies. Reuse it across runtime
+// generations so local account provisioning and disposal share the same lock.
+// Closing a facade closes only its providers, never these borrowed dependencies.
+type FacadeFactory struct {
+	alternatives  alternatives.Provider
+	imp           imp.Imp
+	hostKeys      []crypto.PrivateKey
+	localAccounts *localAccountCoordinator
+}
+
+func NewFacadeFactory(ap alternatives.Provider, i imp.Imp, hostKeys []crypto.PrivateKey, sessions session.Repository) *FacadeFactory {
+	return &FacadeFactory{
+		alternatives: ap, imp: i, hostKeys: append([]crypto.PrivateKey(nil), hostKeys...),
+		localAccounts: &localAccountCoordinator{sessions: sessions},
+	}
+}
+
+func (this *FacadeFactory) NewWithManagement(ctx context.Context, flows *configuration.Flows, management ManagementCommandRunner) (*RepositoryFacade, error) {
+	return newRepositoryFacade(this.contextFor(ctx, management), flows, this.alternatives, this.imp)
+}
+
+func (this *FacadeFactory) contextFor(ctx context.Context, management ManagementCommandRunner) context.Context {
+	return context.WithValue(ctx, repositoryDependenciesContextKey{}, repositoryDependencies{
+		hostKeys: this.hostKeys, localAccounts: this.localAccounts, management: management,
 	})
-	return newRepositoryFacade(ctx, flows, ap, i)
 }
 
 func newRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp) (*RepositoryFacade, error) {
+	return newRepositoryFacadeUsing(ctx, flows, ap, i, newInstance)
+}
+
+func newRepositoryFacadeUsing(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp, create func(context.Context, *configuration.Flow, alternatives.Provider, imp.Imp) (CloseableRepository, error)) (_ *RepositoryFacade, resultErr error) {
 	if flows == nil {
 		return &RepositoryFacade{}, nil
 	}
@@ -47,20 +76,28 @@ func newRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alt
 	success := false
 	defer func() {
 		if !success {
-			for _, entry := range entries {
-				_ = entry.Close()
+			for flow, entry := range entries {
+				if err := entry.Close(); err != nil {
+					resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot close prepared environment of flow %q: %w", flow, err))
+				}
 			}
 		}
 	}()
 	for _, flow := range *flows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, exists := entries[flow.Name]; exists {
 			return nil, fmt.Errorf("duplicate flow name %q", flow.Name)
 		}
-		instance, err := newInstance(ctx, &flow, ap, i)
+		instance, err := create(ctx, &flow, ap, i)
 		if err != nil {
 			return nil, err
 		}
 		entries[flow.Name] = instance
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	success = true

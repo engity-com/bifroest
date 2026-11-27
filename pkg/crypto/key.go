@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"context"
 	gocrypto "crypto"
 	"crypto/dsa"
 	"errors"
@@ -10,6 +11,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto/keydata"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -26,14 +28,24 @@ func WriteSshPrivateKey(pk PrivateKey, to io.Writer) error      { return keydata
 // Native file creation/loading and DSA compatibility remain outside portable key
 // values. Existing private-file ownership/mode/ACL/bootstrap guards are unchanged.
 func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (PrivateKey, error) {
+	return EnsureKeyFileContext(context.Background(), fn, reqOnAbsence, rand)
+}
+
+func EnsureKeyFileContext(ctx context.Context, fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (PrivateKey, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	raw, err := readPrivateKeyFile(fn)
 	if sys.IsNotExist(err) {
 		if reqOnAbsence == nil {
 			return nil, fmt.Errorf("private key %q does not exist", fn)
 		}
+		if !common.ProviderBootstrapAllowed(ctx) {
+			return nil, fmt.Errorf("%w: private key %q", common.ErrProviderBootstrapDisabled, fn)
+		}
 		created, createErr := reqOnAbsence.CreateFile(rand, fn)
 		if errors.Is(createErr, fs.ErrExist) {
-			return EnsureKeyFile(fn, nil, rand)
+			return EnsureKeyFileContext(ctx, fn, nil, rand)
 		}
 		return created, createErr
 	} else if err != nil {

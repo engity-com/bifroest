@@ -14,6 +14,7 @@ import (
 
 type opts struct {
 	configuration.Opts
+	common.ServiceRunOptions
 }
 
 func CreateCommands(version sys.Version, run common.ServiceRunner) []cli.CommandRequirementLike {

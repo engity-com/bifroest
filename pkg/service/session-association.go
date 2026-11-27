@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -78,19 +79,63 @@ func (this *service) resolveAuthenticatedSessionWithReuse(base environment.Conte
 	if len(token) == 0 {
 		return nil, true, fmt.Errorf("authenticated session association requires credentials")
 	}
-	found, _, err := repository.ResolveAssociatedSession(base.Context(), session.AssociationRequest{
+	if this.runtime != nil && !this.runtime.allowFlow(this.generation, auth.Flow()) {
+		return nil, true, fmt.Errorf("authenticated session flow has been removed")
+	}
+	release, err := this.retainRuntime()
+	if err != nil {
+		return nil, true, err
+	}
+	defer release()
+	found, created, err := repository.ResolveAssociatedSession(this.runtimeCreationContext(base.Context(), auth.Flow()), session.AssociationRequest{
 		Flow: auth.Flow(), Identity: identity, Remote: base.Connection().Remote(), AuthorizationToken: token,
 		ResolveTarget: func(ctx context.Context, ref session.Reference) (session.Target, error) {
-			return resolver.ResolveSessionTarget(newAssociationTargetContext(ctx, base, ref))
+			return this.resolveSessionTarget(newAssociationTargetContext(ctx, base, ref), ref, resolver)
+		},
+		Eligible: func(_ context.Context, candidate session.Session) (bool, error) {
+			return this.loginSessionCompatible(candidate), nil
 		},
 		Compatible: func(ctx context.Context, candidate session.Session) (bool, error) {
+			if !this.loginSessionCompatible(candidate) {
+				return false, nil
+			}
 			if compatible, err := this.associationEnvironmentCompatible(ctx, base, candidate); err != nil || !compatible {
 				return compatible, err
 			}
 			return reuse(ctx, candidate)
 		},
 	})
+	if err == nil {
+		if found == nil {
+			return nil, true, fmt.Errorf("session association returned no session")
+		}
+		if err := this.bindAssociatedRuntimeSession(base.Context(), found, created); err != nil {
+			return nil, true, err
+		}
+	}
 	return found, true, err
+}
+
+func (this *service) resolveSessionTarget(ctx environment.Context, ref session.Reference, fallback environment.SessionTargetResolver) (session.Target, error) {
+	if this.resources == nil || this.Watch != configuration.WatchModeReuse {
+		return fallback.ResolveSessionTarget(ctx)
+	}
+	owner, release, err := this.resources.retainSessionOwner(sessionConnectionKey{flow: ref.Flow, id: ref.Id})
+	if err != nil {
+		// New/unowned sessions always use today's complete target definition.
+		return fallback.ResolveSessionTarget(ctx)
+	}
+	defer release()
+	if owner != this {
+		if resolver, ok := environment.SessionReuseTargetResolverFor(this.environments, ref.Flow); ok {
+			for _, flow := range owner.Configuration.Flows {
+				if flow.Name == ref.Flow {
+					return resolver.ResolveSessionReuseTarget(ctx, flow.Environment)
+				}
+			}
+		}
+	}
+	return fallback.ResolveSessionTarget(ctx)
 }
 
 func (this *service) associationEnvironmentCompatible(ctx context.Context, base environment.Context, candidate session.Session) (bool, error) {

@@ -252,8 +252,9 @@ func TestForcedManagementActionReferenceSSHAndHTTPUseSameOperationTargetAndForma
 					conf.Flows = append(conf.Flows, worker)
 				})
 				svc := server.service
-				target, err := svc.sessions.Create(t.Context(), "worker", associationAdapterRemote("private-target"), nil)
+				target, err := svc.sessions.Create(svc.runtimeCreationContext(t.Context(), "worker"), "worker", associationAdapterRemote("private-target"), nil)
 				require.NoError(t, err)
+				require.NoError(t, svc.runtime.bindSession(svc.generation, target, true))
 				command := "session " + action + " " + target.Id().String() + " --format=" + format
 				svc.Configuration.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = crypto.AuthorizedKeys("command=" + strconv.Quote(command) + " " + strings.TrimSpace(string(ssh.MarshalAuthorizedKey(server.signer.PublicKey()))))
 				client := server.mustDial(t)

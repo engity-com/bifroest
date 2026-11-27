@@ -33,6 +33,7 @@ type managedConnection interface {
 }
 
 type sessionConnectionRegistry struct {
+	runtime         *runtimeGenerations
 	mutex           sync.Mutex
 	sessions        map[sessionConnectionKey]*sessionConnectionEntry
 	connections     map[managedConnection]sessionConnectionKey
@@ -84,6 +85,12 @@ func (this *sessionConnectionRegistry) monitoringCounts() map[configuration.Flow
 }
 
 func (this *sessionConnectionRegistry) isRevoked(sess session.Session) bool {
+	if sess == nil {
+		return false
+	}
+	if this.runtime != nil && this.runtime.sessionRevoked(sess) {
+		return true
+	}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	entry := this.sessions[sessionConnectionKey{sess.Flow(), sess.Id()}]
@@ -95,6 +102,10 @@ func (this *sessionConnectionRegistry) track(conn managedConnection, sess sessio
 		return
 	}
 	if !reflect.TypeOf(conn).Comparable() {
+		_ = conn.Close()
+		return
+	}
+	if this.runtime != nil && !this.runtime.bindConnection(conn, sess) {
 		_ = conn.Close()
 		return
 	}
@@ -161,6 +172,9 @@ func (this *sessionConnectionRegistry) untrack(conn managedConnection) {
 	if isNilDependency(conn) || !reflect.TypeOf(conn).Comparable() {
 		return
 	}
+	if this.runtime != nil {
+		this.runtime.untrack(conn)
+	}
 	this.mutex.Lock()
 	if key, ok := this.connections[conn]; ok {
 		this.remove(conn, key)
@@ -183,6 +197,9 @@ func (this *sessionConnectionRegistry) remove(conn managedConnection, key sessio
 // session deletion. Never call this on disposal or an attempted deletion:
 // late registrations must still be rejected while the session exists.
 func (this *sessionConnectionRegistry) finalSessionDeleted(flow configuration.FlowName, id session.Id) {
+	if this.runtime != nil {
+		this.runtime.finalSessionDeleted(flow, id)
+	}
 	key := sessionConnectionKey{flow: flow, id: id}
 	this.mutex.Lock()
 	if entry := this.sessions[key]; entry != nil && entry.revoked && len(entry.connections) == 0 {
@@ -192,6 +209,18 @@ func (this *sessionConnectionRegistry) finalSessionDeleted(flow configuration.Fl
 }
 
 func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id session.Id) error {
+	if this.runtime != nil {
+		connections := this.runtime.revokeSession(flow, id)
+		var persistErr error
+		if persistence := this.runtime.persistence; persistence != nil {
+			persistErr = persistence.revoker.RevokeRuntimeSession(context.Background(), flow, id)
+			if persistErr != nil {
+				this.runtime.stop()
+				persistence.failed(persistErr)
+			}
+		}
+		return errors.Join(persistErr, closeSessionConnections(connections))
+	}
 	key := sessionConnectionKey{flow, id}
 	this.mutex.Lock()
 	entry := this.sessions[key]
@@ -218,6 +247,9 @@ func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id se
 // disconnect takes a snapshot without revoking the session. Connections tracked
 // after this snapshot are new connections and are intentionally left alone.
 func (this *sessionConnectionRegistry) disconnect(flow configuration.FlowName, id session.Id) error {
+	if this.runtime != nil {
+		return closeSessionConnections(this.runtime.snapshotSessionConnections(flow, id))
+	}
 	this.mutex.Lock()
 	var connections []managedConnection
 	if entry := this.sessions[sessionConnectionKey{flow, id}]; entry != nil {
@@ -247,6 +279,9 @@ func closeSessionConnections(connections []managedConnection) error {
 // HTTP hijacks/future framed transports are not owned by the SSH server's grace
 // mechanism. Stop their connections explicitly and let the common driver drain.
 func (this *sessionConnectionRegistry) closeTerminals() error {
+	if this.runtime != nil {
+		return closeSessionConnections(this.runtime.closeTerminals())
+	}
 	this.mutex.Lock()
 	this.terminalsClosed = true
 	var closing []managedConnection

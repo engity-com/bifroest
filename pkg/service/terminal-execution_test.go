@@ -213,9 +213,12 @@ func TestNeutralServiceNewConnectionCreatesNewExecutionAndRecording(t *testing.T
 	require.NoError(t, svc.sessionConnections.revoke(auth.Flow(), auth.FindSession().Id()))
 	require.True(t, two.IsClosed())
 	third, thirdAuth := newExecutionTestLogin(t, svc, "run")
-	late, err := svc.registerTerminalConnection(third, thirdAuth)
+	require.NotEqual(t, auth.FindSession().Id(), thirdAuth.FindSession().Id(), "fresh credential verification must not reuse a revoked session")
+	late, err := svc.registerTerminalConnection(third, auth)
 	require.Nil(t, late)
 	require.ErrorContains(t, err, "revoked")
+	fresh := registerExecutionTestConnection(t, svc, third, thirdAuth)
+	require.False(t, fresh.IsClosed(), "revoking one session does not revoke the identity's permission to authenticate again")
 }
 
 func TestNeutralServicePtyResizeUsesTheSameRecordingLifecycle(t *testing.T) {

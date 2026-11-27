@@ -214,6 +214,13 @@ func (this *Configuration) LoadFromYaml(reader io.Reader, fn string) error {
 	if err := decoder.Decode(&buf); err != nil {
 		return errors.Newf(errors.Config, "cannot parse configuration file %q: %w", fn, err)
 	}
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return errors.Newf(errors.Config, "cannot parse configuration file %q: %w", fn, err)
+		}
+		return errors.Newf(errors.Config, "configuration file %q must contain exactly one YAML document", fn)
+	}
 
 	if err := buf.Validate(); err != nil {
 		return errors.Newf(errors.Config, "configuration file %q contains problems: %w", fn, err)

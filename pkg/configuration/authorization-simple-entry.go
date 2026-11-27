@@ -3,11 +3,9 @@ package configuration
 import (
 	"fmt"
 
-	log "github.com/echocat/slf4g"
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type AuthorizationSimpleEntry struct {
@@ -54,29 +52,6 @@ func (this *AuthorizationSimpleEntry) Trim() error {
 }
 
 func (this *AuthorizationSimpleEntry) Validate() error {
-	if t := this.CreatePasswordFileIfAbsentOfType; t != nil && this.Name != "" {
-		if err := this.CreatePasswordFileIfAbsentOfType.Validate(); err != nil {
-			return err
-		}
-		if f := this.PasswordFile; !f.IsZero() {
-			if pw, err := this.PasswordFile.GetPassword(); pw == nil || pw.IsZero() {
-				decoded, encoded, err := t.Generate(nil)
-				if err != nil {
-					return errors.System.Newf("cannot generate new password for file %v: %w", f, err)
-				}
-				if err := f.SetPassword(encoded); err != nil {
-					return errors.System.Newf("cannot generate new password for file %v: %w", f, err)
-				}
-
-				log.With("name", this.Name).
-					With("password", string(decoded)).
-					Warn("new password created and saved for user")
-
-			} else if err != nil {
-				return err
-			}
-		}
-	}
 	return validate(this,
 		notEmptyStringValidate[AuthorizationSimpleEntry]("name", func(v *AuthorizationSimpleEntry) *string { return &v.Name }),
 		func(v *AuthorizationSimpleEntry) (string, validator) { return "authorizedKeys", &v.AuthorizedKeys },

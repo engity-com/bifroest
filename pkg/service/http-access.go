@@ -26,6 +26,9 @@ var errWebAccessDenied = errors.New("web access denied")
 // Only a hash is indexed server-side. It never accepts a session ID as a proof.
 // Expiry prevents NEW access; logout additionally closes its own web children.
 type webAccess struct {
+	owner      *service
+	revision   *runtimeFlowRevision
+	release    func()
 	scope      webScope
 	auth       authorization.Authorization
 	identity   authentication.Identity
@@ -76,7 +79,17 @@ func (this *webService) issue(scope webScope, base *environmentContext, credenti
 	}
 	token := "bwa1." + base64.RawURLEncoding.EncodeToString(nonce[:])
 	key, _ := webAccessKey(token)
-	access := &webAccess{scope: scope, auth: base.Authorization(), identity: identity, target: target, user: base.Connection().Remote().User(), credential: credential, keepAlive: webKeepAliveView(keepAlive), expires: time.Now().Add(webAccessLifetime), children: make(map[*terminalConnection]struct{})}
+	releaseRuntime, err := this.service.retainRuntime()
+	if err != nil {
+		return "", nil, err
+	}
+	published := false
+	defer func() {
+		if !published {
+			releaseRuntime()
+		}
+	}()
+	access := &webAccess{owner: this.service, revision: this.flowRevision(base.Authorization().Flow()), release: releaseRuntime, scope: scope, auth: base.Authorization(), identity: identity, target: target, user: base.Connection().Remote().User(), credential: credential, keepAlive: webKeepAliveView(keepAlive), expires: time.Now().Add(webAccessLifetime), children: make(map[*terminalConnection]struct{})}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	this.pruneLocked(time.Now())
@@ -86,6 +99,11 @@ func (this *webService) issue(scope webScope, base *environmentContext, credenti
 	if _, exists := this.access[key]; exists {
 		return "", nil, fmt.Errorf("web access collision")
 	}
+	unlock, err := this.lockPublication(access.auth.Flow(), access.revision)
+	if err != nil {
+		return "", nil, err
+	}
+	defer unlock()
 	// All fallible/slow preparation is complete. Commit browser acceptance only
 	// here, immediately before publication, never from an already expired claim.
 	attempt, _ := base.connection.Lifetime().Value(oidcAuthenticationKey{}).(*oidcAuthentication)
@@ -93,6 +111,7 @@ func (this *webService) issue(scope webScope, base *environmentContext, credenti
 		return "", nil, fmt.Errorf("OIDC login expired before access publication")
 	}
 	this.access[key] = access
+	published = true
 	return token, access, nil
 }
 
@@ -132,6 +151,11 @@ func (this *webService) lookup(scope webScope, token string, includeExpired bool
 	defer access.mutex.Unlock()
 	if access.closed || !includeExpired && !time.Now().Before(access.expires) {
 		return nil, errWebAccessDenied
+	}
+	if !includeExpired {
+		if err := this.useAccess(access); err != nil {
+			return nil, err
+		}
 	}
 	return access, nil
 }
@@ -188,7 +212,19 @@ func (this *webAccess) close() error {
 		children = append(children, child)
 	}
 	this.mutex.Unlock()
-	return closeSessionConnections(children)
+	err := closeSessionConnections(children)
+	this.releaseOwner()
+	return err
+}
+
+func (this *webAccess) releaseOwner() {
+	this.mutex.Lock()
+	release := this.release
+	this.release = nil
+	this.mutex.Unlock()
+	if release != nil {
+		release()
+	}
 }
 
 // Trusted adapter bridge; only the protocol handler can turn a verified proof
@@ -216,7 +252,7 @@ func (this *webService) connect(scope webScope, token string, transport terminal
 		cancel()
 		return nil, err
 	}
-	conn, err := this.service.registerTerminalConnection(wrapped, access.auth)
+	conn, err := this.service.registerTerminalConnection(wrapped, access.auth, access.revision)
 	if err != nil {
 		cancel()
 		return nil, err

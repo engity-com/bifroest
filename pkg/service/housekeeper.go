@@ -4,6 +4,7 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,8 @@ type houseKeeper struct {
 	closed             atomic.Bool
 	contextCancel      context.CancelFunc
 	done               chan struct{}
+	wake               chan struct{}
+	runMutex           sync.Mutex
 	orphanedFlows      map[configuration.FlowName]struct{}
 	monitoringProblems map[configuration.FlowName]int
 	tlsRuntime         atomic.Pointer[housekeepingTLSRuntime]
@@ -33,7 +36,9 @@ type houseKeeper struct {
 
 func (this *houseKeeper) init(service *service) error {
 	success := false
-	this.service = service
+	if this.service == nil {
+		this.prepare(service)
+	}
 	var ctx context.Context
 	ctx, this.contextCancel = context.WithCancel(context.Background())
 	defer common.DoIfFalse(&success, this.contextCancel)
@@ -59,6 +64,11 @@ func (this *houseKeeper) init(service *service) error {
 	return nil
 }
 
+func (this *houseKeeper) prepare(svc *service) {
+	this.service = svc
+	this.wake = make(chan struct{}, 1)
+}
+
 func (this *houseKeeper) loop(ctx context.Context, firstIn time.Duration) {
 	t := time.NewTimer(firstIn)
 	defer t.Stop()
@@ -69,11 +79,32 @@ func (this *houseKeeper) loop(ctx context.Context, firstIn time.Duration) {
 		case <-t.C:
 			n, _ := this.checkedRun(ctx)
 			t.Reset(n)
+		case <-this.wake:
+			t.Stop()
+			n, _ := this.checkedRun(ctx)
+			t.Reset(n)
 		}
 	}
 }
 
+func (this *houseKeeper) requestRun() {
+	select {
+	case this.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (this *houseKeeper) knownFlow(flow configuration.FlowName) bool {
+	if this.service.resources != nil {
+		return this.service.runtime.knownFlow(flow)
+	}
+	_, known := this.service.knownFlows[flow]
+	return known
+}
+
 func (this *houseKeeper) checkedRun(ctx context.Context) (nextRunIn time.Duration, rErr error) {
+	this.runMutex.Lock()
+	defer this.runMutex.Unlock()
 	l := this.logger()
 	started := time.Now()
 	if this.service.monitoring != nil {
@@ -106,10 +137,16 @@ func (this *houseKeeper) checkedRun(ctx context.Context) (nextRunIn time.Duratio
 
 	l.Debug("housekeeping run started")
 
-	return 0, this.run(l, ctx)
+	return 0, this.runUnlocked(l, ctx)
 }
 
 func (this *houseKeeper) run(logger log.Logger, ctx context.Context) error {
+	this.runMutex.Lock()
+	defer this.runMutex.Unlock()
+	return this.runUnlocked(logger, ctx)
+}
+
+func (this *houseKeeper) runUnlocked(logger log.Logger, ctx context.Context) error {
 	this.orphanedFlows = make(map[configuration.FlowName]struct{})
 	defer func() { this.orphanedFlows = nil }()
 	inspectionErr := this.inspectSessions(logger, ctx)
@@ -261,13 +298,12 @@ func (this *houseKeeper) inspectSessions(logger log.Logger, ctx context.Context)
 	return this.service.sessions.FindAll(ctx, this.inspectSession, &session.FindOpts{
 		AutoCleanUpAllowed: common.P(this.service.Configuration.HouseKeeping.AutoRepair && this.sessionAutoRepairAllowed()),
 		AutoCleanUpAllowedFor: func(_ context.Context, flow configuration.FlowName, _ session.Id) bool {
-			_, known := this.service.knownFlows[flow]
-			return known
+			return this.knownFlow(flow)
 		},
 		Logger: logger,
 		DiagnosticConsumer: func(_ context.Context, diagnostic session.FindDiagnostic) error {
 			this.monitoringProblem(diagnostic.Flow)
-			if _, known := this.service.knownFlows[diagnostic.Flow]; !known {
+			if !this.knownFlow(diagnostic.Flow) {
 				this.rememberOrphanedFlow(diagnostic.Flow)
 			}
 			logger.
@@ -282,6 +318,45 @@ func (this *houseKeeper) inspectSessions(logger log.Logger, ctx context.Context)
 }
 
 func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Session) (bool, error) {
+	if this.service.resources == nil {
+		return this.inspectOwnedSession(ctx, sess)
+	}
+	owner, current, release, err := this.service.retainSessionAction(ctx, sess)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		this.monitoringProblem(sess.Flow())
+		if !this.knownFlow(sess.Flow()) {
+			return this.inspectOrphanedSession(ctx, sess)
+		}
+		this.logger().With("session", sess).WithError(err).Warn("cannot resolve session runtime owner; preserving session")
+		return true, nil
+	}
+	defer release()
+	inspector := &houseKeeper{service: owner, orphanedFlows: this.orphanedFlows, monitoringProblems: this.monitoringProblems}
+	return inspector.inspectOwnedSession(ctx, current)
+}
+
+func (this *houseKeeper) inspectOrphanedSession(ctx context.Context, sess session.Session) (bool, error) {
+	this.monitoringProblem(sess.Flow())
+	this.rememberOrphanedFlow(sess.Flow())
+	this.logger().With("session", sess).Warn("session belongs to a missing flow; preserving it for operator recovery")
+	if this.hasEnabledAuditlog() {
+		err := this.recordOrphanedSessionAudit(ctx, audit.Event{
+			Name:   audit.EventNameHousekeepingOrphanedSessionCleanupSkipped,
+			Domain: audit.EventDomainHousekeeping, Outcome: audit.EventOutcomeDenied,
+			Flow: sess.Flow().String(), SessionId: sess.Id().String(), Reason: audit.EventReasonMissingFlow,
+		})
+		if err != nil {
+			this.service.monitoring.cleanup(sess.Flow(), "session_inspection", err)
+			this.logger().With("session", sess).WithError(err).Warn("cannot audit preserved orphaned session")
+		}
+	}
+	return true, nil
+}
+
+func (this *houseKeeper) inspectOwnedSession(ctx context.Context, sess session.Session) (bool, error) {
 	logger := this.logger().With("session", sess)
 	started := time.Now()
 
@@ -296,23 +371,12 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 
 	logger.Debug("inspecting session...")
 	if _, flowExists := this.service.knownFlows[sess.Flow()]; !flowExists {
-		this.monitoringProblem(sess.Flow())
-		this.rememberOrphanedFlow(sess.Flow())
-		event := audit.Event{
-			Name:      audit.EventNameHousekeepingOrphanedSessionCleanupSkipped,
-			Domain:    audit.EventDomainHousekeeping,
-			Outcome:   audit.EventOutcomeDenied,
-			Flow:      sess.Flow().String(),
-			SessionId: sess.Id().String(),
-			Reason:    audit.EventReasonMissingFlow,
-		}
-		logger.Warn("session belongs to a missing flow; preserving it for operator recovery")
-		if this.hasEnabledAuditlog() {
-			if err := this.recordOrphanedSessionAudit(ctx, event); err != nil {
-				return reportAndContinue(err)
-			}
-		}
-		return true, nil
+		return this.inspectOrphanedSession(ctx, sess)
+	}
+	revoked := this.service.runtime != nil && this.service.runtime.sessionRevoked(sess)
+	if revoked {
+		this.service.oidcRefresh.stop(sess)
+		_ = this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
 	}
 	if verifier, ok := this.service.environments.(interface {
 		SessionEnvironmentMatches(context.Context, session.Session) (bool, error)
@@ -354,8 +418,8 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 			// The session has been removed durably, even if recording the audit
 			// completion below fails. Its in-memory revocation state can go too.
 			this.service.oidcRefresh.stop(sess)
-			this.service.oidcRefresh.finalSessionDeleted(sess.Flow(), sess.Id())
 			this.service.sessionConnections.finalSessionDeleted(sess.Flow(), sess.Id())
+			this.service.oidcRefresh.finalSessionDeleted(sess.Flow(), sess.Id())
 			return true, nil
 		})
 		if err := goerrors.Join(deleteErr, deleteAuditErr); err != nil {
@@ -363,6 +427,17 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		}
 		logger.Info("session reached maximum age to be kept after being expired and was therefore deleted")
 
+	} else if revoked {
+		reason := audit.EventReasonSessionRevoked
+		if this.service.runtime.sessionFlowRemoved(sessionConnectionKey{flow: sess.Flow(), id: sess.Id()}) {
+			reason = audit.EventReasonMissingFlow
+		}
+		_, actionErr, auditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, reason, func() (bool, error) {
+			return this.dispose(ctx, logger, sess, false, nil)
+		})
+		if err := goerrors.Join(actionErr, auditErr); err != nil {
+			return reportAndContinue(err)
+		}
 	} else if expired, err := session.IsExpired(ctx, sess); err != nil {
 		return reportAndContinue(err)
 	} else if expired {
@@ -473,6 +548,14 @@ func (this *houseKeeper) recordOrphanedSessionAudit(ctx context.Context, event a
 }
 
 func (this *houseKeeper) sessionAutoRepairAllowed() bool {
+	if this.service.runtime != nil && this.service.runtime.persistence != nil {
+		return false // Unknown ownership is evidence, never permission to erase.
+	}
+	// After a reload, a corrupt/missing entry cannot safely be assigned to the
+	// newest provider or removed behind the ownership registry's back.
+	if this.service.resources != nil && this.service.runtime.reloaded() {
+		return false
+	}
 	for _, auditlog := range this.service.Configuration.Auditlogs {
 		if !this.service.auditlogDisabled(auditlog.Name) {
 			return false
@@ -597,6 +680,30 @@ func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Lo
 }
 
 func (this *houseKeeper) cleanup(logger log.Logger, ctx context.Context) error {
+	if this.service.runtime != nil && this.service.runtime.persistence != nil {
+		// Global provider scans can delete resources solely by flow labels,
+		// missing session IDs or terminal pod state. Those are not ownership
+		// proofs, even when a new definition points at the same backend.
+		// Destruction remains in inspectOwnedSession with its retained owner.
+		logger.Debug("skipping unscoped orphan cleanup without runtime ownership proof")
+		return nil
+	}
+	if this.service.resources != nil {
+		views, release := this.service.resources.retainedViews()
+		defer release()
+		var result error
+		for _, svc := range views {
+			err := svc.environments.Cleanup(ctx, &environment.CleanupOpts{
+				FlowOfNamePredicate: this.doesFlowExists, SessionExists: this.doesSessionExist(logger), Logger: logger,
+			})
+			result = goerrors.Join(result, err)
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		this.service.monitoring.cleanup("", "orphan_cleanup", result)
+		return result
+	}
 	err := this.service.environments.Cleanup(ctx, &environment.CleanupOpts{
 		FlowOfNamePredicate: this.doesFlowExists,
 		SessionExists:       this.doesSessionExist(logger),
@@ -610,14 +717,14 @@ func (this *houseKeeper) monitoringProblem(flow configuration.FlowName) {
 	if this.monitoringProblems == nil {
 		return
 	}
-	if _, known := this.service.knownFlows[flow]; !known {
+	if !this.knownFlow(flow) {
 		flow = ""
 	}
 	this.monitoringProblems[flow]++
 }
 
 func (this *houseKeeper) doesFlowExists(name configuration.FlowName) (bool, error) {
-	_, ok := this.service.knownFlows[name]
+	ok := this.knownFlow(name)
 	if !ok {
 		_, ok = this.orphanedFlows[name]
 	}

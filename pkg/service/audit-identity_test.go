@@ -642,7 +642,7 @@ func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
 			IdentityFiles: template.MustNewStrings(path),
 		}},
 	}}
-	serverKeys, err := loadStaticPrivateKeysForAuditEncryption(flows, nil)
+	serverKeys, err := loadStaticPrivateKeysForAuditEncryption(t.Context(), flows, nil)
 	require.NoError(t, err)
 	publicKey := crypto.PublicKeys(string(crypto.MarshalPublicKey(key.PublicKey())))
 	require.ErrorContains(t, audit.ValidateEncryptionRecipientDedicatedFrom(publicKey, serverKeys), "reuses a private key")

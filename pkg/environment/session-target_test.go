@@ -150,6 +150,63 @@ func TestSshSessionTargetDoesNotLoadKeysAndUsesExecutionAddressRules(t *testing.
 	require.NotContains(t, err.Error(), "secret-do-not-log")
 }
 
+func TestContainerReuseTargetsRetainImageButNotBackendIdentityOrPolicy(t *testing.T) {
+	ctx := targetTestContext{ctx: t.Context(), principal: "alice"}
+	t.Run("docker", func(t *testing.T) {
+		before := &configuration.EnvironmentDocker{}
+		require.NoError(t, before.SetDefaults())
+		before.Image = template.MustNewString("image:v1")
+		repo := &DockerRepository{conf: before, apiClient: targetDockerBackend{host: "unix:///one.sock"}, hostOs: sys.OsLinux, hostArch: sys.ArchAmd64}
+		original, err := repo.ResolveSessionTarget(ctx)
+		require.NoError(t, err)
+		after := *before
+		after.Image = template.MustNewString("image:v2")
+		repo.conf = &after
+		fresh, err := repo.ResolveSessionTarget(ctx)
+		require.NoError(t, err)
+		require.NotEqual(t, original, fresh)
+		reused, err := repo.ResolveSessionReuseTarget(ctx, configuration.Environment{V: before})
+		require.NoError(t, err)
+		require.Equal(t, original, reused)
+		after.User = template.MustNewString("different-user")
+		reused, err = repo.ResolveSessionReuseTarget(ctx, configuration.Environment{V: before})
+		require.NoError(t, err)
+		require.NotEqual(t, original, reused)
+		after.User = before.User
+		repo.apiClient = targetDockerBackend{host: "unix:///other.sock"}
+		reused, err = repo.ResolveSessionReuseTarget(ctx, configuration.Environment{V: before})
+		require.NoError(t, err)
+		require.NotEqual(t, original, reused)
+	})
+	t.Run("kubernetes", func(t *testing.T) {
+		before := &configuration.EnvironmentKubernetes{}
+		require.NoError(t, before.SetDefaults())
+		before.Name = template.MustNewString("session")
+		before.Image = template.MustNewString("image:v1")
+		repo := &KubernetesRepository{conf: before, client: targetKubernetesBackend{host: "https://one", namespace: "default"}}
+		original, err := repo.ResolveSessionTarget(ctx)
+		require.NoError(t, err)
+		after := *before
+		after.Image = template.MustNewString("image:v2")
+		repo.conf = &after
+		fresh, err := repo.ResolveSessionTarget(ctx)
+		require.NoError(t, err)
+		require.NotEqual(t, original, fresh)
+		reused, err := repo.ResolveSessionReuseTarget(ctx, configuration.Environment{V: before})
+		require.NoError(t, err)
+		require.Equal(t, original, reused)
+		after.Privileged = template.BoolOf(true)
+		reused, err = repo.ResolveSessionReuseTarget(ctx, configuration.Environment{V: before})
+		require.NoError(t, err)
+		require.NotEqual(t, original, reused)
+		after.Privileged = before.Privileged
+		repo.client = targetKubernetesBackend{host: "https://other", namespace: "default"}
+		reused, err = repo.ResolveSessionReuseTarget(ctx, configuration.Environment{V: before})
+		require.NoError(t, err)
+		require.NotEqual(t, original, reused)
+	})
+}
+
 func TestSessionTargetResolverLookupCancellationAndManagementRights(t *testing.T) {
 	ctx := targetTestContext{ctx: t.Context()}
 	first := &ManagementRepository{}

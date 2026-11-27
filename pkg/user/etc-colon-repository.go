@@ -136,6 +136,9 @@ func (this *EtcColonRepository) Init(ctx context.Context) error {
 	if this.watcher != nil {
 		return nil
 	}
+	if !common.ProviderBootstrapAllowed(ctx) && this.getCreateFilesIfAbsent() {
+		return common.ErrProviderBootstrapDisabled
+	}
 
 	success := false
 	if err := this.handles.init(this); err != nil {

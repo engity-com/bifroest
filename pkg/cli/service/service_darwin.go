@@ -47,6 +47,7 @@ type opts struct {
 
 type installOpts struct {
 	configuration.StrOpts
+	common.ServiceRunOptions
 	Start bool `flag:"start" default:"true" description:"If enabled, the service will be started afterwards, automatically."`
 }
 
@@ -61,7 +62,7 @@ func CreateCommands(_ sys.Version) []cli.CommandRequirementLike {
 					if err != nil {
 						return err
 					}
-					return (darwinService{}).install(c, o.Start)
+					return (darwinService{}).install(c, o.Start, o.ServiceRunOptions)
 				}),
 			).
 			WithCommand(cli.NewCommand[opts]("remove", "Removes the service.").
@@ -85,7 +86,7 @@ func CreateCommands(_ sys.Version) []cli.CommandRequirementLike {
 	}
 }
 
-func (darwinService) install(conf string, start bool) error {
+func (darwinService) install(conf string, start bool, options ...common.ServiceRunOptions) error {
 	if err := requireDarwinServiceRoot(); err != nil {
 		return err
 	}
@@ -124,7 +125,7 @@ func (darwinService) install(conf string, start bool) error {
 		return err
 	}
 	defer func() { _ = gos.Remove(stagedBinary) }()
-	stagedPlist, err := stageDarwinServiceBytes(darwinServicePlistContents(conf), darwinServicePlist, 0644)
+	stagedPlist, err := stageDarwinServiceBytes(darwinServicePlistContents(conf, options...), darwinServicePlist, 0644)
 	if err != nil {
 		return err
 	}
@@ -676,11 +677,15 @@ func darwinServiceCommandEnvironment() []string {
 	return []string{"HOME=/var/root", "PATH=" + darwinServiceExecutablePath}
 }
 
-func darwinServicePlistContents(configurationFilename string) []byte {
+func darwinServicePlistContents(configurationFilename string, options ...common.ServiceRunOptions) []byte {
 	escape := func(value string) string {
 		var result bytes.Buffer
 		_ = xml.EscapeText(&result, []byte(value))
 		return result.String()
+	}
+	watch := ""
+	if len(options) > 0 && options[0].Watch.IsEnabled() {
+		watch = "\n        <string>--watch=" + escape(options[0].Watch.String()) + "</string>"
 	}
 	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -693,7 +698,7 @@ func darwinServicePlistContents(configurationFilename string) []byte {
         <string>%s</string>
         <string>run</string>
         <string>--configuration=%s</string>
-        <string>--log.colorMode=never</string>
+        <string>--log.colorMode=never</string>%s
     </array>
     <key>UserName</key>
     <string>root</string>
@@ -729,6 +734,7 @@ func darwinServicePlistContents(configurationFilename string) []byte {
 		escape(darwinServiceLabel),
 		escape(darwinServiceBinary),
 		escape(configurationFilename),
+		watch,
 		escape(darwinServiceStateDirectory),
 		escape(darwinServiceExecutablePath),
 		escape(darwinServiceStandardOutputPath),

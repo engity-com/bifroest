@@ -98,6 +98,9 @@ func (this *authorizeRequest) Sessions() session.Repository {
 
 func (this *authorizeRequest) Validate(auth authorization.Authorization) (bool, error) {
 	this.SetAuthorizationContext(auth)
+	if this.service.runtime != nil && !this.service.runtime.allowFlow(this.service.generation, auth.Flow()) {
+		return false, nil
+	}
 	ctx := environmentContext{
 		service:       this.service,
 		connection:    this.connection,
@@ -114,6 +117,9 @@ func (this *authorizeRequest) IsSessionCompatible(auth authorization.Authorizati
 	sess := auth.FindSession()
 	if sess == nil {
 		return true, nil
+	}
+	if this.service.runtime != nil && !this.service.runtime.sessionCompatible(this.service.generation, sess) {
+		return false, nil
 	}
 	info, err := sess.Info(this.Context())
 	if err != nil {

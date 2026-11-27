@@ -137,8 +137,9 @@ func TestRememberedPublicKeyProbeDoesNotTrackAndRechecksDisposal(t *testing.T) {
 	remote := authorizedKeysTestRemote{user: server.username}
 	token, err := json.Marshal(map[string]any{"user": map[string]string{"name": server.username}})
 	require.NoError(t, err)
-	sess, err := server.service.sessions.Create(ctx, server.service.Configuration.Flows[0].Name, remote, token)
+	sess, err := server.service.sessions.Create(server.service.runtimeCreationContext(ctx, server.service.Configuration.Flows[0].Name), server.service.Configuration.Flows[0].Name, remote, token)
 	require.NoError(t, err)
+	require.NoError(t, server.service.runtime.bindSession(server.service.generation, sess, true))
 	require.NoError(t, sess.AddPublicKey(ctx, server.signer.PublicKey()))
 	_, err = sess.NotifyLastAccess(ctx, remote, session.StateAuthorized)
 	require.NoError(t, err)

@@ -277,7 +277,7 @@ func TestWebRememberExpiryAndStrictAuditCannotRenewOrIssueLateAccess(t *testing.
 				recorder.setErrorBeforeRecordForName(audit.EventNameAuthenticationCompleted, errors.New("private audit problem"))
 			case "expired while signing":
 				// The current shorter timeout applies without killing existing access.
-				svc.Configuration.Http = &configuration.Http{RememberMe: configuration.HttpRememberMe{IdleTimeout: common.DurationOf(time.Nanosecond)}}
+				svc.Configuration.Http = &configuration.Http{Enabled: configuration.HttpEnabled, RememberMe: configuration.HttpRememberMe{IdleTimeout: common.DurationOf(time.Nanosecond)}}
 			case "revoked while signing":
 				require.NoError(t, svc.sessionConnections.revoke(access.auth.Flow(), access.auth.FindSession().Id()))
 			case "parent logout":
@@ -301,7 +301,7 @@ func TestWebRememberShorterPolicyObservedBeforeProofCannotReviveAfterIncrease(t 
 	key, public := rememberTestKey(t)
 	primary := webTestToken(t, webTestPassword(handler, "alice", "correct", "Work"))
 	binding := rememberTestEnroll(t, handler, primary, public, key)
-	svc.Configuration.Http = &configuration.Http{RememberMe: configuration.HttpRememberMe{IdleTimeout: common.DurationOf(time.Nanosecond)}}
+	svc.Configuration.Http = &configuration.Http{Enabled: configuration.HttpEnabled, RememberMe: configuration.HttpRememberMe{IdleTimeout: common.DurationOf(time.Nanosecond)}}
 	require.Equal(t, 401, rememberTestRequest(handler, "resume", "", binding.selector()).Code)
 	svc.Configuration.Http.RememberMe.IdleTimeout = common.DurationOf(24 * time.Hour)
 	require.Equal(t, 401, rememberTestRequest(handler, "resume", "", binding.selector()).Code)

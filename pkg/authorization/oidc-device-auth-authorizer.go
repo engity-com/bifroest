@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
@@ -38,14 +37,12 @@ type OidcDeviceAuthAuthorizer struct {
 	OnVerified   func(session.Session, time.Time)
 	OnLostAccess func(session.Session)
 
-	oauth2Config oauth2.Config
-	issuer       string
-	provider     *coidc.Provider
-	verifier     *coidc.IDTokenVerifier
-	refreshLocks [64]struct {
-		once  sync.Once
-		ready chan struct{}
-	}
+	oauth2Config       oauth2.Config
+	issuer             string
+	provider           *coidc.Provider
+	verifier           *coidc.IDTokenVerifier
+	refreshLocks       OidcSessionLocks
+	sharedRefreshLocks *OidcSessionLocks
 }
 
 func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *configuration.AuthorizationOidcDeviceAuth) (*OidcDeviceAuthAuthorizer, error) {
@@ -165,6 +162,7 @@ func newOidcAuthorizer(ctx context.Context, flow configuration.FlowName, conf *c
 			ClientID: clientId,
 		}),
 	}
+	result.sharedRefreshLocks, _ = ctx.Value(oidcSessionLocksContextKey{}).(*OidcSessionLocks)
 	if code != nil {
 		result.oauth2Config.RedirectURL = code.RedirectURL()
 		if result.oauth2Config.RedirectURL == "" {
@@ -299,7 +297,11 @@ func withSameOriginRedirects(ctx context.Context, endpoint string) (context.Cont
 func (this *OidcDeviceAuthAuthorizer) lockSession(ctx context.Context, sess session.Session) (func(), error) {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(sess.String()))
-	lock := &this.refreshLocks[h.Sum32()%uint32(len(this.refreshLocks))]
+	locks := &this.refreshLocks
+	if this.sharedRefreshLocks != nil {
+		locks = this.sharedRefreshLocks
+	}
+	lock := &locks.shards[h.Sum32()%uint32(len(locks.shards))]
 	lock.once.Do(func() {
 		lock.ready = make(chan struct{}, 1)
 		lock.ready <- struct{}{}

@@ -6,7 +6,7 @@ description: Configure a separate monitoring listener for Prometheus metrics and
 
 The optional root `monitoring` block provides a separate operational listener. It does not require [HTTP browser access](connection/http/index.md), a management flow or an interactive login. See [Monitor a Bifröst instance](../guides/monitoring.md) for Prometheus and Kubernetes examples.
 
-Metric collection is active when monitoring is enabled or at least one [management flow](environment/management.md) is configured. [`metrics show`](cli/metrics/show.md) queries the same measurements over management SSH, without opening a monitoring port or requiring a monitoring bearer token. Only `monitoring.enabled` starts the HTTP monitoring listener.
+Metric collection is active when monitoring is enabled, at least one [management flow](environment/management.md) is configured, or a [`--watch`](cli/serve.md#run-flag-watch) mode other than `off` is selected. [`metrics show`](cli/metrics/show.md) queries the same measurements over management SSH, without opening a monitoring port or requiring a monitoring bearer token. Only `monitoring.enabled` starts the HTTP monitoring listener.
 
 ## Properties
 
@@ -64,6 +64,8 @@ Application metric names start with `bifroest_`. Counters and histogram observat
 
 Flow-related metrics use `flow`, `authorization`, `auditlog` and `environment`. The latter three are configured definition names, or empty for an unnamed inline/absent definition. Audit-log metrics use `auditlog`; delivery metrics additionally use configured `target` and `kind` (`audit` or `recording`). Shared components are counted once, not once per referring flow. No username, principal, session/Recording ID, target address, error text, claim or session content is a label.
 
+Live reload shares one process-wide metric registry: accepting a generation does not reset counters, histograms or protection budgets. Event observations and running tasks keep the label view of their owning generation; current-state collectors use the accepted generation's configured flows. Historical event series can therefore remain after a definition changes or is removed. No generation revision or configuration digest is a label.
+
 | Metric | Type | Meaning |
 | - | - | - |
 | `bifroest_ready` | Gauge | `1` when ready for new access, otherwise `0`. |
@@ -104,6 +106,23 @@ Flow-related metrics use `flow`, `authorization`, `auditlog` and `environment`. 
 Flow evaluation results are `accepted`, `denied` or `failed`; completion results are `success`, `denied` or `failure`. These measurement points are separate and must not be added together as login counts. No-matching-flow attempts do not invent a flow evaluation or completion. Public-key phases are `candidate` and `verified`; other ordinary methods use an empty phase.
 
 Transports identify SSH (`ssh`) versus browser authentication (`http`); SSH tunnels remain `ssh`. Error categories are `system`, `config`, `network`, `user`, `permission`, `expired` or `unknown`; successful observations use `unknown`. Cleanup operations are `housekeeping`, `session_inspection`, `session_dispose`, `session_delete`, `orphan_cleanup` and `recording_retention`. A successful overall housekeeping pass does not erase a failed individual operation's series. Problem counts are observations, not a full inventory if a scan failed. Unknown/removed flow names are not exported.
+
+### Configuration reload
+
+These metrics observe the selected [live-reload mode](../setup/operations.md#reload-configuration-without-restarting), not general backend health. The Helm chart defaults to `preserve`; the standalone CLI requires opt-in. These metrics are available whenever metric collection is active, even when watching is disabled.
+
+| Metric | Type | Meaning |
+| - | - | - |
+| `bifroest_configuration_watch_enabled` | Gauge | `1` when the selected watch mode is not `off`, otherwise `0`. Not proof that native notifications are healthy. |
+| `bifroest_configuration_reload_attempts_total` | Counter | Completed rereads, with `result="accepted"`, `"rejected"` or `"unchanged"`. Accepted includes declaration-only changes that do not replace runtime providers. |
+| `bifroest_configuration_watch_errors_total` | Counter | Native-watch degradation reports, including unsuccessful watch restoration. Polling remains active; these reports are not rejected configuration candidates. |
+| `bifroest_configuration_reload_last_success` | Gauge | `1` after an accepted or unchanged reread, `0` after rejection; initially `0`. Interpret with the last-attempt timestamp. |
+| `bifroest_configuration_reload_last_attempt_timestamp_seconds` | Gauge | Unix time of the last completed reread, including rejection; `0` before the first attempt. |
+| `bifroest_configuration_reload_last_accepted_timestamp_seconds` | Gauge | Unix time of the last accepted reread, including unchanged input; `0` before the first accepted reread. Not the time of the last runtime change. |
+
+Polling rereads unchanged input too: each successful no-op increments `unchanged`, sets last success to `1` and advances both timestamps. It does not reconstruct providers or force reevaluation of unchanged external dependencies. Rejected candidates are retried, so the counter measures attempts, not distinct edits. Shutdown cancellation is not a rejection.
+
+`/ready` and `bifroest_ready` describe accepted access readiness, not acceptance of the newest file. A rejected candidate leaves healthy old access ready; disabling all access listeners makes readiness false while the watcher continues. Neither a recent accepted timestamp nor `watch_enabled=1` proves cluster-wide convergence or external credential rotation. Verify each instance and a new login after a policy change.
 
 ### Active ages
 

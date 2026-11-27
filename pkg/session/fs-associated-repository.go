@@ -102,6 +102,12 @@ func (this *FsRepository) ResolveAssociatedSession(ctx context.Context, request 
 		if err != nil || !valid {
 			return err == nil, err
 		}
+		if request.Eligible != nil {
+			eligible, err := request.Eligible(ctx, candidate)
+			if err != nil || !eligible {
+				return err == nil, err
+			}
+		}
 		info, err := candidate.Info(ctx)
 		if err != nil {
 			return false, err

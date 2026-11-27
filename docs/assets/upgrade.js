@@ -10,6 +10,16 @@ async function showUpgradePredecessor() {
         return;
     }
 
+    // An explicitly documented compatibility baseline must not be broadened
+    // to a whole series by release-index metadata.
+    const baseline = headline.dataset.baseline;
+    if (baseline) {
+        if (/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(baseline)) {
+            headline.textContent = `Upgrade from ${baseline} to ${release}`;
+        }
+        return;
+    }
+
     try {
         const prefix = /^\/(v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\//.exec(location.pathname)?.[1];
         const response = await fetch(prefix ? `/${prefix}/release.json` : '/release.json');

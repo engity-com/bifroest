@@ -59,6 +59,9 @@ func (this *webService) managementAccess(r *http.Request, scope webScope) (*webA
 	if channel.scope != scope || channel.conn.IsClosed() || channel.conn.check(false) != nil {
 		return nil, errWebAccessDenied
 	}
+	if err := this.useAccess(channel.access); err != nil {
+		return nil, err
+	}
 	base := &environmentContext{service: this.service, connection: channel.conn, authorization: channel.access.auth, executionContext: r.Context()}
 	if err := this.validate(base, channel.access); err != nil {
 		return nil, err

@@ -8,7 +8,9 @@ Bifröst periodically removes expired sessions and resources that are no longer 
 
 ## Cleanup guarantees
 
-Session storage is deleted only after the session, environment, and authorization were disposed successfully. Transient or unknown errors retain the session for a later retry. Permanently unusable local authorization tokens can be removed during an audited disposal.
+Cleanup requires a known runtime owner. Session storage is deleted only after the session, environment, and authorization were disposed successfully through that owner. Transient or unknown errors retain the session for a later retry. Permanently unusable local authorization tokens can be removed during an audited disposal.
+
+Unscoped orphan scans are disabled because flow labels, missing session IDs and terminal Pod state do not prove ownership. `cleanOrphan` does not override this boundary. Unassigned, mismatched and v0.7.8 sessions remain preserved for operator review; see the [restart and upgrade contract](../setup/upgrade.md#existing-sessions-no-import).
 
 Disposal is idempotent. An already disposed entry may be inspected again while
 retained, and pending resource cleanup is still attempted, but an unchanged
@@ -21,13 +23,13 @@ Sealed session Recordings become eligible only after their retention period and 
 
 ## Removed flows
 
-Sessions whose flow no longer exists are preserved because Bifröst can no longer interpret their environment and authorization tokens safely. Their resources are excluded from automatic orphan cleanup, and the skip is logged as [`housekeeping.orphaned-session.cleanup.skipped`](auditlog/events.md#housekeeping-orphaned-session-cleanup-skipped).
+Removing a flow during a live configuration change revokes its access across generations. While the old runtime owner remains available, housekeeping uses its retained providers and cleanup rules. A missing flow after process restart does not reconstruct that owner: its sessions and resources are preserved, and the skip is logged as [`housekeeping.orphaned-session.cleanup.skipped`](auditlog/events.md#housekeeping-orphaned-session-cleanup-skipped).
 
-If a flow keeps its name but changes environment type, sessions with an old or unrecognized environment token are also left untouched. Bifröst logs a warning with the flow and session ID instead of disposing the session or letting the new environment discard a token that may still require account, process, or profile cleanup. Restore the original environment configuration to finish its cleanup, or inspect the session and its resources before removing anything manually. Such sessions remain stored until an operator resolves the mismatch, even after the retention period. Older sessions without an environment token have no persisted type information; Bifröst cannot detect a type change for them.
+A changed environment does not transfer old sessions to its new provider. Live sessions retain their original owner; after restart, only an exact supported ownership proof permits reconstruction. Unknown or mismatched sessions remain stored even after the retention period. Inspect ownership and backend resources before removing anything manually. Restoring an earlier configuration does not revive an older session revision.
 
 ## Corrupt sessions
 
-Without automatic repair, corrupt entries are preserved and reported individually. Automatic repair is limited to configured flows; one corrupt entry does not block other sessions or environment cleanup. Even with automatic repair enabled, a corrupt session with a nonempty environment token is preserved for operator inspection rather than discarded with the token.
+Corrupt entries are preserved and reported individually. The persistent runtime disables destructive session-metadata auto-repair, including when `autoRepair` is enabled: damaged evidence must not become permission to erase an unknown resource owner. One corrupt session does not block inspection of other sessions. Damaged process-wide runtime state or an unfinished runtime write instead blocks startup.
 
 ## Properties
 

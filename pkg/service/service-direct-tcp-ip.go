@@ -159,13 +159,14 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 		nil,
 	}
 
-	env, err := this.environments.Ensure(&req)
+	env, releaseEnvironment, err := this.ensureEnvironment(&req)
 	if err != nil {
 		l.WithError(err).
 			Error("cannot ensure environment; rejecting...")
 		rejectErr := newChan.Reject(gossh.Prohibited, "cannot ensure environment")
 		return goerrors.Join(err, rejectErr, forwardAudit.decide(audit.EventOutcomeFailure, audit.EventReasonEnvironment, err))
 	}
+	defer releaseEnvironment()
 	defer common.IgnoreCloseError(env)
 
 	if ok, err := env.IsPortForwardingAllowed(dest); err != nil {
@@ -310,11 +311,12 @@ func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.
 		return false, errors.Newf(errors.System, "no connection resolved for reverse port forwarding request")
 	}
 	req := environmentRequest{environmentContext{service: this, connection: conn, authorization: auth}, nil}
-	env, err := this.environments.Ensure(&req)
+	env, releaseEnvironment, err := this.ensureEnvironment(&req)
 	if err != nil {
 		wrapped := errors.Newf(errors.System, "cannot ensure environment for reverse port forwarding: %w", err)
 		return recordDecision(false, audit.EventOutcomeFailure, audit.EventReasonEnvironment, wrapped)
 	}
+	defer releaseEnvironment()
 	defer common.IgnoreCloseError(env)
 	var allowed bool
 	if policy, ok := env.(environment.ReversePortForwardingPolicy); ok {
@@ -345,10 +347,16 @@ func (this *service) listenReverseTCP(ctx essh.Context, _ gossh.ConnMetadata, ho
 		return nil, errors.Newf(errors.System, "no connection resolved for reverse port forwarding request")
 	}
 	req := environmentRequest{environmentContext{service: this, connection: conn, authorization: auth}, nil}
-	env, err := this.environments.Ensure(&req)
+	env, releaseEnvironment, err := this.ensureEnvironment(&req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot ensure environment for reverse port forwarding: %w", err)
 	}
+	success := false
+	defer func() {
+		if !success {
+			releaseEnvironment()
+		}
+	}()
 	listener, ok := env.(environment.ReverseTCPListener)
 	if !ok {
 		return nil, goerrors.Join(fmt.Errorf("environment does not support reverse TCP listening"), env.Close())
@@ -363,14 +371,16 @@ func (this *service) listenReverseTCP(ctx essh.Context, _ gossh.ConnMetadata, ho
 	if ln == nil {
 		return nil, goerrors.Join(fmt.Errorf("environment returned no reverse TCP listener"), env.Close())
 	}
-	return &environmentReverseTCPListener{Listener: ln, owner: env}, nil
+	success = true
+	return &environmentReverseTCPListener{Listener: ln, owner: env, release: releaseEnvironment}, nil
 }
 
 type environmentReverseTCPListener struct {
 	gonet.Listener
-	owner environment.Environment
-	once  sync.Once
-	err   error
+	owner   environment.Environment
+	release func()
+	once    sync.Once
+	err     error
 }
 
 func (this *environmentReverseTCPListener) Close() error {
@@ -380,19 +390,26 @@ func (this *environmentReverseTCPListener) Close() error {
 			if drained := listener.Drained(); drained != nil {
 				select {
 				case <-drained:
-					this.err = goerrors.Join(this.err, this.owner.Close())
+					this.err = goerrors.Join(this.err, this.closeOwner())
 				default:
 					go func() {
 						<-drained
-						_ = this.owner.Close()
+						_ = this.closeOwner()
 					}()
 				}
 				return
 			}
 		}
-		this.err = goerrors.Join(this.err, this.owner.Close())
+		this.err = goerrors.Join(this.err, this.closeOwner())
 	})
 	return this.err
+}
+
+func (this *environmentReverseTCPListener) closeOwner() error {
+	if this.release != nil {
+		defer this.release()
+	}
+	return this.owner.Close()
 }
 
 func (this *service) reWrapUserFacingErrors(err error) *errors.Error {

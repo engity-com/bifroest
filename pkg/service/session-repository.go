@@ -10,6 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -17,6 +18,32 @@ type compatibleSessionRepository struct {
 	session.Repository
 	environments     environment.CloseableRepository
 	authorizeRequest *authorizeRequest
+}
+
+func (this *compatibleSessionRepository) Create(ctx context.Context, flow configuration.FlowName, remote net.Remote, token []byte) (session.Session, error) {
+	svc := this.authorizeRequest.service
+	if svc.runtime == nil {
+		return this.Repository.Create(ctx, flow, remote, token)
+	}
+	if !svc.runtime.allowFlow(svc.generation, flow) {
+		return nil, session.ErrNoSuchSession
+	}
+	release, err := svc.runtime.retain(svc.generation)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	created, err := this.Repository.Create(svc.runtimeCreationContext(ctx, flow), flow, remote, token)
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.runtime.bindSession(svc.generation, created, true); err != nil {
+		// The registry retains this rejected session's old owner for cleanup,
+		// even if persisting disposal fails or the request has been canceled.
+		_, disposeErr := created.Dispose(ctx)
+		return nil, errors.Join(err, disposeErr)
+	}
+	return created, nil
 }
 
 func (this *compatibleSessionRepository) FindBy(ctx context.Context, flow configuration.FlowName, id session.Id, opts *session.FindOpts) (session.Session, error) {
@@ -31,6 +58,10 @@ func (this *compatibleSessionRepository) FindByAccessToken(ctx context.Context, 
 	return this.Repository.FindByAccessToken(ctx, token, this.withCompatibility(opts))
 }
 
+func (this *compatibleSessionRepository) FindAll(ctx context.Context, consumer session.Consumer, opts *session.FindOpts) error {
+	return this.Repository.FindAll(ctx, consumer, this.withCompatibility(opts))
+}
+
 func (this *compatibleSessionRepository) withCompatibility(opts *session.FindOpts) *session.FindOpts {
 	result := &session.FindOpts{}
 	if opts != nil {
@@ -38,6 +69,10 @@ func (this *compatibleSessionRepository) withCompatibility(opts *session.FindOpt
 		result.Predicates = append(session.Predicates(nil), opts.Predicates...)
 	}
 	result.Predicates = append(result.Predicates, func(ctx context.Context, candidate session.Session) (bool, error) {
+		svc := this.authorizeRequest.service
+		if !svc.loginSessionCompatible(candidate) {
+			return false, nil
+		}
 		if auth := this.authorizeRequest.authorization; auth != nil {
 			checker, ok := this.environments.(environment.ContextualSessionCompatibilityChecker)
 			if ok {
@@ -66,6 +101,10 @@ func (this *compatibleSessionRepository) withCompatibility(opts *session.FindOpt
 // A remembered key or legacy token lookup must not bypass an existing immutable
 // association. Unbound legacy sessions retain their independent proof-based path.
 func (this *compatibleSessionRepository) associationCompatible(ctx context.Context, candidate session.Session) (bool, error) {
+	svc := this.authorizeRequest.service
+	if !svc.loginSessionCompatible(candidate) {
+		return false, nil
+	}
 	association, err := session.AssociationOf(ctx, candidate)
 	if errors.Is(err, session.ErrAssociationUnavailable) {
 		return true, nil
@@ -107,7 +146,8 @@ func (this *compatibleSessionRepository) associationCompatible(ctx context.Conte
 	if err != nil {
 		return false, err
 	}
-	target, err := resolver.ResolveSessionTarget(newAssociationTargetContext(ctx, base, session.Reference{Flow: candidate.Flow(), Id: candidate.Id(), Created: created}))
+	ref := session.Reference{Flow: candidate.Flow(), Id: candidate.Id(), Created: created}
+	target, err := svc.resolveSessionTarget(newAssociationTargetContext(ctx, base, ref), ref, resolver)
 	return err == nil && target == association.Target, err
 }
 

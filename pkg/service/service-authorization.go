@@ -84,6 +84,9 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 	if this.sessions != nil {
 		if sess := auth.FindSession(); sess != nil {
 			this.sessionConnections.track(conn, sess)
+			if conn.IsClosed() {
+				return false, nil
+			}
 			this.oidcRefresh.register(sess)
 		}
 	}
@@ -149,15 +152,20 @@ func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, pass
 		return false, nil
 	}
 
+	if this.sessions != nil {
+		if sess := auth.FindSession(); sess != nil {
+			this.sessionConnections.track(conn, sess)
+			if conn.IsClosed() {
+				return false, nil
+			}
+		}
+	}
 	if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodPassword, audit.EventOutcomeSuccess, ""); err != nil {
 		return false, err
 	}
 	ctx.SetValue(authorizationCtxKey, auth)
 	if this.sessions != nil {
-		if sess := auth.FindSession(); sess != nil {
-			this.sessionConnections.track(conn, sess)
-			this.oidcRefresh.register(sess)
-		}
+		this.oidcRefresh.register(auth.FindSession())
 	}
 
 	l.Debug("password accepted")
@@ -229,6 +237,14 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 		}
 	}
 
+	if this.sessions != nil {
+		if sess := auth.FindSession(); sess != nil {
+			this.sessionConnections.track(conn, sess)
+			if conn.IsClosed() {
+				return false, nil
+			}
+		}
+	}
 	if err := this.recordAuthenticationCompletedFor(completionCtx, conn, auth, audit.AuthenticationMethodKeyboardInteractive, audit.EventOutcomeSuccess, ""); err != nil {
 		return false, err
 	}
@@ -240,10 +256,7 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 	}
 	ctx.SetValue(authorizationCtxKey, auth)
 	if this.sessions != nil {
-		if sess := auth.FindSession(); sess != nil {
-			this.sessionConnections.track(conn, sess)
-			this.oidcRefresh.register(sess)
-		}
+		this.oidcRefresh.register(auth.FindSession())
 	}
 
 	l.Debug("interactive accepted")

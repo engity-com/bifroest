@@ -80,7 +80,9 @@ func runDefaultUntilInterrupted(t *testing.T, configurationPath string, lockPath
 	application, err := requirement.Create()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, application.Close()) })
-	firstEvent := provider.Len()
+	// GetAll groups events by logger, not by time. A global count is not a
+	// cursor and can select the previous run's now-closed listening address.
+	firstEvent := len(provider.GetAllOf("service"))
 	done := make(chan error, 1)
 	stopped := false
 	go func() {
@@ -115,7 +117,7 @@ func runDefaultUntilInterrupted(t *testing.T, configurationPath string, lockPath
 	}, 10*time.Second, 10*time.Millisecond)
 	var address string
 	require.Eventually(t, func() bool {
-		events := provider.GetAll()
+		events := provider.GetAllOf("service")
 		messageKey := provider.GetFieldKeysSpec().GetMessage()
 		for _, event := range events[firstEvent:] {
 			if message, exists := event.Get(messageKey); exists && message == "listening..." {

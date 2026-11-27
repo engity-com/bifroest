@@ -127,8 +127,9 @@ func TestPublicKeyAuthenticationSkipsIncompatibleSession(t *testing.T) {
 	sessions := make([]session.Session, 2)
 	for i := range sessions {
 		var err error
-		sessions[i], err = server.service.sessions.Create(ctx, "restricted-key", remote, token)
+		sessions[i], err = server.service.sessions.Create(server.service.runtimeCreationContext(ctx, "restricted-key"), "restricted-key", remote, token)
 		require.NoError(t, err)
+		require.NoError(t, server.service.runtime.bindSession(server.service.generation, sessions[i], true))
 		require.NoError(t, sessions[i].AddPublicKey(ctx, server.signer.PublicKey()))
 		_, err = sessions[i].NotifyLastAccess(ctx, remote, session.StateAuthorized)
 		require.NoError(t, err)
@@ -766,7 +767,7 @@ func (this *authorizedKeysTestServer) stop() error {
 	this.stopOnce.Do(func() {
 		defer close(this.stopped)
 		gracefulShutdownTimeout := this.service.Configuration.Ssh.GracefulShutdownTimeout.Native()
-		this.service.connectionLifecycle.stop()
+		this.service.handlerLifecycle().stop()
 		this.cancelServe()
 		select {
 		case _ = <-this.serveDone: // Cancellation may return a listener error.
@@ -774,7 +775,7 @@ func (this *authorizedKeysTestServer) stop() error {
 			this.stopErr = fmt.Errorf("SSH server did not stop")
 			return
 		}
-		if !this.service.connectionLifecycle.wait(gracefulShutdownTimeout) {
+		if !this.service.handlerLifecycle().wait(gracefulShutdownTimeout) {
 			this.stopErr = fmt.Errorf("SSH connection handlers did not stop")
 			return
 		}

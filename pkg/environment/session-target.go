@@ -19,6 +19,13 @@ type SessionTargetResolver interface {
 	ResolveSessionTarget(Context) (session.Target, error)
 }
 
+// SessionReuseTargetResolver can retain immutable provisioning choices of a
+// known live session while still checking today's backend, identity and policy.
+// It never imports sessions or changes their persistent ownership.
+type SessionReuseTargetResolver interface {
+	ResolveSessionReuseTarget(Context, configuration.Environment) (session.Target, error)
+}
+
 // SessionTargetResolverFor preserves third-party repositories without guessing
 // their target semantics. They continue to use their existing selection path.
 func SessionTargetResolverFor(repository Repository, flow configuration.FlowName) (SessionTargetResolver, bool) {
@@ -26,6 +33,14 @@ func SessionTargetResolverFor(repository Repository, flow configuration.FlowName
 		repository = facade.entries[flow]
 	}
 	resolver, ok := repository.(SessionTargetResolver)
+	return resolver, ok
+}
+
+func SessionReuseTargetResolverFor(repository Repository, flow configuration.FlowName) (SessionReuseTargetResolver, bool) {
+	if facade, ok := repository.(*RepositoryFacade); ok {
+		repository = facade.entries[flow]
+	}
+	resolver, ok := repository.(SessionReuseTargetResolver)
 	return resolver, ok
 }
 
