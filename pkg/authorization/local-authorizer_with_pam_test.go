@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/msteinert/pam/v2"
 	"github.com/stretchr/testify/require"
 
@@ -190,6 +191,8 @@ func TestLinuxPamPrimaryAccountPromptCannotReplayItsPassword(t *testing.T) {
 }
 
 func TestLinuxPamResumeRequiresFreshIdentityAndAccountOnlyEnvironment(t *testing.T) {
+	testlog.Hook(t)
+
 	for _, method := range []string{"password", "keyboard-interactive"} {
 		for _, mode := range []string{"valid", "remapped", "locked during PAM", "groups during validation", "environment during validation", "account denial", "cleanup failure"} {
 			t.Run(method+"/"+mode, func(t *testing.T) {

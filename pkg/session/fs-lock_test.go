@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -35,6 +36,8 @@ func TestFsRepositoryProcessLockIsExclusiveAndRemovedOnClose(t *testing.T) {
 }
 
 func TestFsRepositorySingleWriterAcrossProcessesAndAbruptExit(t *testing.T) {
+	testlog.Hook(t)
+
 	const storageEnv = "BIFROEST_TEST_SINGLE_WRITER_STORAGE"
 	if storage := os.Getenv(storageEnv); storage != "" {
 		conf := &configuration.SessionFs{}

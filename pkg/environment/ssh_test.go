@@ -16,6 +16,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/sdk/testlog"
 	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
@@ -212,6 +213,8 @@ func TestSshEnvironmentDeniedSubsystemDoesNotConnect(t *testing.T) {
 }
 
 func TestWatchSubsystemInput(t *testing.T) {
+	testlog.Hook(t)
+
 	for _, test := range []struct {
 		name        string
 		inputDone   bool
@@ -540,12 +543,16 @@ func TestSshPtyRequestsPreservePixelDimensions(t *testing.T) {
 }
 
 func TestNewSshRepositoryWithHostKeysRejectsNilKey(t *testing.T) {
+	testlog.Hook(t)
+
 	conf := &configuration.EnvironmentSsh{AcceptAllHostKeys: true}
 	_, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{nil})
 	require.ErrorContains(t, err, "nil SSH host key")
 }
 
 func TestSshCertificateUsesDedicatedAuthorityInsteadOfHostKey(t *testing.T) {
+	testlog.Hook(t)
+
 	hostKey := newSshTestPrivateKey(t)
 	directory := t.TempDir()
 	authorityFile := filepath.Join(directory, "ca")
@@ -558,6 +565,8 @@ func TestSshCertificateUsesDedicatedAuthorityInsteadOfHostKey(t *testing.T) {
 }
 
 func TestSshCertificateRejectsAuthorityThatReusesHostKey(t *testing.T) {
+	testlog.Hook(t)
+
 	directory := t.TempDir()
 	hostKey := newSshTestPrivateKey(t)
 	authorityFile := filepath.Join(directory, "ca")
@@ -580,6 +589,8 @@ func TestSshCertificateConfigurationKeyNormalizesDefaultPort(t *testing.T) {
 }
 
 func TestSshCertificateRejectsInvalidExistingKeys(t *testing.T) {
+	testlog.Hook(t)
+
 	directory := t.TempDir()
 	hostKey := newSshTestPrivateKey(t)
 	for _, test := range []struct {
@@ -608,6 +619,8 @@ func TestSshCertificateRejectsInvalidExistingKeys(t *testing.T) {
 }
 
 func TestSshCertificateSessionCompatibilityUsesCurrentAuthorizationContext(t *testing.T) {
+	testlog.Hook(t)
+
 	conf := newSshCertificateTestConfiguration(t, filepath.Join(t.TempDir(), "subject"), "")
 	conf.User = template.MustNewString("{{ .targetUser }}")
 	conf.Certificate.Principals = template.MustNewStrings("{{ .targetUser }}")
@@ -659,6 +672,8 @@ func TestSshCertificateSessionCompatibilityUsesCurrentAuthorizationContext(t *te
 }
 
 func TestSshCertificateRejectsNonEmptyCapabilityExtensionValue(t *testing.T) {
+	testlog.Hook(t)
+
 	conf := newSshCertificateTestConfiguration(t, filepath.Join(t.TempDir(), "subject"), "")
 	conf.Certificate.Extensions = configuration.EnvironmentSshCertificateExtensions{
 		"permit-pty": template.MustNewString("not-empty"),
@@ -678,6 +693,8 @@ func TestSshCertificateRejectsNonEmptyCapabilityExtensionValue(t *testing.T) {
 }
 
 func TestSshRepositoryRejectsEmptyRenderedAddress(t *testing.T) {
+	testlog.Hook(t)
+
 	ctx, cancel := newSshTestContext()
 	defer cancel()
 	conf := &configuration.EnvironmentSsh{}
@@ -750,6 +767,8 @@ func newSshTargetWithPublicKeyCallback(t *testing.T, callback func(gossh.ConnMet
 
 func newSshTargetWithPendingOpenAndCallback(t *testing.T, pendingOpen chan string, callback func(gossh.ConnMetadata, gossh.PublicKey) (*gossh.Permissions, error)) *sshTarget {
 	t.Helper()
+	testlog.Hook(t)
+
 	listener, err := gonet.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	config := &gossh.ServerConfig{NoClientAuth: callback == nil, PublicKeyCallback: callback}

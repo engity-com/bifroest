@@ -97,7 +97,7 @@ func oidcRefreshWatchdogFixture(t *testing.T, ctx context.Context, conf *configu
 		}
 	}
 	repository.findBy = findBy
-	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+	hk := newHouseKeeperForTest(t, &houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 	svc := hk.service
 	svc.sessions = repository
 	svc.houseKeeper.service = svc
@@ -283,7 +283,7 @@ func TestOidcRefreshStartupDeadlineDoesNotWaitForCollidingProvider(t *testing.T)
 		repository.findBy = func(_ context.Context, _ configuration.FlowName, id session.Id, _ *session.FindOpts) (session.Session, error) {
 			return sessions[id], nil
 		}
-		hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+		hk := newHouseKeeperForTest(t, &houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 		svc := hk.service
 		svc.sessions = repository
 		svc.houseKeeper.service = svc
@@ -573,6 +573,8 @@ func TestOidcRefreshWatchdogNeverModeAndShutdown(t *testing.T) {
 }
 
 func TestOidcRefreshManagerStartupRegistersPersistedSessionsOnce(t *testing.T) {
+	hookServiceTestLog(t)
+
 	ctx, conf := oidcRefreshTestConfig(t)
 	flow := configuration.FlowName("oidc")
 	flows := configuration.Flows{{Name: flow, Authorization: configuration.Authorization{V: conf}}}
@@ -628,6 +630,8 @@ func TestOidcRefreshManagerStartupRegistersPersistedSessionsOnce(t *testing.T) {
 }
 
 func TestOidcRefreshManagerCloseStopsWorkers(t *testing.T) {
+	hookServiceTestLog(t)
+
 	flow := configuration.FlowName("oidc")
 	started := make(chan session.Id, 2)
 	repository := &oidcRefreshTestRepository{houseKeeperTestSessionRepository: &houseKeeperTestSessionRepository{}}
@@ -681,7 +685,7 @@ func TestOidcRefreshManagerLostAccessDisposalAndAuditRetry(t *testing.T) {
 			require.True(t, lost)
 
 			recorder := &recordingAuditRecorder{}
-			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+			hk := newHouseKeeperForTest(t, &houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 			svc := hk.service
 			svc.houseKeeper.service = svc
 			svc.flowAuditRecorders[sess.flow] = recorder

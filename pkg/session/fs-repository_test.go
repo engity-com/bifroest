@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -469,6 +470,8 @@ func TestFsRepositoryCanceledAutoCleanupPreservesCorruptSession(t *testing.T) {
 
 func newFsRepositoryTestConfiguration(t *testing.T) *configuration.SessionFs {
 	t.Helper()
+	testlog.Hook(t)
+
 	result := &configuration.SessionFs{}
 	require.NoError(t, result.SetDefaults())
 	result.Storage = t.TempDir() + "/sessions"

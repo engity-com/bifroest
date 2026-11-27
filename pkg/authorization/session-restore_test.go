@@ -9,6 +9,7 @@ import (
 	"time"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
@@ -35,6 +36,8 @@ func TestRestoreFromSessionClassifiesMalformedPersistedTokensAsUnusable(t *testi
 }
 
 func TestRestoreFromSessionAutoCleanupRemovesMalformedPersistedTokens(t *testing.T) {
+	testlog.Hook(t)
+
 	for name, authorizer := range map[string]Authorizer{
 		"bifroest": &BifroestAuthorizer{flow: "flow"},
 		"htpasswd": &HtpasswdAuthorizer{flow: "flow"},
@@ -66,6 +69,8 @@ func TestSimpleRestoreClassifiesRemovedConfigurationEntryAsUnusable(t *testing.T
 }
 
 func TestSimpleRestoreAutoCleanupRemovesTokenForRemovedConfigurationEntry(t *testing.T) {
+	testlog.Hook(t)
+
 	authorizer := &SimpleAuthorizer{flow: "flow", conf: &configuration.AuthorizationSimple{}}
 	sess := &authorizationRestoreTestSession{flow: "flow", token: []byte(`{"user":{"name":"removed"}}`)}
 	autoCleanup := true
@@ -105,6 +110,8 @@ func TestRestoreDoesNotClassifyTokenReadFailureAsUnusable(t *testing.T) {
 }
 
 func TestOidcRestoreClassifiesExpiredPersistedTokenAsUnusable(t *testing.T) {
+	testlog.Hook(t)
+
 	raw, err := json.Marshal(oidcToken{Token: &oauth2.Token{
 		AccessToken: "expired",
 		Expiry:      time.Now().Add(-time.Minute),
@@ -129,6 +136,8 @@ func TestOidcRestoreClassifiesExpiredPersistedTokenAsUnusable(t *testing.T) {
 }
 
 func TestOidcRestoreClassifiesMissingRequiredTokensAsUnusable(t *testing.T) {
+	testlog.Hook(t)
+
 	for _, tc := range []struct {
 		name string
 		raw  []byte
@@ -166,6 +175,8 @@ func TestOidcRestoreClassifiesMissingRequiredTokensAsUnusable(t *testing.T) {
 }
 
 func TestOidcRestoreClassifiesExpiredIdTokenAsUnusable(t *testing.T) {
+	testlog.Hook(t)
+
 	const (
 		issuer   = "https://issuer.example"
 		clientId = "client"

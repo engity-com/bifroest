@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/google/go-github/v65/github"
 	"github.com/stretchr/testify/require"
 
@@ -378,6 +379,8 @@ func TestDependencyPullRequestHasFilesAcceptsExactContents(t *testing.T) {
 }
 
 func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
+	testlog.Hook(t)
+
 	now := time.Date(2026, time.September, 13, 12, 0, 0, 0, time.UTC)
 	source := testCaCertsSource(t, testCaCertData{label: "Root", serial: 1, trust: certdata.TrustTrustedDelegator})
 	bundle, err := buildCaCertsBundle(t.Context(), source, now)

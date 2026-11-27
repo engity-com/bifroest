@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/require"
 
@@ -1148,6 +1149,8 @@ type remoteArtifactDeliveryTestSource struct {
 
 func newRemoteArtifactDeliveryTestSource(t *testing.T) (*Identity, string, *remoteArtifactDeliveryTestSource) {
 	t.Helper()
+	testlog.Hook(t)
+
 	_, identity := newJournalTestIdentity(t)
 	return identity, t.TempDir(), &remoteArtifactDeliveryTestSource{artifacts: make(map[string]RemoteArtifact)}
 }

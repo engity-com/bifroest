@@ -1259,6 +1259,8 @@ func newAuditSftpDedicatednessTarget(t *testing.T, identityFiles []string) *conf
 
 func auditSftpDedicatednessTestConfiguration(t *testing.T, root string, sftpIdentities []string, encryptionKey crypto.PublicKeys) configuration.Configuration {
 	t.Helper()
+	hookServiceTestLog(t)
+
 	var conf configuration.Configuration
 	err := conf.LoadFromYaml(strings.NewReader(fmt.Sprintf(`
 ssh:

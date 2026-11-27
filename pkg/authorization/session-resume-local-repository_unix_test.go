@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/authentication"
@@ -22,6 +23,8 @@ import (
 
 func newLocalRepositoryResumeFixture(t *testing.T, method string) (*LocalAuthorizer, *resumeTestRequest, *user.EtcColonRepository) {
 	t.Helper()
+	testlog.Hook(t)
+
 	base := newFacadeSelectionRequest(t, "alice")
 	sess, err := base.repository.Create(t.Context(), "selected", authenticationTestRemote("alice"), []byte(`{"user":{"name":"alice","uid":"1001"},"envVars":{"STALE":"not-current"}}`))
 	require.NoError(t, err)

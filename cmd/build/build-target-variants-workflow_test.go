@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kingpin/v2"
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	bib "github.com/engity-com/bifroest/internal/build"
@@ -54,6 +55,8 @@ func binaryMatrixOutputs(t *testing.T, raw []byte) map[string]string {
 }
 
 func TestBinaryTargetGroupingRetainsEverySourceVariantAndItsBuildEnvironment(t *testing.T) {
+	testlog.Hook(t)
+
 	b := newBase()
 	b.rawCommit, b.rawRef = "historical", "ci-inventory"
 	b.build.rawStages = buildStages{buildStageBinary}

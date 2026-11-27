@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -139,6 +140,9 @@ func (this namedBytesBuffer) Truncate(n int64) error {
 }
 
 func newTestDir(t testing.TB) *testDir {
+	t.Helper()
+	testlog.Hook(t)
+
 	prefix := t.Name()
 	prefix = strings.ReplaceAll(prefix, "/", "_")
 	prefix = strings.ReplaceAll(prefix, "\\", "_")

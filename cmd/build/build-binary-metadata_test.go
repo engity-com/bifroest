@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 
 	bib "github.com/engity-com/bifroest/internal/build"
@@ -138,6 +139,8 @@ func TestPackageRequiresEveryVariantAndEveryGroupedArtifact(t *testing.T) {
 	require.NoError(t, artifacts.Close())
 	for _, file := range saved {
 		t.Run(filepath.Base(file.filename), func(t *testing.T) {
+			testlog.Hook(t)
+
 			require.NoError(t, gos.Remove(file.filename))
 			_, err := build.buildAll(t.Context(), false)
 			require.ErrorContains(t, err, "cannot build "+file.platform)
