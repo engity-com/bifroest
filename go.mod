@@ -40,7 +40,7 @@ require (
 	github.com/klauspost/compress v1.20.5
 	github.com/letsencrypt/pebble/v2 v2.10.3
 	github.com/mattn/go-zglob v0.0.8
-	github.com/miekg/dns v1.1.62
+	github.com/miekg/dns v1.1.73
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
 	github.com/moby/moby/api v1.57.0
 	github.com/moby/moby/client v0.6.3
@@ -166,7 +166,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/arch v0.31.0 // indirect
 	golang.org/x/image v0.46.0 // indirect
-	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261009151841-97e8ea77aa2a // indirect
 	golang.org/x/time v0.16.0 // indirect
