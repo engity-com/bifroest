@@ -53,6 +53,7 @@ import {
     loginLayout,
     logoutAccess,
     notification,
+    removeLocalSavedLogin,
     resumeSavedLogin,
     settledLogin,
 } from './workspace-ui.ts';
@@ -763,25 +764,16 @@ try {
             'ready',
             'failed remote revoke must not silently delete local keys',
         );
-        await page.getByRole('button', { name: 'Saved access options', exact: true }).click();
-        await page.getByRole('menuitem', { name: 'Remove local data only', exact: true }).click();
-        await page
-            .getByRole('dialog', { name: 'Remove local data only?', exact: true })
-            .getByRole('button', { name: 'Remove local data only', exact: true })
-            .click();
-        await page
-            .getByRole('dialog', {
-                name: 'Remove local data only?',
-                exact: true,
-                includeHidden: true,
-            })
-            .waitFor({ state: 'hidden' });
-        await page
-            .getByText('Local setup removed. No server logout or revocation was claimed.', {
-                exact: true,
-            })
-            .waitFor();
+        await removeLocalSavedLogin(page);
         assert.equal(await local(page), 'missing');
+        await chooseLoginMethod(page, 'Password login');
+        assert.equal(
+            await page
+                .getByRole('checkbox', { name: 'Remember this browser', exact: true })
+                .isEnabled(),
+            true,
+            'explicit local cleanup must make fresh enrollment available again',
+        );
         await page
             .getByRole('dialog', { name: 'Sign in', exact: true })
             .waitFor({ state: 'visible' });

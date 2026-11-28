@@ -1,6 +1,7 @@
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
 import {
     LoginDialog,
     type LoginDialogActions,
@@ -79,6 +80,17 @@ it('keeps Saved, Password, Interactive and SSH key as four tabs with a field-fre
         });
         expect(actions.resume).toHaveBeenCalledOnce();
         expect(actions.submit).not.toHaveBeenCalled();
+        // Native browser restart recovery must use the accessible method name,
+        // not the shorter, aria-hidden visual label "Password".
+        for (const [name, choice] of [
+            ['Password login', 'password:named'],
+            ['Interactive / device login', 'keyboard-interactive:named'],
+        ] as const) {
+            await act(async () => {
+                await userEvent.click(page.getByRole('radio', { name, exact: true }));
+            });
+            expect(actions.chooseMethod).toHaveBeenLastCalledWith(choice);
+        }
     } finally {
         await act(async () => {
             root.unmount();

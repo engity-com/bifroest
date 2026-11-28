@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func TestFsRuntimeOwnershipAndPrivateKeySurviveRestart(t *testing.T) {
@@ -151,7 +152,7 @@ func TestFsRuntimeStatePublicationErrorsAreNotMistakenForRejection(t *testing.T)
 // a fully durable write followed by an unrelated injected error.
 func runtimeTestReplaceWithoutDirectorySync(t *testing.T, path string, raw []byte) {
 	t.Helper()
-	file, err := os.CreateTemp(filepath.Dir(path), ".runtime-test-*")
+	file, err := crypto.CreateProtectedTempFile(filepath.Dir(path), ".runtime-test-*", 0600)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.Remove(file.Name()) })
 	_, err = file.Write(raw)
@@ -159,6 +160,9 @@ func runtimeTestReplaceWithoutDirectorySync(t *testing.T, path string, raw []byt
 	require.NoError(t, file.Sync())
 	require.NoError(t, file.Close())
 	require.NoError(t, replaceFsFile(file.Name(), path))
+	published, err := crypto.ReadSecurePrivateFile(path, int64(len(raw)))
+	require.NoError(t, err, "the injected sync failure must not also break private metadata permissions")
+	require.Equal(t, raw, published)
 }
 
 func TestFsRuntimePendingIntentBlocksRestartAndFurtherWrites(t *testing.T) {

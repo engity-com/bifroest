@@ -19,6 +19,7 @@ import {
     duplicateTab,
     logoutAccess,
     notification,
+    removeLocalSavedLogin,
     resumeSavedLogin,
     settledLogin,
 } from './workspace-ui.ts';
@@ -455,10 +456,17 @@ try {
         assert.equal(await page.getByRole('tab').count(), 0);
         // Local authorization/environment providers have no complete restart
         // ownership proof. Old RememberMe must fail closed, not adopt a new owner.
+        // A denial deliberately keeps local keys. Remove only this fixture's
+        // local selection explicitly before enrolling fresh access.
+        stage = `service-${method}-forget-local`;
+        await removeLocalSavedLogin(page);
+        await noStoredKeys(page);
+        stage = `service-${method}-choose-primary`;
         await chooseLoginMethod(
             page,
-            method === 'interactive' ? 'Interactive / device login' : 'Password',
+            method === 'interactive' ? 'Interactive / device login' : 'Password login',
         );
+        stage = `service-${method}-primary-fields`;
         const freshDialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
         await freshDialog.getByLabel('User name', { exact: true }).fill(fixture.user);
         await freshDialog
@@ -467,11 +475,14 @@ try {
         if (method === 'password') {
             await freshDialog.getByLabel('Password', { exact: true }).fill(password);
         }
+        stage = `service-${method}-primary-submit`;
         await freshDialog.getByRole('button', { name: 'Sign in', exact: true }).click();
         if (method === 'interactive') {
             await answerAuthentication(page, password, { kind: 'prompt', echo: false });
         }
+        stage = `service-${method}-primary-connected`;
         await connected(page);
+        stage = `service-${method}-primary-enrollment`;
         await notification(page, 'RememberMe setup confirmed for this browser.');
         await storedKeys(page);
         const previousSession = required(executions.at(-1)).session;
