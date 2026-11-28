@@ -18,13 +18,19 @@ import (
 var monitoringFlowLabels = []string{"flow", "authorization", "auditlog", "environment"}
 
 type serviceMonitoring struct {
+	*serviceMonitoringState
+	flows map[configuration.FlowName][]string
+}
+
+// Metrics, endpoints, budgets and locks belong to the process. Each generation
+// has a small immutable label view so retained work keeps its original labels.
+type serviceMonitoringState struct {
 	endpoint           *monitoring.Endpoint
 	registry           *prometheus.Registry
 	knownFamilies      map[string]struct{}
 	startedAt          time.Time
 	ready              atomic.Bool
 	service            atomic.Pointer[service]
-	flows              map[configuration.FlowName][]string
 	configuration      configuration.Configuration
 	evaluations        *prometheus.CounterVec
 	durations          *prometheus.HistogramVec
@@ -42,9 +48,10 @@ type serviceMonitoring struct {
 	access             monitoringAccess
 	http               monitoringHTTP
 	journal            monitoringJournal
+	reload             monitoringReload
 }
 
-func newServiceMonitoring(conf configuration.Configuration) (*serviceMonitoring, error) {
+func newServiceMonitoring(conf configuration.Configuration, force ...bool) (*serviceMonitoring, error) {
 	management := false
 	for _, flow := range conf.Flows {
 		if _, ok := flow.Environment.V.(*configuration.EnvironmentManagement); ok {
@@ -52,13 +59,11 @@ func newServiceMonitoring(conf configuration.Configuration) (*serviceMonitoring,
 			break
 		}
 	}
-	if !conf.Monitoring.IsEnabled() && !management {
+	collect := conf.Monitoring.IsEnabled() || management || len(force) > 0 && force[0]
+	if !collect {
 		return nil, nil
 	}
-	result := &serviceMonitoring{registry: prometheus.NewRegistry(), knownFamilies: make(map[string]struct{}), startedAt: monitoringProcessStartedAt, flows: make(map[configuration.FlowName][]string), configuration: conf, descriptions: make(map[string]*prometheus.Desc)}
-	for _, flow := range conf.Flows {
-		result.flows[flow.Name] = []string{flow.Name.String(), flow.Authorization.Reference, flow.Auditlog.String(), flow.Environment.Reference}
-	}
+	result := (&serviceMonitoring{serviceMonitoringState: &serviceMonitoringState{registry: prometheus.NewRegistry(), knownFamilies: make(map[string]struct{}), startedAt: monitoringProcessStartedAt, configuration: conf, descriptions: make(map[string]*prometheus.Desc)}}).view(conf)
 	authLabels := append(append([]string{}, monitoringFlowLabels...), "transport", "method", "phase", "result", "error_category")
 	result.evaluations = result.counterVec(prometheus.CounterOpts{Name: "bifroest_authentication_flow_evaluations_total", Help: "Provider evaluations, not completed authentications."}, authLabels)
 	result.durations = result.histogramVec(prometheus.HistogramOpts{Name: "bifroest_authentication_flow_evaluation_duration_seconds", Help: "Provider evaluation time, excluding audit/observer work; interactive methods include user waiting.", Buckets: []float64{.005, .025, .1, .5, 1, 5, 15, 60, 300}}, authLabels)
@@ -84,6 +89,7 @@ func newServiceMonitoring(conf configuration.Configuration) (*serviceMonitoring,
 	result.descriptions["tls_certificate_expiration_timestamp_seconds"] = prometheus.NewDesc("bifroest_tls_certificate_expiration_timestamp_seconds", "Effective certificate chain expiry per TLS source and registered name.", []string{"source", "name"}, nil)
 	result.descriptions["tls_binding_ready"] = prometheus.NewDesc("bifroest_tls_binding_ready", "Whether a configured TLS consumer has valid material.", []string{"source", "consumer"}, nil)
 	result.initJournal()
+	result.initReload()
 	for name, help := range map[string]string{
 		"ready":              "Whether all configured access listeners have completed startup and are accepting new access.",
 		"connections_active": "Open SSH transport connections, including unauthenticated connections and SSH tunnels.",
@@ -135,6 +141,17 @@ func newServiceMonitoring(conf configuration.Configuration) (*serviceMonitoring,
 	return result, nil
 }
 
+func (this *serviceMonitoring) view(conf configuration.Configuration) *serviceMonitoring {
+	if this == nil {
+		return nil
+	}
+	result := &serviceMonitoring{serviceMonitoringState: this.serviceMonitoringState, flows: make(map[configuration.FlowName][]string, len(conf.Flows))}
+	for _, flow := range conf.Flows {
+		result.flows[flow.Name] = []string{flow.Name.String(), flow.Authorization.Reference, flow.Auditlog.String(), flow.Environment.Reference}
+	}
+	return result
+}
+
 func (this *serviceMonitoring) flowLabels(flow configuration.FlowName) []string {
 	if labels, ok := this.flows[flow]; ok {
 		return labels
@@ -164,7 +181,10 @@ func (this *serviceMonitoring) Collect(ch chan<- prometheus.Metric) {
 	if svc == nil {
 		return
 	}
-	emit("connections_active", float64(svc.activeConnections.Load()))
+	if svc.monitoring != nil {
+		this = svc.monitoring
+	}
+	emit("connections_active", float64(svc.connectionCounter().Load()))
 	this.collectAccess(ch, svc)
 	this.collectHTTP(ch, svc)
 	this.collectTLS(ch, svc)
@@ -267,6 +287,9 @@ func (this *serviceMonitoring) cleanupLabels(flowLabels []string, operation stri
 func (this *serviceMonitoring) cleanupSnapshot(problems map[configuration.FlowName]int) {
 	if this == nil {
 		return
+	}
+	if svc := this.service.Load(); svc != nil && svc.monitoring != nil {
+		this = svc.monitoring
 	}
 	for flow, labels := range this.flows {
 		this.cleanupProblems.WithLabelValues(labels...).Set(float64(problems[flow]))

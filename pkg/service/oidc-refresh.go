@@ -22,10 +22,12 @@ const (
 	oidcRefreshUnknownGrace = time.Second
 )
 
-// oidcRefreshManager owns refresh workers for persisted sessions, independently
-// of the SSH connections or individual session objects that discovered them.
+// One process coordinator owns refresh workers for persisted sessions. Lightweight
+// generation bindings select their original providers while sharing worker state,
+// limits and revocation; they never start another manager or shutdown its workers.
 type oidcRefreshManager struct {
 	service       *service
+	coordinator   *oidcRefreshManager
 	ctx           context.Context
 	cancel        context.CancelFunc
 	mutex         sync.Mutex
@@ -33,15 +35,28 @@ type oidcRefreshManager struct {
 	deadlines     map[sessionConnectionKey]chan time.Time
 	lastDeadlines map[sessionConnectionKey]time.Time
 	invalidating  map[sessionConnectionKey]struct{}
+	disposals     map[sessionConnectionKey]context.CancelFunc
 	authorizers   map[configuration.FlowName]*authorization.OidcDeviceAuthAuthorizer
 	limit         chan struct{}
 	done          sync.WaitGroup
 }
 
-func (this *oidcRefreshManager) init(svc *service) error {
+func (this *oidcRefreshManager) state() *oidcRefreshManager {
+	if this.coordinator != nil {
+		return this.coordinator
+	}
+	return this
+}
+
+// Bind callbacks during preparation, but start no workers for a candidate.
+func (this *oidcRefreshManager) prepare(svc *service) {
+	this.service = svc
+	if svc.resources != nil && svc.resources.owner != svc {
+		this.coordinator = &svc.resources.owner.oidcRefresh
+	}
 	facade, ok := svc.authorizer.(*authorization.AuthorizerFacade)
 	if !ok {
-		return nil
+		return
 	}
 	authorizers := make(map[configuration.FlowName]*authorization.OidcDeviceAuthAuthorizer)
 	for _, flow := range svc.Configuration.Flows {
@@ -53,27 +68,46 @@ func (this *oidcRefreshManager) init(svc *service) error {
 			authorizers[flow.Name] = authorizer
 		}
 	}
-	if len(authorizers) == 0 {
-		return nil
-	}
-	this.service = svc
 	this.authorizers = authorizers
+	for _, authorizer := range authorizers {
+		if svc.resources != nil {
+			authorizer.OnVerified = this.verifiedForOwner
+		} else {
+			authorizer.OnVerified = this.verificationUpdated
+		}
+		authorizer.OnLostAccess = this.invalidateSession
+	}
+}
+
+func (this *oidcRefreshManager) init(svc *service) error {
+	this.start(svc)
+	return this.discover()
+}
+
+func (this *oidcRefreshManager) start(svc *service) {
+	this.prepare(svc)
+	if this.coordinator != nil || len(this.authorizers) == 0 && svc.resources == nil {
+		return
+	}
 	this.workers = make(map[sessionConnectionKey]context.CancelFunc)
 	this.deadlines = make(map[sessionConnectionKey]chan time.Time)
 	this.lastDeadlines = make(map[sessionConnectionKey]time.Time)
 	this.invalidating = make(map[sessionConnectionKey]struct{})
+	this.disposals = make(map[sessionConnectionKey]context.CancelFunc)
 	this.limit = make(chan struct{}, oidcRefreshConcurrency)
 	this.ctx, this.cancel = context.WithCancel(context.Background())
-	for _, authorizer := range authorizers {
-		authorizer.OnVerified = this.verificationUpdated
-		authorizer.OnLostAccess = this.invalidateSession
+}
+
+func (this *oidcRefreshManager) discover() error {
+	if this.coordinator != nil || this.ctx == nil {
+		return nil
 	}
-	if err := svc.sessions.FindAll(this.ctx, func(_ context.Context, sess session.Session) (bool, error) {
+	if err := this.service.sessions.FindAll(this.ctx, func(_ context.Context, sess session.Session) (bool, error) {
 		this.register(sess)
 		return true, nil
 	}, &session.FindOpts{
 		DiagnosticConsumer: func(_ context.Context, diagnostic session.FindDiagnostic) error {
-			svc.logger().With("flow", diagnostic.Flow).With("sessionId", diagnostic.Id).
+			this.service.logger().With("flow", diagnostic.Flow).With("sessionId", diagnostic.Id).
 				WithError(diagnostic.Err).Warn("cannot inspect session for OIDC refresh; preserving it")
 			return nil
 		},
@@ -84,57 +118,103 @@ func (this *oidcRefreshManager) init(svc *service) error {
 	return nil
 }
 
+func (this *oidcRefreshManager) owned(key sessionConnectionKey) (*oidcRefreshManager, func(), error) {
+	if this.service == nil || this.service.resources == nil {
+		return this, func() {}, nil
+	}
+	owner, release, err := this.service.resources.retainSessionOwner(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &oidcRefreshManager{service: owner, coordinator: this.state(), authorizers: owner.oidcRefresh.authorizers}, release, nil
+}
+
+func (this *oidcRefreshManager) verifiedForOwner(sess session.Session, _ time.Time) {
+	key := sessionConnectionKey{flow: sess.Flow(), id: sess.Id()}
+	owner, release, err := this.owned(key)
+	if err != nil {
+		return
+	}
+	defer release()
+	if owner.service.runtime != nil && owner.service.runtime.sessionKeyRevoked(key) {
+		return
+	}
+	// A newly authenticated connection may have reused an old session. Use
+	// that session's original max-unverified policy, not the new callback's.
+	ctx, cancel := context.WithTimeout(context.Background(), oidcRefreshTimeout)
+	defer cancel()
+	deadline, err := owner.verificationDeadline(ctx, key, sess)
+	if err == nil {
+		owner.verificationUpdated(sess, deadline)
+	}
+}
+
 func (this *oidcRefreshManager) register(sess session.Session) {
-	if this.ctx == nil || this.ctx.Err() != nil || sess == nil || this.authorizers[sess.Flow()] == nil {
+	state := this.state()
+	if state.ctx == nil || state.ctx.Err() != nil || sess == nil {
 		return
 	}
 	key := sessionConnectionKey{flow: sess.Flow(), id: sess.Id()}
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	if this.ctx.Err() != nil || this.workers[key] != nil {
+	owner, release, err := this.owned(key)
+	if err != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(this.ctx)
-	if this.failClosed(key.flow) {
-		if this.deadlines == nil {
-			this.deadlines = make(map[sessionConnectionKey]chan time.Time)
-		}
-		this.deadlines[key] = make(chan time.Time, 1)
+	if owner.authorizers[key.flow] == nil || owner.service.runtime != nil && owner.service.runtime.sessionKeyRevoked(key) {
+		release()
+		return
 	}
-	this.workers[key] = cancel
-	this.done.Add(1)
-	go this.run(ctx, key)
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+	if state.ctx.Err() != nil || state.workers[key] != nil {
+		release()
+		return
+	}
+	ctx, cancel := context.WithCancel(state.ctx)
+	if owner.failClosed(key.flow) {
+		if state.deadlines == nil {
+			state.deadlines = make(map[sessionConnectionKey]chan time.Time)
+		}
+		state.deadlines[key] = make(chan time.Time, 1)
+	}
+	state.workers[key] = cancel
+	state.done.Add(1)
+	go func() {
+		defer release()
+		owner.run(ctx, key)
+	}()
 }
 
 func (this *oidcRefreshManager) stop(sess session.Session) {
-	if sess == nil || this.ctx == nil {
+	state := this.state()
+	if sess == nil || state.ctx == nil {
 		return
 	}
 	key := sessionConnectionKey{flow: sess.Flow(), id: sess.Id()}
-	this.mutex.Lock()
-	if cancel := this.workers[key]; cancel != nil {
+	state.mutex.Lock()
+	if cancel := state.workers[key]; cancel != nil {
 		cancel()
 	}
-	this.mutex.Unlock()
+	state.mutex.Unlock()
 }
 
 func (this *oidcRefreshManager) run(ctx context.Context, key sessionConnectionKey) {
-	defer this.done.Done()
+	state := this.state()
+	defer state.done.Done()
 	defer func() {
-		this.mutex.Lock()
-		delete(this.workers, key)
-		delete(this.deadlines, key)
-		delete(this.lastDeadlines, key)
-		this.mutex.Unlock()
+		state.mutex.Lock()
+		delete(state.workers, key)
+		delete(state.deadlines, key)
+		delete(state.lastDeadlines, key)
+		state.mutex.Unlock()
 	}()
 	logger := this.service.logger().With("flow", key.flow).With("sessionId", key.id)
 	authorizer := this.authorizers[key.flow]
 	// A deadline read or provider call can block behind another worker. The
 	// watchdog therefore owns its timer independently of the refresh loop.
 	if this.failClosed(key.flow) {
-		this.mutex.Lock()
-		deadlines := this.deadlines[key]
-		this.mutex.Unlock()
+		state.mutex.Lock()
+		deadlines := state.deadlines[key]
+		state.mutex.Unlock()
 		stop := make(chan struct{})
 		finished := make(chan struct{})
 		parentCtx := ctx
@@ -205,23 +285,24 @@ func (this *oidcRefreshManager) verificationDeadline(ctx context.Context, key se
 }
 
 func (this *oidcRefreshManager) verificationUpdated(sess session.Session, deadline time.Time) {
+	state := this.state()
 	key := sessionConnectionKey{flow: sess.Flow(), id: sess.Id()}
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	if this.ctx == nil || this.ctx.Err() != nil || deadline.IsZero() {
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+	if state.ctx == nil || state.ctx.Err() != nil || deadline.IsZero() {
 		return
 	}
-	updates := this.deadlines[key]
+	updates := state.deadlines[key]
 	if updates == nil {
 		return
 	}
-	if previous := this.lastDeadlines[key]; !deadline.After(previous) {
+	if previous := state.lastDeadlines[key]; !deadline.After(previous) {
 		return
 	}
-	if this.lastDeadlines == nil {
-		this.lastDeadlines = make(map[sessionConnectionKey]time.Time)
+	if state.lastDeadlines == nil {
+		state.lastDeadlines = make(map[sessionConnectionKey]time.Time)
 	}
-	this.lastDeadlines[key] = deadline
+	state.lastDeadlines[key] = deadline
 	select {
 	case updates <- deadline:
 	default:
@@ -237,30 +318,56 @@ func (this *oidcRefreshManager) verificationUpdated(sess session.Session, deadli
 }
 
 func (this *oidcRefreshManager) invalidateSession(sess session.Session) {
+	if this.service.resources != nil && !this.service.loginSessionCompatible(sess) {
+		// A different generation's credential check cannot revoke the grant
+		// retained by this session's original provider.
+		return
+	}
 	key := sessionConnectionKey{flow: sess.Flow(), id: sess.Id()}
 	this.invalidate(key, sess)
 }
 
 func (this *oidcRefreshManager) invalidate(key sessionConnectionKey, sess session.Session) {
 	_ = this.service.sessionConnections.revoke(key.flow, key.id)
-	this.mutex.Lock()
-	if this.ctx == nil || this.ctx.Err() != nil {
-		this.mutex.Unlock()
+	state := this.state()
+	owner, release, err := this.owned(key)
+	if err != nil {
 		return
 	}
-	if this.invalidating == nil {
-		this.invalidating = make(map[sessionConnectionKey]struct{})
-	}
-	if _, exists := this.invalidating[key]; exists {
-		this.mutex.Unlock()
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+	if state.ctx == nil || state.ctx.Err() != nil {
+		release()
 		return
 	}
-	this.invalidating[key] = struct{}{}
-	this.done.Add(1)
-	this.mutex.Unlock()
+	if this.service.resources != nil && !this.service.runtime.hasSession(key) {
+		release()
+		return
+	}
+	if state.invalidating == nil {
+		state.invalidating = make(map[sessionConnectionKey]struct{})
+	}
+	if _, exists := state.invalidating[key]; exists {
+		release()
+		return
+	}
+	state.invalidating[key] = struct{}{}
+	if state.disposals == nil {
+		state.disposals = make(map[sessionConnectionKey]context.CancelFunc)
+	}
+	ctx, cancel := context.WithCancel(state.ctx)
+	state.disposals[key] = cancel
+	state.done.Add(1)
 	go func() {
-		defer this.done.Done()
-		this.retryDisposal(this.ctx, key, sess)
+		defer state.done.Done()
+		defer release()
+		defer cancel()
+		defer func() {
+			state.mutex.Lock()
+			delete(state.disposals, key)
+			state.mutex.Unlock()
+		}()
+		owner.retryDisposal(ctx, key, sess)
 	}()
 }
 
@@ -276,6 +383,7 @@ func (this *oidcRefreshManager) failClosed(flow configuration.FlowName) bool {
 }
 
 func (this *oidcRefreshManager) watchDeadline(ctx, workerCtx context.Context, cancel context.CancelFunc, stop <-chan struct{}, key sessionConnectionKey, deadlines <-chan time.Time) {
+	state := this.state()
 	// Unknown persisted state is not evidence of a fresh verification.
 	timer := time.NewTimer(oidcRefreshUnknownGrace)
 	defer timer.Stop()
@@ -305,9 +413,9 @@ func (this *oidcRefreshManager) watchDeadline(ctx, workerCtx context.Context, ca
 			}
 			// The timer and an already queued verification can both be ready.
 			// Consult the latest accepted update before committing to revoke.
-			this.mutex.Lock()
-			latest := this.lastDeadlines[key]
-			this.mutex.Unlock()
+			state.mutex.Lock()
+			latest := state.lastDeadlines[key]
+			state.mutex.Unlock()
 			if latest.After(current) {
 				current = latest
 				timer.Reset(max(0, time.Until(current)))
@@ -334,18 +442,29 @@ func (this *oidcRefreshManager) watchDeadline(ctx, workerCtx context.Context, ca
 // finalSessionDeleted is called only after the repository has durably deleted
 // the session. The caller must also clear the connection registry tombstone.
 func (this *oidcRefreshManager) finalSessionDeleted(flow configuration.FlowName, id session.Id) {
+	state := this.state()
 	key := sessionConnectionKey{flow: flow, id: id}
-	this.mutex.Lock()
-	delete(this.invalidating, key)
-	this.mutex.Unlock()
+	state.mutex.Lock()
+	delete(state.invalidating, key)
+	if cancel := state.workers[key]; cancel != nil {
+		cancel()
+	}
+	if cancel := state.disposals[key]; cancel != nil {
+		cancel()
+	}
+	state.mutex.Unlock()
 }
 
 func (this *oidcRefreshManager) refreshLoop(ctx context.Context, key sessionConnectionKey, authorizer *authorization.OidcDeviceAuthAuthorizer, updateDeadline func(session.Session) bool) {
+	state := this.state()
 	logger := this.service.logger().With("flow", key.flow).With("sessionId", key.id)
 	var retryAt time.Time
 	first := true
 	deadlineKnown := false
 	for ctx.Err() == nil {
+		if this.service.runtime != nil && this.service.runtime.sessionKeyRevoked(key) {
+			return
+		}
 		sess, err := this.service.sessions.FindBy(ctx, key.flow, key.id, nil)
 		if goerrors.Is(err, session.ErrNoSuchSession) {
 			return
@@ -400,11 +519,11 @@ func (this *oidcRefreshManager) refreshLoop(ctx context.Context, key sessionConn
 		select {
 		case <-ctx.Done():
 			return
-		case this.limit <- struct{}{}:
+		case state.limit <- struct{}{}:
 		}
 		var lost bool
 		func() {
-			defer func() { <-this.limit }()
+			defer func() { <-state.limit }()
 			callCtx, cancel := context.WithTimeout(ctx, oidcRefreshTimeout)
 			defer cancel()
 			// A new lookup avoids using the state snapshot retained by an old
@@ -419,6 +538,10 @@ func (this *oidcRefreshManager) refreshLoop(ctx context.Context, key sessionConn
 				if err == nil {
 					err = session.ErrNoSuchSession
 				}
+				return
+			}
+			if this.service.runtime != nil && this.service.runtime.sessionKeyRevoked(key) {
+				err = session.ErrNoSuchSession
 				return
 			}
 			sess = current
@@ -485,17 +608,23 @@ func (this *oidcRefreshManager) dispose(ctx context.Context, sess session.Sessio
 		return session.ErrNoSuchSession
 	}
 	_ = this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
-	logger := this.service.logger().With("session", sess)
 	callCtx, cancel := context.WithTimeout(ctx, oidcRefreshTimeout)
 	defer cancel()
+	owner, current, release, err := this.service.retainSessionAction(callCtx, sess)
+	if err != nil {
+		return err
+	}
+	defer release()
+	sess = current
+	logger := owner.logger().With("session", sess)
 	attempted := false
-	_, actionErr, auditErr := this.service.houseKeeper.auditSessionAction(callCtx, sess,
+	_, actionErr, auditErr := owner.houseKeeper.auditSessionAction(callCtx, sess,
 		audit.EventNameHousekeepingSessionDisposeStarted,
 		audit.EventNameHousekeepingSessionDisposeCompleted,
 		audit.EventReasonOIDCAccessLost,
 		func() (bool, error) {
 			attempted = true
-			return this.service.houseKeeper.disposeWith(callCtx, logger, sess, false, nil, func() {
+			return owner.houseKeeper.disposeWith(callCtx, logger, sess, false, nil, func() {
 				_ = this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
 			})
 		})
@@ -508,6 +637,9 @@ func (this *oidcRefreshManager) dispose(ctx context.Context, sess session.Sessio
 }
 
 func (this *oidcRefreshManager) Close() error {
+	if this.coordinator != nil {
+		return nil // Only the process owner may stop shared workers.
+	}
 	this.mutex.Lock()
 	if this.cancel != nil {
 		this.cancel()
@@ -515,4 +647,18 @@ func (this *oidcRefreshManager) Close() error {
 	this.mutex.Unlock()
 	this.done.Wait()
 	return nil
+}
+
+func (this *oidcRefreshManager) stopRevoked() {
+	if this.service == nil || this.service.runtime == nil {
+		return
+	}
+	state := this.state()
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+	for key, cancel := range state.workers {
+		if this.service.runtime.sessionKeyRevoked(key) {
+			cancel()
+		}
+	}
 }

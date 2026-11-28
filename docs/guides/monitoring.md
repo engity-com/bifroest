@@ -208,6 +208,12 @@ The [Helm chart](../setup/in-kubernetes.md) already configures these probes on a
 
 3. Check Prometheus targets and query `up{job="bifroest"}` and `bifroest_ready`. Each ready Bifröst Pod should appear separately with both values at `1`; do not scrape through the load-balanced SSH or HTTP Service.
 
+### Verify live configuration reloads
+
+With [live reload explicitly enabled](../setup/operations.md#reload-configuration-without-restarting), check `bifroest_configuration_watch_enabled == 1`, a nonzero `bifroest_configuration_reload_last_attempt_timestamp_seconds` and `bifroest_configuration_reload_last_success == 1` on every instance. A rejected candidate can leave `/ready` healthy because the previous accepted rules remain active.
+
+Use the safe reload log categories to investigate rejection, correct the file and verify a new login. Successful unchanged polls also advance the accepted timestamp; it is not a configuration version or evidence that an external credential file was reloaded. Native-watch errors are separate from rejection: polling continues. See the [metric definitions](../reference/monitoring.md#configuration-reload).
+
 ### Add operational alerts
 
 Add these example rules to your existing Prometheus rule group and adapt the thresholds:
@@ -219,6 +225,12 @@ groups:
       - alert: BifroestMetricsUnavailable
         expr: up{job="bifroest"} == 0
         for: 2m
+      - alert: BifroestConfigurationReloadRejected
+        expr: (bifroest_configuration_watch_enabled == 1) and (bifroest_configuration_reload_last_attempt_timestamp_seconds > 0) and (bifroest_configuration_reload_last_success == 0)
+        for: 2m
+      - alert: BifroestConfigurationWatchStalled
+        expr: (bifroest_configuration_watch_enabled == 1) and (time() - bifroest_configuration_reload_last_attempt_timestamp_seconds > 300)
+        for: 5m
       - alert: BifroestAuditlogDisabled
         expr: bifroest_auditlog_disabled == 1
         for: 1m

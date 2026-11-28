@@ -16,6 +16,16 @@
   ],
   "properties": {
     "replicaCount": { "type": "integer", "minimum": 1 },
+    "watch": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["off", "false", "no", "0", "preserve", "reconnect", "reuse", "true"]
+        },
+        { "type": "boolean" },
+        { "type": "integer", "enum": [0] }
+      ]
+    },
     "nameOverride": {
       "type": "string",
       "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$",

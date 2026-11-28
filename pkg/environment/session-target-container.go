@@ -27,6 +27,19 @@ func (this *DockerRepository) ResolveSessionTarget(ctx Context) (session.Target,
 	return projection.SessionTarget()
 }
 
+func (this *DockerRepository) ResolveSessionReuseTarget(ctx Context, previous configuration.Environment) (session.Target, error) {
+	before, ok := previous.V.(*configuration.EnvironmentDocker)
+	if !ok {
+		return this.ResolveSessionTarget(ctx)
+	}
+	conf := *this.conf
+	// An existing container's image cannot change. Every other target field,
+	// including daemon, user, mounts and forwarding policy, remains current.
+	conf.Image = before.Image
+	view := &DockerRepository{conf: &conf, apiClient: this.apiClient, hostOs: this.hostOs, hostArch: this.hostArch}
+	return view.ResolveSessionTarget(ctx)
+}
+
 // ProjectDockerTarget evaluates exactly the existing session-target selectors.
 // It does not inspect images, resolve runtime defaults or read credentials,
 // Docker environment variables, TLS files, or the daemon. Context getters and
@@ -79,6 +92,17 @@ func (this *KubernetesRepository) ResolveSessionTarget(ctx Context) (session.Tar
 		return "", err
 	}
 	return projection.SessionTarget()
+}
+
+func (this *KubernetesRepository) ResolveSessionReuseTarget(ctx Context, previous configuration.Environment) (session.Target, error) {
+	before, ok := previous.V.(*configuration.EnvironmentKubernetes)
+	if !ok {
+		return this.ResolveSessionTarget(ctx)
+	}
+	conf := *this.conf
+	conf.Image = before.Image
+	view := &KubernetesRepository{conf: &conf, client: this.client}
+	return view.ResolveSessionTarget(ctx)
 }
 
 // ProjectKubernetesTarget needs no Kubernetes client or kubeconfig. It projects

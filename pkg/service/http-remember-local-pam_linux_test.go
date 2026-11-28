@@ -101,41 +101,34 @@ func nativePamPrimary(t *testing.T, handler http.Handler, method string) string 
 	return webTestToken(t, finishWebAttempt(t, handler, attempt, "Work"))
 }
 
-func TestLinuxPamRememberMeActualHttpsNativePolicyAndRestart(t *testing.T) {
+func TestLinuxPamRememberMeActualHttpsNativePolicy(t *testing.T) {
 	for _, method := range []string{"password", "keyboard-interactive"} {
 		t.Run(method, func(t *testing.T) {
 			native := nativePamTestFixture(t)
 			configure := native.configure(t, true)
-			first := newWebSocketFixture(t, webSocketWaitTask, configure)
-			handler := localRememberHTTPSHandler(t, first)
+			fixture := newWebSocketFixture(t, webSocketWaitTask, configure)
+			handler := localRememberHTTPSHandler(t, fixture)
 			primary := nativePamPrimary(t, handler, method)
 			key, public := rememberTestKey(t)
 			binding := rememberTestEnroll(t, handler, primary, public, key)
-			original := webTestAccess(t, first.svc, primary, "Work")
+			original := webTestAccess(t, fixture.svc, primary, "Work")
 			require.Equal(t, "primary", original.auth.EnvVars()["PAM_NATIVE_FRESH"])
 			beforeCalls := native.authCount(t)
 			require.Equal(t, 1, beforeCalls)
 			require.NoError(t, os.WriteFile(native.environment, []byte("PAM_NATIVE_FRESH=resumed\n"), 0600))
-			storage := first.svc.Configuration.Session.V.(*configuration.SessionFs).Storage
-			require.NoError(t, first.svc.environments.(*executionTestRepository).shutdown())
-			second := newWebSocketFixture(t, webSocketWaitTask, func(conf *configuration.Configuration) {
-				configure(conf)
-				conf.Session.V.(*configuration.SessionFs).Storage = storage
-			})
-			handler = localRememberHTTPSHandler(t, second)
 			resumed := rememberTestResume(t, handler, binding, key)
-			access := webTestAccess(t, second.svc, resumed, "Work")
+			access := webTestAccess(t, fixture.svc, resumed, "Work")
 			require.Equal(t, binding.SessionID, access.auth.FindSession().Id().String())
 			require.Equal(t, original.identity, access.identity)
 			require.Equal(t, "resumed", access.auth.EnvVars()["PAM_NATIVE_FRESH"])
-			require.Equal(t, beforeCalls, native.authCount(t), "resume after service restart must never run pam_authenticate or replay a password")
+			require.Equal(t, beforeCalls, native.authCount(t), "resume must never run pam_authenticate or replay a password")
 			store := access.auth.FindSession().(session.BrowserBindingSession)
 			before, err := store.BrowserBindings(t.Context())
 			require.NoError(t, err)
-			second.svc.Configuration.Flows[0].Authorization.RememberMe = configuration.RememberMeForbidden
+			fixture.svc.Configuration.Flows[0].Authorization.RememberMe = configuration.RememberMeForbidden
 			challenge := rememberTestStart(t, handler, "resume", "", binding.selector())
 			require.Equal(t, http.StatusUnauthorized, rememberTestProve(t, handler, challenge, key).Code, "current opt-out must deny previously enrolled bindings")
-			second.svc.Configuration.Flows[0].Authorization.RememberMe = configuration.RememberMeAllowed
+			fixture.svc.Configuration.Flows[0].Authorization.RememberMe = configuration.RememberMeAllowed
 			challenge = rememberTestStart(t, handler, "resume", "", binding.selector())
 			require.NoError(t, os.WriteFile(native.access, []byte("- : ALL : ALL\n"), 0600))
 			require.Equal(t, http.StatusUnauthorized, rememberTestProve(t, handler, challenge, key).Code, "PAM account rejection after challenge must prevent resume")
@@ -157,6 +150,51 @@ func TestLinuxPamRememberMeActualHttpsNativePolicyAndRestart(t *testing.T) {
 			info, err := access.auth.FindSession().Info(t.Context())
 			require.NoError(t, err)
 			require.NotEqual(t, session.StateDisposed, info.State())
+		})
+	}
+}
+
+func TestLinuxPamRememberMeRejectsUnprovenOwnerAfterServiceRestart(t *testing.T) {
+	for _, method := range []string{"password", "keyboard-interactive"} {
+		t.Run(method, func(t *testing.T) {
+			native := nativePamTestFixture(t)
+			first := newWebSocketFixture(t, webSocketWaitTask, native.configure(t, true))
+			handler := localRememberHTTPSHandler(t, first)
+			primary := nativePamPrimary(t, handler, method)
+			key, public := rememberTestKey(t)
+			binding := rememberTestEnroll(t, handler, primary, public, key)
+			oldSession := webTestAccess(t, first.svc, primary, "Work").auth.FindSession()
+			owner := runtimePersistenceOwner(t, first.svc, oldSession)
+			before, err := oldSession.(session.BrowserBindingSession).BrowserBindings(t.Context())
+			require.NoError(t, err)
+			beforeCalls := native.authCount(t)
+			require.Equal(t, 1, beforeCalls)
+			previous := first.svc.generation.snapshot.Configuration()
+			require.NoError(t, first.svc.environments.(*executionTestRepository).shutdown())
+			second := newWebSocketFixture(t, webSocketWaitTask, func(conf *configuration.Configuration) {
+				// Keep every owner-relevant definition unchanged: rejection must
+				// come from the unproven native provider, not new audit paths.
+				conf.Session, conf.Flows, conf.Auditlogs = previous.Session, previous.Flows, previous.Auditlogs
+			})
+			handler = localRememberHTTPSHandler(t, second)
+			require.Equal(t, http.StatusUnauthorized, webTestRequest(handler, "POST", "app.example.org", webAPI+"access", `{"slug":"Work"}`, primary).Code)
+			require.Equal(t, http.StatusUnauthorized, rememberTestRequest(handler, "resume", "", binding.selector()).Code)
+			require.Equal(t, beforeCalls, native.authCount(t), "rejected ownership must not invoke PAM authentication")
+			require.Nil(t, second.svc.runtime.sessionOwner(oldSession))
+			preserved, err := second.svc.sessions.FindBy(t.Context(), oldSession.Flow(), oldSession.Id(), nil)
+			require.NoError(t, err)
+			retainedOwner, err := preserved.(session.RuntimeOwnershipSession).RuntimeOwnership(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, owner, retainedOwner, "rejected resumption must not reassign ownership")
+			after, err := preserved.(session.BrowserBindingSession).BrowserBindings(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, before, after, "rejected resumption must preserve old browser bindings")
+			fresh := nativePamPrimary(t, handler, method)
+			access := webTestAccess(t, second.svc, fresh, "Work")
+			require.NotEqual(t, binding.SessionID, access.auth.FindSession().Id().String())
+			runtimePersistenceOwner(t, second.svc, access.auth.FindSession())
+			require.Equal(t, beforeCalls+1, native.authCount(t), "new ownership requires fresh primary authentication")
+			require.Equal(t, 2, webSessionCount(t, second.svc), "unproven session metadata remains preserved")
 		})
 	}
 }

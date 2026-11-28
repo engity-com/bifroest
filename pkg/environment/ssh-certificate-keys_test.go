@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/template"
 )
@@ -26,6 +27,22 @@ func TestEnsureSshCertificateAuthorityCreatesAndReusesKeyWithoutPublicFile(t *te
 	require.Equal(t, gossh.FingerprintSHA256(first.ToSsh().PublicKey()), gossh.FingerprintSHA256(second.ToSsh().PublicKey()))
 	require.FileExists(t, authorityFile)
 	require.NoFileExists(t, authorityFile+".pub")
+}
+
+func TestSshCertificatePreparationDoesNotRecreateKeyRemovedAfterPreflight(t *testing.T) {
+	authority := filepath.Join(t.TempDir(), "authority")
+	flow := newSshCertificateKeyTestFlow(t, authority)
+	_, _, err := EnsureSshCertificateIdentity(flow)
+	require.NoError(t, err)
+	_, _, err = EnsureSshCertificateAuthority(flow)
+	require.NoError(t, err)
+	require.NoError(t, goos.Remove(authority))
+	conf := flow.Environment.V.(*configuration.EnvironmentSsh)
+	conf.AcceptAllHostKeys = true
+	repository, err := NewSshRepositoryWithHostKeys(common.WithProviderBootstrapDisabled(t.Context()), flow.Name, conf, nil)
+	require.ErrorIs(t, err, common.ErrProviderBootstrapDisabled)
+	require.Nil(t, repository)
+	require.NoFileExists(t, authority)
 }
 
 func TestEnsureSshCertificateAuthorityDoesNotReplaceInvalidKey(t *testing.T) {

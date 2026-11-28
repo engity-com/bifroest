@@ -54,7 +54,7 @@ func (this *terminalConnection) IsClosed() bool {
 	return this.closed.Load() || this.parent != nil && (this.parent.IsClosed() || this.ctx.Err() != nil)
 }
 
-func (this *service) registerTerminalConnection(transport terminalTransport, auth authorization.Authorization) (*terminalConnection, error) {
+func (this *service) registerTerminalConnection(transport terminalTransport, auth authorization.Authorization, webRevision ...*runtimeFlowRevision) (*terminalConnection, error) {
 	if isNilDependency(transport) || isNilDependency(transport.Lifetime()) || auth == nil || !auth.IsAuthorized() || auth.FindSession() == nil || auth.Flow() != auth.FindSession().Flow() {
 		return nil, errors.Permission.Newf("terminal connection requires a verified authorization and session")
 	}
@@ -62,6 +62,11 @@ func (this *service) registerTerminalConnection(transport terminalTransport, aut
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	releaseRuntime, err := this.retainRuntime()
+	if err != nil {
+		return nil, err
+	}
+	defer releaseRuntime()
 	if this.terminalAdmissions != nil {
 		release, ok := this.terminalAdmissions.register()
 		if !ok {
@@ -84,7 +89,7 @@ func (this *service) registerTerminalConnection(transport terminalTransport, aut
 	release := func() {}
 	if this.connectionLifecycle != nil {
 		var ok bool
-		release, ok = this.connectionLifecycle.register()
+		release, ok = this.registerConnectionHandler()
 		if !ok {
 			return nil, context.Canceled
 		}
@@ -112,6 +117,25 @@ func (this *service) registerTerminalConnection(transport terminalTransport, aut
 		return nil, errors.System.Newf("session repository does not support neutral connection activity")
 	}
 	result := &terminalConnection{terminalTransport: transport, service: this, authorization: auth, session: auth.FindSession(), lease: activity, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), release: release, stopShutdown: stopShutdown}
+	if this.runtime != nil {
+		var releaseGeneration func()
+		var err error
+		if len(webRevision) == 1 {
+			releaseGeneration, err = this.runtime.admitWeb(this.generation, webRevision[0], result)
+		} else {
+			releaseGeneration, err = this.runtime.admit(this.generation, result)
+		}
+		if err != nil {
+			_ = activity.Close()
+			return nil, err
+		}
+		releaseConnection := release
+		release = sync.OnceFunc(func() {
+			releaseGeneration()
+			releaseConnection()
+		})
+		result.release = release
+	}
 	result.ctx = context.WithValue(ctx, auditConnectionContextKey{}, result)
 	if err := result.check(false); err != nil {
 		cancel()
@@ -132,6 +156,9 @@ func (this *service) registerTerminalConnection(transport terminalTransport, aut
 
 func (this *service) validateTerminalAuthorization(base *environmentContext) error {
 	sess := base.Authorization().FindSession()
+	if this.runtime != nil && !this.runtime.sessionCompatible(this.generation, sess) {
+		return errors.Permission.Newf("terminal session access has been revoked or its environment revision is incompatible")
+	}
 	if valid, err := session.IsStillValid(base.Context(), sess); err != nil {
 		return err
 	} else if !valid {
@@ -209,6 +236,10 @@ func (this *terminalConnection) watch() {
 	defer func() { _ = this.Close() }()
 	for {
 		this.activityMutex.Lock()
+		if this.IsClosed() {
+			this.activityMutex.Unlock()
+			return
+		}
 		deadline, result, err := this.lease.Check(this.ctx)
 		this.activityMutex.Unlock()
 		if err != nil || result == session.ConnectionInterceptorResultDisposed || !deadline.IsZero() && !time.Now().Before(deadline) {

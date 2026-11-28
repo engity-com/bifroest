@@ -19,6 +19,7 @@ import {
     duplicateTab,
     logoutAccess,
     notification,
+    removeLocalSavedLogin,
     resumeSavedLogin,
     settledLogin,
 } from './workspace-ui.ts';
@@ -70,6 +71,7 @@ let stage = 'start';
 let primaryLogins = 0;
 let resumes = 0;
 let denied = 0;
+let restartDenied = 0;
 let groupDenied = 0;
 let groupRejection: (() => void) | undefined;
 let credentialLeak = false;
@@ -207,6 +209,13 @@ async function open(profile: string) {
         ) {
             expectedDenials.add(id);
             denied++;
+        } else if (
+            stage.startsWith('service-') &&
+            path.endsWith('/remember/resume') &&
+            response.status() === 401
+        ) {
+            expectedDenials.add(id);
+            restartDenied++;
         } else {
             failures.push(observation);
         }
@@ -428,6 +437,7 @@ try {
         await storedKeys(page);
         stage = `primary-${method}-native-probe`;
         await probeAndExit(page, `${method}-initial`, true);
+        const initialSession = required(executions.at(-1)).session;
         await closeProfile();
         stage = `profile-${method}`;
         page = await open(profile);
@@ -436,13 +446,53 @@ try {
         await connected(page);
         await storedKeys(page);
         await probeAndExit(page, `${method}-profile`);
+        assert.equal(required(executions.at(-1)).session, initialSession);
         await closeProfile();
         await checkpoint(`restart-${method}`);
         stage = `service-${method}`;
         page = await open(profile);
         await resumeSavedLogin(page);
+        await page.getByText('Access was denied.', { exact: false }).waitFor();
+        assert.equal(await page.getByRole('tab').count(), 0);
+        // Local authorization/environment providers have no complete restart
+        // ownership proof. Old RememberMe must fail closed, not adopt a new owner.
+        // A denial deliberately keeps local keys. Remove only this fixture's
+        // local selection explicitly before enrolling fresh access.
+        stage = `service-${method}-forget-local`;
+        await removeLocalSavedLogin(page);
+        await noStoredKeys(page);
+        stage = `service-${method}-choose-primary`;
+        await chooseLoginMethod(
+            page,
+            method === 'interactive' ? 'Interactive / device login' : 'Password login',
+        );
+        stage = `service-${method}-primary-fields`;
+        const freshDialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
+        await freshDialog.getByLabel('User name', { exact: true }).fill(fixture.user);
+        await freshDialog
+            .getByRole('checkbox', { name: 'Remember this browser', exact: true })
+            .check();
+        if (method === 'password') {
+            await freshDialog.getByLabel('Password', { exact: true }).fill(password);
+        }
+        stage = `service-${method}-primary-submit`;
+        await freshDialog.getByRole('button', { name: 'Sign in', exact: true }).click();
+        if (method === 'interactive') {
+            await answerAuthentication(page, password, { kind: 'prompt', echo: false });
+        }
+        stage = `service-${method}-primary-connected`;
         await connected(page);
-        await probeAndExit(page, `${method}-service`);
+        stage = `service-${method}-primary-enrollment`;
+        await notification(page, 'RememberMe setup confirmed for this browser.');
+        await storedKeys(page);
+        const previousSession = required(executions.at(-1)).session;
+        await probeAndExit(page, `${method}-service`, true);
+        const serviceSession = required(executions.at(-1)).session;
+        assert.notEqual(
+            serviceSession,
+            previousSession,
+            'fresh primary authentication after restart must create a new owned session',
+        );
         const proofsBefore = resumes;
         await checkpoint(`drop-group-${method}`);
         stage = `stale-group-${method}`;
@@ -469,6 +519,7 @@ try {
         await duplicateTab(page);
         await page.locator('[data-terminal-phase="connected"]').waitFor();
         await probeAndExit(page, `${method}-group-restored`);
+        assert.equal(required(executions.at(-1)).session, serviceSession);
         assert.equal(resumes, proofsBefore, 'restored admission must still use that same bearer');
         await closeProfile();
         await checkpoint(`disable-${method}`);
@@ -484,6 +535,7 @@ try {
         await connected(page);
         stage = `restored-${method}-probe`;
         await probeAndExit(page, `${method}-restored`);
+        assert.equal(required(executions.at(-1)).session, serviceSession);
         stage = `restored-${method}-logout`;
         await logoutAccess(page);
         stage = `restored-${method}-logout-notice`;
@@ -506,18 +558,19 @@ try {
     }
     stage = 'assert-summary';
     assert.equal(credentialLeak, false);
-    assert.equal(primaryLogins, 2);
+    assert.equal(primaryLogins, 4);
     assert.equal(resumes, 8);
     assert.equal(denied, 2);
+    assert.equal(restartDenied, 2);
     assert.equal(groupDenied, 2);
-    assert.equal(responses.length, 2);
+    assert.equal(responses.length, 4);
     stage = 'assert-transport-failures';
     assert(
         failures.every(
             (failure) =>
                 failure.type === 'requestfailed' &&
                 expectedDenials.has(failure.id) &&
-                failure.path?.endsWith('/remember/prove') &&
+                /\/remember\/(resume|prove)$/u.test(failure.path ?? '') &&
                 failure.error === 'net::ERR_ABORTED',
         ),
     );
@@ -525,7 +578,7 @@ try {
     assert.equal(executions.length, 10);
     assert.equal(new Set(executions.map((value) => value.connection)).size, 10);
     assert.equal(new Set(executions.map((value) => value.execution)).size, 10);
-    assert.equal(new Set(executions.map((value) => value.session)).size, 1);
+    assert.equal(new Set(executions.map((value) => value.session)).size, 3);
     console.error(
         JSON.stringify({
             tag: 'login-control-diagnostics',
@@ -533,7 +586,9 @@ try {
             loginControlProfiles,
         }),
     );
-    console.log(JSON.stringify({ executions, primaryLogins, resumes, denied, groupDenied }));
+    console.log(
+        JSON.stringify({ executions, primaryLogins, resumes, denied, restartDenied, groupDenied }),
+    );
 } catch (error) {
     // Playwright action errors can include a fill() argument. Never forward their
     // message/stack or raw request bodies, credentials, cookies or bearer frames.
@@ -554,6 +609,7 @@ try {
             primaryLogins,
             resumes,
             denied,
+            restartDenied,
             failures,
             responses,
             transportObservations,

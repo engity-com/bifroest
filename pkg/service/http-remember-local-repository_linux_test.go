@@ -123,25 +123,37 @@ func TestLocalRepositoryRememberMeUsesActualHttpsAndFreshNativeAccountPolicy(t *
 	}
 }
 
-func TestLocalRepositoryRememberMeSurvivesServiceRestartWithoutPrimaryCredentials(t *testing.T) {
+func TestLocalRepositoryRememberMeRejectsUnprovenOwnerAfterServiceRestart(t *testing.T) {
 	_, _ = prepareLocalRememberTestRepository(t)
 	configure := localRememberTestConfiguration(t)
 	first := newWebSocketFixture(t, webSocketWaitTask, configure)
 	key, public := rememberTestKey(t)
 	primary := first.login(t)
 	binding := rememberTestEnroll(t, localRememberHTTPSHandler(t, first), primary, public, key)
-	storage := first.svc.Configuration.Session.V.(*configuration.SessionFs).Storage
+	previous := first.svc.generation.snapshot.Configuration()
+	oldAccess := webTestAccess(t, first.svc, primary, "Work")
+	oldSession := oldAccess.auth.FindSession()
+	owner := runtimePersistenceOwner(t, first.svc, oldSession)
 	require.NoError(t, first.svc.environments.(*executionTestRepository).shutdown())
 	second := newWebSocketFixture(t, webSocketWaitTask, func(conf *configuration.Configuration) {
-		configure(conf)
-		conf.Session.V.(*configuration.SessionFs).Storage = storage
+		// Preserve every owner-relevant definition, not just session.storage.
+		// External local-account providers still have no complete restart proof.
+		conf.Session, conf.Flows, conf.Auditlogs = previous.Session, previous.Flows, previous.Auditlogs
 	})
 	handler := localRememberHTTPSHandler(t, second)
 	require.Equal(t, http.StatusUnauthorized, webTestRequest(handler, "POST", "app.example.org", webAPI+"access", `{"slug":"Work"}`, primary).Code)
-	resumed := rememberTestResume(t, handler, binding, key)
-	access := webTestAccess(t, second.svc, resumed, "Work")
-	require.Equal(t, binding.SessionID, access.auth.FindSession().Id().String())
-	require.Equal(t, 1, webSessionCount(t, second.svc))
+	require.Equal(t, http.StatusUnauthorized, rememberTestRequest(handler, "resume", "", binding.selector()).Code)
+	require.Nil(t, second.svc.runtime.sessionOwner(oldSession))
+	preserved, err := second.svc.sessions.FindBy(t.Context(), oldSession.Flow(), oldSession.Id(), nil)
+	require.NoError(t, err)
+	retainedOwner, err := preserved.(session.RuntimeOwnershipSession).RuntimeOwnership(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, owner, retainedOwner, "rejected resumption must not reassign ownership")
+	fresh := second.login(t)
+	access := webTestAccess(t, second.svc, fresh, "Work")
+	require.NotEqual(t, binding.SessionID, access.auth.FindSession().Id().String())
+	runtimePersistenceOwner(t, second.svc, access.auth.FindSession())
+	require.Equal(t, 2, webSessionCount(t, second.svc), "unproven session metadata remains preserved")
 }
 
 func TestBrowserLocalRepositoryPasswordRememberMeUiAcrossProfileRestart(t *testing.T) {

@@ -29,6 +29,8 @@ A shared volume does not turn this repository into a multi-writer session backen
 
 The storage must not overlap a configured audit log's journal, signing identity, encryption public-key file, or local SFTP target `known_hosts` and identity files. Unsafe paths are rejected during startup.
 
+Private runtime key/state files are stored beside the resolved storage directory; immutable ownership (`ro`) and revocation (`rr`) records are stored with each session. Include them in a consistent, stopped backup. An unfinished runtime-pending marker blocks startup rather than guessing which authority or revocation survived. Do not delete runtime files to bypass recovery checks. See the [restart contract and recovery boundary](../../setup/upgrade.md#subsequent-restarts-and-runtime-metadata).
+
 The default value is different, depending on the platform Bifröst runs on:
 
 * Linux: `/var/lib/engity/bifroest/sessions`
@@ -36,7 +38,7 @@ The default value is different, depending on the platform Bifröst runs on:
 * Windows: `C:\ProgramData\Engity\Bifroest\sessions`
 
 <<property("fileMode", "File Mode", "../data-type.md#file-mode", default="0600")>>
-All files/directories inside the session storage will be stored with this mode. Directories will always get the executable bit.
+Ordinary session metadata uses this mode. Directories also get the executable bit. Private ownership, revocation and runtime key/state files use restricted owner-only permissions independently of this setting.
 
 ## Examples
 

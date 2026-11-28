@@ -1,6 +1,7 @@
 package environment
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,10 @@ import (
 var sshCertificateKeyRequirement = crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}
 
 func EnsureSshCertificateAuthority(flow *configuration.Flow) (crypto.PrivateKey, string, error) {
+	return EnsureSshCertificateAuthorityContext(context.Background(), flow)
+}
+
+func EnsureSshCertificateAuthorityContext(ctx context.Context, flow *configuration.Flow) (crypto.PrivateKey, string, error) {
 	if flow == nil {
 		return nil, "", fmt.Errorf("nil flow")
 	}
@@ -23,7 +28,7 @@ func EnsureSshCertificateAuthority(flow *configuration.Flow) (crypto.PrivateKey,
 	if conf.Certificate == nil {
 		return nil, "", fmt.Errorf("flow %q does not configure an SSH certificate", flow.Name)
 	}
-	key, path, err := ensureSshCertificateKey(conf.Certificate.AuthorityIdentityFile, "certificate authority")
+	key, path, err := ensureSshCertificateKeyContext(ctx, conf.Certificate.AuthorityIdentityFile, "certificate authority")
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot ensure SSH certificate authority for flow %q: %w", flow.Name, err)
 	}
@@ -31,6 +36,10 @@ func EnsureSshCertificateAuthority(flow *configuration.Flow) (crypto.PrivateKey,
 }
 
 func EnsureSshCertificateIdentity(flow *configuration.Flow) (crypto.PrivateKey, string, error) {
+	return EnsureSshCertificateIdentityContext(context.Background(), flow)
+}
+
+func EnsureSshCertificateIdentityContext(ctx context.Context, flow *configuration.Flow) (crypto.PrivateKey, string, error) {
 	if flow == nil {
 		return nil, "", fmt.Errorf("nil flow")
 	}
@@ -41,7 +50,7 @@ func EnsureSshCertificateIdentity(flow *configuration.Flow) (crypto.PrivateKey, 
 	if conf.Certificate == nil {
 		return nil, "", fmt.Errorf("flow %q does not configure an SSH certificate", flow.Name)
 	}
-	key, path, err := ensureSshCertificateKey(conf.Certificate.IdentityFile, "certificate identity")
+	key, path, err := ensureSshCertificateKeyContext(ctx, conf.Certificate.IdentityFile, "certificate identity")
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot ensure SSH certificate identity for flow %q: %w", flow.Name, err)
 	}
@@ -61,20 +70,20 @@ func ValidateSshCertificateAuthority(authority crypto.PrivateKey, hostKeys []cry
 	return nil
 }
 
-func ensureSshCertificateIdentity(conf *configuration.EnvironmentSshCertificate) (crypto.PrivateKey, string, error) {
-	return ensureSshCertificateKey(conf.IdentityFile, "certificate identity")
+func ensureSshCertificateIdentity(ctx context.Context, conf *configuration.EnvironmentSshCertificate) (crypto.PrivateKey, string, error) {
+	return ensureSshCertificateKeyContext(ctx, conf.IdentityFile, "certificate identity")
 }
 
-func ensureSshCertificateAuthority(conf *configuration.EnvironmentSshCertificate) (crypto.PrivateKey, string, error) {
-	return ensureSshCertificateKey(conf.AuthorityIdentityFile, "certificate authority")
+func ensureSshCertificateAuthority(ctx context.Context, conf *configuration.EnvironmentSshCertificate) (crypto.PrivateKey, string, error) {
+	return ensureSshCertificateKeyContext(ctx, conf.AuthorityIdentityFile, "certificate authority")
 }
 
-func ensureSshCertificateKey(configured template.String, kind string) (crypto.PrivateKey, string, error) {
+func ensureSshCertificateKeyContext(ctx context.Context, configured template.String, kind string) (crypto.PrivateKey, string, error) {
 	path := strings.TrimSpace(configured.String())
 	if path == "" || !configured.IsHardCoded() {
 		return nil, "", fmt.Errorf("SSH %s identity file has to be a static non-empty path", kind)
 	}
-	key, err := crypto.EnsureKeyFile(path, &sshCertificateKeyRequirement, nil)
+	key, err := crypto.EnsureKeyFileContext(ctx, path, &sshCertificateKeyRequirement, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot ensure SSH %s identity file %q: %w", kind, path, err)
 	}

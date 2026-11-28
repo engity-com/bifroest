@@ -22,6 +22,11 @@ func (this *service) executeTerminal(conn *terminalConnection, stream terminal.S
 	if conn == nil || conn.service != this || conn.IsClosed() || isNilDependency(stream) || isNilDependency(stream.Context()) {
 		return -1, errors.Permission.Newf("terminal execution requires a live registered connection")
 	}
+	releaseRuntime, err := this.retainRuntime()
+	if err != nil {
+		return -1, err
+	}
+	defer releaseRuntime()
 	if !conn.used.CompareAndSwap(false, true) {
 		return -1, errors.Permission.Newf("terminal connection already has an execution")
 	}

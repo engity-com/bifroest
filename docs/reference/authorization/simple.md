@@ -63,7 +63,7 @@ Same as [`password`](#entry-property-password), but is receiving the value from 
 If both properties are defined and have values, [`password`](#entry-property-password) will be used.
 
 <<property("createPasswordFileIfAbsentOfType", "Password Type", "../data-type.md#password-type", id_prefix="entry-", heading=4)>>
-If this property is provided and [`passwordFile`](#entry-property-passwordFile) is defined, but does not exist, the file will be generated with a random password of this type.
+If this property is provided and [`passwordFile`](#entry-property-passwordFile) is defined, but does not exist, a random password of this type is generated when the authorization is initialized during normal process startup. Merely loading or validating the configuration does not create the file. Live-reload candidate preparation also refuses credential creation: provision the file beforehand or restart. Rejected candidates never replace an empty password file or delete a provisioned credential.
 
 The result will be printed into the startup logs of Bifröst.
 

@@ -47,6 +47,7 @@ type monitoringHTTPConnection struct {
 type monitoringRequestKey struct{}
 type monitoringRequest struct {
 	monitor   *serviceMonitoring
+	view      atomic.Pointer[serviceMonitoring]
 	flow      atomic.Pointer[configuration.FlowName]
 	streaming atomic.Bool
 	transfer  atomic.Bool
@@ -272,6 +273,9 @@ func (m *serviceMonitoring) observeHTTPRequest(next http.Handler) http.Handler {
 				knownFlow = *value
 			}
 			flow := m.flowLabels(knownFlow)[0]
+			if view := observation.view.Load(); view != nil {
+				flow = view.flowLabels(knownFlow)[0]
+			}
 			labels := []string{route, method, statusLabel, flow}
 			m.http.requests.WithLabelValues(labels...).Inc()
 			m.http.input.WithLabelValues(labels...).Add(float64(body.bytes.Load()))

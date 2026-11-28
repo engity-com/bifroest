@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
@@ -27,6 +28,13 @@ func TestDarwinServicePlist(t *testing.T) {
 	require.NoError(t, gos.WriteFile(filename, contents, 0600))
 	output, err := exec.Command("plutil", "-lint", filename).CombinedOutput()
 	require.NoError(t, err, string(output))
+}
+
+func TestDarwinServicePlistPersistsExplicitConfigurationWatch(t *testing.T) {
+	require.NotContains(t, string(darwinServicePlistContents(configuration.DefaultFilename)), "--watch")
+	for _, mode := range []configuration.WatchMode{configuration.WatchModePreserve, configuration.WatchModeReconnect, configuration.WatchModeReuse} {
+		require.Contains(t, string(darwinServicePlistContents(configuration.DefaultFilename, cliCommon.ServiceRunOptions{Watch: mode})), "<string>--watch="+mode.String()+"</string>")
+	}
 }
 
 func TestDarwinServicePlistDoesNotUseShell(t *testing.T) {

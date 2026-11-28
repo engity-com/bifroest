@@ -162,7 +162,11 @@ type AssociationRequest struct {
 	Remote             net.Remote
 	AuthorizationToken []byte
 	ResolveTarget      TargetResolver
-	Compatible         Predicate
+	// Eligible rejects an existing candidate before evaluating its target under
+	// the current environment definition. It supplements, never replaces,
+	// subject/validity checks, target equality and credential compatibility.
+	Eligible   Predicate
+	Compatible Predicate
 }
 
 // AssociatedRepository atomically selects or creates a persistently bound

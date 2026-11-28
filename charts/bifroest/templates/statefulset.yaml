@@ -20,7 +20,7 @@ spec:
       labels:
         {{- include "bifroest.selectorLabels" . | nindent 8 }}
       {{- $annotations := deepCopy .Values.podAnnotations }}
-      {{- if eq (include "bifroest.configurationSource" .) "inline" }}
+      {{- if and (eq (include "bifroest.watch" .) "off") (eq (include "bifroest.configurationSource" .) "inline") }}
         {{- $_ := set $annotations "checksum/configuration" (include "bifroest.configuration" . | sha256sum) }}
       {{- end }}
       {{- if .Values.monitoring.prometheusAnnotations }}
@@ -58,7 +58,12 @@ spec:
         - name: bifroest
           image: {{ include "bifroest.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: [run, --configuration=/etc/engity/bifroest/configuration.yaml]
+          args:
+            - run
+            - --configuration=/etc/engity/bifroest/configuration.yaml
+            {{- if ne (include "bifroest.watch" .) "off" }}
+            - --watch={{ include "bifroest.watch" . }}
+            {{- end }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           ports:

@@ -88,6 +88,27 @@ func TestProjectChartWithRealHelm(t *testing.T) {
 	helm := testHelm(t)
 	output, err := exec.CommandContext(t.Context(), helm, "lint", "--strict", projectSource()).CombinedOutput()
 	require.NoError(t, err, "%s", output)
+	t.Run("configuration-watch-modes", func(t *testing.T) {
+		for _, input := range []string{"preserve", "reconnect", "reuse", "off", "false", "'false'", "no", "'no'", "0", "'0'", "true"} {
+			objects := renderProject(t, helm, "watch: "+input+"\n")
+			state := projectObject[*appsv1.StatefulSet](t, objects)
+			var mode configuration.WatchMode
+			require.NoError(t, mode.Set(strings.Trim(input, "'")))
+			if mode.IsEnabled() {
+				require.Contains(t, state.Spec.Template.Spec.Containers[0].Args, "--watch="+mode.String())
+				require.NotContains(t, state.Spec.Template.Annotations, "checksum/configuration")
+			} else {
+				require.Len(t, state.Spec.Template.Spec.Containers[0].Args, 2)
+				require.Contains(t, state.Spec.Template.Annotations, "checksum/configuration")
+			}
+		}
+	})
+	t.Run("configuration-only-change-keeps-pod-template", func(t *testing.T) {
+		before := renderProject(t, helm)
+		after := renderProject(t, helm, "configuration:\n  startMessage: updated\n")
+		require.Equal(t, projectObject[*appsv1.StatefulSet](t, before).Spec.Template, projectObject[*appsv1.StatefulSet](t, after).Spec.Template)
+		require.NotEqual(t, projectConfiguration(t, before), projectConfiguration(t, after))
+	})
 
 	t.Run("defaults", func(t *testing.T) {
 		objects := renderProject(t, helm, "")
@@ -105,6 +126,8 @@ func TestProjectChartWithRealHelm(t *testing.T) {
 		require.Equal(t, "proof-bifroest", state.Name)
 		require.Equal(t, "bifroest", state.Labels["app.kubernetes.io/name"])
 		container := state.Spec.Template.Spec.Containers[0]
+		require.Contains(t, container.Args, "--watch=preserve")
+		require.NotContains(t, state.Spec.Template.Annotations, "checksum/configuration")
 		require.False(t, *container.SecurityContext.AllowPrivilegeEscalation)
 		require.True(t, *container.SecurityContext.ReadOnlyRootFilesystem)
 		require.Equal(t, []corev1.Capability{"ALL"}, container.SecurityContext.Capabilities.Drop)
@@ -175,7 +198,7 @@ extraVolumeMounts:
 		body, err := yaml.Marshal(defaults["configuration"])
 		require.NoError(t, err)
 		content := "# Preserve literal YAML and application templates.\n\nstartMessage: '{{ .session.id }}'\n" + string(body) + "\n# End of configuration.\n"
-		values, err := yaml.Marshal(map[string]any{"configuration": content})
+		values, err := yaml.Marshal(map[string]any{"configuration": content, "watch": "off"})
 		require.NoError(t, err)
 		objects := renderProject(t, helm, string(values))
 		require.Equal(t, content, string(projectConfiguration(t, objects)))
@@ -299,6 +322,9 @@ networkPolicy:
 func TestProjectChartRejectsUnsafeValuesWithRealHelm(t *testing.T) {
 	helm := testHelm(t)
 	for name, values := range map[string]string{
+		"unknown-watch":                    "watch: unknown\n",
+		"numeric-watch":                    "watch: 1\n",
+		"removed-watch-config":             "watchConfig: true\n",
 		"no-replicas":                      "replicaCount: 0\n",
 		"shared-claim":                     "persistence:\n  existingClaim: shared\n",
 		"shared-access-mode":               "persistence:\n  accessModes: [ReadWriteMany]\n",

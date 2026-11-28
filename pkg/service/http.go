@@ -72,6 +72,23 @@ func (this *service) prepareHTTPS() error {
 
 func (this *service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == https.SshTunnelPath {
+		if this.resources != nil {
+			selection, release, err := this.runtime.selectCurrent()
+			if err != nil {
+				webError(w, http.StatusServiceUnavailable, "web service unavailable")
+				return
+			}
+			defer release()
+			current, err := this.resources.generationService(selection.generation)
+			if err != nil {
+				webError(w, http.StatusServiceUnavailable, "web service unavailable")
+				return
+			}
+			if !current.Configuration.Http.IsEnabled() {
+				http.NotFound(w, r)
+				return
+			}
+		}
 		if this.sshTunnel != nil {
 			this.sshTunnel.ServeHTTP(w, r)
 		} else {
@@ -95,6 +112,9 @@ func (this *service) validateHTTPSKey(key stdcrypto.PublicKey) error {
 		if public.IsEqualTo(other) {
 			return fmt.Errorf("HTTPS/ACME key must be distinct from SSH, audit signing, SFTP and audit encryption keys")
 		}
+	}
+	if this.resources != nil {
+		return this.resources.validateTLSKey(key)
 	}
 	return nil
 }

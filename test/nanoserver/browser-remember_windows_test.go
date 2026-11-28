@@ -94,6 +94,7 @@ func exerciseNativePasswordRemember(t *testing.T, ctx context.Context, h windows
 		PrimaryLogins int                    `json:"primaryLogins"`
 		Resumes       int                    `json:"resumes"`
 		Denied        int                    `json:"denied"`
+		RestartDenied int                    `json:"restartDenied"`
 		GroupDenied   int                    `json:"groupDenied"`
 	}
 	checkpoints := []string{"restart-password", "drop-group-password", "add-group-password", "disable-password", "restore-password", "restart-interactive", "drop-group-interactive", "add-group-interactive", "disable-interactive", "restore-interactive"}
@@ -150,24 +151,27 @@ func exerciseNativePasswordRemember(t *testing.T, ctx context.Context, h windows
 	t.Logf("native password RememberMe transport diagnostics: %s", diagnostics.String())
 	require.Empty(t, checkpoints)
 	require.Len(t, results.Executions, 10)
-	require.Equal(t, 2, results.PrimaryLogins)
+	require.Equal(t, 4, results.PrimaryLogins)
 	require.Equal(t, 8, results.Resumes)
 	require.Equal(t, 2, results.Denied)
+	require.Equal(t, 2, results.RestartDenied)
 	require.Equal(t, 2, results.GroupDenied)
 	expectations := map[string]nativeExecutionExpectation{}
+	sessions := map[string]bool{}
 	for _, execution := range results.Executions {
 		requireNativeIdentity(t, fixture, execution, true)
 		require.Equal(t, "remember-owned", execution.Content)
-		require.Equal(t, results.Executions[0].Session, execution.Session)
+		sessions[execution.Session] = true
 		_, duplicate := expectations[execution.Connection]
 		require.False(t, duplicate)
-		expectations[execution.Connection] = nativeExecutionExpectation{task: audit.SessionTaskShell, pty: true, exit: nativeExit(7)}
+		expectations[execution.Connection] = nativeExecutionExpectation{task: audit.SessionTaskShell, pty: true, exit: nativeExit(7), session: execution.Session}
 	}
+	require.Len(t, sessions, 3, "each process restart requires fresh native session ownership")
 	h.mustDocker("exec", h.container, `C:\smoke\s4u-probe.exe`, "browser-stop")
 	require.Equal(t, "0", strings.TrimSpace(h.mustDocker("wait", h.container)))
 	for _, kind := range []string{"auditlog", "recordings", "sessions"} {
 		h.mustDocker("cp", h.container+":"+filepath.Join(fixture.Root, kind), filepath.Join(dir, kind))
 	}
 	verifyNativeWindowsEvidence(t, dir, fixture, results.Executions[0].Session, expectations)
-	t.Log("NATIVE_WINDOWS_PASSWORD_REMEMBER password/interactive primary once each; profile/service restart resume, same-bearer group removal/restoration, disabled-account denial, ten fresh executions and signed artifact correlation")
+	t.Log("NATIVE_WINDOWS_PASSWORD_REMEMBER password/interactive primary before and after service restart; profile resume, unproven restart ownership denial, same-bearer group removal/restoration, disabled-account denial, ten fresh executions and signed artifact correlation")
 }

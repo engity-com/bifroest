@@ -454,6 +454,18 @@ bar:XbarX:20453:10:100:::20818:`,
 	}
 }
 
+func TestEtcColonRepositoryReloadDoesNotBootstrapAccountDatabases(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "not-created")
+	repository := &EtcColonRepository{
+		PasswdFilename: filepath.Join(root, "passwd"), GroupFilename: filepath.Join(root, "group"),
+		ShadowFilename: filepath.Join(root, "shadow"), CreateFilesIfAbsent: common.P(true),
+	}
+	err := repository.Init(common.WithProviderBootstrapDisabled(t.Context()))
+	require.ErrorIs(t, err, common.ErrProviderBootstrapDisabled)
+	require.NoDirExists(t, root)
+	require.NoError(t, repository.Close())
+}
+
 func Test_EtcColonRepository_Init_withNonExistingFiles(t *testing.T) {
 	testlog.Hook(t)
 

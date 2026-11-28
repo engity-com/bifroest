@@ -107,7 +107,7 @@ func (oidcUndeliveredDeadlineContext) Deadline() (time.Time, bool) {
 }
 
 func TestOidcCodeAcceptanceChecksDeadlineBeforeCancellationIsDelivered(t *testing.T) {
-	web := &webService{ctx: t.Context()}
+	web := &webService{ctx: t.Context(), webState: &webState{}}
 	tx := &oidcBrowserTransaction{ctx: oidcUndeliveredDeadlineContext{context.Background()}, cancel: func() {}, phase: "authorizing", done: make(chan *authorization.OidcCodeResult, 1)}
 	attempt := &oidcAuthentication{transactions: []*oidcBrowserTransaction{tx}, current: tx}
 	require.NoError(t, tx.ctx.Err(), "simulate a scheduler that has not delivered cancellation")

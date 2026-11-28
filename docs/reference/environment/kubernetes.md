@@ -255,12 +255,7 @@ Each Pod accepts at most 64 simultaneous reverse-forwarded TCP connections acros
 On Linux, reverse TCP ports 1-1023 require a target user with UID 0 (for example `user: root` or `user: "0"`). An empty `user` setting is also permitted when the container runs with UID 0. An unresolvable user cannot authorize these ports. Port `0` and ports 1024 and above are unchanged. Windows Pods do not have this restriction.
 
 <<property("cleanOrphan", "bool", template_context="../context/container.md", default=True)>>
-While the [housekeeping iterations](../housekeeping.md) this environment will look for pods that can be inspected based on the provided [config](#property-config). Is there any container that does not belong to any flow of this Bifröst instance, it will be removed.
-
-This is useful to clean up old pods which are leftovers after you have changed the configuration of Bifröst.
-
-!!! warning
-     If multiple Bifröst installations are using the same [config](#property-config)/cluster, this should be disabled. Otherwise, each instance is removing the pods of the other instance.
+Unscoped automatic orphan scans are currently disabled by the service: flow/session labels and terminal Pod state alone do not prove runtime ownership, particularly after configuration changes or a restart. `cleanOrphan` does not authorize removing another instance's or an unassigned session's Pod. Cleanup through a known session owner remains active. Verify and reconcile truly orphaned Pods manually.
 
 ## Execution lifecycle and upgrades
 
@@ -270,7 +265,7 @@ On Windows, the command is resumed only after it has been assigned to Bifröst's
 
 On Linux, execution-scoped signaling requires Linux kernel 5.3 or later for `pidfd_open` and `pidfd_send_signal` support. The container's seccomp policy must allow both system calls; Bifröst rejects the signal request rather than falling back to an unsafe numeric PID when they are unavailable.
 
-Pods without matching declared lifecycle and IMP protocol revisions cannot be reused. A missing IMP protocol revision is treated as revision 1. A normal login rejects reuse without deleting the Pod, even when automatic cleanup is allowed. Housekeeping proactively disposes sessions with known incompatible metadata as a whole, even if still active and not expired, including their environments; explicit environment disposal also removes the Pod. Invalid metadata or failed inspections require operator review instead. Session storage is deleted only after the required cleanup succeeds and its retention period has elapsed.
+Pods without matching declared lifecycle and IMP protocol revisions cannot be reused. A missing IMP protocol revision is treated as revision 1. A normal login rejects reuse without deleting the Pod, even when automatic cleanup is allowed. For sessions with a known, retained runtime owner, housekeeping proactively disposes known incompatible sessions as a whole, even if still active and not expired, including their environments. Unassigned or unproven sessions are not cleaned through a newly configured provider; this includes all v0.7.8 sessions and Kubernetes sessions after a process restart without a supported ownership proof. Preserve them for operator review and follow the [upgrade contract](../../setup/upgrade.md#existing-sessions-no-import). Invalid metadata or failed inspections also require operator review. Session storage is deleted only after the required cleanup succeeds and its retention period has elapsed.
 
 !!! warning
     Removing the Pod can destroy Pod-local ephemeral data. Back up anything you need before upgrading or allowing disposal; persistent volumes retain their own lifecycle rules. Metadata alone is not a guarantee that the Pod or its data will be preserved.

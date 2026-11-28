@@ -42,8 +42,15 @@ type webPeerBudget struct {
 }
 
 type webService struct {
-	service         *service
-	ctx             context.Context
+	service *service
+	ctx     context.Context
+	*webState
+	request *webRequestLifetime
+}
+
+// One process owns all browser budgets and ephemeral state. Generation/request
+// views borrow this state, never copy its mutexes or restart its accounting.
+type webState struct {
 	cancel          context.CancelFunc
 	operations      *connectionLifecycle
 	mutex           sync.Mutex
@@ -70,7 +77,7 @@ type webService struct {
 
 func newWebService(svc *service) *webService {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt), socketPeers: make(map[netip.Addr]int), terminalTimings: defaultWebTerminalTimings(), remember: make(map[[32]byte]*webRememberAttempt), confirmations: make(map[[32]byte]*webManagementConfirmation)}
+	return &webService{service: svc, ctx: ctx, webState: &webState{cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt), socketPeers: make(map[netip.Addr]int), terminalTimings: defaultWebTerminalTimings(), remember: make(map[[32]byte]*webRememberAttempt), confirmations: make(map[[32]byte]*webManagementConfirmation)}}
 }
 
 func (this *webService) monitoring() *serviceMonitoring {
@@ -120,6 +127,7 @@ func (this *webService) pruneLocked(now time.Time) {
 		access.mutex.Unlock()
 		if remove {
 			delete(this.access, key)
+			access.releaseOwner()
 		}
 	}
 }
@@ -211,8 +219,12 @@ func (this *webService) Close() error {
 
 func (this *webService) stop() { this.operations.stop(); this.loginWorkers.stop(); this.cancel() }
 
-func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (this *webService) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	conf := this.service.Configuration.Http
+	if conf != nil && !conf.IsEnabled() {
+		http.NotFound(w, r)
+		return
+	}
 	loginRoute := r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, oidcBrowserPrefix) || strings.HasPrefix(r.URL.Path, webAPI+"oidc/")
 	if conf != nil && loginRoute && !conf.LoginFlow.IsEnabled() {
 		http.NotFound(w, r)
@@ -449,6 +461,11 @@ func (this *webService) completeAuthentication(w http.ResponseWriter, ctx contex
 	}
 	if auth.Flow() != auth.FindSession().Flow() || ctx.Err() != nil || conn.IsClosed() {
 		webError(w, http.StatusServiceUnavailable, "authentication unavailable")
+		return
+	}
+	if !this.flowCurrent(auth.Flow(), this.flowRevision(auth.Flow())) {
+		result = "denied"
+		webError(w, http.StatusUnauthorized, "configuration changed; authenticate again")
 		return
 	}
 	ctx = context.WithValue(ctx, auditConnectionContextKey{}, conn)

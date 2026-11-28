@@ -98,12 +98,12 @@ func newSshRepository(ctx context.Context, flow configuration.FlowName, conf *co
 	}
 	var certificateKeys *sshCertificateKeys
 	if conf.Certificate != nil {
-		subject, identityFile, err := ensureSshCertificateIdentity(conf.Certificate)
+		subject, identityFile, err := ensureSshCertificateIdentity(ctx, conf.Certificate)
 		if err != nil {
 			return nil, err
 		}
 		subjectSigner := subject.ToSsh()
-		authority, _, err := ensureSshCertificateAuthority(conf.Certificate)
+		authority, _, err := ensureSshCertificateAuthority(ctx, conf.Certificate)
 		if err != nil {
 			return nil, err
 		}

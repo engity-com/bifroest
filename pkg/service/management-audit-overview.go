@@ -31,6 +31,9 @@ func managementLongRead(path string) bool {
 }
 
 func (this *service) managementAuditCursorMAC(data []byte) ([]byte, error) {
+	if this.resources != nil && this.resources.owner != this {
+		return this.resources.owner.managementAuditCursorMAC(data)
+	}
 	this.managementCursorOnce.Do(func() { _, this.managementCursorErr = rand.Read(this.managementCursorKey[:]) })
 	if this.managementCursorErr != nil {
 		return nil, this.managementCursorErr
@@ -93,12 +96,16 @@ func (this *service) managementAuditEventPage(ctx context.Context, request proto
 		at, _ := protocol.RecordingTime(cursor.RecordedAt)
 		position = overviewKey(at, cursor.Sequence, cursor.Index, request.Sort != "recorded-asc")
 	}
-	this.auditOverviewOnce.Do(func() {
-		roots := make([]string, 0, len(this.Configuration.Auditlogs))
-		for _, conf := range this.Configuration.Auditlogs {
+	overviewOwner := this
+	if this.resources != nil {
+		overviewOwner = this.resources.owner
+	}
+	overviewOwner.auditOverviewOnce.Do(func() {
+		roots := make([]string, 0, len(overviewOwner.Configuration.Auditlogs))
+		for _, conf := range overviewOwner.Configuration.Auditlogs {
 			roots = append(roots, conf.Directory)
 		}
-		this.auditOverview = audit.NewOverviewReader(roots...)
+		overviewOwner.auditOverview = audit.NewOverviewReader(roots...)
 	})
 	var selected []readSlot[audit.OverviewRecord]
 	defer func() {
@@ -108,7 +115,7 @@ func (this *service) managementAuditEventPage(ctx context.Context, request proto
 	}()
 	filter := managementGridPredicate(request.GridFilter, request.Operation)
 	var total int64
-	err := this.auditOverview.Walk(ctx, journal, func(row audit.OverviewRecord) error {
+	err := overviewOwner.auditOverview.Walk(ctx, journal, func(row audit.OverviewRecord) error {
 		if request.ID != "" && !uuidtext.Equal(row.ID, request.ID) {
 			return nil
 		}

@@ -72,6 +72,12 @@ func (this managementSessionControl) performTarget(ctx context.Context, target s
 	if caller.Flow() == target.Flow() && caller.Id() == target.Id() {
 		return result, fmt.Errorf("cannot disconnect or dispose the session executing this management command; use a different management session")
 	}
+	targetOwner, current, release, err := this.service.retainSessionAction(ctx, target)
+	if err != nil {
+		return result, err
+	}
+	defer release()
+	target = current
 	result = model.SessionActionResult{ID: id.String(), Flow: target.Flow().String(), Action: "disconnect"}
 	startedName, completedName := audit.EventNameSessionDisconnectStarted, audit.EventNameSessionDisconnectCompleted
 	if dispose {
@@ -92,9 +98,9 @@ func (this managementSessionControl) performTarget(ctx context.Context, target s
 	record := func(event audit.Event) error {
 		result := this.service.recordFlowAudit(ctx, caller.Flow(), event)
 		callerLog, callerConfigured := this.service.flowAuditlogs[caller.Flow()]
-		targetLog, targetConfigured := this.service.flowAuditlogs[target.Flow()]
-		if target.Flow() != caller.Flow() && (!callerConfigured || !targetConfigured || callerLog != targetLog) {
-			result = errors.Join(result, this.service.recordFlowAudit(ctx, target.Flow(), event))
+		targetLog, targetConfigured := targetOwner.flowAuditlogs[target.Flow()]
+		if callerLog != targetLog || target.Flow() != caller.Flow() && (!callerConfigured || !targetConfigured) {
+			result = errors.Join(result, targetOwner.recordFlowAudit(ctx, target.Flow(), event))
 		}
 		return result
 	}
@@ -130,7 +136,7 @@ func (this managementSessionControl) performTarget(ctx context.Context, target s
 	// Only disposeWith may remove resources, after durable session disposal.
 	disconnectErr := this.service.sessionConnections.revoke(target.Flow(), target.Id())
 	this.service.oidcRefresh.stop(target)
-	_, err = this.service.houseKeeper.disposeWith(ctx, this.service.logger().With("session", target), target, false, nil, func() {
+	_, err = targetOwner.houseKeeper.disposeWith(ctx, targetOwner.logger().With("session", target), target, false, nil, func() {
 		disconnectErr = errors.Join(disconnectErr, this.service.sessionConnections.revoke(target.Flow(), target.Id()))
 	})
 	return result, errors.Join(disconnectErr, err)

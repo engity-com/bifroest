@@ -30,6 +30,17 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
   {{- end -}}
 {{- end -}}
 
+{{- define "bifroest.watch" -}}
+  {{- $watch := toString .Values.watch -}}
+  {{- if has $watch (list "off" "false" "no" "0") -}}
+    off
+  {{- else if eq $watch "true" -}}
+    preserve
+  {{- else -}}
+    {{- $watch -}}
+  {{- end -}}
+{{- end -}}
+
 {{- define "bifroest.configurationSource" -}}
   {{- if and (kindIs "string" .Values.configuration) (regexMatch "^(secret|configMap):" .Values.configuration) -}}
     {{- regexFind "^(secret|configMap)" .Values.configuration -}}

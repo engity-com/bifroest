@@ -54,6 +54,14 @@ func (this *service) execute(request *executionRequest) (exitCode int, rErr erro
 	if isNilDependency(request.connection) || request.connection.IsClosed() {
 		return fail(context.Canceled)
 	}
+	if this.runtime != nil && !this.runtime.allowFlow(this.generation, auth.Flow()) {
+		return fail(errors.Permission.Newf("execution flow has been removed"))
+	}
+	releaseRuntime, err := this.retainRuntime()
+	if err != nil {
+		return fail(err)
+	}
+	defer releaseRuntime()
 	if this.executions != nil {
 		release, ok := this.executions.register()
 		if !ok {
@@ -98,10 +106,11 @@ func (this *service) execute(request *executionRequest) (exitCode int, rErr erro
 		return fail(err)
 	}
 	req := request.source.Request(base)
-	env, err := this.environments.Ensure(req)
+	env, releaseEnvironment, err := this.ensureEnvironment(req)
 	if err != nil {
 		return fail(err)
 	}
+	defer releaseEnvironment()
 	defer common.KeepCloseError(&rErr, env)
 	management := this.isManagementFlow(auth.Flow())
 	if recordingLifecycle != nil && !management {

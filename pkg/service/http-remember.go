@@ -33,6 +33,7 @@ func (this *webBindingReference) matches(other *webBindingReference) bool {
 }
 
 type webRememberAttempt struct {
+	revision *runtimeFlowRevision
 	scope    webScope
 	peer     netip.Addr
 	purpose  string
@@ -162,6 +163,11 @@ func (this *webService) handleRemember(w http.ResponseWriter, r *http.Request, s
 		webError(w, 503, "browser binding unavailable")
 		return
 	}
+	attempt.revision = this.flowRevision(attempt.sess.Flow())
+	if purpose != "revoke" && !this.flowCurrent(attempt.sess.Flow(), attempt.revision) {
+		webError(w, http.StatusUnauthorized, "browser authentication denied")
+		return
+	}
 	proofContext := browserauth.Context{Purpose: purpose, Origin: scope.Origin, Slug: scope.Slug, Flow: attempt.sess.Flow().String(), SessionID: attempt.sess.Id().String(), Target: string(attempt.spec.Target)}
 	if purpose != "enroll" {
 		proofContext.BindingID = attempt.binding.ID
@@ -256,6 +262,10 @@ func (this *webService) proveRemember(w http.ResponseWriter, r *http.Request, sc
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if !this.flowCurrent(attempt.sess.Flow(), attempt.revision) {
+		webError(w, http.StatusUnauthorized, "browser authentication denied")
+		return
+	}
 	if attempt.purpose == "resume" {
 		if !this.service.rememberMePolicy(attempt.sess.Flow()).Allowed() {
 			webError(w, 401, "browser binding denied")
@@ -275,6 +285,9 @@ func (this *webService) proveRemember(w http.ResponseWriter, r *http.Request, sc
 		}
 		attempt.parent.mutex.Lock()
 		eligible := !attempt.parent.closed && attempt.parent.binding == nil && time.Now().Before(attempt.parent.expires)
+		if eligible {
+			eligible = this.useAccess(attempt.parent) == nil
+		}
 		attempt.parent.mutex.Unlock()
 		if !eligible {
 			webError(w, 401, "primary authentication ended")
@@ -320,17 +333,25 @@ func (this *webService) commitRemember(ctx context.Context, conn *webLoginConnec
 	if err := this.service.recordAuthenticationCompletedFor(ctx, conn, auth, audit.AuthenticationMethodBrowserRememberMe, audit.EventOutcomeSuccess, ""); err != nil {
 		return http.StatusServiceUnavailable, nil, "browser authentication unavailable"
 	}
+	if !this.flowCurrent(attempt.sess.Flow(), attempt.revision) {
+		return http.StatusUnauthorized, nil, "configuration changed; authenticate again"
+	}
 	if attempt.purpose == "enroll" {
 		parent := attempt.parent
 		parent.mutex.Lock()
 		defer parent.mutex.Unlock()
-		if parent.closed || parent.binding != nil || !time.Now().Before(parent.expires) {
+		if parent.closed || parent.binding != nil || !time.Now().Before(parent.expires) || !this.flowCurrent(parent.auth.Flow(), parent.revision) {
 			return http.StatusUnauthorized, nil, "primary authentication ended"
 		}
 		binding, err := store.CreateBrowserBinding(ctx, attempt.spec, this.rememberIdle())
 		if err != nil {
 			return http.StatusServiceUnavailable, nil, "browser binding unavailable"
 		}
+		unlock, err := this.lockPublication(parent.auth.Flow(), parent.revision)
+		if err != nil {
+			return http.StatusUnauthorized, nil, "primary authentication ended"
+		}
+		defer unlock()
 		parent.binding = &webBindingReference{attempt.sess, binding.ID}
 		return http.StatusCreated, webRememberBindingResponse(attempt.sess, binding), ""
 	}
@@ -378,7 +399,7 @@ func (this *webSessionResumeRequest) Sessions() session.Repository { return this
 
 func (this *webService) resumeBrowserAuthorization(conn *webLoginConnection, sess session.Session, spec session.BrowserBindingSpec) (authorization.Authorization, error) {
 	resumer, ok := this.service.authorizer.(authorization.SessionResumer)
-	if !ok || spec.Credential.Validate() != nil || this.service.sessionConnections.isRevoked(sess) {
+	if !ok || spec.Credential.Validate() != nil || this.service.sessionConnections.isRevoked(sess) || !this.service.loginSessionCompatible(sess) {
 		return nil, authorization.ErrSessionResumeDenied
 	}
 	if spec.Credential.Method == "public-key" {

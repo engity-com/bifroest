@@ -222,7 +222,7 @@ func (this *webService) managementConnection(w http.ResponseWriter, r *http.Requ
 	}
 	transport := &managementHTTPConnection{webLoginConnection: base, controller: http.NewResponseController(w)}
 	if parent, ok := r.Context().Value(webManagementContextKey{}).(*webManagementChannel); ok {
-		if parent.access != access || parent.conn.check(false) != nil {
+		if parent.access != access || parent.conn.check(false) != nil || !this.flowCurrent(access.auth.Flow(), access.revision) {
 			_ = transport.Close()
 			return nil, nil, errWebAccessDenied
 		}

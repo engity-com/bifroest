@@ -331,6 +331,8 @@ func TestACMEWithEmbeddedPebbleIssuesRenewsAndRestartsOffline(t *testing.T) {
 		return manager
 	}
 	first := prepare(source)
+	initialCounts := ca.counts()
+	require.EqualValues(t, len(domains), initialCounts.Challenges, "every new identifier must complete TLS-ALPN-01 validation")
 	account, err := source.store.read("account.pem")
 	require.NoError(t, err)
 	before := make(map[string]string)
@@ -371,7 +373,10 @@ func TestACMEWithEmbeddedPebbleIssuesRenewsAndRestartsOffline(t *testing.T) {
 	counts := ca.counts()
 	require.EqualValues(t, 1, counts.Registrations)
 	require.EqualValues(t, 4, counts.Finalizations)
-	require.EqualValues(t, 4, counts.Challenges, "Pebble must validate every TLS-ALPN-01 challenge")
+	// Pebble's inclusive random comparison can reuse a valid authorization
+	// even with PEBBLE_AUTHZREUSE=0. Renewal may legitimately need no new proof.
+	require.GreaterOrEqual(t, counts.Challenges, initialCounts.Challenges)
+	require.LessOrEqual(t, counts.Challenges, counts.Finalizations)
 	require.NoError(t, source.Close())
 	ca.Close()
 	restarted, err := newACME(conf, ca.client, time.Now)

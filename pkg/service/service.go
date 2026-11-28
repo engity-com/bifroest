@@ -25,7 +25,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
-	"github.com/engity-com/bifroest/pkg/cli"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -51,13 +51,17 @@ const remoteAuditDeliveryShutdownTimeout = 5 * time.Second
 type Service struct {
 	Configuration configuration.Configuration
 	Version       sys.Version
+	Watch         configuration.WatchMode
 
 	Logger log.Logger
 }
 
 // Run starts a service with the configuration selected by the executable CLI.
 func Run(ctx context.Context, conf configuration.Configuration, version sys.Version) error {
-	return (&Service{Configuration: conf, Version: version}).Run(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return (&Service{Configuration: conf, Version: version, Watch: cliCommon.ServiceRunOptionsFromContext(ctx).Watch}).Run(ctx)
 }
 
 func (this *Service) isProblematicError(err error) bool {
@@ -91,6 +95,12 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := this.Watch.Validate(); err != nil {
+		return err
+	}
+	if this.Watch.IsEnabled() && this.Configuration.Filename == "" {
+		return fmt.Errorf("--watch requires a configuration file source")
+	}
 
 	if msg, err := this.Configuration.StartMessage.Render(noopContext{}); err != nil {
 		return err
@@ -105,9 +115,12 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	if err := this.Configuration.Validate(); err != nil {
 		return err
 	}
-	monitor, err := newServiceMonitoring(this.Configuration)
+	monitor, err := newServiceMonitoring(this.Configuration, this.Watch.IsEnabled())
 	if err != nil {
 		return errors.Config.Newf("cannot prepare monitoring: %w", err)
+	}
+	if monitor != nil {
+		monitor.reload.enabled.Set(monitoringBool(this.Watch.IsEnabled()))
 	}
 	if monitor != nil && monitor.endpoint != nil {
 		if !this.Configuration.Monitoring.Tls.IsEnabled() {
@@ -136,7 +149,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	if shutdown.forced {
 		handlerDrainTimeout = 0
 	}
-	if !svc.connectionLifecycle.wait(handlerDrainTimeout) {
+	if !svc.handlerLifecycle().wait(handlerDrainTimeout) {
 		drainErr := fmt.Errorf("SSH connection handlers did not finish within the graceful shutdown timeout of %s", gracefulShutdownTimeout)
 		this.logger().WithError(drainErr).Warn("delaying service cleanup until SSH connection handlers finish")
 		if this.isProblematicError(shutdown.cause) {
@@ -144,7 +157,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		}
 		closeService = false
 		go func() {
-			svc.connectionLifecycle.waitUntilDrained()
+			svc.handlerLifecycle().waitUntilDrained()
 			if err := svc.Close(); err != nil {
 				this.logger().WithError(err).Error("cannot close service after SSH connection handlers finished")
 			}
@@ -184,13 +197,23 @@ func (this *Service) prepareContextWithMonitoring(ctx context.Context, monitor *
 	fail := func(err error) (*service, error) {
 		return nil, fmt.Errorf("cannot prepare service: %w", err)
 	}
-	if err := this.Configuration.Validate(); err != nil {
+	snapshot, err := configuration.NewSnapshot(this.Configuration)
+	if err != nil {
 		return fail(err)
 	}
+	sourceConfiguration := snapshot.Configuration()
+	// Runtime objects must never borrow the caller's mutable configuration.
+	owner := *this
+	owner.Configuration = snapshot.Configuration()
+	this = &owner
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}
 	if err := validateRuntimePaths(&this.Configuration); err != nil {
+		return fail(err)
+	}
+	snapshot, err = configuration.NewSnapshot(this.Configuration)
+	if err != nil {
 		return fail(err)
 	}
 
@@ -202,52 +225,29 @@ func (this *Service) prepareContextWithMonitoring(ctx context.Context, monitor *
 		terminalAdmissions:  newConnectionLifecycle(),
 	}
 	svc.terminalContext, svc.cancelTerminals = context.WithCancel(context.Background())
+	svc.runtime = newRuntimeGenerations(snapshot, this.Watch)
+	svc.resources = newRuntimeResources(svc)
+	svc.generationClosed = make(chan struct{})
+	svc.runtime.activeConnections = &svc.activeConnections
+	svc.generation = svc.runtime.initial
+	svc.sessionConnections.runtime = svc.runtime
 	resourcesOwnedByService := false
 	defer func(prepared *service) {
 		if !resourcesOwnedByService {
 			err = goerrors.Join(err, prepared.close(false))
 		}
 	}(svc)
-	svc.managementApplication, err = cli.NewApplication[clibase.NoOptions](this.Version, "Bifröst SSH management.", nil).
-		Create()
-	if err != nil {
-		return fail(err)
+	if this.Watch.IsEnabled() {
+		svc.configurationReloader, err = configuration.NewFileReloader(sourceConfiguration, svc.applyConfigurationReload)
+		if err != nil {
+			return fail(err)
+		}
 	}
-
-	svc.knownFlows = make(map[configuration.FlowName]struct{})
-	for _, flow := range this.Configuration.Flows {
-		svc.knownFlows[flow.Name] = struct{}{}
-	}
-
-	sshKeysExchanges, err := this.Configuration.Ssh.Keys.Exchanges.MarshalTexts()
-	if err != nil {
-		return fail(err)
-	}
-	svc.resolvedSshKeysExchanges = make([]string, len(sshKeysExchanges))
-	for i, n := range sshKeysExchanges {
-		svc.resolvedSshKeysExchanges[i] = string(n)
-	}
-	sshMessagesAuthentications, err := this.Configuration.Ssh.Messages.Authentications.MarshalTexts()
-	if err != nil {
-		return fail(err)
-	}
-	svc.resolvedSshMessagesAuthentications = make([]string, len(sshMessagesAuthentications))
-	for i, n := range sshMessagesAuthentications {
-		svc.resolvedSshMessagesAuthentications[i] = string(n)
-	}
-	sshMessagesCiphers, err := this.Configuration.Ssh.Messages.Ciphers.MarshalTexts()
-	if err != nil {
-		return fail(err)
-	}
-	svc.resolvedSshMessagesCiphers = make([]string, len(sshMessagesCiphers))
-	for i, n := range sshMessagesCiphers {
-		svc.resolvedSshMessagesCiphers[i] = string(n)
-	}
-
 	hostSigners, err := this.loadHostPrivateKeys()
 	if err != nil {
 		return fail(err)
 	}
+	svc.resources.hostKeys = hostSigners
 	if err := this.prepareAudit(ctx, svc, hostSigners); err != nil {
 		return fail(err)
 	}
@@ -274,21 +274,23 @@ func (this *Service) prepareContextWithMonitoring(ctx context.Context, monitor *
 		return fail(err)
 	}
 	svc.sessions = sessions
-	authorizerContext := ctx
-	if svc.web != nil {
-		authorizerContext = authorization.WithOidcBrowser(ctx, svc.web)
-	}
-	authorizer, err := authorization.NewAuthorizerFacadeWithObserver(authorizerContext, &this.Configuration.Flows, svc.observeFlowAuthorization)
+	previousRuntime, err := svc.openRuntimePersistence(ctx)
 	if err != nil {
 		return fail(err)
 	}
-	svc.authorizer = authorizer
-	svc.authorizerDiscovery = authorizer
-	environments, err := environment.NewRepositoryFacadeWithManagement(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners, svc.sessions, svc)
-	if err != nil {
+	svc.resources.environments = environment.NewFacadeFactory(svc.alternatives, svc.imp, hostSigners, svc.sessions)
+	if err := svc.prepareGenerationProviders(ctx); err != nil {
 		return fail(err)
 	}
-	svc.environments = environments
+	if err := svc.initializeRuntimePersistence(ctx, previousRuntime); err != nil {
+		return fail(err)
+	}
+	if err := svc.registerRuntimeSessions(ctx); err != nil {
+		return fail(err)
+	}
+	// Publish immutable manager state before housekeeping can stop or inspect
+	// refresh workers. Persisted-session discovery still follows housekeeping.
+	svc.oidcRefresh.start(svc)
 	if err = svc.houseKeeper.init(svc); err != nil {
 		return fail(err)
 	}
@@ -313,7 +315,7 @@ func (this *Service) prepareContextWithMonitoring(ctx context.Context, monitor *
 			}
 		}
 	}
-	if err := svc.oidcRefresh.init(svc); err != nil {
+	if err := svc.oidcRefresh.discover(); err != nil {
 		return fail(err)
 	}
 
@@ -322,6 +324,7 @@ func (this *Service) prepareContextWithMonitoring(ctx context.Context, monitor *
 		svc.sessionConnections.observeAges = true
 	}
 	resourcesOwnedByService = true
+	svc.resources.track(svc)
 	return svc, nil
 }
 
@@ -345,7 +348,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 
 	serverPrivateKeys := hostSigners
 	if this.Configuration.Http.IsListenerEnabled() || len(this.Configuration.Auditlogs) > 0 || this.Configuration.Monitoring.IsEnabled() && this.Configuration.Monitoring.Tls.IsEnabled() {
-		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
+		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(ctx, this.Configuration.Flows, hostSigners)
 		if err != nil {
 			return err
 		}
@@ -437,13 +440,27 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 	svc.httpsForbiddenKeys = append(svc.httpsForbiddenKeys, auditIdentityPublicKeys...)
 	svc.httpsForbiddenKeys = append(svc.httpsForbiddenKeys, sftpIdentityPublicKeys...)
+	svc.auditProtectedKeys = append(svc.auditProtectedKeys, auditIdentityPublicKeys...)
+	svc.auditProtectedKeys = append(svc.auditProtectedKeys, sftpIdentityPublicKeys...)
 	resolvedEncryptionPublicKeys := make(map[configuration.AuditlogName]crypto.PublicKeys, len(this.Configuration.Auditlogs))
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
+		// Keep available configured recipients protected even when best-effort
+		// disabled this log earlier. Reloaded providers must not reuse them.
+		encryptionPublicKey, encryptionErr := audit.ResolveEncryptionPublicKey(auditlog.EncryptionPublicKey, auditlog.EncryptionPublicKeyFile)
+		if err := encryptionPublicKey.ForEach(func(_ int, key gossh.PublicKey, _ string) (bool, error) {
+			public, err := crypto.PublicKeyFromSsh(key)
+			if err != nil {
+				return false, err
+			}
+			svc.auditProtectedKeys = append(svc.auditProtectedKeys, public)
+			return true, nil
+		}); err != nil {
+			return fmt.Errorf("cannot inspect configured audit encryption recipients: %w", err)
+		}
 		if svc.auditlogDisabled(auditlog.Name) {
 			continue
 		}
-		encryptionPublicKey, encryptionErr := audit.ResolveEncryptionPublicKey(auditlog.EncryptionPublicKey, auditlog.EncryptionPublicKeyFile)
 		if encryptionErr != nil {
 			if err := svc.handleAuditlogFailure(auditlog.Name, "encryption", encryptionErr); err != nil {
 				return err
@@ -578,17 +595,8 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	if err := svc.replaySessionRecordingLifecycles(ctx); err != nil {
 		return err
 	}
-	for _, flow := range this.Configuration.Flows {
-		if flow.Auditlog == "" {
-			svc.flowAuditRecorders[flow.Name] = audit.NewNoopRecorder()
-		} else {
-			recorder, found := svc.auditRecorders[flow.Auditlog]
-			if !found || recorder == nil {
-				return errors.Config.Newf("flow %q references unknown auditlog %q", flow.Name, flow.Auditlog)
-			}
-			svc.flowAuditRecorders[flow.Name] = recorder
-		}
-		svc.flowAuditlogs[flow.Name] = flow.Auditlog
+	if err := svc.bindFlowAudit(); err != nil {
+		return err
 	}
 	svc.unauthenticatedAudit = newUnauthenticatedAuditLimiter(this.Configuration.Ssh.UnauthenticatedAudit)
 	if svc.monitoring != nil {
@@ -599,6 +607,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 
 func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateKeys []crypto.PrivateKey) (err error) {
 	sshConfig := &svc.Configuration.Ssh
+	svc.forwardHandler.ListenCallback = svc.listenReverseTCP
 	this.configureServer(svc, &svc.server, hostPrivateKeys)
 	if sshConfig.ProxyProtocol {
 		svc.server.ProxyProtocol = new(essh.ProxyProtocolConfig)
@@ -640,34 +649,8 @@ func (this *Service) configureServer(svc *service, server *essh.Server, hostPriv
 		}
 	}
 	server.GracefulShutdownHandler = essh.NewGracefulShutdownTimeoutHandler(sshConfig.GracefulShutdownTimeout.Native())
-	server.ServerConfigCallback = svc.createNewServerConfig
 	server.ErrorHandler = svc.handleSshError
-	server.ConnCallback = svc.onNewConnConnection
-	server.ConnectionFailedCallback = svc.onConnectionFailed
-	server.DisconnectCallback = svc.onDisconnected
-	server.Handler = svc.handleSshShellSession
-	server.PtyCallback = svc.onPtyRequest
-	server.SessionRequestCallback = svc.onSessionRequest
-	server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
-	svc.forwardHandler.ListenCallback = svc.listenReverseTCP
-	server.PublicKeyHandler = svc.handlePublicKey
-	server.PasswordHandler = svc.handlePassword
-	server.KeyboardInteractiveHandler = svc.handleKeyboardInteractiveChallenge
-	server.BannerHandler = svc.handleBanner
-	server.AgentForwardingCallback = svc.onAgentForwardingRequested
-	server.RequestHandlers = map[string]essh.RequestHandler{
-		"keepalive@openssh.com": func(response essh.RequestResponseWriter, _ *essh.Request) error { return response.Accept(nil) },
-		"tcpip-forward":         svc.forwardHandler.HandleSSHRequest,
-		"cancel-tcpip-forward":  svc.forwardHandler.HandleSSHRequest,
-	}
-	server.ChannelHandlers = map[string]essh.ChannelHandler{
-		"session":      svc.handleNewSshSession,
-		"direct-tcpip": svc.handleNewDirectTcpIp,
-	}
-	server.DeferredSubsystemHandlers = map[string]essh.DeferredSubsystemHandler{
-		"sftp":    svc.handleSshSubsystemSession,
-		"default": svc.handleSshSubsystemSession,
-	}
+	svc.configureSshDispatch(server)
 	server.HostSigners = make([]essh.Signer, len(hostPrivateKeys))
 	for i, v := range hostPrivateKeys {
 		server.HostSigners[i] = v.ToSsh()
@@ -715,7 +698,7 @@ func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
 	return EnsureHostPrivateKeys(&this.Configuration)
 }
 
-func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys []crypto.PrivateKey) ([]crypto.PrivateKey, error) {
+func loadStaticPrivateKeysForAuditEncryption(ctx context.Context, flows configuration.Flows, hostKeys []crypto.PrivateKey) ([]crypto.PrivateKey, error) {
 	result := append([]crypto.PrivateKey(nil), hostKeys...)
 	for index := range flows {
 		flow := &flows[index]
@@ -724,11 +707,11 @@ func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys
 			continue
 		}
 		if sshEnvironment.Certificate != nil {
-			identity, _, err := environment.EnsureSshCertificateIdentity(flow)
+			identity, _, err := environment.EnsureSshCertificateIdentityContext(ctx, flow)
 			if err != nil {
 				return nil, err
 			}
-			authority, _, err := environment.EnsureSshCertificateAuthority(flow)
+			authority, _, err := environment.EnsureSshCertificateAuthorityContext(ctx, flow)
 			if err != nil {
 				return nil, err
 			}
@@ -740,7 +723,7 @@ func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys
 				continue
 			}
 			path := strings.TrimSpace(configuredPath.String())
-			key, err := crypto.EnsureKeyFile(path, nil, nil)
+			key, err := crypto.EnsureKeyFileContext(ctx, path, nil, nil)
 			if err != nil {
 				return nil, fmt.Errorf("cannot load static SSH identity of flow %q: %w", flow.Name, err)
 			}
@@ -871,9 +854,22 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 
 type service struct {
 	*Service
-	monitoring            *serviceMonitoring
-	web                   *webService
-	managementApplication *clibase.Application[clibase.NoOptions]
+	configurationReloader     *configuration.FileReloader
+	configurationWatchOptions configuration.FileWatchOptions
+	resources                 *runtimeResources
+	generationClosed          chan struct{}
+	providerCancel            context.CancelFunc
+	generationCloseOnce       sync.Once
+	generationCloseErr        error
+	workCloseOnce             sync.Once
+	workCloseErr              error
+	closeOnce                 sync.Once
+	closeErr                  error
+	runtime                   *runtimeGenerations
+	generation                *runtimeGeneration
+	monitoring                *serviceMonitoring
+	web                       *webService
+	managementApplication     *clibase.Application[clibase.NoOptions]
 
 	auditIdentities          map[configuration.AuditlogName]*audit.Identity
 	auditRecorders           map[configuration.AuditlogName]audit.Recorder
@@ -915,6 +911,7 @@ type service struct {
 	tlsChallenges            transporttls.Registry
 	tlsChallengeAddresses    bnet.NetAddresses
 	httpsForbiddenKeys       []crypto.PublicKey
+	auditProtectedKeys       []crypto.PublicKey
 	forwardHandler           essh.ForwardedTCPHandler
 
 	knownFlows map[configuration.FlowName]struct{}
@@ -955,12 +952,6 @@ func (this *service) connection(ctx essh.Context) *connection {
 }
 
 func (this *service) createNewServerConfig(ctx essh.Context, _ gonet.Conn, target *gossh.ServerConfig) error {
-	release, ok := this.connectionLifecycle.register()
-	if !ok {
-		return context.Canceled
-	}
-	ctx.SetValue(connectionLifecycleCtxKey, release)
-
 	target.ServerVersion = "SSH-2.0-Engity-Bifroest_" + this.Version.Version()
 	target.MaxAuthTries = sshMaxAuthTries(this.Configuration.Ssh.MaxAuthTries)
 	target.Config = gossh.Config{
@@ -1008,6 +999,28 @@ func (this *service) Close() (rErr error) {
 
 // Failed preparation owns the same resources but must not start remote flushing.
 func (this *service) close(flush bool) (rErr error) {
+	if this.resources != nil {
+		if this.resources.owner != this {
+			if !this.runtime.discard(this.generation) {
+				return fmt.Errorf("cannot discard an activated runtime generation")
+			}
+			<-this.generationClosed
+			return this.generationCloseErr
+		}
+		return this.resources.close(flush)
+	}
+	this.closeOnce.Do(func() { this.closeErr = this.closeUnshared(flush) })
+	return this.closeErr
+}
+
+// Lean test/adaptor services may own all of their dependencies directly.
+func (this *service) closeUnshared(flush bool) (rErr error) {
+	if this.runtime != nil {
+		this.runtime.stop()
+		// Deferred first: workers/providers close before session ownership is
+		// forgotten. This never removes persisted sessions.
+		defer this.runtime.forgetSessions()
+	}
 	if this.sshTunnel != nil {
 		_ = this.sshTunnel.Close()
 	}
@@ -1052,6 +1065,17 @@ func (this *service) close(flush bool) (rErr error) {
 		defer common.KeepCloseError(&rErr, this.https)
 	}
 	defer func() { rErr = goerrors.Join(rErr, this.closeTLS()) }()
+	return rErr
+}
+
+func (this *service) closeSharedResources(flush bool) (rErr error) {
+	if this.auditOverview != nil {
+		rErr = goerrors.Join(rErr, this.auditOverview.Close())
+	}
+	common.KeepCloseError(&rErr, this.sessions)
+	common.KeepCloseError(&rErr, this.imp)
+	common.KeepCloseError(&rErr, this.alternatives)
+	rErr = goerrors.Join(rErr, this.closeRecording(flush), this.closeAudit(flush))
 	return rErr
 }
 

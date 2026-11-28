@@ -86,6 +86,22 @@ export async function resumeSavedLogin(page: Page) {
     await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
 }
 
+export async function removeLocalSavedLogin(page: Page) {
+    await page.getByRole('button', { name: 'Saved access options', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Remove local data only', exact: true }).click();
+    const confirmation = page.getByRole('dialog', {
+        name: 'Remove local data only?',
+        exact: true,
+    });
+    await confirmation.getByRole('button', { name: 'Remove local data only', exact: true }).click();
+    await confirmation.waitFor({ state: 'hidden' });
+    await page
+        .getByText('Local setup removed. No server logout or revocation was claimed.', {
+            exact: true,
+        })
+        .waitFor();
+}
+
 export async function activeAccess(page: Page, user: string) {
     await page.waitForFunction(
         (user) =>

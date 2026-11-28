@@ -233,8 +233,16 @@ export async function exerciseLoginOptions(page: Page) {
     await input('anonymous-execution-started');
     assert.equal(sockets, 3);
     assert.deepEqual(logins[2], { method: 'password', slug: 'Public', user: '' });
-    await page.getByRole('tab', { name: 'Terminal 1 alice', exact: true }).click();
+    // Three mobile tabs can scroll the first one out of view. Use the tab
+    // list's Home navigation rather than competing with its selected-tab scroll.
+    await page.getByRole('tab', { selected: true }).press('Home');
     await activeAccess(page, 'alice');
+    assert.equal(
+        await page
+            .getByRole('tab', { name: 'Terminal 1 alice', exact: true })
+            .getAttribute('aria-selected'),
+        'true',
+    );
     await page.getByRole('button', { name: 'New connection', exact: true }).click();
     await chooseSlug('Public');
     assert.equal(await dialog().getByRole('radio', { name: 'Saved', exact: true }).count(), 0);

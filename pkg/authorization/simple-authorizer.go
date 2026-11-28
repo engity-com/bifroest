@@ -10,6 +10,7 @@ import (
 	log "github.com/echocat/slf4g"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -28,7 +29,7 @@ type SimpleAuthorizer struct {
 	Logger log.Logger
 }
 
-func NewSimple(_ context.Context, flow configuration.FlowName, conf *configuration.AuthorizationSimple) (*SimpleAuthorizer, error) {
+func NewSimple(ctx context.Context, flow configuration.FlowName, conf *configuration.AuthorizationSimple) (*SimpleAuthorizer, error) {
 	fail := func(err error) (*SimpleAuthorizer, error) {
 		return nil, err
 	}
@@ -38,6 +39,12 @@ func NewSimple(_ context.Context, flow configuration.FlowName, conf *configurati
 
 	if conf == nil {
 		return failf("nil configuration")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
 	}
 
 	result := SimpleAuthorizer{
@@ -50,7 +57,65 @@ func NewSimple(_ context.Context, flow configuration.FlowName, conf *configurati
 	}
 	result.trustedUserCAs = trustedUserCAs
 
+	for index := range conf.Entries {
+		if err := ctx.Err(); err != nil {
+			return fail(err)
+		}
+		if err := prepareSimplePasswordFileContext(ctx, &conf.Entries[index]); err != nil {
+			return failf("cannot prepare password file for user %q: %w", conf.Entries[index].Name, err)
+		}
+	}
+
 	return &result, nil
+}
+
+// Credential creation belongs to startup/bootstrap, never YAML validation or
+// preparation of a possibly rejected live-reload candidate.
+func prepareSimplePasswordFile(entry *configuration.AuthorizationSimpleEntry) error {
+	return prepareSimplePasswordFileContext(context.Background(), entry)
+}
+
+func prepareSimplePasswordFileContext(ctx context.Context, entry *configuration.AuthorizationSimpleEntry) error {
+	kind := entry.CreatePasswordFileIfAbsentOfType
+	if kind == nil || entry.Name == "" || entry.PasswordFile.IsZero() {
+		return nil
+	}
+	if err := kind.Validate(); err != nil {
+		return err
+	}
+	password, err := entry.PasswordFile.GetPassword()
+	if err != nil {
+		return &simplePasswordFileError{err}
+	}
+	if !password.IsZero() {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !common.ProviderBootstrapAllowed(ctx) {
+		return fmt.Errorf("%w: password file %q", common.ErrProviderBootstrapDisabled, entry.PasswordFile)
+	}
+	decoded, encoded, err := kind.Generate(nil)
+	if err != nil {
+		return err
+	}
+	if err := entry.PasswordFile.SetPassword(encoded); err != nil {
+		return err
+	}
+	log.With("name", entry.Name).
+		With("password", string(decoded)).
+		Warn("new password created and saved for user")
+	return nil
+}
+
+// Password parsers can include the rejected content in their diagnostics.
+// Preserve typed causes without exposing that content in startup errors.
+type simplePasswordFileError struct{ cause error }
+
+func (*simplePasswordFileError) Error() string { return "illegal password file (***redacted***)" }
+func (this *simplePasswordFileError) Unwrap() error {
+	return this.cause
 }
 
 func (*SimpleAuthorizer) SupportsUserCertificates() {}

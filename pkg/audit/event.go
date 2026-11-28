@@ -46,6 +46,7 @@ const (
 	EventReasonRateLimit                               = evidence.EventReasonRateLimit
 	EventReasonJournalReserve                          = evidence.EventReasonJournalReserve
 	EventReasonSessionIncompatible                     = evidence.EventReasonSessionIncompatible
+	EventReasonSessionRevoked                          = evidence.EventReasonSessionRevoked
 	EventReasonOIDCAccessLost                          = evidence.EventReasonOIDCAccessLost
 	EventReasonAuthorizedKeyPolicy                     = evidence.EventReasonAuthorizedKeyPolicy
 	EventReasonEnvironmentPolicy                       = evidence.EventReasonEnvironmentPolicy

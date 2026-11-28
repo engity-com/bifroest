@@ -67,23 +67,34 @@ func TestDocumentedHelmInstallationAndOptionalValues(t *testing.T) {
 	monitoring := documentedChartValues(t, "guides/monitoring.md", "monitoring-values.yaml")
 	acme := documentedChartValues(t, "setup/in-kubernetes.md", "acme-values.yaml")
 	replicas := documentedChartValues(t, "setup/operations.md", "Additional Helm values")
+	watch := documentedChartValues(t, "setup/operations.md", "Live reload Helm values")
 	for _, test := range []struct {
 		name                string
 		values              []string
 		ingress, monitoring bool
 		replicas            int32
+		watch               bool
 	}{
-		{"ssh-gateway", []string{gateway}, false, false, 1},
-		{"http-ingress", []string{gateway, ingress}, true, false, 1},
-		{"prometheus", []string{gateway, monitoring}, false, true, 1},
-		{"ingress-and-prometheus", []string{gateway, ingress, monitoring}, true, true, 1},
-		{"two-replicas", []string{gateway, ingress, monitoring, replicas}, true, true, 2},
-		{"direct-acme", []string{gateway, acme}, false, false, 1},
+		{"ssh-gateway", []string{gateway}, false, false, 1, true},
+		{"http-ingress", []string{gateway, ingress}, true, false, 1, true},
+		{"prometheus", []string{gateway, monitoring}, false, true, 1, true},
+		{"ingress-and-prometheus", []string{gateway, ingress, monitoring}, true, true, 1, true},
+		{"two-replicas", []string{gateway, ingress, monitoring, replicas}, true, true, 2, true},
+		{"live-reload", []string{gateway, watch}, false, false, 1, true},
+		{"watch-off", []string{gateway, "watch: off\n"}, false, false, 1, false},
+		{"direct-acme", []string{gateway, acme}, false, false, 1, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			objects := renderProject(t, helm, test.values...)
 			state := projectObject[*appsv1.StatefulSet](t, objects)
 			require.Equal(t, test.replicas, *state.Spec.Replicas)
+			if test.watch {
+				require.Contains(t, state.Spec.Template.Spec.Containers[0].Args, "--watch=preserve")
+				require.NotContains(t, state.Spec.Template.Annotations, "checksum/configuration")
+			} else {
+				require.Len(t, state.Spec.Template.Spec.Containers[0].Args, 2)
+				require.Contains(t, state.Spec.Template.Annotations, "checksum/configuration")
+			}
 			require.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, state.Spec.Template.Spec.SecurityContext.SeccompProfile.Type)
 			require.Len(t, state.Spec.VolumeClaimTemplates, 1)
 			require.Equal(t, "10Gi", state.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests.Storage().String())

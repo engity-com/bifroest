@@ -14,8 +14,12 @@ async function render(
     pathname = '/setup/upgrade/',
     navigation = 'material',
     ok = true,
+    baseline,
 ) {
-    const headline = { dataset: { release }, textContent: 'Upgrade from previous minor versions' };
+    const headline = {
+        dataset: { release, baseline },
+        textContent: 'Upgrade from previous minor versions',
+    };
     const hint = {
         hidden: true,
         append(...parts) {
@@ -72,12 +76,30 @@ async function render(
     return { headline, hint, requests };
 }
 
-test('upgrade page uses release macro without hardcoded release numbers', () => {
+test('upgrade page pins only the published compatibility baseline and uses a target release macro', () => {
     assert.match(
         page,
-        /^# .*\{: #upgrade-notes \.upgrade-notes-headline data-release="<<release_name\(\)>>" \}/m,
+        /^# .*\{: #upgrade-notes \.upgrade-notes-headline data-release="<<release_name\(\)>>" data-baseline="v0\.7\.8" \}/m,
     );
-    assert.doesNotMatch(page, /v\d+\.\d+\.\d+/);
+    assert.ok([...page.matchAll(/v\d+\.\d+\.\d+/g)].every(([version]) => version === 'v0.7.8'));
+    assert.match(page, /Sessions created by v0\.7\.8 are not imported or reused/);
+});
+
+test('an explicit baseline is not widened or replaced by predecessor metadata', async () => {
+    const { headline, hint, requests } = await render(
+        'v1.0.0-beta1',
+        {
+            previous: 'v0.7.7',
+            previousMajorMinor: 'v0.7',
+        },
+        '/v1.0.0-beta1/setup/upgrade/',
+        'material',
+        true,
+        'v0.7.8',
+    );
+    assert.equal(headline.textContent, 'Upgrade from v0.7.8 to v1.0.0-beta1');
+    assert.deepEqual(requests, []);
+    assert.equal(hint.hidden, true);
 });
 
 test('root uses release metadata for predecessor, even when missing from filtered index', async () => {

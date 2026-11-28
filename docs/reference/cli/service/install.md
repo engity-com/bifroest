@@ -36,6 +36,9 @@ The Windows default is `C:\ProgramData\Engity\Bifroest\configuration.yaml`.
 <<flag("start", "bool", default=True, id_prefix="service-install-", heading=3)>>
 Starts the service immediately after installation. Use `--start=false` to install it without starting it. The default behavior is equivalent to subsequently calling [`bifroest service start`](start.md).
 
+<<flag("watch", "off | preserve | reconnect | reuse", default="off", id_prefix="service-install-", heading=3)>>
+Stores the selected [watch mode](../serve.md#run-flag-watch) in the Windows SCM command line or macOS LaunchDaemon arguments. A bare flag selects `preserve`. `false`, `no` and `0` disable watching. Reinstalling without this flag disables watching; it is not a Bifröst YAML setting.
+
 ## Output
 
 Registers the platform service and, by default, starts it. Errors are logged to stderr and return a nonzero exit status. There is no structured `--format` output.

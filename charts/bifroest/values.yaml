@@ -2,6 +2,10 @@ replicaCount: 1
 nameOverride: ""
 fullnameOverride: ""
 
+# Same modes as --watch: off, preserve, reconnect, reuse. Off aliases: false, no, 0.
+# Supported changes reload without a Pod rollout; unsupported changes need one.
+watch: preserve
+
 image:
   repository: ghcr.io/engity-com/bifroest
   # Empty uses the chart's appVersion. Existing edition tags remain usable.

@@ -141,7 +141,7 @@ Use a Secret for configuration containing credentials. Inline configuration is a
 | `monitoring.addresses` | `[":9090"]`, matching the chart's `monitoring.port` |
 | `monitoring.allowedRemoteHosts` | Permit the actual node/probe sources; `[]` relies on cluster network restrictions |
 
-Enable monitoring TLS only together with `monitoring.scheme: HTTPS` and the necessary certificate mounts. Keep other writable repositories and generated keys under `/var/lib/engity/bifroest`; `/etc/engity/bifroest` and the root filesystem are read-only. Changes to external configuration require a [Pod rollout](operations.md#helm-releases-and-persistent-state).
+Enable monitoring TLS only together with `monitoring.scheme: HTTPS` and the necessary certificate mounts. Keep other writable repositories and generated keys under `/var/lib/engity/bifroest`; `/etc/engity/bifroest` and the root filesystem are read-only. The chart defaults to [live reload](operations.md#reload-configuration-without-restarting) with `watch: preserve`. Unsupported changes require a deliberate [Pod rollout](operations.md#helm-releases-and-persistent-state). If you select `watch: off`, external configuration changes also require an explicit rollout.
 
 ## HTTP ingress {: #http-ingress }
 
@@ -238,6 +238,7 @@ Use `helm show values oci://ghcr.io/engity-com/bifroest --version <version>` for
 | Helm value | Default | When to change it |
 | --- | --- | --- |
 | `replicaCount` | `1` | After planning [instance routing and separate state](operations.md#helm-releases-and-persistent-state) |
+| `watch` | `preserve` | Select [live-reload behavior](operations.md#reload-configuration-without-restarting): `off`, `preserve`, `reconnect` or `reuse`; `false`, `no` and `0` mean `off` |
 | `persistence.size` | `10Gi` per Pod | Choose the initial capacity for sessions and configured evidence repositories; [resize storage separately](operations.md#update-configuration-or-upgrade) |
 | `persistence.storageClass` | `""` (cluster default) | Select your provisioner; `"-"` requests no StorageClass |
 | `persistence.accessModes` | `[ReadWriteOnce]` | Use `ReadWriteOncePod` if supported by your storage |

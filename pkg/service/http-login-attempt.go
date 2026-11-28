@@ -38,6 +38,8 @@ const (
 // A worker retains its slot until it has actually returned, including after
 // cancellation. A misbehaving authorizer cannot create unbounded detached work.
 type webLoginAttempt struct {
+	web                *webService
+	releaseRuntime     func()
 	oidcAuthentication *oidcAuthentication
 	loginMethod        authorization.LoginMethod
 	conn               *webLoginConnection
@@ -94,6 +96,22 @@ func webAttemptKey(token string) ([32]byte, bool) {
 }
 
 func (this *webService) startAttempt(w http.ResponseWriter, r *http.Request, scope webScope, peer netip.Addr, user string, method audit.AuthenticationMethod, key ssh.PublicKey) (string, *webLoginAttempt, error) {
+	releaseResult, err := this.service.retainRuntime()
+	if err != nil {
+		return "", nil, err
+	}
+	releaseWorker, err := this.service.retainRuntime()
+	if err != nil {
+		releaseResult()
+		return "", nil, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			releaseResult()
+			releaseWorker()
+		}
+	}()
 	var nonce [32]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", nil, err
@@ -131,7 +149,7 @@ func (this *webService) startAttempt(w http.ResponseWriter, r *http.Request, sco
 		// value never enters a JSON response, ticket, URL or browser JavaScript.
 		oidcAttempt.initiator = oidcInitiatorBinding{name: "__Host-bifroest-oidc-init-" + base64.RawURLEncoding.EncodeToString(index[:]), hash: sha256.Sum256([]byte(initiatorCookie))}
 	}
-	attempt := &webLoginAttempt{oidcAuthentication: oidcAttempt, loginMethod: loginMethod, conn: conn, peer: peer, method: method, primaryKey: key, expires: expires, stopContext: cancel, stopShutdown: stopShutdown, done: make(chan struct{})}
+	attempt := &webLoginAttempt{web: this.forService(this.service), releaseRuntime: sync.OnceFunc(releaseResult), oidcAuthentication: oidcAttempt, loginMethod: loginMethod, conn: conn, peer: peer, method: method, primaryKey: key, expires: expires, stopContext: cancel, stopShutdown: stopShutdown, done: make(chan struct{})}
 	attempt.idle = time.AfterFunc(webAttemptIdleTimeout, cancel)
 	this.mutex.Lock()
 	this.pruneLocked(time.Now())
@@ -161,8 +179,10 @@ func (this *webService) startAttempt(w http.ResponseWriter, r *http.Request, sco
 	if loginMethod == authorization.LoginMethodOidc {
 		setOidcCookie(w, oidcAttempt.initiator.name, initiatorCookie, expires)
 	}
+	started = true
 	go func() {
 		defer release()
+		defer releaseWorker()
 		var auth authorization.Authorization
 		var err error
 		if key == nil {
@@ -197,6 +217,9 @@ func (this *webLoginAttempt) stop() {
 	this.stopShutdown()
 	this.stopContext()
 	_ = this.conn.Close()
+	if this.releaseRuntime != nil {
+		this.releaseRuntime()
+	}
 }
 
 func (this *webService) findAttempt(scope webScope, peer netip.Addr, token string) (*webLoginAttempt, error) {
@@ -410,7 +433,12 @@ func (this *webService) pollAttempt(w http.ResponseWriter, r *http.Request, atte
 		defer cancel()
 		stop := context.AfterFunc(attempt.conn.Lifetime(), cancel)
 		defer stop()
-		this.completeAuthentication(w, ctx, attempt.conn, auth, attempt.method, attempt.primaryKey)
+		view := this
+		if attempt.web != nil {
+			view = attempt.web.forService(attempt.web.service)
+			view.request = this.request
+		}
+		view.completeAuthentication(w, ctx, attempt.conn, auth, attempt.method, attempt.primaryKey)
 	default:
 		pending := attempt.pending("")
 		attempt.mutex.Unlock()

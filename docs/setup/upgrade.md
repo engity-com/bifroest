@@ -1,8 +1,8 @@
 ---
-description: Actions and behavior to consider when upgrading Bifröst from v0.7.x.
+description: Actions and behavior to consider when upgrading Bifröst from v0.7.8.
 ---
 
-# Upgrade from v0.7.x to <<release_name()>> {: #upgrade-notes .upgrade-notes-headline data-release="<<release_name()>>" }
+# Upgrade from v0.7.8 to <<release_name()>> {: #upgrade-notes .upgrade-notes-headline data-release="<<release_name()>>" data-baseline="v0.7.8" }
 
 These notes apply to an upgrade from any v0.7.x release to <<release_name()>>. They document upgrade actions and behavior changes, not release notes. Patch releases within the new series share these upgrade notes.
 
@@ -14,13 +14,37 @@ These notes apply to an upgrade from any v0.7.x release to <<release_name()>>. T
 
 The filesystem session repository now holds an exclusive operating-system lock. Before starting the upgraded Bifröst, stop every process using the same storage: only one process can open it at a time.
 
-The lock file, `.<storage-name>.bifroest.lock`, is created next to the **resolved** storage directory. Check that its parent directory and any existing lock file are writable. Storage symlinks resolve to the same lock; a symlink pointing to a missing directory prevents startup. Existing session metadata needs no conversion.
+The lock file, `.<storage-name>.bifroest.lock`, is created next to the **resolved** storage directory. Check that its parent directory and any existing lock file are writable. Storage symlinks resolve to the same lock; a symlink pointing to a missing directory prevents startup.
+
+### Existing sessions: no import
+
+**Sessions created by v0.7.8 are not imported or reused.** They lack the persistent runtime ownership required by the upgraded service. All users must authenticate again; old saved SSH access and browser RememberMe bindings cannot bypass this boundary.
+
+Rejecting an old session does **not** authorize cleanup of its container, Pod, local account, home directory, processes or data using the new configuration. Unassigned session records and backend resources remain preserved for operator review, not automatic migration or disposal.
+
+Unscoped automatic orphan scans are disabled: flow labels, missing session IDs or a terminated Pod do not prove ownership. `cleanOrphan` does not override this boundary. Cleanup of sessions with a known runtime owner remains active.
+
+Before upgrading:
+
+1. Identify backend resources belonging to old sessions and back up needed workload data. Complete any required cleanup using the old version, or plan to verify ownership and reconcile resources manually afterward.
+2. Stop the old instance and back up configuration and session storage.
+3. Start the upgraded service and test a fresh login over every enabled transport. A new login creates a new session rather than adopting an old backend.
+
+### Subsequent restarts and runtime metadata
+
+Sessions created by the upgraded service can be reused after a restart only when their immutable ownership matches the accepted runtime state. Credential, identity, account and target checks still apply. Changed or unproven ownership denies reuse without assigning cleanup to a new provider.
+
+The current restart proof supports `dummy` and `management` environments with `none`, inline `simple`, or OIDC authorization. OIDC also compares resolved client settings and discovery metadata. External environment providers, `local`/`htpasswd` authorization and file-backed `simple` credentials or user CAs currently require a new session after every process restart, even if their configuration text is unchanged. Their old resources are not automatically reconciled through the new provider.
+
+Keep the private `.<storage-name>.bifroest-runtime-key` and `.<storage-name>.bifroest-runtime-state` files beside the resolved storage directory in a consistent, stopped backup. Session ownership (`ro`) and revocation (`rr`) records are part of session storage; these files contain no additional provider configuration copies. Protect the comparison key like other credentials.
+
+A leftover `.<storage-name>.bifroest-runtime-pending` file indicates an unfinished authority or revocation write and **blocks startup**. Invalid state or a missing key for existing state also blocks startup. Do not delete individual runtime files to force recovery: inspect the failure and restore a complete, consistent backup, reconciling later revocations, or deliberately use new empty session storage and require fresh authentication. Preserve and reconcile old backend resources separately.
 
 ### `session.maxTimeout`
 
 If set, the maximum lifetime now counts from session creation rather than last access. Check active sessions and this setting before upgrading: some sessions may expire earlier or immediately.
 
-Sessions saved by the previous minor series have no creation timestamp. For them, Bifröst uses the modification time of the session metadata file, which may differ from the actual creation time.
+This does not make v0.7.8 sessions eligible for import.
 
 ## Flows
 
@@ -32,15 +56,15 @@ Flow names must be unique, may not be `.` or `..`, and may not exceed 255 bytes.
 
 ### RememberMe
 
-RememberMe now defaults to `forbidden` for `local`, `simple`, `htpasswd` and `oidcDeviceAuth`. Previously remembered SSH keys cannot resume access unless you enable it. Set `rememberMe: allowedAndEnabledByDefault` on the relevant authorization to retain automatic registration and reuse. Ordinary configured SSH keys remain valid. See [RememberMe](../reference/data-type.md#rememberme).
+RememberMe now defaults to `forbidden` for `local`, `simple`, `htpasswd` and `oidcDeviceAuth`. To allow registration and reuse for **new sessions**, set `rememberMe: allowedAndEnabledByDefault` on the relevant authorization. This does not import remembered access from v0.7.8 or override restart ownership checks. Ordinary configured SSH keys remain valid. See [RememberMe](../reference/data-type.md#rememberme).
 
 ### OIDC Device Auth
 
 OIDC now defaults to `forceDisposeSessionOn: lostAccess` and `refreshToken.mode: proactive`. Before upgrading, ensure your identity provider issues refresh tokens for the configured client and scopes (often requiring `offline_access`). Otherwise, new OIDC logins will be rejected. Bifröst does not add provider-specific scopes automatically.
 
-Previously created sessions without a refresh token or recorded identity will be disposed when the upgraded service starts. Users of those sessions must authenticate again; running work may be interrupted.
+The existing-session boundary above also applies to OIDC: old grants are not adopted or disposed through the new provider. Users must authenticate again.
 
-To temporarily retain the previous behavior while configuring your identity provider, explicitly set **both** properties in the OIDC authorization:
+To temporarily allow **new logins** without refresh-token enforcement while configuring your identity provider, explicitly set **both** properties in the OIDC authorization. This does not preserve or import old sessions:
 
 ```yaml
 forceDisposeSessionOn: never
@@ -69,9 +93,9 @@ Previously, SSH-client and `authorized_keys` variables could override authorizat
 
 #### Existing IMP sessions
 
-Containers and Pods from the previous minor series lack the required execution-lifecycle and IMP protocol revision metadata. A new login cannot reuse them and does not remove them. Housekeeping also checks active sessions: when it can establish incompatibility, it attempts to dispose the **entire session**, including the container or Pod and authorization. Running work may be interrupted.
+Containers and Pods belonging to v0.7.8 sessions are not adopted. Neither a new login nor housekeeping may delete them using an unproven provider assignment. Changing lifecycle labels or annotations does not establish ownership or upgrade the IMP binary.
 
-You do not generally need to remove old resources yourself. **Before starting the upgraded Bifröst**, back up any needed container-local data, anonymous Docker volumes, and Pod-local ephemeral data. Persistent volumes have their own lifecycle. Invalid metadata, ambiguous ownership, and inspection or disposal failures require operator review. Changing resource metadata does not upgrade the IMP binary. See the [Docker](../reference/environment/docker.md#execution-lifecycle-and-upgrades) and [Kubernetes](../reference/environment/kubernetes.md#execution-lifecycle-and-upgrades) details.
+**Before starting the upgraded Bifröst**, back up any needed container-local data, anonymous Docker volumes, and Pod-local ephemeral data. Complete cleanup with the old version or reconcile verified resources manually; do not expect the upgraded service to dispose them automatically. Persistent volumes have their own lifecycle. See the [Docker](../reference/environment/docker.md#execution-lifecycle-and-upgrades) and [Kubernetes](../reference/environment/kubernetes.md#execution-lifecycle-and-upgrades) details.
 
 #### Linux execution-scoped signals
 
@@ -81,13 +105,13 @@ If you use execution-scoped signals in Linux containers or Pods, check for Linux
 
 #### Existing session cleanup tokens
 
-Persisted `local` tokens from the previous minor series have no cleanup-token `version` field. Their account, home-directory, and process cleanup decisions are **not migrated**. Successful disposal can remove a token while leaving the account, home directory, and processes behind; the old identity snapshot is insufficient for safe deletion.
+Persisted `local` sessions from v0.7.8 and their cleanup decisions are **not imported**. The upgraded service does not assign their accounts, home directories or processes to the new environment provider.
 
 Before upgrading, identify accounts whose cleanup relied on existing sessions. Complete any needed cleanup before the upgrade, or afterward verify account identity, home ownership, and active sessions before reconciling them manually. Changing the new configuration cannot restore cleanup decisions in old tokens.
 
 #### `environment.dispose.*`
 
-The previous minor series accepted these Linux `local` settings, which the upgraded version rejects if explicitly set:
+v0.7.8 accepted these Linux `local` settings, which the upgraded version rejects if explicitly set:
 
 - `dispose.deleteManagedUser`: review [`deleteOnDispose`](../reference/environment/local.md#property-deleteOnDispose).
 - `dispose.deleteManagedUserHomeDir`: review [`deleteHomeTogetherWithUser`](../reference/environment/local.md#property-deleteHomeTogetherWithUser).
@@ -119,4 +143,4 @@ For OIDC, map a verified claim to the account name; an email address is not auto
 
 #### Service identity and existing sessions
 
-Run Bifröst as LocalSystem for S4U session process startup, and check the selected account's permissions. S4U does not provide that account's network credentials or EFS access; check workloads that previously relied on the service identity. Saved Windows `local` sessions without a bound account SID cannot be reused and require reauthorization.
+Run Bifröst as LocalSystem for S4U session process startup, and check the selected account's permissions. S4U does not provide that account's network credentials or EFS access; check workloads that previously relied on the service identity. The no-import boundary also applies to all v0.7.8 Windows `local` sessions.

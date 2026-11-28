@@ -25,6 +25,7 @@ import (
 type WindowsService struct {
 	Version sys.Version
 	Run     cliCommon.ServiceRunner
+	Options cliCommon.ServiceRunOptions
 
 	Name   string
 	Conf   configuration.Configuration
@@ -42,6 +43,7 @@ type opts struct {
 type installOpts struct {
 	opts
 	configuration.Opts
+	cliCommon.ServiceRunOptions
 	Start       bool   `flag:"start" default:"true" description:"If enabled, the service will be started afterwards, automatically."`
 	DisplayName string `flag:"displayName" default:"Engity's Bifröst" description:"Defines how this service is displayed in the service listings."`
 }
@@ -63,6 +65,7 @@ func CreateCommands(version sys.Version) []cli.CommandRequirementLike {
 							Version: version,
 							Name:    o.ServiceName,
 							Conf:    *o.Configuration,
+							Options: o.ServiceRunOptions,
 						}).install(o.Start, true, o.DisplayName)
 					}),
 				cli.NewCommand[removeOpts]("remove", "Removes the service.").
@@ -125,7 +128,7 @@ func (this *WindowsService) Execute(_ []string, r <-chan svc.ChangeRequest, chan
 	if this.Run == nil {
 		return fail(fmt.Errorf("service runner is unavailable"))
 	}
-	if err := this.Run(ctx, this.Conf, this.Version); err != nil {
+	if err := this.Run(cliCommon.WithServiceRunOptions(ctx, this.Options), this.Conf, this.Version); err != nil {
 		return fail(err)
 	}
 
@@ -174,7 +177,7 @@ func (this *WindowsService) install(start, retry bool, displayName string) error
 		DelayedAutoStart: true,
 	}
 	success := false
-	s, err := m.CreateService(this.Name, exe, mgrCfg, windowsServiceArguments(confFn, this.Name)...)
+	s, err := m.CreateService(this.Name, exe, mgrCfg, windowsServiceArguments(confFn, this.Name, this.Options)...)
 	if err != nil {
 		return err
 	}
@@ -202,8 +205,12 @@ func (this *WindowsService) install(start, retry bool, displayName string) error
 	return nil
 }
 
-func windowsServiceArguments(configurationFile, name string) []string {
-	return []string{"run", "--configuration=" + configurationFile, "--internal.windowsService", "--serviceName=" + name}
+func windowsServiceArguments(configurationFile, name string, options ...cliCommon.ServiceRunOptions) []string {
+	result := []string{"run", "--configuration=" + configurationFile, "--internal.windowsService", "--serviceName=" + name}
+	if len(options) > 0 && options[0].Watch.IsEnabled() {
+		result = append(result, "--watch="+options[0].Watch.String())
+	}
+	return result
 }
 
 func (this *WindowsService) remove(stop bool) error {
