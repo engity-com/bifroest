@@ -50,7 +50,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openwall/yescrypt-go v1.0.0
 	github.com/otiai10/copy v1.14.1
-	github.com/pkg/sftp v1.13.12
+	github.com/pkg/sftp v1.13.13
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/common v0.74.0
