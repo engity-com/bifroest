@@ -340,7 +340,7 @@ func TestNeutralServiceShutdownDrainsExecutionBeforeClosingRecordingRepository(t
 	started, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
+	defer unblock() // Release before fixture cleanup also on assertion failure.
 	svc, _, root := executionTestFixture(t, func(task environment.TerminalTask) (int, error) {
 		close(started)
 		<-task.Context().Done()
@@ -354,7 +354,11 @@ func TestNeutralServiceShutdownDrainsExecutionBeforeClosingRecordingRepository(t
 	go func() { _, err := svc.executeTerminal(conn, transport.stream, true); runDone <- err }()
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case err := <-runDone:
+		t.Fatalf("execution ended before reaching the environment: %v", err)
+	// Startup durably writes a recording checkpoint. This is an I/O watchdog,
+	// not a latency assertion about the shutdown operation tested below.
+	case <-time.After(10 * time.Second):
 		t.Fatal("execution did not start")
 	}
 	closeDone := make(chan error, 1)

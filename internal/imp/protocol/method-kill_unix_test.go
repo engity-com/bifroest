@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	log "github.com/echocat/slf4g"
@@ -160,24 +161,30 @@ func TestKillProcessesWaitsForProcessRegistration(t *testing.T) {
 }
 
 func TestKillProcessesWaitsLongerThanFormerRegistrationTimeout(t *testing.T) {
-	stateId := connection.MustNewId()
-	directory := t.TempDir()
-	pidPath := filepath.Join(directory, stateId.String()+".pid")
-	identity, err := processIdentityForTest(os.Getpid())
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(pidPath, []byte(execution.StateStartingMarker+" "+identity), 0600))
+	synctest.Test(t, func(t *testing.T) {
+		stateId := connection.MustNewId()
+		directory := t.TempDir()
+		pidPath := filepath.Join(directory, stateId.String()+".pid")
+		identity, err := processIdentityForTest(os.Getpid())
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(pidPath, []byte(execution.StateStartingMarker+" "+identity), 0600))
 
-	registrationDone := make(chan error, 1)
-	go func() {
-		time.Sleep(1100 * time.Millisecond)
-		registrationDone <- writeRegisteredProcessForTest(pidPath, identity)
-	}()
+		registrationDone := make(chan error, 1)
+		go func() {
+			time.Sleep(1100 * time.Millisecond)
+			registrationDone <- writeRegisteredProcessForTest(pidPath, identity)
+		}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	response := (&imp{}).killProcesses(ctx, &Header{ConnectionId: connection.MustNewId()}, log.GetLogger("test"), directory, stateId, "", 0, sys.Signal(0), false, true)
-	require.NoError(t, response.error)
-	require.NoError(t, <-registrationDone)
+		// The regression concerns elapsed registration time, not how quickly a
+		// shared runner can schedule the writer or flush its filesystem.
+		started := time.Now()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		response := (&imp{}).killProcesses(ctx, &Header{ConnectionId: connection.MustNewId()}, log.GetLogger("test"), directory, stateId, "", 0, sys.Signal(0), false, true)
+		require.NoError(t, response.error)
+		require.NoError(t, <-registrationDone)
+		require.GreaterOrEqual(t, time.Since(started), 1100*time.Millisecond)
+	})
 }
 
 func TestKillProcessesWaitsForInitialRegistrationFile(t *testing.T) {

@@ -3,6 +3,7 @@
 package serve_test
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	goos "os"
@@ -85,8 +86,10 @@ func runDefaultUntilInterrupted(t *testing.T, configurationPath string, lockPath
 	firstEvent := len(provider.GetAllOf("service"))
 	done := make(chan error, 1)
 	stopped := false
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	go func() {
-		done <- application.ParseAndExecute(t.Context(), &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}},
+		done <- application.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}},
 			"serve", "--configuration="+configurationPath)
 	}()
 	t.Cleanup(func() {
@@ -98,25 +101,45 @@ func runDefaultUntilInterrupted(t *testing.T, configurationPath string, lockPath
 			return
 		default:
 		}
-		process, err := goos.FindProcess(goos.Getpid())
-		if err == nil {
-			_ = process.Signal(syscall.SIGINT)
-		}
+		cancel()
 		select {
 		case _ = <-done:
 		case <-time.After(10 * time.Second):
 		}
 	})
-	require.Eventually(t, func() bool {
+	// Startup flushes several independent repositories. Wait for their actual
+	// readiness or the command's error; this is not a startup latency test.
+	waitForReady := func(stage string, ready func() bool) {
+		t.Helper()
+		deadline := time.NewTimer(30 * time.Second)
+		defer deadline.Stop()
+		poll := time.NewTicker(10 * time.Millisecond)
+		defer poll.Stop()
+		for !ready() {
+			select {
+			case err := <-done:
+				stopped = true
+				t.Fatalf("serve stopped before %s: %v; service events: %v", stage, err, provider.GetAllOf("service"))
+			case <-deadline.C:
+				for _, path := range lockPaths {
+					_, err := goos.Stat(path)
+					t.Logf("repository lock %s: %v", path, err)
+				}
+				t.Fatalf("serve did not reach %s; service events: %v", stage, provider.GetAllOf("service"))
+			case <-poll.C:
+			}
+		}
+	}
+	waitForReady("repository locks", func() bool {
 		for _, lockPath := range lockPaths {
 			if _, err := goos.Stat(lockPath); err != nil {
 				return false
 			}
 		}
 		return true
-	}, 10*time.Second, 10*time.Millisecond)
+	})
 	var address string
-	require.Eventually(t, func() bool {
+	waitForReady("SSH listener", func() bool {
 		events := provider.GetAllOf("service")
 		messageKey := provider.GetFieldKeysSpec().GetMessage()
 		for _, event := range events[firstEvent:] {
@@ -128,7 +151,7 @@ func runDefaultUntilInterrupted(t *testing.T, configurationPath string, lockPath
 			}
 		}
 		return false
-	}, 10*time.Second, 10*time.Millisecond)
+	})
 	client, err := gossh.Dial("tcp", address, &gossh.ClientConfig{
 		User:            "test-user",
 		Auth:            []gossh.AuthMethod{gossh.Password("test-password")},
